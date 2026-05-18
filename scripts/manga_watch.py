@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import email.utils
 import hashlib
 import html
 import json
@@ -764,9 +765,36 @@ def extract_generic_html(source: Source, html_text: str, max_items: int) -> list
     return candidates
 
 
-def extract_rss(source: Source, feed_text: str, max_items: int) -> list[Candidate]:
+def _parse_feed_date(value: str) -> dt.datetime | None:
+    """Best-effort parse para fechas RSS. Devuelve None si no se puede parsear."""
+    if not value:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    # Intento ISO 8601 (`2024-05-12T10:00:00Z`, `2024-05-12T10:00:00+00:00`).
+    try:
+        candidate = value.strip().replace("Z", "+00:00")
+        parsed = dt.datetime.fromisoformat(candidate)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: int = 0) -> list[Candidate]:
     parsed = feedparser.parse(feed_text)
     candidates: list[Candidate] = []
+    cutoff: dt.datetime | None = None
+    if max_age_days > 0:
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=max_age_days)
+
     for entry in parsed.entries[:max_items]:
         title = clean_text(entry.get("title", ""))
         link = clean_text(entry.get("link", "")) or source.url
@@ -774,6 +802,10 @@ def extract_rss(source: Source, feed_text: str, max_items: int) -> list[Candidat
         published_at = clean_text(entry.get("published", "") or entry.get("updated", "") or entry.get("created", ""))
         if not title and not summary:
             continue
+        if cutoff is not None and published_at:
+            parsed_date = _parse_feed_date(published_at)
+            if parsed_date is not None and parsed_date < cutoff:
+                continue
         combined = f"{title}\n{summary}"
         score, _signals, _types = detect_signals(combined)
         # Para RSS guardamos solo entradas con señales. Esto baja muchísimo el ruido.
@@ -1100,6 +1132,16 @@ def run(args: argparse.Namespace) -> int:
         include_disabled=args.include_disabled,
     )
 
+    only_source = (args.only_source or "").strip()
+    if only_source:
+        matched = [s for s in sources_all if s.name == only_source]
+        if not matched:
+            available = ", ".join(s.name for s in sources_all)
+            print(f"[ERROR] --only-source '{only_source}' no coincide con ninguna fuente.")
+            print(f"        Fuentes disponibles: {available}")
+            return 2
+        sources = matched
+
     if args.list_sources:
         for source in sources:
             enabled = "enabled" if source.enabled else "disabled"
@@ -1141,7 +1183,12 @@ def run(args: argparse.Namespace) -> int:
             text = fetch_text(session=session, url=source.url, timeout=(args.connect_timeout, args.read_timeout))
 
             if source.kind in {"rss", "feed", "atom"}:
-                candidates = extract_rss(source, text, max_items=args.max_items_per_source)
+                candidates = extract_rss(
+                    source,
+                    text,
+                    max_items=args.max_items_per_source,
+                    max_age_days=args.max_age_days,
+                )
             else:
                 # Pre-check JS-heavy / vacío antes de extraer.
                 pre_soup = BeautifulSoup(text, "html.parser")
@@ -1248,6 +1295,17 @@ def parse_args() -> argparse.Namespace:
         "--list-empty-sources",
         action="store_true",
         help="Al final, lista fuentes detectadas como vacías/JS-rendered",
+    )
+    parser.add_argument(
+        "--only-source",
+        default="",
+        help="Procesa solo la fuente con este nombre exacto (útil para debug).",
+    )
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=30,
+        help="Para feeds RSS, ignora entradas más viejas que N días. 0 = sin filtro. Default: 30",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()
