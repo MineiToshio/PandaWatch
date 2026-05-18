@@ -560,52 +560,166 @@ def make_snippets(text: str, signals: list[str], limit: int = 5) -> list[str]:
     return snippets
 
 
+CHROME_SELECTORS_TO_STRIP = [
+    "header",
+    "footer",
+    "nav",
+    "aside",
+    "[role='navigation']",
+    "[role='banner']",
+    "[role='contentinfo']",
+    "[class*='menu']",
+    "[class*='Menu']",
+    "[class*='footer']",
+    "[class*='Footer']",
+    "[class*='header']",
+    "[class*='Header']",
+    "[class*='nav']",
+    "[id*='menu']",
+    "[id*='footer']",
+    "[id*='header']",
+]
+
+
+def strip_chrome(soup: BeautifulSoup) -> None:
+    """Quita menús, headers, footers y nav del soup para reducir contaminación."""
+    for selector in CHROME_SELECTORS_TO_STRIP:
+        for tag in soup.select(selector):
+            tag.decompose()
+
+
+def _container_signature(tag: Any) -> tuple[str, tuple[str, ...]] | None:
+    """Firma estable de un tag para agrupar contenedores 'iguales'."""
+    classes = tag.get("class") or []
+    if not classes:
+        return None
+    return (tag.name, tuple(sorted(classes)))
+
+
+def detect_product_clusters(soup: BeautifulSoup, source_url: str) -> list[Any]:
+    """Detecta clusters de tarjetas de producto en el HTML.
+
+    Estrategia:
+    1. Si hay matches directos en selectores típicos de e-commerce, devolvemos esos.
+    2. Si no, agrupamos `article|li|div` por (tag, classes); el grupo más grande
+       con >=3 elementos y al menos un <a href> distinto en cada uno gana.
+    """
+    direct_selectors = [
+        ".product-item",
+        ".product-card",
+        ".product",
+        "[class*='product-item']",
+        "[class*='product-card']",
+        "[class*='ProductCard']",
+        "[class*='ProductItem']",
+        "li[class*='product']",
+        "article[class*='product']",
+        "article[class*='post']",
+    ]
+    for selector in direct_selectors:
+        try:
+            matches = soup.select(selector)
+        except Exception:
+            continue
+        # Filtramos a los que realmente tienen un link.
+        usable = [m for m in matches if m.find("a", href=True)]
+        if len(usable) >= 3:
+            return usable
+
+    # Agrupación por firma de tag+classes.
+    groups: dict[tuple[str, tuple[str, ...]], list[Any]] = {}
+    for tag in soup.find_all(["article", "li", "div"]):
+        signature = _container_signature(tag)
+        if signature is None:
+            continue
+        groups.setdefault(signature, []).append(tag)
+
+    best: list[Any] = []
+    best_score = 0
+    for tags in groups.values():
+        if len(tags) < 3:
+            continue
+        hrefs: set[str] = set()
+        usable: list[Any] = []
+        for tag in tags:
+            anchor = tag.find("a", href=True)
+            if not anchor:
+                continue
+            url = canonicalize_url(source_url, anchor.get("href"))
+            if not url or url in hrefs:
+                continue
+            hrefs.add(url)
+            usable.append(tag)
+        if len(usable) < 3:
+            continue
+        # Bonus si la firma menciona producto/item/card/post.
+        joined_classes = " ".join(usable[0].get("class") or []).lower()
+        keyword_bonus = sum(
+            keyword in joined_classes for keyword in ("product", "item", "card", "post", "tile", "article")
+        )
+        score = len(usable) + keyword_bonus * 2
+        if score > best_score:
+            best_score = score
+            best = usable
+
+    return best
+
+
+def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
+    anchor = card.find("a", href=True)
+    if not anchor:
+        return None
+    url = canonicalize_url(source.url, anchor.get("href"))
+    if not url:
+        return None
+    title = clean_text(anchor.get_text(" ", strip=True))
+    if not title:
+        # Algunas tarjetas tienen el título en otro nodo.
+        heading = card.find(["h1", "h2", "h3", "h4", "h5"])
+        if heading:
+            title = clean_text(heading.get_text(" ", strip=True))
+    if not title or len(title) < 3:
+        return None
+    description = clean_text(card.get_text(" ", strip=True))
+    # Filtro de longitudes: menos de 40 = probable menú; más de 2000 = bloque contaminado.
+    if len(description) < 40 or len(description) > 2000:
+        return None
+    return candidate_from_source(source, title[:260], url, description)
+
+
 def extract_generic_html(source: Source, html_text: str, max_items: int) -> list[Candidate]:
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
 
+    # 1) Selectores manuales del YAML tienen prioridad.
     selector_candidates = extract_with_selectors(source, soup, max_items=max_items)
     if selector_candidates:
         return selector_candidates
 
+    # 2) Quitamos menú/footer/nav del soup antes de buscar productos.
+    strip_chrome(soup)
+
+    # 3) Detectamos clusters de productos repetidos.
+    cards = detect_product_clusters(soup, source.url)
+    if not cards:
+        # Sin patrón repetido detectable. Es preferible silencio que ruido.
+        return []
+
     candidates: list[Candidate] = []
     seen_urls: set[str] = set()
-
-    # Estrategia genérica: link + bloque padre. Solo guardamos si hay señales.
-    for anchor in soup.find_all("a", href=True):
-        if len(candidates) >= max_items:
-            break
-        url = canonicalize_url(source.url, anchor.get("href"))
-        if not url or url in seen_urls:
+    for card in cards[:max_items]:
+        candidate = _candidate_from_card(source, card)
+        if candidate is None:
             continue
-        title = clean_text(anchor.get_text(" ", strip=True))
-        if not title or len(title) < 3:
+        if candidate.url in seen_urls:
             continue
-        parent = anchor.find_parent(["article", "li", "section", "div"]) or anchor.parent
-        description = clean_text(parent.get_text(" ", strip=True) if parent else title)
-        combined = f"{title}\n{description}"
+        combined = f"{candidate.title}\n{candidate.description}"
         score, _signals, _types = detect_signals(combined)
         if score <= 0:
             continue
-        seen_urls.add(url)
-        candidates.append(candidate_from_source(source, title[:260], url, description))
-
-    # Fallback: si la página entera contiene señales, creamos un único hallazgo.
-    if not candidates:
-        page_title = clean_text(soup.title.get_text(" ", strip=True) if soup.title else source.name)
-        page_text = clean_text(soup.get_text(" ", strip=True))
-        score, signals, _types = detect_signals(page_text)
-        if score > 0:
-            snippets = make_snippets(page_text, signals, limit=6)
-            candidates.append(
-                candidate_from_source(
-                    source,
-                    f"{page_title} — posibles menciones coleccionistas",
-                    source.url,
-                    "\n".join(snippets)[:2200] if snippets else page_text[:1400],
-                )
-            )
+        seen_urls.add(candidate.url)
+        candidates.append(candidate)
 
     return candidates
 
