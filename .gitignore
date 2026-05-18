@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.pyc
+data/items.jsonl
+data/state.json
+data/*.broken.json
+reports/

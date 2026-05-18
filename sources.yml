@@ -1,0 +1,861 @@
+# Manga Watch - fuentes recomendadas
+# source_class:
+#   official      = editorial/tienda oficial o distribuidor oficial
+#   trusted_media = medio especializado o medio de noticias confiable
+#   retailer      = tienda/retailer útil para exclusivas, variantes o bonus
+#   social        = red social/mirror; útil, pero menos estable para scraping
+#
+# Para un primer MVP puedes correr todo. Si hay mucho ruido:
+#   python manga_watch.py --source-classes official,retailer
+# o solo medios:
+#   python manga_watch.py --source-classes trusted_media,social
+
+sources:
+  # -------------------------
+  # Argentina
+  # -------------------------
+  - name: "AR - Ivrea Argentina"
+    country: "Argentina"
+    language: "Español"
+    publisher: "Editorial Ivrea Argentina"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.ivrea.com.ar/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "AR - Ivreality"
+    country: "Argentina"
+    language: "Español"
+    publisher: "Editorial Ivrea Argentina"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.ivreality.com.ar/"
+    enabled: true
+    tags: ["manga", "news", "official"]
+
+  - name: "AR - La Comiquería"
+    country: "Argentina"
+    language: "Español"
+    publisher: "Editorial Ivrea Argentina"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.lacomiqueria.com.ar/"
+    enabled: true
+    tags: ["manga", "store", "stock"]
+
+  # -------------------------
+  # México
+  # -------------------------
+  - name: "MX - Panini Manga México"
+    country: "México"
+    language: "Español"
+    publisher: "Panini Manga México"
+    source_class: "official"
+    kind: "html"
+    url: "https://tiendapanini.com.mx/coleccionables/manga"
+    enabled: true
+    tags: ["manga", "official", "store"]
+
+  - name: "MX - Panini México Boxsets"
+    country: "México"
+    language: "Español"
+    publisher: "Panini Manga México"
+    source_class: "official"
+    kind: "html"
+    url: "https://tiendapanini.com.mx/coleccionables/item-3/boxsets"
+    enabled: true
+    tags: ["manga", "boxset", "official"]
+
+  - name: "MX - Panini México búsqueda edición especial"
+    country: "México"
+    language: "Español"
+    publisher: "Panini Manga México"
+    source_class: "official"
+    kind: "html"
+    url: "https://tiendapanini.com.mx/catalogsearch/result/?q=edicion%20especial"
+    enabled: true
+    tags: ["manga", "special", "official"]
+
+  # -------------------------
+  # España - fuentes transversales y medios
+  # -------------------------
+  - name: "ES - Listado Manga Calendario"
+    country: "España"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.listadomanga.es/calendario.php"
+    enabled: true
+    tags: ["calendar", "manga", "spain"]
+
+  - name: "ES - Listado Manga Novedades"
+    country: "España"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.listadomanga.es/novedades.php"
+    enabled: true
+    tags: ["calendar", "manga", "spain"]
+
+  - name: "ES - Ramen Para Dos Manga"
+    country: "España"
+    language: "Español"
+    publisher: "Ramen Para Dos"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://ramenparados.com/category/noticias/manga/"
+    enabled: true
+    tags: ["news", "manga", "spain"]
+
+  - name: "ES - Ramen Para Dos RSS"
+    country: "España"
+    language: "Español"
+    publisher: "Ramen Para Dos"
+    source_class: "trusted_media"
+    kind: "rss"
+    url: "https://feeds.feedburner.com/RamenParaDos"
+    enabled: true
+    tags: ["rss", "news", "manga"]
+
+  - name: "ES - Misión Tokyo novedades manga"
+    country: "España"
+    language: "Español"
+    publisher: "Misión Tokyo"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://misiontokyo.com/tag/novedades-manga"
+    enabled: true
+    tags: ["news", "manga", "spain"]
+
+  - name: "ES - Misión Tokyo lanzamientos"
+    country: "España"
+    language: "Español"
+    publisher: "Misión Tokyo"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://misiontokyo.com/tag/lanzamientos"
+    enabled: true
+    tags: ["news", "releases", "manga"]
+
+  - name: "ES - Crunchyroll Noticias"
+    country: "España / LatAm"
+    language: "Español"
+    publisher: "Crunchyroll Noticias"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.crunchyroll.com/es/news/"
+    enabled: true
+    tags: ["news", "anime", "manga"]
+
+  # -------------------------
+  # España - editoriales oficiales
+  # -------------------------
+  - name: "ES - Planeta Cómic"
+    country: "España"
+    language: "Español"
+    publisher: "Planeta Cómic"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.planetadelibros.com/editorial/planeta-comic/54"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Norma Editorial Manga"
+    country: "España"
+    language: "Español"
+    publisher: "Norma Editorial"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.normaeditorial.com/novedades/manga"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Panini Manga España"
+    country: "España"
+    language: "Español"
+    publisher: "Panini Manga España"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.panini.es/shp_esp_es/novedades-panini-comics-marvel-manga"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Ivrea España Noticias"
+    country: "España"
+    language: "Español"
+    publisher: "Editorial Ivrea España"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.editorialivrea.com/ESP/news/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Milky Way Próximamente"
+    country: "España"
+    language: "Español"
+    publisher: "Milky Way Ediciones"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.milkywayediciones.com/collections/proximamente"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Distrito Manga"
+    country: "España"
+    language: "Español"
+    publisher: "Distrito Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.penguinlibros.com/es/221600-distrito-manga"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Arechi Manga Próximamente"
+    country: "España"
+    language: "Español"
+    publisher: "Arechi Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://arechimanga.com/novedades/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Kibook Novedades"
+    country: "España"
+    language: "Español"
+    publisher: "Kibook Ediciones"
+    source_class: "official"
+    kind: "html"
+    url: "https://kibookediciones.com/novedades"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "ES - Pika Ediciones"
+    country: "España"
+    language: "Español"
+    publisher: "Pika Ediciones"
+    source_class: "official"
+    kind: "html"
+    url: "https://hablamosdelibros.es/editorial/pika-ediciones/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  # -------------------------
+  # Estados Unidos / Inglés - oficiales y medios
+  # -------------------------
+  - name: "US - VIZ Blog"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "VIZ Media"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.viz.com/blog"
+    enabled: true
+    tags: ["manga", "official", "news"]
+
+  - name: "US - Kodansha USA News"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Kodansha USA"
+    source_class: "official"
+    kind: "html"
+    url: "https://kodansha.us/news/"
+    enabled: true
+    tags: ["manga", "official", "news"]
+
+  - name: "US - Yen Press News"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Yen Press"
+    source_class: "official"
+    kind: "html"
+    url: "https://yenpress.com/news"
+    enabled: true
+    tags: ["manga", "official", "news"]
+
+  - name: "US - Seven Seas News"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Seven Seas Entertainment"
+    source_class: "official"
+    kind: "html"
+    url: "https://sevenseasentertainment.com/news/"
+    enabled: true
+    tags: ["manga", "official", "news"]
+
+  - name: "US - Seven Seas Box Sets"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Seven Seas Entertainment"
+    source_class: "official"
+    kind: "html"
+    url: "https://sevenseasentertainment.com/category/box-set/"
+    enabled: true
+    tags: ["manga", "boxset", "official"]
+
+  - name: "US - Seven Seas RSS"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Seven Seas Entertainment"
+    source_class: "official"
+    kind: "rss"
+    url: "https://sevenseasentertainment.com/feed/"
+    enabled: true
+    tags: ["rss", "manga", "official"]
+
+  - name: "US - Dark Horse Direct Manga"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Dark Horse Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.darkhorsedirect.com/collections/comics"
+    enabled: true
+    tags: ["manga", "hardcover", "official", "store"]
+
+  - name: "US - Square Enix Manga Coming Soon"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Square Enix Manga & Books"
+    source_class: "official"
+    kind: "html"
+    url: "https://squareenixmangaandbooks.square-enix-games.com/en-us/coming-soon"
+    enabled: true
+    tags: ["manga", "official", "coming-soon"]
+
+  - name: "US - Anime News Network News RSS"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Anime News Network"
+    source_class: "trusted_media"
+    kind: "rss"
+    url: "https://www.animenewsnetwork.com/news/rss.xml?ann-edition=us"
+    enabled: true
+    tags: ["rss", "news", "anime", "manga"]
+
+  - name: "US - Anime News Network News"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Anime News Network"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.animenewsnetwork.com/news/"
+    enabled: false
+    tags: ["news", "anime", "manga", "fallback"]
+    notes: "Fallback si el RSS falla. Lo dejo desactivado para evitar duplicados con el RSS."
+
+  - name: "US - ComicBook.com Anime"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "ComicBook.com"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://comicbook.com/category/anime/"
+    enabled: true
+    tags: ["news", "anime", "manga"]
+
+  # Retailers de variantes/exclusivas en inglés
+  - name: "US - Kinokuniya Exclusives"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Kinokuniya USA"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://usa.kinokuniya.com/kinokuniya-exclusives"
+    enabled: true
+    tags: ["retailer", "exclusive", "variant", "shikishi"]
+
+  - name: "US - Barnes & Noble Manga Exclusives"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Barnes & Noble"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.barnesandnoble.com/b/barnes-noble-exclusives/graphic-novels-comics-manga/_/N-2o2bZ1fZ2y35"
+    enabled: true
+    tags: ["retailer", "exclusive", "variant"]
+
+  - name: "US - Crunchyroll Store Manga"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Crunchyroll Store"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://store.crunchyroll.com/collections/manga/"
+    enabled: true
+    tags: ["retailer", "exclusive", "manga"]
+
+  # Manga Mogura: no lo usaría como fuente primaria, pero sí como radar rápido.
+  - name: "SOCIAL - Manga Mogura Bluesky"
+    country: "Japón / Global"
+    language: "Inglés"
+    publisher: "Manga Mogura"
+    source_class: "social"
+    kind: "html"
+    url: "https://bsky.app/profile/mangamogura.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "japan"]
+    notes: "Más scrapeable que X/Twitter en muchos entornos, pero puede cargar con JS. Usarlo como radar, no como fuente final."
+
+  - name: "SOCIAL - Manga Mogura RE X"
+    country: "Japón / Global"
+    language: "Inglés"
+    publisher: "Manga Mogura RE"
+    source_class: "social"
+    kind: "html"
+    url: "https://x.com/MangaMoguraRE"
+    enabled: false
+    tags: ["social", "x", "twitter", "news", "manga"]
+    notes: "X/Twitter suele bloquear o cambiar HTML; lo dejo desactivado para evitar falsos fallos. Mejor revisarlo manualmente o por un bridge/RSS propio."
+
+  # -------------------------
+  # Francia - oficiales y medios
+  # -------------------------
+  - name: "FR - Glénat Manga Nouveautés"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Glénat Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.glenat.com/manga/nouveautes/"
+    enabled: true
+    tags: ["manga", "official", "france"]
+
+  - name: "FR - Glénat Art Books"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Glénat Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.glenat.com/livres-keywords-art-book/"
+    enabled: true
+    tags: ["artbook", "official", "france"]
+
+  - name: "FR - Pika Édition"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Pika Édition"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.pika.fr/"
+    enabled: true
+    tags: ["manga", "official", "france"]
+
+  - name: "FR - Pika Planning"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Pika Édition"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.pika.fr/planning"
+    enabled: true
+    tags: ["manga", "planning", "official"]
+
+  - name: "FR - Pika Livres / Artbooks"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Pika Édition"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.pika.fr/livres-pika/"
+    enabled: true
+    tags: ["artbook", "manga", "official"]
+
+  - name: "FR - Ki-oon"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Ki-oon"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.ki-oon.com/"
+    enabled: true
+    tags: ["manga", "collector", "official"]
+
+  - name: "FR - Kana"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Kana"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kana.fr/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "FR - Kana Actualités"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Kana"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kana.fr/actualites/"
+    enabled: true
+    tags: ["manga", "news", "official"]
+
+  - name: "FR - Delcourt / Tonkam Mangas"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Delcourt / Tonkam"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.editions-delcourt.fr/mangas"
+    enabled: true
+    tags: ["manga", "official", "prestige"]
+
+  - name: "FR - Kurokawa"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Kurokawa"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.lisez.com/editeurs/kurokawa"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "FR - Meian"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Meian"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.meian-editions.fr/meian/accueil-meian"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "FR - Meian Plus Boutique"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Meian"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.meian-plus.fr/accueil"
+    enabled: true
+    tags: ["manga", "store", "official"]
+
+  - name: "FR - Akata"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Akata"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.akata.fr/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "FR - Vega Dupuis"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Vega Dupuis"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.dupuis.com/label/FR/5/vega_dupuis.html"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "FR - ActuaLitté Mangas RSS"
+    country: "Francia"
+    language: "Francés"
+    publisher: "ActuaLitté"
+    source_class: "trusted_media"
+    kind: "rss"
+    url: "https://actualitte.com/flux/rss/categorie/mangas.xml"
+    enabled: true
+    tags: ["rss", "news", "manga", "france"]
+
+  - name: "FR - Manga-News Actus"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Manga-News.com"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.manga-news.com/index.php/actus/"
+    enabled: true
+    tags: ["news", "manga", "france"]
+
+  - name: "FR - Manga-News Home"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Manga-News.com"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.manga-news.com/"
+    enabled: true
+    tags: ["news", "manga", "france"]
+
+  # -------------------------
+  # Italia - oficiales, retailers y noticias útiles
+  # -------------------------
+  - name: "IT - Panini Planet Manga"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Panini / Planet Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga.html"
+    enabled: true
+    tags: ["manga", "official", "italy"]
+
+  - name: "IT - Panini Variant ed Esclusive"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Panini / Planet Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/variant-ed-esclusive.html"
+    enabled: true
+    tags: ["manga", "variant", "exclusive", "official"]
+
+  - name: "IT - Panini Edizioni da Collezione e Cofanetti"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Panini / Planet Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/edizioni-da-collezione-e-cofanetti.html"
+    enabled: true
+    tags: ["manga", "collector", "boxset", "official"]
+
+  - name: "IT - Star Comics Manga"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Star Comics"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.starcomics.com/categorie-fumetti/manga"
+    enabled: true
+    tags: ["manga", "official", "italy"]
+
+  - name: "IT - Star Comics Home"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Star Comics"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.starcomics.com/"
+    enabled: true
+    tags: ["manga", "official", "news"]
+
+  - name: "IT - J-Pop Manga"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "J-Pop Manga / Edizioni BD"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.j-pop.it/"
+    enabled: true
+    tags: ["manga", "official", "italy"]
+
+  - name: "IT - Edizioni BD"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "J-Pop Manga / Edizioni BD"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.edizionibd.it/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "IT - Dynit"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Dynit Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.dynit.it/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "IT - Magic Press"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Magic Press"
+    source_class: "official"
+    kind: "html"
+    url: "https://magicpressedizioni.it/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "IT - Magic Press Uscite"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Magic Press"
+    source_class: "official"
+    kind: "html"
+    url: "https://magicpressedizioni.it/le-uscite-della-settimana/"
+    enabled: true
+    tags: ["manga", "releases", "official"]
+
+  - name: "IT - GOEN / RW Edizioni"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "GOEN / RW Edizioni"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.rwedizioni.it/goen/"
+    enabled: true
+    tags: ["manga", "official"]
+
+  - name: "IT - MangaYo Esclusive"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "MangaYo"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://mangayo.it/150-esclusive-"
+    enabled: true
+    tags: ["retailer", "exclusive", "variant", "italy"]
+
+  # -------------------------
+  # Japón - editoriales oficiales, tiendas oficiales y trackers de especiales
+  # -------------------------
+  - name: "JP - Shueisha Comics Paper Releases"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Shueisha"
+    source_class: "official"
+    kind: "html"
+    url: "https://books.shueisha.co.jp/newcomics/index.html"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - S-MANGA Shueisha"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Shueisha"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.s-manga.net/"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - Jump Characters Store"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Shueisha / Jump"
+    source_class: "official"
+    kind: "html"
+    url: "https://jumpcs.shueisha.co.jp/shop/default.aspx"
+    enabled: true
+    tags: ["goods", "official", "jump", "japan"]
+
+  - name: "JP - Kodansha Comic Limited Editions"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Kodansha"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kodansha.co.jp/comic/labels/gentei"
+    enabled: true
+    tags: ["manga", "limited", "official", "japan"]
+
+  - name: "JP - Kodansha Comic Calendar"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Kodansha"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kodansha.co.jp/comic/calendar"
+    enabled: true
+    tags: ["manga", "calendar", "official"]
+
+  - name: "JP - Shogakukan Comic"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Shogakukan"
+    source_class: "official"
+    kind: "html"
+    url: "https://shogakukan-comic.jp/"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - Shogakukan Comics Calendar"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Shogakukan"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.shogakukan.co.jp/calendar/paper/comics/next2"
+    enabled: true
+    tags: ["manga", "calendar", "official"]
+
+  - name: "JP - KADOKAWA Comics"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "KADOKAWA"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kadokawa.co.jp/category/comic/"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - KADOKAWA Store Artbooks Fanbooks"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "KADOKAWA"
+    source_class: "official"
+    kind: "html"
+    url: "https://store.kadokawa.co.jp/shop/c/c109050/"
+    enabled: true
+    tags: ["artbook", "fanbook", "official", "japan"]
+
+  - name: "JP - KADOKAWA Store"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "KADOKAWA"
+    source_class: "official"
+    kind: "html"
+    url: "https://store.kadokawa.co.jp/shop/"
+    enabled: true
+    tags: ["store", "bonus", "official", "japan"]
+
+  - name: "JP - Square Enix Comics"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Square Enix"
+    source_class: "official"
+    kind: "html"
+    url: "https://magazine.jp.square-enix.com/top/comics/"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - Hakusensha"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Hakusensha"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.hakusensha.co.jp/"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - Akita Shoten Comics"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Akita Shoten"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.akitashoten.co.jp/comics"
+    enabled: true
+    tags: ["manga", "official", "japan"]
+
+  - name: "JP - Sanyodo Comic Limited Editions"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Sanyodo"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.sanyodo.co.jp/news/bks_new_comic_limited-edition"
+    enabled: true
+    tags: ["limited", "special-edition", "retailer", "japan"]
+
+  - name: "JP - Animate Online Books"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Animate"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.animate-onlineshop.jp/corner/cc/comics/cd/11/"
+    enabled: true
+    tags: ["retailer", "bonus", "manga", "japan"]
