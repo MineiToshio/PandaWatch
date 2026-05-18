@@ -1,0 +1,76 @@
+# Changelog
+
+Todos los cambios notables a `manga-watch` se documentan aquí.
+
+El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
+
+## [Unreleased] — Fase 1: ruido y JS-rendered
+
+### Added
+
+- **`detect_product_clusters()`** detecta tarjetas de producto repetidas en HTML
+  genérico sin selectores YAML. Busca contenedores con la misma firma
+  `(tag, classes)` que aparezcan ≥3 veces con `<a href>` único, o selectores
+  comunes de e-commerce (`.product-item`, `.product-card`, `[class*="product"]`,
+  etc.).
+- **`strip_chrome()`** elimina `header`, `footer`, `nav`, `aside` y contenedores
+  cuyo `class`/`id`/`role` indique menú/navegación antes de extraer candidatos.
+- **`detect_empty_or_js()`** marca fuentes con HTML <5000 chars, SPA shells
+  (`<div id="root">`, `#app`, `#__next`, ...) vacíos, o menos de 5 anchors con
+  texto significativo. La extracción se omite y la fuente queda registrada
+  como problemática.
+- **`problems`** estructurado en `run()` (lista de dicts con `source`,
+  `category`, `message`). Categorías: `empty`, `js-shell`, `no-links`,
+  `http`, `request`, `robots`, `selector`, `other`.
+- **Sección "Fuentes problemáticas"** en el reporte Markdown, agrupada por
+  categoría, además de la sección "Errores" ya existente.
+- **CLI `--list-empty-sources`**: al final del run, imprime las fuentes
+  detectadas como vacías o JS-renderizadas.
+- **CLI `--only-source "nombre"`**: procesa solo la fuente con ese nombre
+  exacto. Útil para debuggear una fuente sin correr las 82.
+- **CLI `--max-age-days N`** (default 30, `0` desactiva): en feeds RSS,
+  descarta entradas con `published_at` más viejas que N días. Fechas no
+  parseables no se descartan.
+- **`_parse_feed_date()`** parser best-effort de fechas RSS: RFC 2822 vía
+  `email.utils.parsedate_to_datetime` con fallback a ISO 8601.
+- **Tests `pytest`** en `tests/test_extraction.py` (13 casos) cubriendo las
+  funciones nuevas. Nuevo `requirements-dev.txt`.
+
+### Changed
+
+- **`extract_generic_html()`**: ahora corre `strip_chrome()` y
+  `detect_product_clusters()` cuando no hay selectores YAML. Los candidatos
+  se filtran por longitud de descripción (40 ≤ len ≤ 2000) para descartar
+  menús y bloques contaminados.
+- **Reporte Markdown**: nueva sección "Fuentes problemáticas".
+
+### Removed
+
+- **Fallback "página entera con señales → un candidato sintético"** en
+  `extract_generic_html`. Causaba ruido diario sobre páginas categoría
+  (ej. `/coleccionables/manga` de Panini). Si no se detectan candidatos
+  individuales, ahora preferimos silencio.
+
+### Compatibility
+
+- API CLI 100 % compatible: no se renombra ni se quita ningún flag.
+- `state.json` schema sin cambios.
+- Sin dependencias nuevas en `requirements.txt`. `pytest` queda en
+  `requirements-dev.txt` (opcional).
+
+### Cómo probar
+
+```bash
+# tests unitarios
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -v
+
+# debug de una sola fuente
+python manga_watch.py --only-source "MX - Panini Manga México" --dry-run
+
+# listar fuentes JS/vacías
+python manga_watch.py --list-empty-sources --dry-run
+
+# RSS limitado a últimos 7 días
+python manga_watch.py --max-age-days 7 --dry-run
+```
