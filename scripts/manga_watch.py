@@ -687,6 +687,46 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     return candidate_from_source(source, title[:260], url, description)
 
 
+JS_SHELL_IDS = ("root", "app", "__next", "__nuxt", "react-root", "react-app")
+
+
+def detect_empty_or_js(html_text: str, soup: BeautifulSoup) -> tuple[str, str] | None:
+    """Devuelve (categoria, mensaje) si el HTML parece vacío o JS-renderizado.
+
+    Categorías: 'empty' (HTML muy corto), 'js-shell' (div root/app vacío),
+    'no-links' (ningún <a> con texto significativo). Devuelve None si parece OK.
+    """
+    raw_len = len(html_text or "")
+    if raw_len < 5000:
+        return ("empty", f"HTML muy corto ({raw_len} chars). Probablemente JS-rendered o vacío.")
+
+    for shell_id in JS_SHELL_IDS:
+        node = soup.find(id=shell_id)
+        if node is None:
+            continue
+        inner_text = clean_text(node.get_text(" ", strip=True))
+        if len(inner_text) < 80 and not node.find("a", href=True):
+            return (
+                "js-shell",
+                f"<{node.name} id='{shell_id}'> sin contenido. Probablemente requiere Playwright.",
+            )
+
+    significant_links = 0
+    for anchor in soup.find_all("a", href=True):
+        text = clean_text(anchor.get_text(" ", strip=True))
+        if len(text) >= 10:
+            significant_links += 1
+            if significant_links >= 5:
+                break
+    if significant_links < 5:
+        return (
+            "no-links",
+            f"Sin enlaces con texto significativo ({significant_links} encontrados). JS o página vacía.",
+        )
+
+    return None
+
+
 def extract_generic_html(source: Source, html_text: str, max_items: int) -> list[Candidate]:
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
@@ -865,7 +905,27 @@ def markdown_escape_pipe(value: str) -> str:
     return value.replace("|", "\\|")
 
 
-def write_markdown_report(path: Path, reportable: list[Candidate], errors: list[str], min_score: int) -> None:
+PROBLEM_CATEGORY_LABELS = {
+    "empty": "Vacías / muy cortas",
+    "js-shell": "JS-rendered (necesitan Playwright)",
+    "no-links": "Sin enlaces significativos",
+    "http": "Errores HTTP",
+    "request": "Errores de red / timeout",
+    "robots": "Bloqueadas por robots.txt",
+    "selector": "Selectores YAML inválidos",
+    "other": "Otros errores",
+}
+
+PROBLEM_CATEGORY_ORDER = list(PROBLEM_CATEGORY_LABELS.keys())
+
+
+def write_markdown_report(
+    path: Path,
+    reportable: list[Candidate],
+    errors: list[str],
+    problems: list[dict[str, str]],
+    min_score: int,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     now_local = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     date_title = dt.date.today().isoformat()
@@ -941,6 +1001,32 @@ def write_markdown_report(path: Path, reportable: list[Candidate], errors: list[
                 f"| {item.score} | {item.status} | {source_class} | {country} | {publisher} | {title} | {item.url} |"
             )
         lines.append("")
+
+    if problems:
+        lines.append("## Fuentes problemáticas")
+        lines.append("")
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for problem in problems:
+            grouped.setdefault(problem.get("category", "other"), []).append(problem)
+        for category in PROBLEM_CATEGORY_ORDER:
+            items = grouped.get(category)
+            if not items:
+                continue
+            label = PROBLEM_CATEGORY_LABELS.get(category, category)
+            lines.append(f"### {label} ({len(items)})")
+            lines.append("")
+            for item in items:
+                lines.append(f"- **{item.get('source', '?')}** — {item.get('message', '')}")
+            lines.append("")
+        # Categorías no mapeadas
+        unknown_categories = set(grouped.keys()) - set(PROBLEM_CATEGORY_ORDER)
+        for category in sorted(unknown_categories):
+            items = grouped[category]
+            lines.append(f"### {category} ({len(items)})")
+            lines.append("")
+            for item in items:
+                lines.append(f"- **{item.get('source', '?')}** — {item.get('message', '')}")
+            lines.append("")
 
     if errors:
         lines.append("## Errores")
@@ -1030,6 +1116,10 @@ def run(args: argparse.Namespace) -> int:
 
     all_candidates: list[Candidate] = []
     errors: list[str] = []
+    problems: list[dict[str, str]] = []
+
+    def record_problem(source_name: str, category: str, message: str) -> None:
+        problems.append({"source": source_name, "category": category, "message": message})
 
     print(f"[INFO] Fuentes totales en YAML: {len(sources_all)}")
     print(f"[INFO] Fuentes activas tras filtros: {len(sources)}")
@@ -1045,13 +1135,26 @@ def run(args: argparse.Namespace) -> int:
                 message = f"robots.txt no permite acceder a {source.url}"
                 print(f"[SKIP] {message}")
                 errors.append(f"{source.name}: {message}")
+                record_problem(source.name, "robots", message)
                 continue
 
             text = fetch_text(session=session, url=source.url, timeout=(args.connect_timeout, args.read_timeout))
+
             if source.kind in {"rss", "feed", "atom"}:
                 candidates = extract_rss(source, text, max_items=args.max_items_per_source)
             else:
-                candidates = extract_generic_html(source, text, max_items=args.max_items_per_source)
+                # Pre-check JS-heavy / vacío antes de extraer.
+                pre_soup = BeautifulSoup(text, "html.parser")
+                for stripped in pre_soup(["script", "style", "noscript", "svg"]):
+                    stripped.decompose()
+                js_check = detect_empty_or_js(text, pre_soup)
+                if js_check is not None:
+                    category, message = js_check
+                    print(f"[SKIP-{category}] {source.name}: {message}")
+                    record_problem(source.name, category, message)
+                    candidates = []
+                else:
+                    candidates = extract_generic_html(source, text, max_items=args.max_items_per_source)
 
             scored = [score_candidate(candidate) for candidate in candidates]
             all_candidates.extend(scored)
@@ -1061,14 +1164,17 @@ def run(args: argparse.Namespace) -> int:
             message = f"{source.name}: HTTP error {exc}"
             print(f"[ERROR] {message}")
             errors.append(message)
+            record_problem(source.name, "http", str(exc))
         except requests.RequestException as exc:
             message = f"{source.name}: request error {exc}"
             print(f"[ERROR] {message}")
             errors.append(message)
+            record_problem(source.name, "request", str(exc))
         except Exception as exc:
             message = f"{source.name}: error inesperado {exc}"
             print(f"[ERROR] {message}")
             errors.append(message)
+            record_problem(source.name, "other", str(exc))
 
         if args.sleep_seconds > 0 and index < len(sources):
             time.sleep(args.sleep_seconds)
@@ -1086,7 +1192,13 @@ def run(args: argparse.Namespace) -> int:
             candidate_to_json(candidate) for candidate in reportable if candidate.status in {"new", "changed"}
         ]
         append_jsonl(items_path, new_or_changed_rows)
-        write_markdown_report(path=report_path, reportable=reportable, errors=errors, min_score=args.min_score)
+        write_markdown_report(
+            path=report_path,
+            reportable=reportable,
+            errors=errors,
+            problems=problems,
+            min_score=args.min_score,
+        )
 
     print("")
     print("[RESUMEN]")
@@ -1094,6 +1206,14 @@ def run(args: argparse.Namespace) -> int:
     print(f"  reportables: {len(reportable)}")
     print(f"  errores: {len(errors)}")
     print(f"  reporte: {report_path}")
+
+    if args.list_empty_sources:
+        empty_categories = {"empty", "js-shell", "no-links"}
+        empty_problems = [p for p in problems if p.get("category") in empty_categories]
+        print("")
+        print(f"[FUENTES VACÍAS / JS-rendered] ({len(empty_problems)})")
+        for problem in empty_problems:
+            print(f"  [{problem['category']}] {problem['source']} — {problem['message']}")
 
     if args.send_telegram and not args.dry_run:
         try:
@@ -1124,6 +1244,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--countries", default="", help="Filtra por país exacto, separado por comas. Ej: España,Francia,Japón")
     parser.add_argument("--send-telegram", action="store_true", help="Envía resumen por Telegram")
     parser.add_argument("--list-sources", action="store_true", help="Lista fuentes tras filtros y termina")
+    parser.add_argument(
+        "--list-empty-sources",
+        action="store_true",
+        help="Al final, lista fuentes detectadas como vacías/JS-rendered",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()
 
