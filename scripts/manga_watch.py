@@ -2993,24 +2993,28 @@ def _run_wiki_bootstrap(
     print(f"                min-score: {args.min_score}")
     print()
 
+    # Asegurar que scripts/ esté en sys.path para que 'wikis' sea importable
+    # tanto si corremos desde root como desde el wrapper.
+    _scripts_dir = str(Path(__file__).resolve().parent)
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+
     if args.bootstrap_wiki == "listadomanga":
-        # Asegurar que scripts/ esté en sys.path para que 'wikis' sea importable
-        # tanto si corremos desde root como desde el wrapper.
-        _scripts_dir = str(Path(__file__).resolve().parent)
-        if _scripts_dir not in sys.path:
-            sys.path.insert(0, _scripts_dir)
-        from wikis.listadomanga import bootstrap as bootstrap_listadomanga, iter_year_months
-        candidates = bootstrap_listadomanga(
-            yf, mf, yt, mt,
-            session=session,
-            sleep_seconds=args.sleep_seconds,
-            timeout=(args.connect_timeout, args.read_timeout),
-            min_score=args.min_score,
-            fetch_details=bool(args.fetch_details),
-        )
-        months = iter_year_months(yf, mf, yt, mt)
+        from wikis.listadomanga import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "manga-sanctuary":
+        from wikis.manga_sanctuary import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
+
+    candidates = wiki_bootstrap(
+        yf, mf, yt, mt,
+        session=session,
+        sleep_seconds=args.sleep_seconds,
+        timeout=(args.connect_timeout, args.read_timeout),
+        min_score=args.min_score,
+        fetch_details=bool(args.fetch_details),
+    )
+    months = iter_year_months(yf, mf, yt, mt)
 
     print(f"\n[BOOTSTRAP-WIKI] {len(candidates)} candidates con score>={args.min_score} sobre {len(months)} meses")
 
@@ -3484,8 +3488,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria (Fase 2 del PRD). Actualmente soporta: listadomanga (España).",
+        choices=["listadomanga", "manga-sanctuary"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria (Fase 2 del PRD). Soporta: listadomanga (España), manga-sanctuary (Francia).",
     )
     parser.add_argument(
         "--wiki-from",
