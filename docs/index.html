@@ -352,6 +352,35 @@
   </div>
 
   <div class="flag">
+    <div class="flag-name">--fuzzy-keywords <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Por defecto el script busca <strong>frases exactas</strong> ("edición especial", "limited edition"). Con este flag, además busca <strong>palabras sueltas</strong> de cada regla — útil para variantes como <em>"tomo especial"</em>, <em>"manga especial"</em>, etc.</p>
+      <p>Ejemplo: la regla <code>"edición especial" → 40 pts</code></p>
+      <ul>
+        <li>Si el texto dice <em>"edición especial"</em>: suma <strong>40 pts</strong>.</li>
+        <li>Si el texto dice <em>"tomo especial"</em>: con fuzzy off suma <strong>0</strong>, con fuzzy on suma <strong>13 pts</strong> (40÷3).</li>
+        <li>Si el texto dice solo <em>"edición"</em> (sin nada más): suma <strong>0</strong>, porque "edición" es <em>stopword</em>.</li>
+      </ul>
+      <p>El script extrae automáticamente las palabras "fuertes" de cada regla, ignorando stopwords ("edición", "de", "la", "the", "of", "manga", "vol", "tomo"…).</p>
+      <p>Trade-off: <strong>captura más</strong> ediciones que se llaman distinto, pero también <strong>genera algo más de ruido</strong>. Los matches fuzzy se marcan en el reporte como <code>[fuzzy:especial]</code> para distinguirlos.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--fuzzy-divisor 3 <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: <code>3</code></div>
+    <div class="flag-body">
+      <p>Cuánto se divide el score original cuando matchea solo una palabra suelta (no la frase completa). Mayor divisor = score más bajo para matches fuzzy = menos ruido.</p>
+      <ul>
+        <li><code>--fuzzy-divisor 2</code>: matches fuzzy valen 50% del score original (más permisivo)</li>
+        <li><code>--fuzzy-divisor 3</code>: 33% (default, balanceado)</li>
+        <li><code>--fuzzy-divisor 5</code>: 20% (más conservador)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="flag">
     <div class="flag-name">--max-age-days 30 <span class="tag tag-new">NUEVO</span></div>
     <div class="flag-default">Default: <code>30</code> días</div>
     <div class="flag-body">

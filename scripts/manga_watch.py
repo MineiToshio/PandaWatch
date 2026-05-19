@@ -323,6 +323,41 @@ def canonicalize_url(base_url: str, href: str | None) -> str:
     return absolute
 
 
+FUZZY_STOPWORDS: frozenset[str] = frozenset({
+    # Genéricas en varios idiomas — solas no aportan señal coleccionista.
+    "edicion", "edition", "edizione",
+    "de", "la", "el", "le", "les", "las", "los", "en", "con", "y", "e",
+    "a", "and", "the", "of", "with", "et", "du", "di", "da", "del",
+    "pack", "libro", "livre", "book", "version", "vol", "tome", "tomo",
+    "pre", "order", "preorder", "preordine",
+    "manga", "comic", "comics",
+})
+
+# Configuración de detección (se setea desde run()).
+_DETECT_FUZZY: bool = False
+_DETECT_FUZZY_DIVISOR: int = 3
+
+
+def configure_detection(fuzzy: bool, fuzzy_divisor: int) -> None:
+    """Setea modo fuzzy de detect_signals para todo el run."""
+    global _DETECT_FUZZY, _DETECT_FUZZY_DIVISOR
+    _DETECT_FUZZY = fuzzy
+    _DETECT_FUZZY_DIVISOR = max(1, fuzzy_divisor)
+
+
+def _derive_fuzzy_tokens(phrase: str) -> list[str]:
+    """Devuelve las palabras 'fuertes' de una phrase (sin stopwords).
+
+    Solo aplica a phrases con espacios. Las japonesas/coreanas/etc. monolíticas
+    no se descomponen porque suelen ser palabras únicas significativas.
+    """
+    if not phrase or " " not in phrase:
+        return []
+    normalized = normalize_text(phrase)
+    tokens = re.split(r"[\s\-']+", normalized)
+    return [t for t in tokens if t and len(t) >= 3 and t not in FUZZY_STOPWORDS]
+
+
 def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     normalized = normalize_text(text)
     matched_phrases: list[str] = []
@@ -332,10 +367,24 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     for rule in KEYWORD_RULES:
         phrase = str(rule["phrase"])
         normalized_phrase = normalize_text(phrase)
+        rule_score = int(rule["score"])
+        rule_type = str(rule["type"])
+
         if normalized_phrase and normalized_phrase in normalized:
             matched_phrases.append(phrase)
-            matched_types.append(str(rule["type"]))
-            score += int(rule["score"])
+            matched_types.append(rule_type)
+            score += rule_score
+            continue
+
+        if _DETECT_FUZZY:
+            tokens = _derive_fuzzy_tokens(phrase)
+            for token in tokens:
+                pattern = rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
+                if re.search(pattern, normalized):
+                    matched_phrases.append(f"{phrase} [fuzzy:{token}]")
+                    matched_types.append(rule_type)
+                    score += rule_score // _DETECT_FUZZY_DIVISOR
+                    break
 
     matched_phrases = list(dict.fromkeys(matched_phrases))
     matched_types = list(dict.fromkeys(matched_types))
@@ -1699,6 +1748,11 @@ class DiagnosticRecorder:
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
+    configure_detection(
+        fuzzy=bool(getattr(args, "fuzzy_keywords", False)),
+        fuzzy_divisor=int(getattr(args, "fuzzy_divisor", 3)),
+    )
+
     sources_path = Path(args.sources)
     data_dir = Path(args.data_dir)
     reports_dir = Path(args.reports_dir)
@@ -1970,6 +2024,17 @@ def parse_args() -> argparse.Namespace:
         "--enable-js",
         action="store_true",
         help="Habilita rendering con Playwright para fuentes con kind:js. Requiere 'pip install playwright && playwright install chromium'",
+    )
+    parser.add_argument(
+        "--fuzzy-keywords",
+        action="store_true",
+        help="Activa matching por palabra individual además de la frase exacta. 'tomo especial' matchea 'edición especial' con score reducido.",
+    )
+    parser.add_argument(
+        "--fuzzy-divisor",
+        type=int,
+        default=3,
+        help="Divisor del score cuando una palabra fuzzy matchea pero no la frase completa. Default: 3",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()

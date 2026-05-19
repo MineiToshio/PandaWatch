@@ -175,3 +175,65 @@ def test_parse_feed_date_iso8601():
 def test_parse_feed_date_invalid_returns_none():
     assert mw._parse_feed_date("not a date") is None
     assert mw._parse_feed_date("") is None
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy keyword matching
+# ---------------------------------------------------------------------------
+
+
+def _detect(text: str, fuzzy: bool, divisor: int = 3):
+    mw.configure_detection(fuzzy=fuzzy, fuzzy_divisor=divisor)
+    return mw.detect_signals(text)
+
+
+def teardown_function(_func):
+    """Reset detection config después de cada test."""
+    mw.configure_detection(fuzzy=False, fuzzy_divisor=3)
+
+
+def test_fuzzy_off_keeps_exact_phrase_match():
+    score, phrases, _ = _detect("Berserk edición especial vol 1", fuzzy=False)
+    assert score >= 40
+    assert "edición especial" in phrases
+
+
+def test_fuzzy_off_does_not_match_isolated_token():
+    score, _, _ = _detect("Berserk tomo especial vol 1", fuzzy=False)
+    assert score == 0
+
+
+def test_fuzzy_on_matches_isolated_token_with_reduced_score():
+    score, phrases, _ = _detect("Berserk tomo especial vol 1", fuzzy=True, divisor=3)
+    # 40 // 3 = 13 puntos por matchear "especial"
+    assert score >= 13
+    assert any("[fuzzy:especial]" in p for p in phrases)
+
+
+def test_fuzzy_on_same_rule_does_not_double_count():
+    # La regla "edición especial" no debería sumar dos veces (una por phrase
+    # exacta y otra por su propio fuzzy token "especial").
+    mw.configure_detection(fuzzy=True, fuzzy_divisor=3)
+    score, phrases, _ = mw.detect_signals("edición especial coleccionista")
+    # "edición especial" debe aparecer como phrase exacta, no como [fuzzy:especial].
+    assert "edición especial" in phrases
+    assert "edición especial [fuzzy:especial]" not in phrases
+
+
+def test_fuzzy_stopwords_alone_do_not_match():
+    score, _, _ = _detect("nueva edición del manga", fuzzy=True)
+    # "edición" y "manga" son stopwords; no deben generar score.
+    assert score == 0
+
+
+def test_fuzzy_does_not_split_japanese_phrases():
+    # 限定版 es monolítica; con fuzzy=True debe seguir matcheando como phrase.
+    score, phrases, _ = _detect("新作 限定版 発売", fuzzy=True)
+    assert "限定版" in phrases
+    assert score >= 50
+
+
+def test_fuzzy_token_boundary_avoids_substring_collision():
+    # "especialista" NO debe matchear "especial" — debe respetar word boundary.
+    score, _, _ = _detect("entrevista al especialista en cómics", fuzzy=True)
+    assert score == 0

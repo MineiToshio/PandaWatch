@@ -4,6 +4,24 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Fuzzy keyword matching
+
+### Added
+
+- **Fuzzy keyword matching opcional** en `detect_signals()`.
+  - Activable con `--fuzzy-keywords` (off por default).
+  - Cuando una regla compuesta como `"edición especial"` no matchea
+    como frase exacta, el script intenta matchear palabras
+    individuales fuertes ("especial") con score reducido (default
+    score ÷ 3, configurable con `--fuzzy-divisor`).
+  - `FUZZY_STOPWORDS` excluye genéricos como "edición/de/la/the/of/
+    manga/vol/tomo…" que solos no aportan señal.
+  - Solo aplica a phrases con espacios — frases monolíticas (japonés
+    `限定版`, etc.) siguen como están.
+  - Matches fuzzy se marcan en reporte como `phrase [fuzzy:token]`.
+- 7 tests nuevos para el matching fuzzy: comportamiento off/on,
+  stopwords, word boundaries, no-double-count, japonés.
+
 ## [Unreleased] — Playwright + YAML fixes
 
 ### Added
