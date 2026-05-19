@@ -142,10 +142,35 @@ Una vez que tenemos un dataset grande pero ruidoso, usar LLM para:
 **Por qué NO usarlo como source**: LLMs alucinan ediciones que no existen.
 Solo lo usamos para enriquecer datos ya scrappeados.
 
+## 4.5. Bootstrap inicial (modo one-shot)
+
+Antes/en paralelo a Fase 2-3, hay una herramienta tipo "primer crawleo
+exhaustivo" para construir el dataset inicial:
+
+```bash
+./scripts/bootstrap.sh
+```
+
+Hace scraping profundo con:
+- `--max-pages 50` (vs 5 incremental)
+- `--sleep-seconds 1.5` (anti-rate-limit)
+- Todos los modos activados: JS, fuzzy, fetch-details, diagnostic
+- Snapshot del `items.jsonl` previo (rollback fácil)
+
+Tiempo: 1-2 horas. Pensado para correr una vez (o cada 6-12 meses).
+
+Es **complementario** a Fase 2/3, no las reemplaza:
+- Para **ES/FR** (editoriales grandes): Fase 2 (wikis) sigue siendo mejor para el histórico.
+- Para **MX/AR/JP** (sin wiki ni sitemap claro): bootstrap es la única forma de cubrir profundo.
+- Para **catálogos con sitemap accesible**: Fase 3 sigue siendo más eficiente.
+
+Después del bootstrap, runs incrementales con `./scripts/full_run.sh`.
+
 ## 5. Roadmap propuesto
 
 | Sprint | Trabajo | Resultado esperado |
 |---|---|---|
+| **Sprint 0.5** (1 hora) | `bootstrap.sh` one-shot con paginación 50 | Dataset: 493 → 2,000-4,000 items |
 | **Sprint 1** (1-2 días) | Fase 1: `search_template + keywords` en YAML, agregar entries para 8-10 editoriales | Dataset: 283 → 2,000-5,000 items |
 | **Sprint 2** (3-5 días) | Fase 2.1: parser de ListadoManga (calendario histórico ES) | +3,000-5,000 items curados ES |
 | **Sprint 3** (3-5 días) | Fase 2.2: parser de Manga-Sanctuary (FR) | +2,000-4,000 items FR |

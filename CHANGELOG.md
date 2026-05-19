@@ -4,6 +4,40 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Bootstrap one-shot script
+
+### Added
+
+- **`scripts/bootstrap.sh`**: scraping profundo one-shot para construir
+  el catálogo inicial. Defaults agresivos:
+  - `--max-pages 50` (vs 5 incremental)
+  - `--sleep-seconds 1.5` (anti rate-limit en runs largos)
+  - `--enable-js --fuzzy-keywords --fetch-details --diagnostic` activos
+  - Snapshot automático de `data/items.jsonl` previo (rollback en 1 línea)
+  - Tiempo estimado: 1-2 horas
+  - Reporte final: stats por fuente, top 15 fuentes por profundidad de
+    paginación
+- Documentación en `docs/PRD-catalog.md` § 4.5 explicando cuándo usar
+  bootstrap vs Fase 2/3.
+
+### Por qué bootstrap si igual vamos a Fase 2/3
+
+Tapón los huecos que Fase 2/3 no cubren:
+- **MX (Panini, etc.)**: sin wiki comunitaria, sin sitemap claro →
+  bootstrap es la única forma.
+- **JP (Sanyodo, Hakusensha…)**: idem.
+- **AR (Ivrea, La Comiquería)**: idem.
+
+Para ES/FR (Norma, Glénat) Fase 2 (ListadoManga, Manga-Sanctuary)
+seguirá siendo más completa y mejor curada.
+
+### Uso
+
+```bash
+./scripts/bootstrap.sh              # primer crawleo profundo
+./scripts/full_run.sh               # updates incrementales (default)
+```
+
 ## [Unreleased] — Paginación automática
 
 ### Added
