@@ -625,6 +625,95 @@ def test_schema_empty_when_no_json_ld():
 
 
 # ---------------------------------------------------------------------------
+# Bug A: blacklist de anchor genérico en _derive_title
+# ---------------------------------------------------------------------------
+
+
+def test_derive_title_avoids_lire_la_suite():
+    soup = make_soup("""
+        <article>
+            <h2>L'atelier des sorciers - Edition Collector</h2>
+            <p>Tapa dura con sobrecubierta</p>
+            <a href="/p/x">Lire la suite</a>
+        </article>
+    """)
+    art = soup.find("article")
+    anchor = art.find("a")
+    title = mw._derive_title(art, anchor)
+    assert "Lire la suite" not in title
+    assert "atelier des sorciers" in title.lower()
+
+
+def test_derive_title_avoids_read_more():
+    soup = make_soup("""
+        <div>
+            <h3>Berserk Deluxe Edition Vol 14</h3>
+            <a href="/p"><img alt="Read more"></a>
+        </div>
+    """)
+    d = soup.find("div")
+    title = mw._derive_title(d, d.find("a"))
+    assert "Read more" not in title
+    assert "Berserk" in title
+
+
+def test_derive_title_avoids_japanese_generic():
+    soup = make_soup("""
+        <li class='comic_article'>
+            <h2>限定版 ヒロアカ 30巻</h2>
+            <a href="/x">詳しく見る</a>
+        </li>
+    """)
+    li = soup.find("li")
+    title = mw._derive_title(li, li.find("a"))
+    assert "詳しく見る" not in title
+    assert "限定版" in title
+
+
+# ---------------------------------------------------------------------------
+# Bug B: keyword injection en score para búsquedas dirigidas
+# ---------------------------------------------------------------------------
+
+
+def test_score_candidate_injects_search_keyword_signal():
+    # Una card de Glénat search "edition collector" cuyo título NO incluye
+    # "edition collector" debería igual recibir score gracias al tag.
+    mw.configure_detection(fuzzy=False, fuzzy_divisor=3)
+    cand = mw.Candidate(
+        title="L'atelier des sorciers 15",
+        url="https://www.glenat.com/livre/x",
+        source="FR - Glénat (search) [search: edition collector]",
+        source_url="https://www.glenat.com/?keys=edition+collector",
+        country="Francia",
+        language="Francés",
+        publisher="Glénat",
+        source_class="official",
+        tags=["manga", "official", "expansion", "search:edition collector"],
+        description="Manga: nouveau tome 15",
+    )
+    mw.score_candidate(cand)
+    # 'edition collector' está en KEYWORD_RULES con score 45.
+    assert cand.score >= 45
+    assert any("edition collector" in s for s in cand.signals)
+
+
+def test_score_candidate_no_keyword_injection_without_tag():
+    # Si no hay tag search:X, el comportamiento es el de siempre.
+    mw.configure_detection(fuzzy=False, fuzzy_divisor=3)
+    cand = mw.Candidate(
+        title="Manga regular",
+        url="https://x.com/",
+        source="x", source_url="x",
+        country="", language="", publisher="",
+        source_class="official",
+        tags=["manga", "official"],
+        description="Sin señales",
+    )
+    mw.score_candidate(cand)
+    assert cand.score == 0
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 

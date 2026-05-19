@@ -1989,22 +1989,62 @@ def detect_product_clusters(soup: BeautifulSoup, source_url: str) -> list[Any]:
     return fallback_best
 
 
+GENERIC_ANCHOR_TEXTS: frozenset[str] = frozenset({
+    # Español
+    "leer mas", "leer más", "ver mas", "ver más", "ver detalles", "mas info",
+    "más info", "más información", "comprar", "añadir al carrito",
+    "agregar al carrito",
+    # Inglés
+    "read more", "see more", "learn more", "view details", "view more",
+    "add to cart", "buy now", "shop now", "details",
+    # Francés
+    "lire la suite", "voir plus", "en savoir plus", "voir le produit",
+    "ajouter au panier",
+    # Italiano
+    "leggi tutto", "leggi di piu", "leggi di più", "scopri di piu",
+    "scopri di più", "vedi tutti", "aggiungi al carrello",
+    # Japonés
+    "詳しく見る", "続きを読む", "詳細を見る", "もっと見る", "カートに入れる",
+    # Genéricos
+    "more", "info", "details", "shop", "go", "next", "→",
+})
+
+
+def _is_generic_anchor_text(text: str) -> bool:
+    """¿Es texto genérico de 'leer más / ver detalle' en lugar del título real?"""
+    if not text:
+        return True
+    lower = text.lower().strip()
+    if lower in GENERIC_ANCHOR_TEXTS:
+        return True
+    # Caso "Leer más sobre X..." (empieza con un texto genérico).
+    for generic in GENERIC_ANCHOR_TEXTS:
+        if lower.startswith(generic + " ") or lower.startswith(generic + ":"):
+            return True
+    return False
+
+
 def _derive_title(card: Any, anchor: Any) -> str:
-    """Extrae título de un card en orden de prioridad razonable."""
+    """Extrae título de un card en orden de prioridad razonable.
+
+    Si el texto del anchor es genérico ("Leer más", "Lire la suite", "詳しく見る",
+    etc.), busca el título real en headings / [class*='title'] / img alt.
+    """
     title = clean_text(anchor.get_text(" ", strip=True))
-    if title:
+    if title and not _is_generic_anchor_text(title):
         return title
+
     # Anchor envuelve solo una imagen: probar alt.
     img = anchor.find("img")
     if img:
         alt = clean_text(img.get("alt") or img.get("title") or "")
-        if alt:
+        if alt and not _is_generic_anchor_text(alt):
             return alt
     # Headings dentro de la card.
     heading = card.find(["h1", "h2", "h3", "h4", "h5", "h6"])
     if heading:
         text = clean_text(heading.get_text(" ", strip=True))
-        if text:
+        if text and not _is_generic_anchor_text(text):
             return text
     # Elementos con class title/name/heading.
     for selector in ("[class*='title']", "[class*='Title']", "[class*='name']", "[class*='Name']"):
@@ -2014,15 +2054,17 @@ def _derive_title(card: Any, anchor: Any) -> str:
             continue
         if node:
             text = clean_text(node.get_text(" ", strip=True))
-            if text:
+            if text and not _is_generic_anchor_text(text):
                 return text
     # Última opción: img alt de cualquier imagen dentro de la card.
     img = card.find("img")
     if img:
         alt = clean_text(img.get("alt") or img.get("title") or "")
-        if alt:
+        if alt and not _is_generic_anchor_text(alt):
             return alt
-    return ""
+    # Fallback: si el único texto disponible es genérico, devolvemos el anchor
+    # original (al menos no perdemos el item; el reporte lo va a mostrar feo).
+    return title
 
 
 def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
@@ -2163,7 +2205,15 @@ def extract_generic_html(
             if info is not None:
                 info["cards_skipped_dup_url"] += 1
             continue
-        combined = f"{candidate.title}\n{candidate.description}"
+        # Inyectar keywords de búsqueda dirigida en el combined text para que
+        # cards de Glénat / Pika / etc. pasen el filtro aunque el card no
+        # incluya el keyword textualmente.
+        search_kw_text = " ".join(
+            tag.split(":", 1)[1].strip()
+            for tag in (source.tags or [])
+            if tag.startswith("search:")
+        )
+        combined = f"{candidate.title}\n{candidate.description}\n{search_kw_text}"
         score, _signals, _types = detect_signals(combined)
         if score <= 0:
             if info is not None:
@@ -2243,6 +2293,17 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
 
 
 def score_candidate(candidate: Candidate) -> Candidate:
+    # Si la source es una búsqueda dirigida (tag 'search:<keyword>'), inyectamos
+    # ese keyword como señal "fantasma" en el texto a evaluar. La editorial ya
+    # filtró su catálogo por ese keyword, así que cualquier card devuelta puede
+    # razonablemente considerarse coleccionista — aunque el snippet visible no
+    # lo diga textualmente.
+    search_keywords: list[str] = [
+        tag.split(":", 1)[1].strip()
+        for tag in (candidate.tags or [])
+        if tag.startswith("search:")
+    ]
+
     combined = "\n".join(
         [
             candidate.title,
@@ -2250,6 +2311,8 @@ def score_candidate(candidate: Candidate) -> Candidate:
             candidate.publisher,
             candidate.source,
             " ".join(candidate.tags),
+            # Inyección de keywords de búsqueda dirigida:
+            " ".join(search_keywords),
         ]
     )
     score, signals, signal_types = detect_signals(combined)

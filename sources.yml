@@ -116,6 +116,7 @@ sources:
     url: "https://ramenparados.com/category/noticias/manga/"
     enabled: true
     tags: ["news", "manga", "spain"]
+    max_pages: 3  # blog de noticias, paginación profunda no aporta
 
   - name: "ES - Ramen Para Dos RSS"
     country: "España"
@@ -812,6 +813,7 @@ sources:
     url: "https://shogakukan-comic.jp/"
     enabled: true
     tags: ["manga", "official", "japan"]
+    max_pages: 3  # home page con paginación que devuelve ruido
 
   - name: "JP - Shogakukan Comics Calendar"
     country: "Japón"
@@ -979,8 +981,9 @@ sources:
     publisher: "Glénat Manga"
     source_class: "official"
     kind: "html"
-    enabled: true
+    enabled: false
     tags: ["manga", "official"]
+    notes: "?keys= devuelve la home, no resultados. Búsqueda JS-only. Usar canónica /manga/nouveautes/."
     search_template: "https://www.glenat.com/?keys={query}"
     keywords:
       - "edition collector"
@@ -997,8 +1000,9 @@ sources:
     publisher: "Pika Édition"
     source_class: "official"
     kind: "html"
-    enabled: true
+    enabled: false
     tags: ["manga", "official"]
+    notes: "?s= devuelve la home, no resultados. Búsqueda JS-only. Usar canónicas Livres/Artbooks."
     search_template: "https://www.pika.fr/?s={query}"
     keywords:
       - "edition collector"
