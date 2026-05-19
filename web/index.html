@@ -440,26 +440,47 @@ function mangaApp() {
     },
 
     dedupByUrl(items) {
-      // Misma URL normalizada → quedarse con la entrada que tiene MAYOR score
-      // (ese item ya acumuló todas las señales de varias búsquedas). Empate de
-      // score: usar el más reciente.
+      // Dedup en dos pases:
+      // 1) Por URL normalizada (mismo producto mismo retailer, distintas URLs).
+      // 2) Por ISBN cuando exista (mismo SKU vendido en distintos retailers).
+      // Tie-break: mayor score gana; empate → más reciente.
+      const pickWinner = (a, b) => {
+        if (!a) return b;
+        if (!b) return a;
+        const sa = a.score || 0, sb = b.score || 0;
+        if (sb > sa) return b;
+        if (sb < sa) return a;
+        return (b.detected_at || "") > (a.detected_at || "") ? b : a;
+      };
+
       const byUrl = new Map();
       for (const item of items) {
         const key = this.normalizeUrlForDedup(item.url);
-        const existing = byUrl.get(key);
-        if (!existing) {
-          byUrl.set(key, item);
+        byUrl.set(key, pickWinner(byUrl.get(key), item));
+      }
+
+      const byIsbn = new Map();
+      const final = [];
+      for (const item of byUrl.values()) {
+        const isbn = (item.isbn || "").trim();
+        if (!isbn) {
+          final.push(item);
           continue;
         }
-        const newScore = item.score || 0;
-        const oldScore = existing.score || 0;
-        if (newScore > oldScore) {
-          byUrl.set(key, item);
-        } else if (newScore === oldScore && (item.detected_at || "") > (existing.detected_at || "")) {
-          byUrl.set(key, item);
+        const existing = byIsbn.get(isbn);
+        if (!existing) {
+          byIsbn.set(isbn, item);
+          final.push(item);
+        } else {
+          const winner = pickWinner(existing, item);
+          if (winner !== existing) {
+            byIsbn.set(isbn, winner);
+            const i = final.indexOf(existing);
+            if (i >= 0) final[i] = winner;
+          }
         }
       }
-      return Array.from(byUrl.values());
+      return final;
     },
 
     get unique() {

@@ -292,6 +292,7 @@ class Candidate:
     product_type: str = ""
     author: str = ""
     stock_type: str = ""
+    isbn: str = ""
 
 
 def clean_text(value: Any) -> str:
@@ -760,6 +761,84 @@ def _extract_author_from_links(soup: BeautifulSoup) -> str:
     return ""
 
 
+ISBN13_PATTERN = re.compile(
+    r"(?:ISBN(?:-13)?[\s:\-]*)?(97[89])[\s\-]?(\d{1,5})[\s\-]?(\d{1,7})[\s\-]?(\d{1,7})[\s\-]?(\d)",
+    re.IGNORECASE,
+)
+ISBN10_PATTERN = re.compile(
+    r"(?:ISBN(?:-10)?[\s:\-]*)?(\d{1,5})[\s\-]?(\d{1,7})[\s\-]?(\d{1,7})[\s\-]?([\dXx])(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def _isbn13_check(digits: str) -> bool:
+    """Valida ISBN-13 con dígito de control."""
+    if len(digits) != 13 or not digits.isdigit():
+        return False
+    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(digits[:12]))
+    return (10 - total % 10) % 10 == int(digits[12])
+
+
+def extract_isbn(text: str, soup: Any = None) -> str:
+    """Extrae ISBN-13 (preferido) o ISBN-10 del texto y/o del HTML."""
+    # 1. Selectores HTML estructurados.
+    if soup is not None:
+        for attrs in (
+            {"itemprop": "isbn"},
+            {"itemprop": "productID"},
+            {"name": "isbn"},
+            {"property": "book:isbn"},
+        ):
+            try:
+                meta = soup.find("meta", attrs=attrs)
+            except Exception:
+                meta = None
+            if meta and meta.get("content"):
+                cleaned = re.sub(r"[\s\-]", "", meta["content"])
+                # productID puede venir "isbn:9781234567897"
+                if ":" in cleaned:
+                    cleaned = cleaned.split(":")[-1]
+                if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
+                    return cleaned
+                if len(cleaned) == 10:
+                    return cleaned
+
+        # JSON-LD: buscar isbn / productID
+        try:
+            scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+        except Exception:
+            scripts = []
+        for script in scripts:
+            raw = script.string or script.get_text() or ""
+            if not raw.strip():
+                continue
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
+                    val = item.get(key)
+                    if isinstance(val, str):
+                        cleaned = re.sub(r"[^0-9Xx]", "", val)
+                        if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
+                            return cleaned
+                        if len(cleaned) == 10:
+                            return cleaned
+
+    # 2. Regex en texto plano + URL.
+    if text:
+        for match in ISBN13_PATTERN.finditer(text):
+            digits = "".join(match.groups())
+            if _isbn13_check(digits):
+                return digits
+
+    return ""
+
+
 def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
     """Extrae URL de portada de una página de detalle, varias estrategias.
 
@@ -874,7 +953,7 @@ def fetch_metadata_from_detail(
     Devuelve {"author": "...", "image_url": "..."} (campos vacíos si no
     se encuentra). Hace 1 HTTP request opt-in (--fetch-details).
     """
-    result = {"author": "", "image_url": ""}
+    result = {"author": "", "image_url": "", "isbn": ""}
     if not url:
         return result
     try:
@@ -910,6 +989,13 @@ def fetch_metadata_from_detail(
 
     # === Image ===
     result["image_url"] = _extract_image_from_detail_soup(soup, url)
+
+    # === ISBN ===
+    # Buscamos en HTML completo: muchos sites lo ponen en <span> o <dl><dd> en
+    # secciones de "detalles técnicos" que pueden estar después de mucho ruido
+    # en el body.
+    body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
+    result["isbn"] = extract_isbn(f"{body_text}\n{url}", soup)
 
     return result
 
@@ -1523,6 +1609,7 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             candidate.image_url = extract_image_url(card, source.url)
             candidate.release_date = extract_release_date(description)
             candidate.author = extract_author(description, card)
+            candidate.isbn = extract_isbn(f"{description}\n{candidate.url}", card)
             candidates.append(candidate)
 
     return candidates
@@ -1760,6 +1847,7 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     candidate.image_url = extract_image_url(card, source.url)
     candidate.release_date = extract_release_date(description)
     candidate.author = extract_author(description, card)
+    candidate.isbn = extract_isbn(f"{description}\n{url}", card)
     return candidate
 
 
@@ -1938,6 +2026,7 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
                 pass
         candidate.release_date = extract_release_date(summary) or published_at
         candidate.author = extract_author(summary)
+        candidate.isbn = extract_isbn(f"{summary}\n{link}")
         candidates.append(candidate)
     return candidates
 
@@ -1996,6 +2085,7 @@ def _recompute_content_hash(candidate: Candidate) -> None:
                 "product_type": candidate.product_type,
                 "author": candidate.author,
                 "stock_type": candidate.stock_type,
+                "isbn": candidate.isbn,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -2021,11 +2111,35 @@ def process_state(
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     deduped: dict[str, Candidate] = {}
 
+    # Primer pase: dedup por URL normalizada (mismo producto, mismo retailer).
     for candidate in candidates:
         key = candidate_key(candidate)
         current = deduped.get(key)
         if current is None or candidate.score > current.score:
             deduped[key] = candidate
+
+    # Segundo pase: colapsar por ISBN (mismo producto físico, distintos retailers).
+    # Solo si el ISBN no está vacío. Conservamos el candidato de mayor score; los
+    # otros se descartan y NO entran al state ni al reportable.
+    by_isbn: dict[str, str] = {}
+    isbn_collapsed = 0
+    for key, cand in list(deduped.items()):
+        if not cand.isbn:
+            continue
+        existing_key = by_isbn.get(cand.isbn)
+        if existing_key is None:
+            by_isbn[cand.isbn] = key
+            continue
+        # Hay otro candidato con el mismo ISBN → comparar scores.
+        existing = deduped[existing_key]
+        if cand.score > existing.score:
+            del deduped[existing_key]
+            by_isbn[cand.isbn] = key
+        else:
+            del deduped[key]
+        isbn_collapsed += 1
+    if isbn_collapsed:
+        print(f"[DEDUP] {isbn_collapsed} duplicados colapsados por ISBN coincidente")
 
     reportable: list[Candidate] = []
     for key, candidate in deduped.items():
@@ -2057,6 +2171,7 @@ def process_state(
             "product_type": candidate.product_type,
             "author": candidate.author,
             "stock_type": candidate.stock_type,
+            "isbn": candidate.isbn,
         }
 
         if candidate.score >= min_score and (include_seen or candidate.status in {"new", "changed"}):
@@ -2091,6 +2206,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "product_type": candidate.product_type,
         "author": candidate.author,
         "stock_type": candidate.stock_type,
+        "isbn": candidate.isbn,
     }
 
 
@@ -2828,6 +2944,7 @@ def run(args: argparse.Namespace) -> int:
             )
             new_author = metadata.get("author") or ""
             new_image = metadata.get("image_url") or ""
+            new_isbn = metadata.get("isbn") or ""
             updates: list[str] = []
             if new_author and not c.author:
                 c.author = new_author
@@ -2837,12 +2954,16 @@ def run(args: argparse.Namespace) -> int:
                 c.image_url = new_image
                 enriched_image += 1
                 updates.append(f"img: ✓")
+            if new_isbn and not c.isbn:
+                c.isbn = new_isbn
+                updates.append(f"isbn: {new_isbn}")
             if updates:
                 _recompute_content_hash(c)
                 key = candidate_key(c)
                 if key in state:
                     state[key]["author"] = c.author
                     state[key]["image_url"] = c.image_url
+                    state[key]["isbn"] = c.isbn
                     state[key]["content_hash"] = c.content_hash
                 print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → {', '.join(updates)}")
             else:

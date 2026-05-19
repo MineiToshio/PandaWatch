@@ -56,23 +56,47 @@ def dedupe_by_url(items: list[dict]) -> list[dict]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from manga_watch import normalize_url_for_dedup
 
+    def pick(a, b):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        sa = a.get("score") or 0
+        sb = b.get("score") or 0
+        if sb > sa:
+            return b
+        if sb < sa:
+            return a
+        return b if (b.get("detected_at") or "") > (a.get("detected_at") or "") else a
+
+    # Pase 1: por URL normalizada.
     by_url: dict[str, dict] = {}
     for item in items:
         url = item.get("url") or ""
         if not url:
             continue
         key = normalize_url_for_dedup(url)
-        existing = by_url.get(key)
-        if existing is None:
-            by_url[key] = item
+        by_url[key] = pick(by_url.get(key), item)
+
+    # Pase 2: por ISBN cuando exista (mismo SKU en distintos retailers).
+    by_isbn: dict[str, dict] = {}
+    final: list[dict] = []
+    for item in by_url.values():
+        isbn = (item.get("isbn") or "").strip()
+        if not isbn:
+            final.append(item)
             continue
-        new_score = item.get("score") or 0
-        old_score = existing.get("score") or 0
-        if new_score > old_score:
-            by_url[key] = item
-        elif new_score == old_score and (item.get("detected_at") or "") > (existing.get("detected_at") or ""):
-            by_url[key] = item
-    return list(by_url.values())
+        existing = by_isbn.get(isbn)
+        if existing is None:
+            by_isbn[isbn] = item
+            final.append(item)
+        else:
+            winner = pick(existing, item)
+            if winner is not existing:
+                by_isbn[isbn] = winner
+                i = final.index(existing)
+                final[i] = winner
+    return final
 
 
 def inject(html: str, items: list[dict]) -> str:

@@ -498,6 +498,49 @@ def test_normalize_empty_url():
 
 
 # ---------------------------------------------------------------------------
+# extract_isbn
+# ---------------------------------------------------------------------------
+
+
+def test_isbn_from_text_with_dashes():
+    isbn = mw.extract_isbn("ISBN: 978-1-5067-0221-6 — Berserk Deluxe Vol 1")
+    assert isbn == "9781506702216"
+
+
+def test_isbn_from_text_no_separators():
+    isbn = mw.extract_isbn("Código: 9781506702216")
+    assert isbn == "9781506702216"
+
+
+def test_isbn_from_url():
+    isbn = mw.extract_isbn("https://example.com/p/9781506702216")
+    assert isbn == "9781506702216"
+
+
+def test_isbn_from_meta_itemprop():
+    soup = make_soup('<html><head><meta itemprop="isbn" content="978-1-5067-0221-6"></head></html>')
+    isbn = mw.extract_isbn("", soup)
+    assert isbn == "9781506702216"
+
+
+def test_isbn_from_json_ld():
+    html = '<script type="application/ld+json">{"@type":"Book","isbn":"9781506702216"}</script>'
+    isbn = mw.extract_isbn("", make_soup(html))
+    assert isbn == "9781506702216"
+
+
+def test_isbn_invalid_checksum_rejected():
+    # 9781506702210 termina en 0 pero el checksum válido es 6 → debe rechazar
+    isbn = mw.extract_isbn("ISBN: 9781506702210")
+    assert isbn == ""
+
+
+def test_isbn_empty_when_no_match():
+    assert mw.extract_isbn("Solo texto sin números relevantes") == ""
+    assert mw.extract_isbn("") == ""
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 
