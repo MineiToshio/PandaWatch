@@ -218,6 +218,79 @@ def parse_planning_page(html_text: str) -> list[Candidate]:
     return candidates
 
 
+def _title_matches_page(expected_title: str, page_title: str, body_text: str) -> bool:
+    """Verifica que la página de detalle realmente corresponda al item esperado.
+
+    Manga-Sanctuary a veces devuelve una página default (de otro manga) para
+    URLs de releases futuros. Tomamos las 2-3 palabras significativas del
+    título y verificamos que al menos UNA aparezca en <title> o body.
+    """
+    if not expected_title:
+        return True  # sin verificación, asumimos OK
+    # Normalizamos para comparar (lowercase, sin acentos básicos)
+    def norm(s: str) -> str:
+        return clean_text(s).lower()
+    exp = norm(expected_title)
+    # Palabras significativas (>=4 chars, no numéricas)
+    words = [w for w in re.split(r"\W+", exp) if len(w) >= 4 and not w.isdigit()]
+    if not words:
+        return True  # título muy genérico, no validar
+    page_norm = norm(page_title) + " " + norm(body_text[:2000])
+    matches = sum(1 for w in words[:5] if w in page_norm)
+    # Si al menos una palabra significativa aparece, consideramos válido.
+    return matches >= 1
+
+
+def fetch_detail_metadata(
+    url: str,
+    session: requests.Session,
+    timeout: tuple[int, int] = (10, 30),
+    expected_title: str = "",
+) -> dict[str, str]:
+    """Fetch a página de producto y extrae autor (con validación de matching)."""
+    result = {"author": ""}
+    if not url:
+        return result
+    try:
+        response = session.get(url, timeout=timeout)
+        response.raise_for_status()
+        if not response.encoding:
+            response.encoding = response.apparent_encoding
+        soup = BeautifulSoup(response.text, "html.parser")
+    except (requests.RequestException, Exception):
+        return result
+
+    # Validar que la página corresponde al item esperado.
+    page_title = ""
+    if soup.title:
+        page_title = clean_text(soup.title.get_text())
+    body_text = clean_text(soup.get_text(" ", strip=True))
+    if not _title_matches_page(expected_title, page_title, body_text):
+        return result  # URL devolvió la página de otro manga; abortar.
+
+    # 1) Buscar links a /bdd/personnalites/ (páginas de autor)
+    persons: list[str] = []
+    for a in soup.find_all("a", href=re.compile(r"/bdd/personnalites/")):
+        name = clean_text(a.get_text(" ", strip=True))
+        if name and name not in persons and 2 < len(name) < 80:
+            persons.append(name)
+        if len(persons) >= 3:
+            break
+    if persons:
+        result["author"] = " / ".join(persons[:2])
+        return result
+
+    # 2) Fallback: regex sobre el body buscando labels.
+    for label in ("Scénariste", "Dessinateur", "Auteur"):
+        m = re.search(rf"{label}\s+([^\n]{{2,80}}?)(?=\s+(?:Sc[ée]nariste|Dessinateur|Auteur|Editeur|Pages|Date|EAN|$))", body_text)
+        if m:
+            name = clean_text(m.group(1))
+            if name and 2 < len(name) < 80:
+                result["author"] = name
+                break
+    return result
+
+
 def fetch_planning_month(
     year: int, month: int, session: requests.Session, timeout: tuple[int, int] = (10, 30)
 ) -> list[Candidate]:
@@ -261,9 +334,13 @@ def bootstrap(
     sleep_seconds: float = 0.5,
     timeout: tuple[int, int] = (10, 30),
     min_score: int = 30,
-    fetch_details: bool = False,  # no-op por ahora; planning ya tiene cover/price/ean
+    fetch_details: bool = False,
 ) -> list[Candidate]:
-    """Recorre meses entre [from, to] inclusivo y devuelve candidates con score >= min_score."""
+    """Recorre meses [from, to] y devuelve candidates con score >= min_score.
+
+    Si fetch_details=True, hace un HTTP extra por item a la página de detalle
+    para extraer el autor (dessinateur + scénariste).
+    """
     all_candidates: list[Candidate] = []
     pairs = iter_year_months(year_from, month_from, year_to, month_to)
     for idx, (y, m) in enumerate(pairs, start=1):
@@ -274,6 +351,23 @@ def bootstrap(
         all_candidates.extend(kept)
         if sleep_seconds > 0 and idx < len(pairs):
             time_module.sleep(sleep_seconds)
+
+    if fetch_details and all_candidates:
+        print(f"\n[DETAIL-FETCH] enriqueciendo {len(all_candidates)} items con autor")
+        enriched = 0
+        for i, c in enumerate(all_candidates, start=1):
+            md = fetch_detail_metadata(c.url, session, timeout=timeout, expected_title=c.title)
+            if md["author"] and not c.author:
+                c.author = md["author"]
+                enriched += 1
+            if i % 100 == 0:
+                print(f"  [{i}/{len(all_candidates)}] +autores={enriched}")
+            if sleep_seconds > 0 and i < len(all_candidates):
+                time_module.sleep(min(sleep_seconds, 0.3))
+        print(f"[DETAIL-FETCH] {enriched} autores enriquecidos")
+        # Re-score por si el autor agregó nueva señal (unlikely but safe).
+        for c in all_candidates:
+            score_candidate(c)
     return all_candidates
 
 
