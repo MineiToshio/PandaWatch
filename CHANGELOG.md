@@ -4,6 +4,40 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Metadata extra por producto
+
+### Added
+
+- **`price`**: extracción multi-moneda con regex (€/$/¥/£/USD/MXN).
+  Best-effort; queda vacío si no se encuentra.
+- **`image_url`**: primera imagen de la card (src, data-src, srcset,
+  data-srcset, data-original, data-lazy-src). Canonicalizada.
+- **`release_date`**: fecha de lanzamiento. Patrones soportados:
+  ISO 8601, dd/mm/yyyy, japonés (`2026年6月15日`), mes en EN/ES/FR/IT
+  ("June 15, 2026", "15 de junio de 2026", "15 juin 2026", etc.).
+  Prefiere fechas cerca de palabras-clave ("disponible", "release",
+  "発売日", "sortie le", "salida", "preventa", "pre-order").
+- **`product_type`**: derivado de título + signal_types. Valores:
+  `artbook` / `fanbook` / `guidebook` / `boxset` / `novel` / `manga`.
+  Vacío si no hay título ni descripción.
+- 18 tests nuevos para los 4 extractores (multi-moneda, multi-idioma,
+  word boundary, fallbacks vacíos).
+
+### Changed
+
+- `Candidate` dataclass: 4 campos nuevos (`price`, `image_url`,
+  `release_date`, `product_type`), todos default `""`.
+- `state.json` agrega los 4 campos (retrocompatible con states
+  existentes — los campos faltantes se reciben como vacíos).
+- `items.jsonl` agrega los 4 campos en cada línea nueva.
+- Reporte Markdown muestra cada uno cuando tiene valor:
+  `- **Tipo de producto:** boxset`
+  `- **Precio:** € 19.99`
+  `- **Fecha de lanzamiento:** 2026-06-15`
+  `- **Imagen:** https://...` + preview con `![](url)`
+- `content_hash` ahora incluye price + release_date + product_type para
+  detectar cambios reales (precio bajó, fecha cambió, etc.).
+
 ## [Unreleased] — Fuzzy keyword matching
 
 ### Added

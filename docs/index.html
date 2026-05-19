@@ -719,9 +719,14 @@ jq '.sources[] | select(.fetch_ms &gt; 5000) | {name, fetch_ms}' logs/diagnostic
   <ul>
     <li><strong>Score</strong>: la suma de las señales detectadas (cap a 100).</li>
     <li><strong>Estado</strong>: <code>new</code> (nuevo), <code>changed</code> (cambió respecto a la última vez), <code>seen</code> (ya visto).</li>
+    <li><strong>Tipo de producto</strong> <span class="tag tag-new">NUEVO</span>: <code>manga</code> / <code>artbook</code> / <code>fanbook</code> / <code>guidebook</code> / <code>boxset</code> / <code>novel</code>.</li>
+    <li><strong>Precio</strong> <span class="tag tag-new">NUEVO</span>: si se detecta — multi-moneda (€, $, ¥, £, MXN). Vacío si no aparece.</li>
+    <li><strong>Fecha de lanzamiento</strong> <span class="tag tag-new">NUEVO</span>: si se detecta — soporta ISO, dd/mm/yyyy, japonés (`2026年6月15日`), mes en EN/ES/FR/IT.</li>
+    <li><strong>Imagen</strong> <span class="tag tag-new">NUEVO</span>: URL de la portada cuando la card tiene <code>&lt;img&gt;</code>. Se muestra inline en el Markdown.</li>
     <li><strong>Señales</strong>: las frases concretas que matchearon ("edición limitada", "hardcover", "限定版"…).</li>
     <li><strong>Fragmento</strong>: un extracto del bloque donde se detectó.</li>
   </ul>
+  <p>Si algún campo no se puede extraer, queda vacío — no es error. El sistema reporta lo que está disponible en la página.</p>
 </section>
 
 <!-- ========================= TELEGRAM ========================= -->

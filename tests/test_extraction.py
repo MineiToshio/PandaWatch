@@ -237,3 +237,114 @@ def test_fuzzy_token_boundary_avoids_substring_collision():
     # "especialista" NO debe matchear "especial" — debe respetar word boundary.
     score, _, _ = _detect("entrevista al especialista en cómics", fuzzy=True)
     assert score == 0
+
+
+# ---------------------------------------------------------------------------
+# Extracción de precio
+# ---------------------------------------------------------------------------
+
+
+def test_extract_price_euro():
+    assert mw.extract_price("Precio: 19,99 €") == "€ 19,99"
+    assert mw.extract_price("Solo €25.50 hoy") == "€ 25.50"
+
+
+def test_extract_price_dollar():
+    assert mw.extract_price("Total $19.99 USD") == "$ 19.99"
+
+
+def test_extract_price_yen():
+    assert mw.extract_price("価格: ¥1,980") == "¥ 1,980"
+    assert mw.extract_price("Solo 2,500円") == "¥ 2,500"
+
+
+def test_extract_price_empty_when_not_found():
+    assert mw.extract_price("Manga sin precio aquí") == ""
+    assert mw.extract_price("") == ""
+
+
+# ---------------------------------------------------------------------------
+# Extracción de fecha de lanzamiento
+# ---------------------------------------------------------------------------
+
+
+def test_extract_release_date_iso():
+    assert mw.extract_release_date("Disponible: 2026-06-15 en tiendas") == "2026-06-15"
+
+
+def test_extract_release_date_dd_mm_yyyy():
+    assert mw.extract_release_date("Sortie le 15/06/2026") == "15/06/2026"
+
+
+def test_extract_release_date_japanese():
+    assert "2026" in mw.extract_release_date("発売日: 2026年6月15日")
+
+
+def test_extract_release_date_english_month():
+    result = mw.extract_release_date("Release date: June 15, 2026")
+    assert "June 15" in result and "2026" in result
+
+
+def test_extract_release_date_spanish_month():
+    result = mw.extract_release_date("Disponible el 15 de junio de 2026")
+    assert "15" in result and "junio" in result.lower() and "2026" in result
+
+
+def test_extract_release_date_empty():
+    assert mw.extract_release_date("Manga genial sin fecha") == ""
+
+
+# ---------------------------------------------------------------------------
+# Extracción de imagen
+# ---------------------------------------------------------------------------
+
+
+def test_extract_image_url_from_src():
+    soup = make_soup('<div><img src="/img/cover.jpg" alt="cover"></div>')
+    div = soup.find("div")
+    assert mw.extract_image_url(div, "https://example.com/manga") == "https://example.com/img/cover.jpg"
+
+
+def test_extract_image_url_from_data_src():
+    soup = make_soup('<div><img data-src="/img/lazy.jpg" alt="x"></div>')
+    div = soup.find("div")
+    assert mw.extract_image_url(div, "https://example.com/") == "https://example.com/img/lazy.jpg"
+
+
+def test_extract_image_url_from_srcset():
+    soup = make_soup('<div><img srcset="/img/480.jpg 480w, /img/720.jpg 720w"></div>')
+    div = soup.find("div")
+    url = mw.extract_image_url(div, "https://example.com/")
+    assert url == "https://example.com/img/480.jpg"
+
+
+def test_extract_image_url_empty_when_no_img():
+    soup = make_soup("<div><p>nada</p></div>")
+    div = soup.find("div")
+    assert mw.extract_image_url(div, "https://example.com/") == ""
+
+
+# ---------------------------------------------------------------------------
+# Derivación de tipo de producto
+# ---------------------------------------------------------------------------
+
+
+def test_derive_product_type_artbook():
+    assert mw.derive_product_type("Berserk Artbook", "Libro de arte oficial", ["artbook"]) == "artbook"
+    assert mw.derive_product_type("Kakegurui イラスト集", "", []) == "artbook"
+
+
+def test_derive_product_type_boxset():
+    assert mw.derive_product_type("Naruto Cofre completo", "Cofre de 72 tomos", ["box_set"]) == "boxset"
+
+
+def test_derive_product_type_guidebook():
+    assert mw.derive_product_type("One Piece official guidebook", "", ["guidebook"]) == "guidebook"
+
+
+def test_derive_product_type_manga_default():
+    assert mw.derive_product_type("Vagabond Vol. 14 edición limitada", "Tapa dura.", ["limited", "hardcover"]) == "manga"
+
+
+def test_derive_product_type_empty_when_no_input():
+    assert mw.derive_product_type("", "", []) == ""

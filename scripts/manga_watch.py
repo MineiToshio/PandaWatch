@@ -285,6 +285,10 @@ class Candidate:
     signal_types: list[str] = field(default_factory=list)
     status: str = "unknown"
     content_hash: str = ""
+    price: str = ""
+    image_url: str = ""
+    release_date: str = ""
+    product_type: str = ""
 
 
 def clean_text(value: Any) -> str:
@@ -392,6 +396,153 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     matched_types = list(dict.fromkeys(matched_types))
     score = min(score, 100)
     return score, matched_phrases, matched_types
+
+
+# ---------------------------------------------------------------------------
+# Extracción de metadata adicional (precio, imagen, fecha, tipo de producto)
+# ---------------------------------------------------------------------------
+
+PRICE_PATTERNS = [
+    # (regex, prefix/suffix template using $1 for amount)
+    (re.compile(r"(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€"), "€ {}"),
+    (re.compile(r"€\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "€ {}"),
+    (re.compile(r"USD\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "USD {}"),
+    (re.compile(r"\$\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "$ {}"),
+    (re.compile(r"¥\s*(\d{1,3}(?:,\d{3})*)"), "¥ {}"),
+    (re.compile(r"(\d{1,3}(?:,\d{3})*)\s*円"), "¥ {}"),
+    (re.compile(r"(\d{1,3}(?:,\d{3})*)\s*yen", re.IGNORECASE), "¥ {}"),
+    (re.compile(r"MXN\s*\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "MXN {}"),
+    (re.compile(r"GBP\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "£ {}"),
+    (re.compile(r"£\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "£ {}"),
+]
+
+
+def extract_price(text: str) -> str:
+    """Extrae primer precio detectado en el texto. Devuelve "" si no encuentra."""
+    if not text:
+        return ""
+    for pattern, fmt in PRICE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return fmt.format(match.group(1).strip())
+    return ""
+
+
+# Patrones de fecha de lanzamiento en varios idiomas.
+RELEASE_DATE_PATTERNS = [
+    # ISO 8601
+    re.compile(r"\b(\d{4}-\d{2}-\d{2})\b"),
+    # dd/mm/yyyy o dd-mm-yyyy
+    re.compile(r"\b(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4})\b"),
+    # Japonés: 2026年6月15日
+    re.compile(r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)"),
+    # Mes en inglés: June 15, 2026 / Jun 15 2026
+    re.compile(
+        r"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
+        re.IGNORECASE,
+    ),
+    # Mes en español/francés/italiano: 15 de junio de 2026 / 15 juin 2026 / 15 giugno 2026
+    re.compile(
+        r"\b(\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
+        r"janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre|"
+        r"gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)"
+        r"(?:\s+de)?\s+\d{4})\b",
+        re.IGNORECASE,
+    ),
+]
+
+# Palabras-clave que sugieren que el contexto cercano contiene fecha de lanzamiento.
+RELEASE_HINT_WORDS = re.compile(
+    r"(disponible|disponibile|sortie|release|releases?\s+date|salida|sale\s+date|pub(?:lic|blic)at|"
+    r"発売|発売日|preventa|pre-?order|onsale|on\s+sale|en\s+venta)",
+    re.IGNORECASE,
+)
+
+
+def extract_release_date(text: str) -> str:
+    """Best-effort extracción de fecha de lanzamiento. Devuelve "" si no encuentra."""
+    if not text:
+        return ""
+    # Si hay palabras-clave de fecha de venta, buscar fecha cerca; si no, primera fecha encontrada.
+    hint = RELEASE_HINT_WORDS.search(text)
+    haystack = text
+    if hint:
+        start = max(0, hint.start() - 20)
+        end = min(len(text), hint.end() + 80)
+        haystack = text[start:end]
+    for pattern in RELEASE_DATE_PATTERNS:
+        match = pattern.search(haystack)
+        if match:
+            return match.group(1).strip()
+    # Si no encontramos cerca del hint, intentar buscar en todo el texto.
+    if hint:
+        for pattern in RELEASE_DATE_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return match.group(1).strip()
+    return ""
+
+
+def extract_image_url(card: Any, source_url: str) -> str:
+    """Extrae URL de imagen del primer <img> dentro de la card.
+    Considera src, data-src, data-original, srcset (primera URL)."""
+    if card is None:
+        return ""
+    try:
+        img = card.find("img")
+    except Exception:
+        return ""
+    if img is None:
+        return ""
+    for attr in ("src", "data-src", "data-original", "data-lazy-src", "srcset", "data-srcset"):
+        val = img.get(attr)
+        if not val:
+            continue
+        # srcset puede tener varias URLs "url 480w, url 720w"
+        if "srcset" in attr:
+            val = val.split(",")[0].strip().split(" ")[0]
+        url = canonicalize_url(source_url, val.strip())
+        if url and url != source_url:
+            return url
+    return ""
+
+
+PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("artbook", [
+        "artbook", "art book", "art-book",
+        "libro de arte", "libro de ilustraciones", "libro d'illustrazione",
+        "livre d'illustration", "beau livre",
+        "画集", "イラスト集", "ビジュアルブック", "設定資料集", "visual book", "visual fanbook",
+        "illustration book", "super illustration book",
+    ]),
+    ("fanbook", ["fanbook", "ファンブック"]),
+    ("guidebook", ["guidebook", "guía oficial", "guia oficial", "official guidebook"]),
+    ("boxset", [
+        "box set", "boxset", "box-set", "slipcase",
+        "cofre", "cofanetto", "coffret",
+    ]),
+    ("novel", ["light novel", "novel", "novela", "ranobe", "ライトノベル"]),
+]
+
+
+def derive_product_type(title: str, description: str, signal_types: list[str]) -> str:
+    """Devuelve el tipo de producto detectado (manga / artbook / boxset / etc.)."""
+    if not (title or description):
+        return ""
+    text = normalize_text(f"{title} {description}")
+    for ptype, words in PRODUCT_TYPE_KEYWORDS:
+        for w in words:
+            if normalize_text(w) in text:
+                return ptype
+    # Fallback por signal_types (señales del scoring)
+    if signal_types:
+        if any(t in {"artbook", "fanbook"} for t in signal_types):
+            return "artbook"
+        if "guidebook" in signal_types:
+            return "guidebook"
+        if "box_set" in signal_types:
+            return "boxset"
+    return "manga" if (title or description) else ""
 
 
 def load_sources(path: Path) -> list[Source]:
@@ -766,7 +917,11 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             description = clean_text(card.get_text(" ", strip=True))
 
         if title or description:
-            candidates.append(candidate_from_source(source, title, link or source.url, description))
+            candidate = candidate_from_source(source, title, link or source.url, description)
+            candidate.price = extract_price(description)
+            candidate.image_url = extract_image_url(card, source.url)
+            candidate.release_date = extract_release_date(description)
+            candidates.append(candidate)
 
     return candidates
 
@@ -998,7 +1153,11 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     # 25 chars permite cards de e-commerce con título corto + precio.
     if len(description) < 25 or len(description) > 2000:
         return None
-    return candidate_from_source(source, title[:260], url, description)
+    candidate = candidate_from_source(source, title[:260], url, description)
+    candidate.price = extract_price(description)
+    candidate.image_url = extract_image_url(card, source.url)
+    candidate.release_date = extract_release_date(description)
+    return candidate
 
 
 JS_SHELL_IDS = ("root", "app", "__next", "__nuxt", "react-root", "react-app")
@@ -1163,7 +1322,19 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
         # Para RSS guardamos solo entradas con señales. Esto baja muchísimo el ruido.
         if score <= 0:
             continue
-        candidates.append(candidate_from_source(source, title, link, summary, published_at=published_at))
+        candidate = candidate_from_source(source, title, link, summary, published_at=published_at)
+        candidate.price = extract_price(summary)
+        # RSS rara vez incluye <img> en el summary; intentamos parsearlo si está embebido.
+        if "<img" in (entry.get("summary", "") or entry.get("content", "") or ""):
+            try:
+                rss_soup = BeautifulSoup(
+                    entry.get("summary", "") or str(entry.get("content", "")), "html.parser"
+                )
+                candidate.image_url = extract_image_url(rss_soup, source.url)
+            except Exception:
+                pass
+        candidate.release_date = extract_release_date(summary) or published_at
+        candidates.append(candidate)
     return candidates
 
 
@@ -1191,6 +1362,9 @@ def score_candidate(candidate: Candidate) -> Candidate:
     candidate.score = max(0, min(score, 100))
     candidate.signals = signals
     candidate.signal_types = signal_types
+    candidate.product_type = derive_product_type(
+        candidate.title, candidate.description, signal_types
+    )
     candidate.content_hash = sha256_text(
         json.dumps(
             {
@@ -1200,6 +1374,9 @@ def score_candidate(candidate: Candidate) -> Candidate:
                 "score": candidate.score,
                 "signals": candidate.signals,
                 "source_class": candidate.source_class,
+                "price": candidate.price,
+                "release_date": candidate.release_date,
+                "product_type": candidate.product_type,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -1254,6 +1431,10 @@ def process_state(
             "content_hash": candidate.content_hash,
             "first_seen_at": previous.get("first_seen_at") if previous else now,
             "last_seen_at": now,
+            "price": candidate.price,
+            "image_url": candidate.image_url,
+            "release_date": candidate.release_date,
+            "product_type": candidate.product_type,
         }
 
         if candidate.score >= min_score and (include_seen or candidate.status in {"new", "changed"}):
@@ -1282,6 +1463,10 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "published_at": candidate.published_at,
         "description": candidate.description,
         "content_hash": candidate.content_hash,
+        "price": candidate.price,
+        "image_url": candidate.image_url,
+        "release_date": candidate.release_date,
+        "product_type": candidate.product_type,
     }
 
 
@@ -1354,12 +1539,22 @@ def write_markdown_report(
             lines.append(f"- **Idioma:** {item.language or 'N/D'}")
             lines.append(f"- **Editorial/fuente:** {item.publisher or item.source}")
             lines.append(f"- **Fuente:** {item.source}")
+            if item.product_type:
+                lines.append(f"- **Tipo de producto:** {item.product_type}")
+            if item.price:
+                lines.append(f"- **Precio:** {item.price}")
+            if item.release_date:
+                lines.append(f"- **Fecha de lanzamiento:** {item.release_date}")
             if item.published_at:
                 lines.append(f"- **Fecha publicada:** {item.published_at}")
             lines.append(f"- **Señales:** {', '.join(item.signals) if item.signals else 'N/D'}")
             lines.append(f"- **Tipos:** {', '.join(item.signal_types) if item.signal_types else 'N/D'}")
             lines.append(f"- **Tags:** {', '.join(item.tags) if item.tags else 'N/D'}")
             lines.append(f"- **Link:** {item.url}")
+            if item.image_url:
+                lines.append(f"- **Imagen:** {item.image_url}")
+                lines.append("")
+                lines.append(f"![{item.title[:80]}]({item.image_url})")
             lines.append("")
             if item.description:
                 lines.append("**Fragmento:**")
