@@ -331,6 +331,8 @@ FUZZY_STOPWORDS: frozenset[str] = frozenset({
     "pack", "libro", "livre", "book", "version", "vol", "tome", "tomo",
     "pre", "order", "preorder", "preordine",
     "manga", "comic", "comics",
+    # Palabras de envoltorio: la señal real está en otra palabra de la frase.
+    "formato", "portada", "official", "coleccion", "collection",
 })
 
 # Configuración de detección (se setea desde run()).
