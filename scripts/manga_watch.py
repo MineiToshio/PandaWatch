@@ -3006,6 +3006,7 @@ def _run_wiki_bootstrap(
             sleep_seconds=args.sleep_seconds,
             timeout=(args.connect_timeout, args.read_timeout),
             min_score=args.min_score,
+            fetch_details=bool(args.fetch_details),
         )
         months = iter_year_months(yf, mf, yt, mt)
     else:

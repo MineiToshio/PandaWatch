@@ -239,6 +239,59 @@ def fetch_calendar_month(
     return [score_candidate(c) for c in raw_candidates]
 
 
+def fetch_detail_metadata(
+    url: str, session: requests.Session, timeout: tuple[int, int] = (10, 30)
+) -> dict[str, str]:
+    """Fetch a coleccion.php?id=N y extrae portada + precio + descripción enriquecida.
+
+    Devuelve dict con image_url, price, description. Vacíos si no se encuentra.
+    """
+    result = {"image_url": "", "price": "", "description_extra": ""}
+    if not url:
+        return result
+    try:
+        response = session.get(url, timeout=timeout)
+        response.raise_for_status()
+        if not response.encoding:
+            response.encoding = response.apparent_encoding
+        soup = BeautifulSoup(response.text, "html.parser")
+    except (requests.RequestException, Exception):
+        return result
+
+    # 1) Imagen principal: primer <img> en static.listadomanga.com
+    for img in soup.find_all("img"):
+        src = (img.get("src") or "").strip()
+        if not src:
+            continue
+        if "static.listadomanga.com" in src:
+            result["image_url"] = src
+            break
+
+    # 2) Precio: regex en el body buscando "X,YY €"
+    body_text = soup.get_text(" ", strip=True)
+    # ListadoManga muestra precios típicos del mercado español en €.
+    price_match = re.search(r"(\d{1,3}[,.]\d{2})\s*€", body_text)
+    if price_match:
+        result["price"] = f"€ {price_match.group(1)}"
+
+    # 3) Descripción enriquecida: capturamos secciones útiles del HTML.
+    # ListadoManga usa <b>Etiqueta:</b> Valor en algunas filas. Buscamos
+    # info de Formato y Editorial japonesa para contexto extra.
+    enriched_parts: list[str] = []
+    for label in ("Formato", "Editorial japonesa", "Números en castellano", "Géneros"):
+        # Buscar <b>Label:</b> y capturar texto siguiente hasta siguiente <b>
+        pattern = re.compile(rf"{re.escape(label)}\s*:\s*([^\n]{{3,200}}?)(?=\s+\w+:|\s*$)")
+        m = pattern.search(body_text)
+        if m:
+            value = clean_text(m.group(1))
+            if value and len(value) < 200:
+                enriched_parts.append(f"{label}: {value}")
+    if enriched_parts:
+        result["description_extra"] = " · ".join(enriched_parts)
+
+    return result
+
+
 def iter_year_months(
     year_from: int, month_from: int, year_to: int, month_to: int
 ) -> list[tuple[int, int]]:
@@ -265,10 +318,13 @@ def bootstrap(
     sleep_seconds: float = 0.5,
     timeout: tuple[int, int] = (10, 30),
     min_score: int = 30,
+    fetch_details: bool = False,
 ) -> list[Candidate]:
     """Recorre meses entre [from, to] inclusivo y devuelve candidates scored.
 
     Solo retorna los que tengan score >= min_score (mismo criterio que el scraper).
+    Si fetch_details=True, hace un HTTP extra por item a la página de detalle
+    (coleccion.php?id=N) para extraer portada, precio y datos enriquecidos.
     """
     import time
     all_candidates: list[Candidate] = []
@@ -281,6 +337,32 @@ def bootstrap(
         all_candidates.extend(kept)
         if sleep_seconds > 0 and idx < len(pairs):
             time.sleep(sleep_seconds)
+
+    # Fase de enrichment por detail-fetch (opt-in).
+    if fetch_details and all_candidates:
+        print(f"\n[DETAIL-FETCH] enriqueciendo {len(all_candidates)} items con portada/precio/extras")
+        enriched_img = 0
+        enriched_price = 0
+        for i, c in enumerate(all_candidates, start=1):
+            meta = fetch_detail_metadata(c.url, session, timeout=timeout)
+            if meta["image_url"] and not c.image_url:
+                c.image_url = meta["image_url"]
+                enriched_img += 1
+            if meta["price"] and not c.price:
+                c.price = meta["price"]
+                enriched_price += 1
+            if meta["description_extra"]:
+                c.description = f"{c.description} · {meta['description_extra']}"[:2500]
+            if i % 50 == 0:
+                print(f"  [{i}/{len(all_candidates)}] +imgs={enriched_img} +prices={enriched_price}")
+            if sleep_seconds > 0 and i < len(all_candidates):
+                time.sleep(min(sleep_seconds, 0.3))
+        print(f"[DETAIL-FETCH] finalizado: {enriched_img} imágenes · {enriched_price} precios enriquecidos")
+
+        # Re-score (porque description_extra puede aportar señales nuevas)
+        for c in all_candidates:
+            score_candidate(c)
+
     return all_candidates
 
 

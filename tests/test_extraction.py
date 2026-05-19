@@ -773,6 +773,45 @@ def test_listadomanga_parse_calendar_extracts_items():
     assert items[0].url.startswith("https://www.listadomanga.es/coleccion.php?id=100")
 
 
+def test_listadomanga_detail_extracts_image_and_price():
+    """Test que el extractor de detail page agarra cover + precio sin hacer HTTP real."""
+    from wikis import listadomanga as lm
+    # Simulamos lo que extract hace internamente: parsear HTML + buscar img + precio.
+    html = """<html><body>
+        <img src="https://static.listadomanga.com/abc123.jpg" alt="cover">
+        <p>Editorial: Norma Editorial</p>
+        <p>Precio: 9,95 €</p>
+        <b>Formato:</b> Tomo A5 rústica con sobrecubierta
+    </body></html>"""
+    # Mockeamos session.get para no hacer HTTP real
+    class FakeResponse:
+        text = html
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        def raise_for_status(self): pass
+    class FakeSession:
+        def get(self, url, **kw): return FakeResponse()
+
+    meta = lm.fetch_detail_metadata("https://www.listadomanga.es/coleccion.php?id=1", FakeSession())
+    assert meta["image_url"] == "https://static.listadomanga.com/abc123.jpg"
+    assert "9,95" in meta["price"]
+    assert "Formato" in meta["description_extra"]
+
+
+def test_listadomanga_detail_empty_when_no_data():
+    from wikis import listadomanga as lm
+    class FakeResponse:
+        text = "<html><body>no relevante</body></html>"
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        def raise_for_status(self): pass
+    class FakeSession:
+        def get(self, url, **kw): return FakeResponse()
+    meta = lm.fetch_detail_metadata("https://x.com/x", FakeSession())
+    assert meta["image_url"] == ""
+    assert meta["price"] == ""
+
+
 def test_listadomanga_parse_handles_multiple_editorials():
     from wikis import listadomanga as lm
     html = """<html><body>
