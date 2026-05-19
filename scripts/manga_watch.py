@@ -330,6 +330,65 @@ def canonicalize_url(base_url: str, href: str | None) -> str:
     return absolute
 
 
+# Query params que NO identifican al producto, solo tracking / posición.
+TRACKING_PARAMS: frozenset[str] = frozenset({
+    # Shopify (Dark Horse Direct, Milky Way, Kinokuniya, etc.)
+    "_pos", "_sid", "_ss", "_psq", "_v",
+    # UTM / ads
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "fbclid", "msclkid", "yclid", "dclid", "ttclid",
+    # Mailchimp / newsletters
+    "mc_cid", "mc_eid",
+    # Genérico
+    "ref", "source", "affiliate", "aff", "tag",
+    # Magento / Panini
+    "___store", "___from_store",
+})
+
+
+def normalize_url_for_dedup(url: str) -> str:
+    """Normaliza URL para deduplicación.
+
+    Strippea params de tracking (no identifican producto), normaliza
+    case en host, y para Shopify colapsa /collections/X/products/Y → /products/Y
+    (ambas URLs apuntan al mismo producto).
+
+    Devuelve la URL normalizada o el input si no se puede parsear.
+    """
+    if not url:
+        return url
+    try:
+        from urllib.parse import parse_qsl, urlencode, urlunparse
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    # 1. Params: drop los de tracking, mantener el resto (ordenados para estabilidad).
+    if parsed.query:
+        params = parse_qsl(parsed.query, keep_blank_values=False)
+        clean_params = sorted((k, v) for k, v in params if k not in TRACKING_PARAMS)
+        new_query = urlencode(clean_params)
+    else:
+        new_query = ""
+
+    # 2. Shopify: /collections/<col>/products/<handle> → /products/<handle>
+    path = parsed.path
+    m = re.match(r"^/collections/[^/]+/(products/.+)$", path)
+    if m:
+        path = "/" + m.group(1)
+
+    # 3. Trailing slash: quitar excepto si el path es solo "/"
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+
+    # 4. Host minúsculas.
+    netloc = parsed.netloc.lower()
+
+    return urlunparse(
+        (parsed.scheme.lower(), netloc, path, parsed.params, new_query, "")
+    )
+
+
 FUZZY_STOPWORDS: frozenset[str] = frozenset({
     # Genéricas en varios idiomas — solas no aportan señal coleccionista.
     "edicion", "edition", "edizione",
@@ -1945,8 +2004,10 @@ def _recompute_content_hash(candidate: Candidate) -> None:
 
 
 def candidate_key(candidate: Candidate) -> str:
+    """Clave de dedup. Normaliza URL para colapsar mismo producto con
+    URLs sutilmente distintas (tracking params Shopify, collections, etc.)."""
     if candidate.url:
-        return f"url:{candidate.url}"
+        return f"url:{normalize_url_for_dedup(candidate.url)}"
     raw = f"{candidate.source}|{candidate.publisher}|{candidate.title}"
     return f"hash:{sha256_text(raw)}"
 

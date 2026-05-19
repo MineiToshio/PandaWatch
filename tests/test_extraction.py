@@ -445,6 +445,59 @@ def test_detail_image_empty_if_nothing_found():
 
 
 # ---------------------------------------------------------------------------
+# normalize_url_for_dedup
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_strips_shopify_tracking():
+    a = "https://www.darkhorsedirect.com/products/berserk?_pos=1&_sid=abc&_ss=r"
+    b = "https://www.darkhorsedirect.com/products/berserk?_pos=2&_sid=xyz&_ss=r"
+    assert mw.normalize_url_for_dedup(a) == mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_strips_utm_params():
+    a = "https://example.com/p?utm_source=fb&utm_campaign=x"
+    b = "https://example.com/p?utm_source=tw&fbclid=123"
+    assert mw.normalize_url_for_dedup(a) == mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_collapses_shopify_collection_prefix():
+    a = "https://example.com/collections/comics/products/berserk"
+    b = "https://example.com/products/berserk"
+    assert mw.normalize_url_for_dedup(a) == mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_preserves_real_query_params():
+    # ?variant=42 SI identifica un producto distinto; no strippear.
+    # (Pero 'variant' está en tracking? — no, lo dejé fuera)
+    a = "https://example.com/products/x?id=123"
+    b = "https://example.com/products/x?id=456"
+    assert mw.normalize_url_for_dedup(a) != mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_strips_trailing_slash():
+    a = "https://example.com/products/berserk/"
+    b = "https://example.com/products/berserk"
+    assert mw.normalize_url_for_dedup(a) == mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_lowercases_host():
+    a = "https://WWW.Example.COM/products/x"
+    b = "https://www.example.com/products/x"
+    assert mw.normalize_url_for_dedup(a) == mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_keeps_different_products_distinct():
+    a = "https://example.com/products/berserk-vol-1"
+    b = "https://example.com/products/berserk-vol-2"
+    assert mw.normalize_url_for_dedup(a) != mw.normalize_url_for_dedup(b)
+
+
+def test_normalize_empty_url():
+    assert mw.normalize_url_for_dedup("") == ""
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 

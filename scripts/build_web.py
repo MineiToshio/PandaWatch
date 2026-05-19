@@ -43,15 +43,35 @@ def load_items(path: Path) -> list[dict]:
 
 
 def dedupe_by_url(items: list[dict]) -> list[dict]:
-    """Mantiene la entrada más reciente por URL (mismo criterio que el HTML)."""
+    """Mantiene la entrada con mayor score por URL normalizada.
+
+    Importa scripts.manga_watch.normalize_url_for_dedup para colapsar:
+    - Params de tracking (Shopify _pos/_sid/_ss, UTM, etc.)
+    - Shopify /collections/X/products/Y → /products/Y
+    - Trailing slash, case del host
+
+    Empate de score: usar el más reciente.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from manga_watch import normalize_url_for_dedup
+
     by_url: dict[str, dict] = {}
     for item in items:
         url = item.get("url") or ""
         if not url:
             continue
-        existing = by_url.get(url)
-        if existing is None or (item.get("detected_at") or "") > (existing.get("detected_at") or ""):
-            by_url[url] = item
+        key = normalize_url_for_dedup(url)
+        existing = by_url.get(key)
+        if existing is None:
+            by_url[key] = item
+            continue
+        new_score = item.get("score") or 0
+        old_score = existing.get("score") or 0
+        if new_score > old_score:
+            by_url[key] = item
+        elif new_score == old_score and (item.get("detected_at") or "") > (existing.get("detected_at") or ""):
+            by_url[key] = item
     return list(by_url.values())
 
 
