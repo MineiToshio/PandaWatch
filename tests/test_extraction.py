@@ -324,6 +324,67 @@ def test_extract_image_url_empty_when_no_img():
     assert mw.extract_image_url(div, "https://example.com/") == ""
 
 
+def test_extract_image_url_finds_in_parent_sibling():
+    # Patrón KADOKAWA: img es hermano del card de texto, no descendiente.
+    soup = make_soup("""
+        <div class="product-wrapper">
+            <a href="/p/1"><img src="/img/cover.jpg" alt="x"></a>
+            <div class="product-title">Título del manga</div>
+        </div>
+    """)
+    title_card = soup.find("div", class_="product-title")
+    url = mw.extract_image_url(title_card, "https://example.com/")
+    assert url == "https://example.com/img/cover.jpg"
+
+
+def test_extract_image_url_skips_icons():
+    soup = make_soup('<div><img src="/icon/cart.png" alt="cart"></div>')
+    div = soup.find("div")
+    assert mw.extract_image_url(div, "https://example.com/") == ""
+
+
+def test_extract_image_url_skips_logos_and_pixels():
+    soup = make_soup('<div><img src="/static/spacer.gif"><img src="/site/logo.png"></div>')
+    div = soup.find("div")
+    assert mw.extract_image_url(div, "https://example.com/") == ""
+
+
+def test_extract_image_url_skips_global_container():
+    # Si el contenedor tiene >8 imgs, lo skipeamos (parece wrapper global).
+    imgs = "".join(f'<img src="/img/{i}.jpg">' for i in range(15))
+    soup = make_soup(f"<div>{imgs}<p class='card'>Card</p></div>")
+    card = soup.find("p", class_="card")
+    assert mw.extract_image_url(card, "https://example.com/") == ""
+
+
+def test_extract_image_url_ranks_goods_path_over_sys():
+    # Patrón KADOKAWA: hay imgs de íconos (/sys/) y de productos (/goods/).
+    # Debe preferir la de /goods/ porque es la portada real.
+    soup = make_soup("""
+        <div class="product">
+            <img src="/img/sys/new.png" alt="NEW">
+            <img src="/img/goods/12345.jpg" alt="貞本義行画集 EVANGELION 限定版">
+            <p class="card">Título del manga</p>
+        </div>
+    """)
+    card = soup.find("p", class_="card")
+    url = mw.extract_image_url(card, "https://example.com/")
+    assert url == "https://example.com/img/goods/12345.jpg"
+
+
+def test_extract_image_url_ignores_negative_score_only():
+    # Si TODAS las imgs son íconos (negative score), no devolver nada.
+    soup = make_soup("""
+        <div class="product">
+            <img src="/img/sys/new.png" alt="NEW">
+            <img src="/icon/cart.png" alt="cart">
+            <p class="card">Título</p>
+        </div>
+    """)
+    card = soup.find("p", class_="card")
+    assert mw.extract_image_url(card, "https://example.com/") == ""
+
+
 # ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------

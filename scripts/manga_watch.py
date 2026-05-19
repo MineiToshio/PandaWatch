@@ -488,28 +488,104 @@ def extract_release_date(text: str) -> str:
     return ""
 
 
-def extract_image_url(card: Any, source_url: str) -> str:
-    """Extrae URL de imagen del primer <img> dentro de la card.
-    Considera src, data-src, data-original, srcset (primera URL)."""
-    if card is None:
-        return ""
-    try:
-        img = card.find("img")
-    except Exception:
-        return ""
-    if img is None:
-        return ""
+IMAGE_URL_BAD_PATTERNS = (
+    "/icon/", "/icons/", "/ui/", "/svg/", "favicon",
+    "/logo", "spacer.gif", "pixel.gif", "blank.gif",
+    "1x1.png", "/sprite", "loader.gif", "loading.gif",
+    "/sys/", "/category/", "/badges/", "/badge/", "/banner/",
+    "/promo/", "/btn", "/button", "/arrow", "/separator",
+    "/star", "/rating", "/cart",
+)
+
+IMAGE_URL_GOOD_PATTERNS = (
+    "/goods/", "/products/", "/product/", "/cover", "/jacket",
+    "/manga/", "/manga_", "/book", "/item",
+)
+
+
+def _img_to_url(img: Any, source_url: str) -> str:
+    """Extrae URL absoluta de un <img> probando src/data-src/srcset/etc."""
     for attr in ("src", "data-src", "data-original", "data-lazy-src", "srcset", "data-srcset"):
         val = img.get(attr)
         if not val:
             continue
-        # srcset puede tener varias URLs "url 480w, url 720w"
         if "srcset" in attr:
             val = val.split(",")[0].strip().split(" ")[0]
         url = canonicalize_url(source_url, val.strip())
         if url and url != source_url:
             return url
     return ""
+
+
+def _score_image(url: str, alt: str) -> int:
+    """Score más alto = más probable que sea cover/portada de producto.
+
+    Negativo para íconos, badges, logos. Positivo para paths de producto
+    y alt text largo (suele ser título del producto).
+    """
+    lower = url.lower()
+    if any(p in lower for p in IMAGE_URL_BAD_PATTERNS):
+        return -100
+    score = 0
+    if any(p in lower for p in IMAGE_URL_GOOD_PATTERNS):
+        score += 10
+    if alt and len(alt) >= 10:
+        score += 5
+    elif alt and len(alt) >= 3:
+        score += 1
+    # Imágenes con números largos en el path suelen ser IDs de producto.
+    if re.search(r"/\d{6,}", lower):
+        score += 3
+    return score
+
+
+def extract_image_url(card: Any, source_url: str) -> str:
+    """Extrae URL de la imagen más probable del card o de su contenedor.
+
+    Algunos sites (KADOKAWA, grid CSS) ponen la imagen como sibling del card
+    de texto, no dentro. Por eso buscamos en card primero y después en padres
+    inmediatos (hasta 2 niveles).
+
+    Rankea las imágenes encontradas: prefiere paths tipo /goods/, /products/,
+    alts con título largo, IDs numéricos. Penaliza íconos, badges, logos.
+
+    Si un contenedor tiene >8 imágenes, lo asumimos wrapper global y lo
+    skipeamos (evita capturar header/footer/sidebar).
+    """
+    if card is None:
+        return ""
+
+    containers: list[Any] = [card]
+    parent = card.parent
+    for _ in range(2):
+        if parent is None or parent.name in ("body", "html"):
+            break
+        containers.append(parent)
+        parent = parent.parent
+
+    best_url = ""
+    best_score = -1
+    for container in containers:
+        try:
+            imgs = container.find_all("img", limit=15)
+        except Exception:
+            continue
+        if len(imgs) > 8:
+            continue
+        for img in imgs:
+            url = _img_to_url(img, source_url)
+            if not url:
+                continue
+            alt = (img.get("alt") or "").strip()
+            score = _score_image(url, alt)
+            if score > best_score:
+                best_score = score
+                best_url = url
+        # Si ya encontramos una imagen con score positivo, no subimos más niveles.
+        if best_score >= 5:
+            return best_url
+
+    return best_url if best_score >= 0 else ""
 
 
 PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
