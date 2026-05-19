@@ -27,7 +27,7 @@ cd "$(dirname "$0")/.."
 SLEEP="${SLEEP:-0.5}"
 MIN_SCORE="${MIN_SCORE:-30}"
 SKIP_DETAILS="${SKIP_DETAILS:-0}"
-MAX_PAGES="${MAX_PAGES:-3}"
+MAX_PAGES="${MAX_PAGES:-5}"
 
 VENV_PY=".venv/bin/python"
 if [ ! -x "$VENV_PY" ]; then

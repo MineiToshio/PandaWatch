@@ -63,6 +63,7 @@ sources:
     enabled: true
     tags: ["manga", "official", "store"]
 
+    max_pages: 15
   - name: "MX - Panini México Boxsets"
     country: "México"
     language: "Español"
@@ -179,6 +180,7 @@ sources:
     enabled: true
     tags: ["manga", "official"]
 
+    max_pages: 15
   - name: "ES - Panini Manga España"
     country: "España"
     language: "Español"
@@ -189,6 +191,7 @@ sources:
     enabled: true
     tags: ["manga", "official"]
 
+    max_pages: 15
   - name: "ES - Ivrea España Noticias"
     country: "España"
     language: "Español"
@@ -328,6 +331,7 @@ sources:
     enabled: true
     tags: ["manga", "hardcover", "official", "store"]
 
+    max_pages: 15
   - name: "US - Square Enix Manga Coming Soon"
     country: "Estados Unidos"
     language: "Inglés"
@@ -440,6 +444,7 @@ sources:
     enabled: true
     tags: ["manga", "official", "france"]
 
+    max_pages: 15
   - name: "FR - Glénat Art Books"
     country: "Francia"
     language: "Francés"
@@ -523,6 +528,7 @@ sources:
     enabled: true
     tags: ["manga", "official", "prestige"]
 
+    max_pages: 15
   - name: "FR - Kurokawa"
     country: "Francia"
     language: "Francés"
@@ -650,6 +656,7 @@ sources:
     enabled: true
     tags: ["manga", "official", "italy"]
 
+    max_pages: 15
   - name: "IT - Star Comics Home"
     country: "Italia"
     language: "Italiano"

@@ -2648,8 +2648,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-pages",
         type=int,
-        default=3,
-        help="Máximo de páginas a seguir por fuente cuando hay link 'siguiente'. Default: 3. Override en YAML con 'max_pages: N'. RSS siempre = 1.",
+        default=5,
+        help="Máximo de páginas a seguir por fuente cuando hay link 'siguiente'. Default: 5 (suficiente para búsquedas Fase 1 y categorías específicas). Override por fuente en YAML con 'max_pages: 15' para catálogos grandes. RSS siempre = 1.",
     )
     parser.add_argument("--sleep-seconds", type=float, default=1.5, help="Pausa entre fuentes. Default: 1.5")
     parser.add_argument("--connect-timeout", type=int, default=10, help="Timeout conexión HTTP. Default: 10")
