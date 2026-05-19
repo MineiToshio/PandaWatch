@@ -386,6 +386,65 @@ def test_extract_image_url_ignores_negative_score_only():
 
 
 # ---------------------------------------------------------------------------
+# _extract_image_from_detail_soup (página de detalle, vía fetch_metadata)
+# ---------------------------------------------------------------------------
+
+
+def test_detail_image_from_og_image():
+    html = """<html><head>
+    <meta property="og:image" content="/img/cover-12345.jpg">
+    </head><body></body></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/p/1")
+    assert url == "https://example.com/img/cover-12345.jpg"
+
+
+def test_detail_image_from_json_ld_string():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@type":"Book","name":"X","image":"https://cdn.example.com/cover.jpg"}
+    </script></head></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/p/1")
+    assert url == "https://cdn.example.com/cover.jpg"
+
+
+def test_detail_image_from_json_ld_object():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@type":"Product","image":{"url":"/static/cover.jpg"}}
+    </script></head></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/p/1")
+    assert url == "https://example.com/static/cover.jpg"
+
+
+def test_detail_image_prefers_og_over_random_img():
+    # og:image debería ganar al primer <img> aleatorio.
+    html = """<html><head>
+    <meta property="og:image" content="/img/og-real.jpg">
+    </head><body>
+        <img src="/static/header.png" alt="header">
+        <main><img src="/img/cover.jpg" alt="cover"></main>
+    </body></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/")
+    assert url == "https://example.com/img/og-real.jpg"
+
+
+def test_detail_image_fallback_ranking():
+    # Sin meta tags, debe rankear los <img> del body.
+    html = """<html><body>
+        <img src="/sys/new.png" alt="NEW">
+        <img src="/img/goods/9876.jpg" alt="Berserk Edición Coleccionista">
+    </body></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/")
+    assert url == "https://example.com/img/goods/9876.jpg"
+
+
+def test_detail_image_empty_if_nothing_found():
+    html = "<html><body><p>solo texto</p></body></html>"
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/")
+    assert url == ""
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 

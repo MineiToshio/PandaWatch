@@ -701,18 +701,123 @@ def _extract_author_from_links(soup: BeautifulSoup) -> str:
     return ""
 
 
-def fetch_author_from_detail(
+def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
+    """Extrae URL de portada de una página de detalle, varias estrategias.
+
+    1) JSON-LD schema.org `image` field
+    2) OpenGraph `og:image` / Twitter `twitter:image`
+    3) meta itemprop="image"
+    4) <img> con clases típicas de portada (cover, product-image, etc.)
+    5) Ranking general de <img> tags del body (mismo scoring que el listing).
+    """
+    # 1) JSON-LD
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("image")
+            if isinstance(value, str) and value.strip():
+                url = canonicalize_url(source_url, value.strip())
+                if url:
+                    return url
+            if isinstance(value, dict):
+                v = (value.get("url") or value.get("@id") or "").strip()
+                if v:
+                    url = canonicalize_url(source_url, v)
+                    if url:
+                        return url
+            if isinstance(value, list) and value:
+                for v in value:
+                    if isinstance(v, str) and v.strip():
+                        url = canonicalize_url(source_url, v.strip())
+                        if url:
+                            return url
+                    if isinstance(v, dict):
+                        s = (v.get("url") or v.get("@id") or "").strip()
+                        if s:
+                            url = canonicalize_url(source_url, s)
+                            if url:
+                                return url
+
+    # 2) OpenGraph / Twitter
+    for attrs in (
+        {"property": "og:image"},
+        {"property": "og:image:url"},
+        {"name": "twitter:image"},
+        {"name": "twitter:image:src"},
+    ):
+        meta = soup.find("meta", attrs=attrs)
+        if meta and meta.get("content"):
+            url = canonicalize_url(source_url, meta["content"].strip())
+            if url:
+                return url
+
+    # 3) meta itemprop="image"
+    meta = soup.find("meta", attrs={"itemprop": "image"})
+    if meta and meta.get("content"):
+        url = canonicalize_url(source_url, meta["content"].strip())
+        if url:
+            return url
+
+    # 4) <img> con clases típicas de portada (Schema.org / E-commerce)
+    for selector in (
+        "img[itemprop='image']",
+        "img.cover",
+        "img.product-image",
+        "img.product-image-photo",
+        "[class*='product-image'] img",
+        "[class*='cover'] img",
+        "[class*='jacket'] img",
+        "[class*='detail'] img",
+        "[id*='product'] img",
+        "main img",
+        "article img",
+    ):
+        try:
+            node = soup.select_one(selector)
+        except Exception:
+            continue
+        if node and node.name == "img":
+            url = _img_to_url(node, source_url)
+            if url and _score_image(url, (node.get("alt") or "").strip()) >= 0:
+                return url
+
+    # 5) Fallback: rankear todos los <img> del body.
+    body = soup.body or soup
+    best_url = ""
+    best_score = -1
+    for img in body.find_all("img", limit=30):
+        url = _img_to_url(img, source_url)
+        if not url:
+            continue
+        score = _score_image(url, (img.get("alt") or "").strip())
+        if score > best_score:
+            best_score = score
+            best_url = url
+    return best_url if best_score >= 5 else ""
+
+
+def fetch_metadata_from_detail(
     url: str,
     session: requests.Session,
     timeout: tuple[int, int],
-) -> str:
-    """Fetch HTTP a la URL del producto y extrae autor con 4 estrategias en orden.
+) -> dict[str, str]:
+    """Fetch HTTP a la URL del producto y extrae autor + imagen.
 
-    Devuelve "" si la página no responde o no se puede extraer autor confiable.
-    Es opt-in (--fetch-details) porque agrega 1 HTTP request por item.
+    Devuelve {"author": "...", "image_url": "..."} (campos vacíos si no
+    se encuentra). Hace 1 HTTP request opt-in (--fetch-details).
     """
+    result = {"author": "", "image_url": ""}
     if not url:
-        return ""
+        return result
     try:
         response = session.get(url, timeout=timeout)
         response.raise_for_status()
@@ -720,34 +825,44 @@ def fetch_author_from_detail(
             response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, "html.parser")
     except (requests.RequestException, Exception):
-        return ""
+        return result
 
-    # 1) JSON-LD (schema.org)
+    # === Author ===
     author = _extract_json_ld_author(soup)
-    if author:
-        return author
+    if not author:
+        for attrs in (
+            {"name": "author"},
+            {"property": "book:author"},
+            {"property": "og:book:author"},
+            {"name": "twitter:creator"},
+        ):
+            meta = soup.find("meta", attrs=attrs)
+            if meta and meta.get("content"):
+                value = clean_text(meta["content"])
+                if value:
+                    author = value
+                    break
+    if not author:
+        author = _extract_author_from_links(soup)
+    if not author:
+        body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
+        author = extract_author(body_text[:3000], soup)
+    result["author"] = author
 
-    # 2) meta tags
-    for attrs in (
-        {"name": "author"},
-        {"property": "book:author"},
-        {"property": "og:book:author"},
-        {"name": "twitter:creator"},
-    ):
-        meta = soup.find("meta", attrs=attrs)
-        if meta and meta.get("content"):
-            value = clean_text(meta["content"])
-            if value:
-                return value
+    # === Image ===
+    result["image_url"] = _extract_image_from_detail_soup(soup, url)
 
-    # 3) Links a páginas de autor (patrón más común en e-commerce)
-    author = _extract_author_from_links(soup)
-    if author:
-        return author
+    return result
 
-    # 4) Fallback: regex + selectores class-based sobre el body completo.
-    body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
-    return extract_author(body_text[:3000], soup)
+
+# Mantengo el helper antiguo para no romper código/tests externos.
+def fetch_author_from_detail(
+    url: str,
+    session: requests.Session,
+    timeout: tuple[int, int],
+) -> str:
+    """Compat helper: ahora delega en fetch_metadata_from_detail()."""
+    return fetch_metadata_from_detail(url, session, timeout).get("author", "")
 
 
 def extract_author(text: str, card: Any = None) -> str:
@@ -2627,11 +2742,12 @@ def run(args: argparse.Namespace) -> int:
 
     # Detail-fetch para enriquecer autor en items importantes (opt-in).
     if args.fetch_details:
+        # Item es elegible si le falta autor O imagen (ambos enriquecibles desde detail).
         eligible = [
             c for c in reportable
             if c.status in {"new", "changed"}
             and c.score >= args.fetch_details_min_score
-            and not c.author
+            and (not c.author or not c.image_url)
             and c.source_class in ("official", "retailer")
             and c.url
         ]
@@ -2639,27 +2755,42 @@ def run(args: argparse.Namespace) -> int:
         source_urls = {s.url for s in sources}
         eligible = [c for c in eligible if c.url not in source_urls]
         print("")
-        print(f"[FETCH-DETAILS] {len(eligible)} items elegibles (score>={args.fetch_details_min_score}, sin autor, official/retailer)")
-        enriched = 0
+        print(
+            f"[FETCH-DETAILS] {len(eligible)} items elegibles "
+            f"(score>={args.fetch_details_min_score}, sin autor o sin imagen, official/retailer)"
+        )
+        enriched_author = 0
+        enriched_image = 0
         for idx, c in enumerate(eligible, start=1):
-            author = fetch_author_from_detail(
+            metadata = fetch_metadata_from_detail(
                 c.url, session, timeout=(args.connect_timeout, args.read_timeout)
             )
-            if author:
-                c.author = author
+            new_author = metadata.get("author") or ""
+            new_image = metadata.get("image_url") or ""
+            updates: list[str] = []
+            if new_author and not c.author:
+                c.author = new_author
+                enriched_author += 1
+                updates.append(f"autor: {new_author[:50]}")
+            if new_image and not c.image_url:
+                c.image_url = new_image
+                enriched_image += 1
+                updates.append(f"img: ✓")
+            if updates:
                 _recompute_content_hash(c)
-                # Sincronizar state con el nuevo hash + autor.
                 key = candidate_key(c)
                 if key in state:
-                    state[key]["author"] = author
+                    state[key]["author"] = c.author
+                    state[key]["image_url"] = c.image_url
                     state[key]["content_hash"] = c.content_hash
-                enriched += 1
-                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → autor: {author[:60]}")
+                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → {', '.join(updates)}")
             else:
-                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → (sin autor)")
+                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → (sin cambios)")
             if args.sleep_seconds > 0 and idx < len(eligible):
                 time.sleep(min(args.sleep_seconds, 1.0))
-        print(f"[FETCH-DETAILS] {enriched}/{len(eligible)} items enriquecidos con autor")
+        print(
+            f"[FETCH-DETAILS] {enriched_author} autores · {enriched_image} imágenes enriquecidas"
+        )
 
     if not args.dry_run:
         save_state(state_path, state)
