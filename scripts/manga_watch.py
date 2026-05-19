@@ -839,6 +839,199 @@ def extract_isbn(text: str, soup: Any = None) -> str:
     return ""
 
 
+SCHEMA_ORG_CURRENCY_SYMBOLS = {
+    "EUR": "€", "USD": "$", "JPY": "¥", "GBP": "£",
+    "MXN": "MXN", "ARS": "$", "CAD": "$", "AUD": "$",
+}
+
+
+def _format_schema_price(price: str, currency: str) -> str:
+    if not price:
+        return ""
+    cur = (currency or "").upper().strip()
+    sym = SCHEMA_ORG_CURRENCY_SYMBOLS.get(cur, cur)
+    return f"{sym} {price}".strip()
+
+
+def _schema_iter_items(data: Any) -> list[dict]:
+    """Aplana JSON-LD: dict, lista, o @graph → lista de dicts."""
+    items: list[dict] = []
+    candidates = data if isinstance(data, list) else [data]
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        graph = c.get("@graph")
+        if isinstance(graph, list):
+            items.extend(g for g in graph if isinstance(g, dict))
+        else:
+            items.append(c)
+    return items
+
+
+def _schema_item_is_product(item: dict) -> bool:
+    """¿El item JSON-LD es Product/Book/Comic?"""
+    t = item.get("@type", "")
+    if isinstance(t, list):
+        t = " ".join(str(x) for x in t)
+    t = str(t)
+    return any(k in t for k in ("Product", "Book", "Comic", "Manga", "GraphicNovel"))
+
+
+def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, str]:
+    """Extrae metadata de un Product/Book Schema.org en JSON-LD.
+
+    Acepta tanto un BeautifulSoup completo como un Tag (card individual). Si la
+    card contiene un <script type='application/ld+json'> con Product, devuelve
+    todos los campos disponibles. Si no, devuelve dict vacío.
+
+    Devuelve dict con: name, image_url, description, author, isbn, price,
+    release_date, publisher, product_type (manga/artbook/boxset/...).
+    """
+    result = {
+        "name": "",
+        "image_url": "",
+        "description": "",
+        "author": "",
+        "isbn": "",
+        "price": "",
+        "release_date": "",
+        "publisher": "",
+        "product_type": "",
+    }
+    if soup_or_card is None:
+        return result
+
+    try:
+        scripts = soup_or_card.find_all("script", attrs={"type": "application/ld+json"})
+    except Exception:
+        return result
+
+    for script in scripts:
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for item in _schema_iter_items(data):
+            if not _schema_item_is_product(item):
+                continue
+
+            # name
+            if not result["name"] and item.get("name"):
+                result["name"] = clean_text(str(item["name"]))
+
+            # image
+            if not result["image_url"]:
+                img = item.get("image")
+                url = ""
+                if isinstance(img, str):
+                    url = img.strip()
+                elif isinstance(img, dict):
+                    url = (img.get("url") or img.get("@id") or "").strip()
+                elif isinstance(img, list) and img:
+                    first = img[0]
+                    if isinstance(first, str):
+                        url = first.strip()
+                    elif isinstance(first, dict):
+                        url = (first.get("url") or first.get("@id") or "").strip()
+                if url:
+                    canonical = canonicalize_url(source_url, url)
+                    if canonical and _score_image(canonical, "") >= -10:
+                        result["image_url"] = canonical
+
+            # description
+            if not result["description"] and item.get("description"):
+                result["description"] = clean_text(str(item["description"]))[:2000]
+
+            # author / creator
+            if not result["author"]:
+                auth = item.get("author") or item.get("creator")
+                value = ""
+                if isinstance(auth, str):
+                    value = auth.strip()
+                elif isinstance(auth, dict):
+                    value = (auth.get("name") or "").strip()
+                elif isinstance(auth, list) and auth:
+                    first = auth[0]
+                    if isinstance(first, str):
+                        value = first.strip()
+                    elif isinstance(first, dict):
+                        value = (first.get("name") or "").strip()
+                if value:
+                    result["author"] = clean_text(value)
+
+            # publisher / brand
+            if not result["publisher"]:
+                pub = item.get("publisher") or item.get("brand")
+                value = ""
+                if isinstance(pub, str):
+                    value = pub.strip()
+                elif isinstance(pub, dict):
+                    value = (pub.get("name") or "").strip()
+                if value:
+                    result["publisher"] = clean_text(value)
+
+            # isbn (con validación de checksum)
+            if not result["isbn"]:
+                for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
+                    val = item.get(key)
+                    if isinstance(val, str):
+                        cleaned = re.sub(r"[^0-9Xx]", "", val)
+                        if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
+                            result["isbn"] = cleaned
+                            break
+                        if len(cleaned) == 10:
+                            result["isbn"] = cleaned
+                            break
+
+            # price (offers.price o offers.lowPrice)
+            if not result["price"]:
+                offers = item.get("offers")
+                offer_list: list[dict] = []
+                if isinstance(offers, dict):
+                    offer_list = [offers]
+                elif isinstance(offers, list):
+                    offer_list = [o for o in offers if isinstance(o, dict)]
+                for off in offer_list:
+                    p = off.get("price") or off.get("lowPrice")
+                    if p is None:
+                        continue
+                    currency = off.get("priceCurrency", "")
+                    result["price"] = _format_schema_price(str(p), str(currency))
+                    if result["price"]:
+                        break
+
+            # release_date / datePublished
+            if not result["release_date"]:
+                date_val = (
+                    item.get("datePublished")
+                    or item.get("releaseDate")
+                    or item.get("dateCreated")
+                    or item.get("dateModified")
+                )
+                if date_val:
+                    result["release_date"] = str(date_val).strip()[:30]
+
+            # product_type desde @type o bookFormat
+            if not result["product_type"]:
+                t = item.get("@type", "")
+                if isinstance(t, list):
+                    t = " ".join(str(x) for x in t)
+                t = str(t).lower()
+                book_format = str(item.get("bookFormat", "")).lower()
+                if "graphicnovel" in t or "comic" in t or "manga" in t:
+                    result["product_type"] = "manga"
+                elif "audiobook" in book_format:
+                    result["product_type"] = "audiobook"
+                elif "hardcover" in book_format:
+                    result["product_type"] = "manga"  # tapa dura, sigue siendo manga
+
+    return result
+
+
 def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
     """Extrae URL de portada de una página de detalle, varias estrategias.
 
@@ -1605,11 +1798,16 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
 
         if title or description:
             candidate = candidate_from_source(source, title, link or source.url, description)
-            candidate.price = extract_price(description)
-            candidate.image_url = extract_image_url(card, source.url)
-            candidate.release_date = extract_release_date(description)
-            candidate.author = extract_author(description, card)
-            candidate.isbn = extract_isbn(f"{description}\n{candidate.url}", card)
+            schema = extract_schema_org_product(card, source.url)
+            if schema.get("name") and len(schema["name"]) >= 3:
+                candidate.title = schema["name"][:260]
+            if schema.get("description") and len(schema["description"]) > len(candidate.description):
+                candidate.description = schema["description"][:2500]
+            candidate.price = schema.get("price") or extract_price(candidate.description)
+            candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
+            candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
+            candidate.author = schema.get("author") or extract_author(candidate.description, card)
+            candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{candidate.url}", card)
             candidates.append(candidate)
 
     return candidates
@@ -1843,11 +2041,24 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     if len(description) < 25 or len(description) > 2000:
         return None
     candidate = candidate_from_source(source, title[:260], url, description)
-    candidate.price = extract_price(description)
-    candidate.image_url = extract_image_url(card, source.url)
-    candidate.release_date = extract_release_date(description)
-    candidate.author = extract_author(description, card)
-    candidate.isbn = extract_isbn(f"{description}\n{url}", card)
+
+    # Estrategia 0: si la card tiene JSON-LD inline (Shopify, Magento moderno…),
+    # usar esos datos como override (mayor calidad que las heurísticas).
+    schema = extract_schema_org_product(card, source.url)
+
+    # Title: si Schema.org tiene un name más específico, lo usamos.
+    if schema.get("name") and len(schema["name"]) >= 3:
+        candidate.title = schema["name"][:260]
+
+    # Description: si la de Schema es más sustancial, la preferimos.
+    if schema.get("description") and len(schema["description"]) > len(candidate.description):
+        candidate.description = schema["description"][:2500]
+
+    candidate.price = schema.get("price") or extract_price(candidate.description)
+    candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
+    candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
+    candidate.author = schema.get("author") or extract_author(candidate.description, card)
+    candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{url}", card)
     return candidate
 
 

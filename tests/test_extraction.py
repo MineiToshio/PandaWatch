@@ -541,6 +541,90 @@ def test_isbn_empty_when_no_match():
 
 
 # ---------------------------------------------------------------------------
+# extract_schema_org_product
+# ---------------------------------------------------------------------------
+
+
+def test_schema_extracts_basic_product():
+    html = """<html><body>
+    <script type="application/ld+json">
+    {
+      "@type": "Product",
+      "name": "Berserk Deluxe Edition Vol. 1",
+      "description": "Tapa dura con sobrecubierta",
+      "image": "https://cdn.example.com/cover.jpg",
+      "isbn": "9781506702216",
+      "author": {"@type": "Person", "name": "Kentaro Miura"},
+      "offers": {"@type": "Offer", "price": "49.99", "priceCurrency": "USD"},
+      "datePublished": "2024-06-15"
+    }
+    </script>
+    </body></html>"""
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["name"] == "Berserk Deluxe Edition Vol. 1"
+    assert s["image_url"] == "https://cdn.example.com/cover.jpg"
+    assert s["isbn"] == "9781506702216"
+    assert s["author"] == "Kentaro Miura"
+    assert s["price"] == "$ 49.99"
+    assert s["release_date"] == "2024-06-15"
+    assert "Tapa dura" in s["description"]
+
+
+def test_schema_handles_book_type():
+    html = """<html><body><script type="application/ld+json">
+    {"@type": "Book", "name": "Vagabond Vol 1", "author": "Takehiko Inoue"}
+    </script></body></html>"""
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["name"] == "Vagabond Vol 1"
+    assert s["author"] == "Takehiko Inoue"
+
+
+def test_schema_handles_offers_list():
+    html = """<html><body><script type="application/ld+json">
+    {"@type": "Product", "name": "x", "offers": [
+        {"price": "19.99", "priceCurrency": "EUR"},
+        {"price": "29.99", "priceCurrency": "EUR"}
+    ]}
+    </script></body></html>"""
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["price"] == "€ 19.99"
+
+
+def test_schema_handles_graph_wrapper():
+    # Algunos sites wrappean Product en @graph.
+    html = """<html><body><script type="application/ld+json">
+    {"@graph": [
+      {"@type": "WebPage"},
+      {"@type": "Product", "name": "Berserk", "isbn": "9781506702216"}
+    ]}
+    </script></body></html>"""
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["name"] == "Berserk"
+    assert s["isbn"] == "9781506702216"
+
+
+def test_schema_returns_empty_when_no_product():
+    html = """<html><body><script type="application/ld+json">
+    {"@type": "WebPage", "name": "About us"}
+    </script></body></html>"""
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["name"] == ""
+    assert s["isbn"] == ""
+
+
+def test_schema_ignores_invalid_json():
+    html = '<html><body><script type="application/ld+json">not valid json</script></body></html>'
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert s["name"] == ""
+
+
+def test_schema_empty_when_no_json_ld():
+    html = "<html><body><p>plain</p></body></html>"
+    s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
+    assert all(v == "" for v in s.values())
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 
