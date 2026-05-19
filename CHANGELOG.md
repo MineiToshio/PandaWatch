@@ -4,6 +4,40 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Playwright + YAML fixes
+
+### Added
+
+- **Playwright integration** opcional para fuentes JS-rendered.
+  - Nuevo `kind: "js"` en YAML marca fuentes que requieren rendering.
+  - CLI `--enable-js` activa el flujo (off por default).
+  - `fetch_with_playwright()` lanza Chromium headless, hace
+    `wait_for_function` esperando anchors con texto, scroll lazy-load,
+    y devuelve HTML + metadata.
+  - Singleton de browser para reutilizar entre fuentes.
+  - `close_playwright()` cleanup al final del run.
+  - Si `--enable-js` está y Playwright no instalado, error claro
+    (no crash).
+- **`requirements-playwright.txt`** opt-in install (`pip install -r`
+  + `playwright install chromium`).
+- **14 fuentes marcadas con `kind: "js"`** identificadas como JS-heavy
+  en runs anteriores (Crunchyroll, Misión Tokyo, La Comiquería, etc.).
+
+### Fixed
+
+- **4 URLs 404** actualizadas en sources.yml:
+  - MX - Panini Manga México → `/coleccionables/item-3`
+  - US - Square Enix → `/release-calendar`
+  - FR - Pika Planning → `/planning-sorties/`
+  - JP - Animate Online Books → URL nueva, marcada `enabled: false`
+    hasta que se pueda saltar bot detection.
+
+### Changed
+
+- Cuando `source.kind == "js"`, el flujo salta `detect_empty_or_js`
+  porque ya renderizamos con browser; el resultado tras Playwright es
+  nuestra mejor apuesta.
+
 ## [Unreleased] — Modo diagnóstico
 
 ### Added

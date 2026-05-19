@@ -1,0 +1,5 @@
+-r requirements.txt
+playwright>=1.40
+
+# Después de instalar, ejecutar una vez:
+#   playwright install chromium

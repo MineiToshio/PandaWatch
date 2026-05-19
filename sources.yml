@@ -45,7 +45,7 @@ sources:
     language: "Español"
     publisher: "Editorial Ivrea Argentina"
     source_class: "retailer"
-    kind: "html"
+    kind: "js"
     url: "https://www.lacomiqueria.com.ar/"
     enabled: true
     tags: ["manga", "store", "stock"]
@@ -59,7 +59,7 @@ sources:
     publisher: "Panini Manga México"
     source_class: "official"
     kind: "html"
-    url: "https://tiendapanini.com.mx/coleccionables/manga"
+    url: "https://tiendapanini.com.mx/coleccionables/item-3"
     enabled: true
     tags: ["manga", "official", "store"]
 
@@ -131,7 +131,7 @@ sources:
     language: "Español"
     publisher: "Misión Tokyo"
     source_class: "trusted_media"
-    kind: "html"
+    kind: "js"
     url: "https://misiontokyo.com/tag/novedades-manga"
     enabled: true
     tags: ["news", "manga", "spain"]
@@ -141,7 +141,7 @@ sources:
     language: "Español"
     publisher: "Misión Tokyo"
     source_class: "trusted_media"
-    kind: "html"
+    kind: "js"
     url: "https://misiontokyo.com/tag/lanzamientos"
     enabled: true
     tags: ["news", "releases", "manga"]
@@ -151,7 +151,7 @@ sources:
     language: "Español"
     publisher: "Crunchyroll Noticias"
     source_class: "trusted_media"
-    kind: "html"
+    kind: "js"
     url: "https://www.crunchyroll.com/es/news/"
     enabled: true
     tags: ["news", "anime", "manga"]
@@ -215,7 +215,7 @@ sources:
     language: "Español"
     publisher: "Distrito Manga"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.penguinlibros.com/es/221600-distrito-manga"
     enabled: true
     tags: ["manga", "official"]
@@ -238,7 +238,7 @@ sources:
     language: "Español"
     publisher: "Kibook Ediciones"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://kibookediciones.com/novedades"
     enabled: true
     tags: ["manga", "official"]
@@ -303,7 +303,7 @@ sources:
     language: "Inglés"
     publisher: "Seven Seas Entertainment"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://sevenseasentertainment.com/category/box-set/"
     enabled: true
     tags: ["manga", "boxset", "official"]
@@ -334,7 +334,7 @@ sources:
     publisher: "Square Enix Manga & Books"
     source_class: "official"
     kind: "html"
-    url: "https://squareenixmangaandbooks.square-enix-games.com/en-us/coming-soon"
+    url: "https://squareenixmangaandbooks.square-enix-games.com/en-us/release-calendar"
     enabled: true
     tags: ["manga", "official", "coming-soon"]
 
@@ -409,7 +409,7 @@ sources:
     language: "Inglés"
     publisher: "Manga Mogura"
     source_class: "social"
-    kind: "html"
+    kind: "js"
     url: "https://bsky.app/profile/mangamogura.bsky.social"
     enabled: true
     tags: ["social", "news", "manga", "japan"]
@@ -465,7 +465,7 @@ sources:
     publisher: "Pika Édition"
     source_class: "official"
     kind: "html"
-    url: "https://www.pika.fr/planning"
+    url: "https://www.pika.fr/planning-sorties/"
     enabled: true
     tags: ["manga", "planning", "official"]
 
@@ -537,7 +537,7 @@ sources:
     language: "Francés"
     publisher: "Meian"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.meian-editions.fr/meian/accueil-meian"
     enabled: true
     tags: ["manga", "official"]
@@ -547,7 +547,7 @@ sources:
     language: "Francés"
     publisher: "Meian"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.meian-plus.fr/accueil"
     enabled: true
     tags: ["manga", "store", "official"]
@@ -570,7 +570,7 @@ sources:
     language: "Francés"
     publisher: "Vega Dupuis"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.dupuis.com/label/FR/5/vega_dupuis.html"
     enabled: true
     tags: ["manga", "official"]
@@ -666,7 +666,7 @@ sources:
     language: "Italiano"
     publisher: "J-Pop Manga / Edizioni BD"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.j-pop.it/"
     enabled: true
     tags: ["manga", "official", "italy"]
@@ -748,7 +748,7 @@ sources:
     language: "Japonés"
     publisher: "Shueisha"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://books.shueisha.co.jp/newcomics/index.html"
     enabled: true
     tags: ["manga", "official", "japan"]
@@ -808,7 +808,7 @@ sources:
     language: "Japonés"
     publisher: "Shogakukan"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.shogakukan.co.jp/calendar/paper/comics/next2"
     enabled: true
     tags: ["manga", "calendar", "official"]
@@ -889,6 +889,7 @@ sources:
     publisher: "Animate"
     source_class: "retailer"
     kind: "html"
-    url: "https://www.animate-onlineshop.jp/corner/cc/comics/cd/11/"
-    enabled: true
+    url: "https://www.animate-onlineshop.jp/contents/manga/comics_top.php"
+    enabled: false
     tags: ["retailer", "bonus", "manga", "japan"]
+    notes: "Bloqueada por bot detection. Requiere Playwright + User-Agent realista."

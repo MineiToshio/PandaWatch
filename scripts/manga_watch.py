@@ -490,6 +490,122 @@ def fetch_with_metadata(
     return response.text, metadata
 
 
+# ---------------------------------------------------------------------------
+# Playwright (opt-in, lazy import)
+# ---------------------------------------------------------------------------
+
+_PLAYWRIGHT_AVAILABLE: bool | None = None
+_PLAYWRIGHT_BROWSER: Any | None = None
+_PLAYWRIGHT_INSTANCE: Any | None = None
+_PLAYWRIGHT_REAL_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _playwright_available() -> bool:
+    """Check si Playwright está instalado (sin lanzar import si ya falló antes)."""
+    global _PLAYWRIGHT_AVAILABLE
+    if _PLAYWRIGHT_AVAILABLE is not None:
+        return _PLAYWRIGHT_AVAILABLE
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+        _PLAYWRIGHT_AVAILABLE = True
+    except ImportError:
+        _PLAYWRIGHT_AVAILABLE = False
+    return _PLAYWRIGHT_AVAILABLE
+
+
+def _get_playwright_browser() -> Any:
+    """Singleton de browser para reutilizar entre sources."""
+    global _PLAYWRIGHT_BROWSER, _PLAYWRIGHT_INSTANCE
+    if _PLAYWRIGHT_BROWSER is not None:
+        return _PLAYWRIGHT_BROWSER
+    from playwright.sync_api import sync_playwright
+    _PLAYWRIGHT_INSTANCE = sync_playwright().start()
+    _PLAYWRIGHT_BROWSER = _PLAYWRIGHT_INSTANCE.chromium.launch(headless=True)
+    return _PLAYWRIGHT_BROWSER
+
+
+def close_playwright() -> None:
+    """Cierra browser al final del run (best-effort)."""
+    global _PLAYWRIGHT_BROWSER, _PLAYWRIGHT_INSTANCE
+    if _PLAYWRIGHT_BROWSER is not None:
+        try:
+            _PLAYWRIGHT_BROWSER.close()
+        except Exception:
+            pass
+        _PLAYWRIGHT_BROWSER = None
+    if _PLAYWRIGHT_INSTANCE is not None:
+        try:
+            _PLAYWRIGHT_INSTANCE.stop()
+        except Exception:
+            pass
+        _PLAYWRIGHT_INSTANCE = None
+
+
+def fetch_with_playwright(
+    url: str, timeout_ms: int = 30000, wait_until: str = "domcontentloaded"
+) -> tuple[str, dict[str, Any]]:
+    """Renderiza la página con Chromium headless y devuelve (html, metadata).
+
+    Requiere `pip install playwright && playwright install chromium`.
+    """
+    if not _playwright_available():
+        raise RuntimeError(
+            "Playwright no está instalado. Instalar con: "
+            "pip install playwright && playwright install chromium"
+        )
+    browser = _get_playwright_browser()
+    context = browser.new_context(
+        user_agent=_PLAYWRIGHT_REAL_UA,
+        locale="es-ES",
+        viewport={"width": 1366, "height": 900},
+    )
+    page = context.new_page()
+    start = time.perf_counter()
+    response = None
+    try:
+        response = page.goto(url, timeout=timeout_ms, wait_until=wait_until)
+        # Esperar a que aparezca algún <a> con texto (best-effort, no falla si no llega).
+        try:
+            page.wait_for_function(
+                """() => Array.from(document.querySelectorAll('a'))
+                       .some(a => (a.textContent || '').trim().length > 5)""",
+                timeout=8000,
+            )
+        except Exception:
+            pass
+        # Scroll para disparar lazy-load.
+        try:
+            page.evaluate(
+                """async () => {
+                  const total = document.body.scrollHeight;
+                  for (let y = 0; y < total; y += 500) {
+                    window.scrollTo(0, y);
+                    await new Promise(r => setTimeout(r, 100));
+                  }
+                  window.scrollTo(0, 0);
+                }"""
+            )
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        html = page.content()
+    finally:
+        page.close()
+        context.close()
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    metadata: dict[str, Any] = {
+        "http_status": response.status if response else None,
+        "content_type": "text/html (playwright)",
+        "fetch_ms": elapsed_ms,
+        "final_url": page.url if not page.is_closed() else url,
+        "rendered_with": "playwright",
+    }
+    return html, metadata
+
+
 def candidate_from_source(source: Source, title: str, url: str, description: str, published_at: str = "") -> Candidate:
     return Candidate(
         title=title or f"Hallazgo en {source.name}",
@@ -1607,9 +1723,30 @@ def run(args: argparse.Namespace) -> int:
                 diagnostic.record_status("robots", message)
                 continue
 
-            text, fetch_meta = fetch_with_metadata(
-                session=session, url=source.url, timeout=(args.connect_timeout, args.read_timeout)
-            )
+            if source.kind == "js":
+                if not args.enable_js:
+                    message = "Fuente kind:js requiere --enable-js (Playwright)"
+                    print(f"[SKIP-js] {source.name}: {message}")
+                    record_problem(source.name, "js-shell", message)
+                    diagnostic.record_status("js-shell", message)
+                    continue
+                if not _playwright_available():
+                    message = "Playwright no instalado. Ver requirements-playwright.txt"
+                    print(f"[ERROR] {source.name}: {message}")
+                    errors.append(f"{source.name}: {message}")
+                    record_problem(source.name, "other", message)
+                    diagnostic.record_status("other", message)
+                    continue
+                text, fetch_meta = fetch_with_playwright(
+                    url=source.url,
+                    timeout_ms=args.read_timeout * 1000,
+                )
+            else:
+                text, fetch_meta = fetch_with_metadata(
+                    session=session,
+                    url=source.url,
+                    timeout=(args.connect_timeout, args.read_timeout),
+                )
             diagnostic.record_fetch(fetch_meta, text)
 
             if source.kind in {"rss", "feed", "atom"}:
@@ -1623,25 +1760,34 @@ def run(args: argparse.Namespace) -> int:
                     info["extraction_method"] = "rss"
                     info["candidates_after_signals"] = len(candidates)
             else:
-                # Pre-check JS-heavy / vacío antes de extraer.
                 pre_soup = BeautifulSoup(text, "html.parser")
                 for stripped in pre_soup(["script", "style", "noscript", "svg"]):
                     stripped.decompose()
                 diagnostic.record_anchor_counts(pre_soup)
-                js_check = detect_empty_or_js(text, pre_soup)
-                if js_check is not None:
-                    category, message = js_check
-                    print(f"[SKIP-{category}] {source.name}: {message}")
-                    record_problem(source.name, category, message)
-                    diagnostic.record_status(category, message)
-                    candidates = []
-                else:
+                # Si ya renderizamos con Playwright, saltamos el check de JS-shell
+                # (era para detectar páginas que necesitan exactamente esto).
+                if source.kind == "js":
                     candidates = extract_generic_html(
                         source,
                         text,
                         max_items=args.max_items_per_source,
                         info=info,
                     )
+                else:
+                    js_check = detect_empty_or_js(text, pre_soup)
+                    if js_check is not None:
+                        category, message = js_check
+                        print(f"[SKIP-{category}] {source.name}: {message}")
+                        record_problem(source.name, category, message)
+                        diagnostic.record_status(category, message)
+                        candidates = []
+                    else:
+                        candidates = extract_generic_html(
+                            source,
+                            text,
+                            max_items=args.max_items_per_source,
+                            info=info,
+                        )
 
             scored = [score_candidate(candidate) for candidate in candidates]
             all_candidates.extend(scored)
@@ -1726,8 +1872,10 @@ def run(args: argparse.Namespace) -> int:
             print("[OK] Envié alerta por Telegram")
         except Exception as exc:
             print(f"[ERROR] No pude enviar Telegram: {exc}")
+            close_playwright()
             return 2
 
+    close_playwright()
     return 0
 
 
@@ -1774,6 +1922,11 @@ def parse_args() -> argparse.Namespace:
         "--log-dir",
         default="logs",
         help="Directorio para logs diagnósticos. Default: logs",
+    )
+    parser.add_argument(
+        "--enable-js",
+        action="store_true",
+        help="Habilita rendering con Playwright para fuentes con kind:js. Requiere 'pip install playwright && playwright install chromium'",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()

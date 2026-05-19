@@ -221,6 +221,7 @@
     <li><a href="#http">Comportamiento HTTP</a></li>
     <li><a href="#output">Output y modo</a></li>
     <li><a href="#diagnostico">Modo diagnóstico</a></li>
+    <li><a href="#playwright">Fuentes JS (Playwright)</a></li>
     <li><a href="#combos">Combinaciones útiles</a></li>
     <li><a href="#salida">Cómo leer el reporte</a></li>
     <li><a href="#telegram">Telegram</a></li>
@@ -465,6 +466,17 @@
   </div>
 
   <div class="flag">
+    <div class="flag-name">--enable-js <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Activa el rendering con <strong>Playwright</strong> (Chromium headless) para fuentes marcadas con <code>kind: "js"</code> en el YAML. Off por default para que el script no falle si no tenés Playwright instalado.</p>
+      <p>Requiere instalación opt-in:</p>
+      <pre style="margin-top:8px;"><code>.venv/bin/pip install -r requirements-playwright.txt
+.venv/bin/python -m playwright install chromium</code></pre>
+    </div>
+  </div>
+
+  <div class="flag">
     <div class="flag-name">--diagnostic <span class="tag tag-new">NUEVO</span></div>
     <div class="flag-default">Default: off</div>
     <div class="flag-body">
@@ -561,6 +573,65 @@ jq '.sources[] | select(.fetch_ms &gt; 5000) | {name, fetch_ms}' logs/diagnostic
   --source-classes official,retailer \
   --sleep-seconds 0.5</code></pre>
     Solo fuentes oficiales y retailers (las más accionables), sin pausas largas, sin escribir nada al state. Tarda ~1-2 minutos y deja todo lo necesario para revisar.
+  </div>
+</section>
+
+<!-- ========================= PLAYWRIGHT ========================= -->
+<section id="playwright">
+  <h2>Fuentes JS (Playwright) <span class="tag tag-new">NUEVO</span></h2>
+
+  <p>Algunas tiendas modernas (Crunchyroll, Penguin Libros, Tiendanube, etc.) renderizan los productos con JavaScript. Devuelven un HTML casi vacío para <code>requests</code>. Para esas, usamos <strong>Playwright</strong>: un browser real headless que ejecuta el JS antes de leer el contenido.</p>
+
+  <h3>1. Instalación (una sola vez)</h3>
+  <pre><code>.venv/bin/pip install -r requirements-playwright.txt
+.venv/bin/python -m playwright install chromium</code></pre>
+
+  <p>Esto baja Chromium (~92MB). Sin esta instalación, las fuentes <code>kind: "js"</code> se saltean con un mensaje claro — el resto del pipeline sigue funcionando normal.</p>
+
+  <h3>2. Marcar fuentes en el YAML</h3>
+  <p>En <code>sources.yml</code>, las fuentes que requieren JS llevan <code>kind: "js"</code>:</p>
+  <pre><code>- name: "AR - La Comiquería"
+  source_class: "retailer"
+  kind: "js"             # &lt;-- requiere Playwright
+  url: "https://www.lacomiqueria.com.ar/"</code></pre>
+
+  <p>Las 14 fuentes JS ya detectadas y marcadas:</p>
+  <ul style="columns: 2;">
+    <li>AR - La Comiquería</li>
+    <li>ES - Crunchyroll Noticias</li>
+    <li>ES - Distrito Manga</li>
+    <li>ES - Kibook Novedades</li>
+    <li>ES - Misión Tokyo (novedades)</li>
+    <li>ES - Misión Tokyo (lanzamientos)</li>
+    <li>FR - Meian</li>
+    <li>FR - Meian Plus Boutique</li>
+    <li>FR - Vega Dupuis</li>
+    <li>IT - J-Pop Manga</li>
+    <li>JP - Shueisha Comics Paper Releases</li>
+    <li>JP - Shogakukan Comics Calendar</li>
+    <li>SOCIAL - Manga Mogura Bluesky</li>
+    <li>US - Seven Seas Box Sets</li>
+  </ul>
+
+  <h3>3. Correr con JS habilitado</h3>
+  <pre><code>.venv/bin/python manga_watch.py --enable-js --dry-run</code></pre>
+
+  <p>Las fuentes <code>kind: "js"</code> se renderizan con Chromium; las demás siguen usando <code>requests</code> normal. El browser se reutiliza entre fuentes (es lento abrirlo una sola vez, no 14).</p>
+
+  <h3>Qué hace internamente</h3>
+  <ol>
+    <li>Lanza Chromium headless con User-Agent realista de Chrome desktop.</li>
+    <li><code>page.goto(url)</code> con <code>wait_until: domcontentloaded</code>.</li>
+    <li>Espera con <code>wait_for_function</code> hasta que aparezca algún <code>&lt;a&gt;</code> con texto ≥5 chars (máx. 8s).</li>
+    <li>Hace scroll progresivo de toda la página para disparar lazy-load.</li>
+    <li>Lee <code>page.content()</code> y lo pasa al mismo pipeline de extracción.</li>
+  </ol>
+
+  <div class="callout">
+    <strong>Tip de debugging:</strong> Si una fuente JS no funciona, corré sola con
+    <pre style="margin-top:6px;"><code>.venv/bin/python manga_watch.py --diagnostic --dry-run --enable-js \
+  --only-source "ES - Crunchyroll Noticias"</code></pre>
+    El <code>logs/raw/&lt;slug&gt;.html</code> tendrá el HTML <strong>ya renderizado</strong> con todo el contenido visible.
   </div>
 </section>
 
