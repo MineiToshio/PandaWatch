@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manga Watch — Explorar catálogo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root {
+    --accent: #d63384;
+    --accent-soft: #fce4ec;
+    --bg: #fafaf7;
+  }
+  body { background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Segoe UI", Helvetica, Arial, sans-serif; }
+  .accent { color: var(--accent); }
+  .bg-accent { background: var(--accent); }
+  .bg-accent-soft { background: var(--accent-soft); }
+  .border-accent { border-color: var(--accent); }
+  /* Card hover lift */
+  .card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  /* Image aspect ratio */
+  .img-wrap { aspect-ratio: 3 / 4; overflow: hidden; background: #f3f3ee; position: relative; }
+  .img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .img-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: #bbb; font-size: 2.5em; }
+  /* Score badge colors */
+  .score-high { background: #fee2e2; color: #b91c1c; }
+  .score-mid  { background: #fef3c7; color: #92400e; }
+  .score-low  { background: #f3f4f6; color: #4b5563; }
+  /* Limited badge */
+  .badge-limited { background: linear-gradient(90deg, #f97316, #fb7185); color: white; }
+  /* Modal */
+  .modal-overlay { background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
+  /* Smooth scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #bbb; }
+  /* Filters sticky */
+  .sidebar { position: sticky; top: 16px; }
+</style>
+</head>
+<body x-data="mangaApp()" x-init="loadItems()" class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-30">
+  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold accent">Manga Watch</h1>
+      <p class="text-sm text-gray-500" x-show="!loading">
+        <span x-text="stats.total"></span> items ·
+        <span x-text="stats.countries"></span> países ·
+        <span x-text="stats.publishers"></span> editoriales
+        <template x-if="stats.lastDetected">
+          · última detección: <span x-text="stats.lastDetected"></span>
+        </template>
+      </p>
+      <p class="text-sm text-gray-500" x-show="loading">Cargando datos…</p>
+    </div>
+    <div class="text-right text-sm text-gray-500">
+      <span x-text="filtered.length"></span> resultados visibles
+    </div>
+  </div>
+</header>
+
+<!-- ERROR STATE -->
+<template x-if="error">
+  <div class="max-w-screen-2xl mx-auto p-6">
+    <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4">
+      <strong>Error cargando data/items.jsonl:</strong>
+      <p class="mt-1 text-sm" x-text="error"></p>
+      <p class="mt-2 text-sm">¿Estás corriendo el server desde la raíz del proyecto?
+        <code class="bg-red-100 px-2 py-0.5 rounded">./web/serve.sh</code>
+      </p>
+    </div>
+  </div>
+</template>
+
+<!-- EMPTY STATE -->
+<template x-if="!loading && !error && items.length === 0">
+  <div class="max-w-screen-2xl mx-auto p-6">
+    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-4">
+      <strong>Aún no hay items detectados.</strong>
+      <p class="mt-1 text-sm">Corré primero el scraper:</p>
+      <pre class="mt-2 bg-amber-100 p-2 rounded text-xs"><code>.venv/bin/python manga_watch.py --enable-js --fuzzy-keywords --fetch-details</code></pre>
+    </div>
+  </div>
+</template>
+
+<!-- MAIN LAYOUT -->
+<div class="max-w-screen-2xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6" x-show="!loading && items.length > 0">
+
+  <!-- SIDEBAR FILTERS -->
+  <aside class="sidebar bg-white rounded-lg border border-gray-200 p-5 space-y-4 self-start">
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">Buscar título</label>
+      <input type="text" x-model="filters.search" placeholder="Berserk, Bleach..."
+        class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-pink-300">
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">País</label>
+      <select x-model="filters.country" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+        <option value="">Todos</option>
+        <template x-for="c in unique.countries" :key="c">
+          <option :value="c" x-text="c"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">Editorial</label>
+      <select x-model="filters.publisher" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+        <option value="">Todas</option>
+        <template x-for="p in unique.publishers" :key="p">
+          <option :value="p" x-text="p"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">Idioma</label>
+      <select x-model="filters.language" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+        <option value="">Todos</option>
+        <template x-for="l in unique.languages" :key="l">
+          <option :value="l" x-text="l"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">Tipo de producto</label>
+      <select x-model="filters.productType" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+        <option value="">Todos</option>
+        <template x-for="t in unique.productTypes" :key="t">
+          <option :value="t" x-text="t"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">Clase de fuente</label>
+      <select x-model="filters.sourceClass" class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+        <option value="">Todas</option>
+        <template x-for="c in unique.sourceClasses" :key="c">
+          <option :value="c" x-text="c"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
+        Score mínimo: <span x-text="filters.minScore" class="accent font-bold"></span>
+      </label>
+      <input type="range" min="0" max="100" step="5" x-model.number="filters.minScore" class="w-full accent-pink-500">
+    </div>
+
+    <div class="pt-2 border-t border-gray-200">
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" x-model="filters.onlyLimited" class="rounded text-pink-500 focus:ring-pink-300">
+        <span>Solo stock limitado</span>
+      </label>
+    </div>
+
+    <button @click="resetFilters()" class="w-full mt-2 px-3 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+      Reset filtros
+    </button>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main>
+
+    <!-- Sort + page info -->
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-2 text-sm">
+        <label class="text-gray-500">Ordenar:</label>
+        <select x-model="sort" class="px-3 py-1.5 border border-gray-300 rounded-md text-sm">
+          <option value="score_desc">Score (↓ alto)</option>
+          <option value="score_asc">Score (↑ bajo)</option>
+          <option value="detected_desc">Detección (más reciente)</option>
+          <option value="detected_asc">Detección (más antiguo)</option>
+          <option value="title_asc">Título A→Z</option>
+          <option value="title_desc">Título Z→A</option>
+        </select>
+      </div>
+      <div class="text-sm text-gray-500" x-show="totalPages > 1">
+        Página <span x-text="page"></span> / <span x-text="totalPages"></span>
+      </div>
+    </div>
+
+    <!-- Grid de cards -->
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+      <template x-for="item in paginated" :key="item.url + item.detected_at">
+        <div @click="openModal(item)"
+             class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+          <div class="img-wrap relative">
+            <template x-if="item.image_url">
+              <img :src="item.image_url" :alt="item.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+            </template>
+            <div class="img-placeholder" :style="item.image_url ? 'display:none' : ''">📚</div>
+            <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
+                  :class="scoreClass(item.score)" x-text="item.score"></span>
+            <template x-if="item.stock_type === 'limited'">
+              <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
+            </template>
+          </div>
+          <div class="p-3 flex-1 flex flex-col">
+            <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-2" x-text="item.title"></h3>
+            <div class="mt-auto space-y-1 text-xs text-gray-600">
+              <div class="flex items-center gap-1">
+                <span>🌍</span>
+                <span x-text="item.country || '—'"></span>
+              </div>
+              <div class="flex items-center gap-1 truncate">
+                <span>🏢</span>
+                <span x-text="item.publisher || item.source" class="truncate"></span>
+              </div>
+              <div class="flex items-center gap-1">
+                <span>📚</span>
+                <span x-text="item.product_type || '—'" class="capitalize"></span>
+                <template x-if="item.price">
+                  <span class="ml-auto text-pink-700 font-semibold" x-text="item.price"></span>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Vacío con filtros -->
+    <template x-if="filtered.length === 0">
+      <div class="text-center py-16 text-gray-500">
+        <p class="text-lg">Sin resultados con estos filtros.</p>
+        <button @click="resetFilters()" class="mt-3 text-pink-600 underline">Reset filtros</button>
+      </div>
+    </template>
+
+    <!-- Paginación -->
+    <div class="flex items-center justify-center gap-2 mt-8" x-show="totalPages > 1">
+      <button @click="page = Math.max(1, page - 1)" :disabled="page === 1"
+              class="px-3 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+        ← Anterior
+      </button>
+      <span class="text-sm text-gray-600">
+        Página <span x-text="page"></span> / <span x-text="totalPages"></span>
+      </span>
+      <button @click="page = Math.min(totalPages, page + 1)" :disabled="page === totalPages"
+              class="px-3 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+        Siguiente →
+      </button>
+    </div>
+
+  </main>
+</div>
+
+<!-- MODAL DETALLE -->
+<div x-show="selectedItem" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay" @click.self="closeModal()" style="display:none">
+  <div class="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" @click.stop>
+    <template x-if="selectedItem">
+      <div>
+        <!-- Modal header -->
+        <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-start justify-between gap-4">
+          <div class="flex-1">
+            <h2 class="text-xl font-bold" x-text="selectedItem.title"></h2>
+            <p class="text-sm text-gray-500 mt-1">
+              <span x-text="selectedItem.source"></span> · <span x-text="selectedItem.status" class="capitalize"></span>
+            </p>
+          </div>
+          <span class="px-3 py-1 rounded-full text-sm font-bold flex-shrink-0" :class="scoreClass(selectedItem.score)" x-text="selectedItem.score"></span>
+          <button @click="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+        </div>
+
+        <!-- Modal body -->
+        <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-[200px_1fr] gap-6">
+          <div>
+            <template x-if="selectedItem.image_url">
+              <img :src="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200">
+            </template>
+            <template x-if="!selectedItem.image_url">
+              <div class="img-wrap rounded-lg border border-gray-200"><div class="img-placeholder">📚</div></div>
+            </template>
+            <template x-if="selectedItem.stock_type === 'limited'">
+              <div class="mt-3 px-3 py-2 rounded-md badge-limited text-sm text-center font-semibold">
+                ⚠️ Stock limitado
+              </div>
+            </template>
+          </div>
+
+          <div class="space-y-3 text-sm">
+            <template x-for="field in detailFields" :key="field.key">
+              <div x-show="selectedItem[field.key]">
+                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold" x-text="field.label"></span>
+                <p class="mt-0.5 text-gray-900" x-text="formatField(selectedItem, field.key)"></p>
+              </div>
+            </template>
+
+            <template x-if="selectedItem.signals && selectedItem.signals.length">
+              <div>
+                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Señales detectadas</span>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  <template x-for="sig in selectedItem.signals" :key="sig">
+                    <span class="px-2 py-0.5 bg-accent-soft text-pink-800 rounded-full text-xs" x-text="sig"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="selectedItem.description">
+              <div>
+                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Fragmento</span>
+                <p class="mt-1 text-gray-700 text-xs italic whitespace-pre-wrap" x-text="selectedItem.description.slice(0, 800)"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Modal footer -->
+        <div class="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-between items-center">
+          <span class="text-xs text-gray-500">Detectado: <span x-text="formatDate(selectedItem.detected_at)"></span></span>
+          <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
+            Ver en sitio original ↗
+          </a>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+function mangaApp() {
+  return {
+    loading: true,
+    error: null,
+    items: [],
+    selectedItem: null,
+    page: 1,
+    perPage: 60,
+    sort: "score_desc",
+    filters: {
+      search: "",
+      country: "",
+      publisher: "",
+      language: "",
+      productType: "",
+      sourceClass: "",
+      minScore: 30,
+      onlyLimited: false,
+    },
+    detailFields: [
+      { key: "product_type", label: "Tipo de producto" },
+      { key: "author", label: "Autor" },
+      { key: "publisher", label: "Editorial" },
+      { key: "country", label: "País" },
+      { key: "language", label: "Idioma" },
+      { key: "price", label: "Precio" },
+      { key: "release_date", label: "Fecha de lanzamiento" },
+      { key: "published_at", label: "Publicado en feed" },
+      { key: "source_class", label: "Clase de fuente" },
+      { key: "tags", label: "Tags" },
+    ],
+
+    async loadItems() {
+      try {
+        const res = await fetch("../data/items.jsonl");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        const lines = text.trim().split("\n").filter(Boolean);
+        const parsed = lines.map(l => {
+          try { return JSON.parse(l); } catch (e) { return null; }
+        }).filter(Boolean);
+        // Deduplicate by url, keep most recent detected_at
+        const byUrl = new Map();
+        for (const item of parsed) {
+          const existing = byUrl.get(item.url);
+          if (!existing || (item.detected_at || "") > (existing.detected_at || "")) {
+            byUrl.set(item.url, item);
+          }
+        }
+        this.items = Array.from(byUrl.values());
+        this.loading = false;
+      } catch (e) {
+        this.error = e.message;
+        this.loading = false;
+      }
+    },
+
+    get unique() {
+      const u = (key) => Array.from(new Set(this.items.map(i => i[key]).filter(Boolean))).sort();
+      return {
+        countries: u("country"),
+        publishers: u("publisher"),
+        languages: u("language"),
+        productTypes: u("product_type"),
+        sourceClasses: u("source_class"),
+      };
+    },
+
+    get stats() {
+      const lastDetected = this.items
+        .map(i => i.detected_at)
+        .filter(Boolean)
+        .sort()
+        .pop();
+      return {
+        total: this.items.length,
+        countries: this.unique.countries.length,
+        publishers: this.unique.publishers.length,
+        lastDetected: lastDetected ? new Date(lastDetected).toLocaleDateString() : "",
+      };
+    },
+
+    get filtered() {
+      const f = this.filters;
+      const q = f.search.trim().toLowerCase();
+      return this.items.filter(i => {
+        if (q && !(i.title || "").toLowerCase().includes(q)) return false;
+        if (f.country && i.country !== f.country) return false;
+        if (f.publisher && i.publisher !== f.publisher) return false;
+        if (f.language && i.language !== f.language) return false;
+        if (f.productType && i.product_type !== f.productType) return false;
+        if (f.sourceClass && i.source_class !== f.sourceClass) return false;
+        if ((i.score || 0) < f.minScore) return false;
+        if (f.onlyLimited && i.stock_type !== "limited") return false;
+        return true;
+      });
+    },
+
+    get sorted() {
+      const arr = [...this.filtered];
+      const cmp = {
+        score_desc: (a, b) => (b.score || 0) - (a.score || 0),
+        score_asc:  (a, b) => (a.score || 0) - (b.score || 0),
+        detected_desc: (a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""),
+        detected_asc:  (a, b) => (a.detected_at || "").localeCompare(b.detected_at || ""),
+        title_asc:  (a, b) => (a.title || "").localeCompare(b.title || ""),
+        title_desc: (a, b) => (b.title || "").localeCompare(a.title || ""),
+      };
+      return arr.sort(cmp[this.sort] || cmp.score_desc);
+    },
+
+    get totalPages() {
+      return Math.max(1, Math.ceil(this.sorted.length / this.perPage));
+    },
+
+    get paginated() {
+      // Reset page if out of range when filters change
+      if (this.page > this.totalPages) this.page = 1;
+      const start = (this.page - 1) * this.perPage;
+      return this.sorted.slice(start, start + this.perPage);
+    },
+
+    scoreClass(score) {
+      if (score >= 70) return "score-high";
+      if (score >= 35) return "score-mid";
+      return "score-low";
+    },
+
+    formatField(item, key) {
+      const v = item[key];
+      if (Array.isArray(v)) return v.join(", ");
+      return v || "";
+    },
+
+    formatDate(iso) {
+      if (!iso) return "";
+      try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    },
+
+    openModal(item) { this.selectedItem = item; document.body.style.overflow = "hidden"; },
+    closeModal() { this.selectedItem = null; document.body.style.overflow = ""; },
+
+    resetFilters() {
+      this.filters = {
+        search: "", country: "", publisher: "", language: "",
+        productType: "", sourceClass: "", minScore: 30, onlyLimited: false,
+      };
+      this.page = 1;
+    },
+  };
+}
+
+// ESC para cerrar modal
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const root = document.querySelector("[x-data]");
+    if (root && root.__x) root.__x.$data.closeModal();
+  }
+});
+</script>
+
+</body>
+</html>
