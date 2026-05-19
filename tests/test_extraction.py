@@ -714,6 +714,88 @@ def test_score_candidate_no_keyword_injection_without_tag():
 
 
 # ---------------------------------------------------------------------------
+# Fase 2: parser de ListadoManga
+# ---------------------------------------------------------------------------
+
+
+def test_listadomanga_parse_date_header():
+    from wikis import listadomanga as lm
+    assert lm._parse_date_header("Sábado, 2 Mayo 2026") == "2026-05-02"
+    assert lm._parse_date_header("Lunes, 4 Mayo 2026") == "2026-05-04"
+    assert lm._parse_date_header("Viernes, 15 Diciembre 2023") == "2023-12-15"
+
+
+def test_listadomanga_parse_date_invalid():
+    from wikis import listadomanga as lm
+    assert lm._parse_date_header("Mayo 2026") == ""  # no es fecha completa
+    assert lm._parse_date_header("Norma Editorial") == ""
+    assert lm._parse_date_header("") == ""
+
+
+def test_listadomanga_is_publisher_header():
+    from wikis import listadomanga as lm
+    assert lm._is_publisher_header("Norma Editorial") is True
+    assert lm._is_publisher_header("Ediciones Tomodomo") is True
+    assert lm._is_publisher_header("Sábado, 2 Mayo 2026") is False  # es fecha
+    assert lm._is_publisher_header("Mayo 2026") is False  # es mes adyacente
+    assert lm._is_publisher_header("Calendario de Mayo 2026") is False
+    assert lm._is_publisher_header("") is False
+
+
+def test_listadomanga_iter_year_months():
+    from wikis import listadomanga as lm
+    months = lm.iter_year_months(2025, 11, 2026, 2)
+    assert months == [(2025, 11), (2025, 12), (2026, 1), (2026, 2)]
+
+
+def test_listadomanga_parse_calendar_extracts_items():
+    """Parsea un HTML reducido con el patrón real de ListadoManga."""
+    from wikis import listadomanga as lm
+    html = """<html><body>
+        <h2>Norma Editorial</h2>
+        <h2>Sábado, 2 Mayo 2026</h2>
+        <table class="ventana_id1">
+            <tr><td class="izq">
+                <b><u>Seinen</u></b><br/>
+                - <a href="coleccion.php?id=100">Berserk Deluxe nº14 - Edición Especial</a> /
+                  <a href="autor.php?id=50">Kentaro Miura</a><br/>
+                - <a href="coleccion.php?id=101">Otro manga nº1 (de 5)</a> /
+                  <a href="autor.php?id=51">Otro Autor</a><br/>
+            </td></tr>
+        </table>
+    </body></html>"""
+    items = lm.parse_calendar_page(html)
+    assert len(items) == 2
+    assert items[0].publisher == "Norma Editorial"
+    assert items[0].release_date == "2026-05-02"
+    assert "Berserk Deluxe" in items[0].title
+    assert items[0].author == "Kentaro Miura"
+    assert items[0].url.startswith("https://www.listadomanga.es/coleccion.php?id=100")
+
+
+def test_listadomanga_parse_handles_multiple_editorials():
+    from wikis import listadomanga as lm
+    html = """<html><body>
+        <h2>Editorial A</h2>
+        <h2>Lunes, 1 Enero 2024</h2>
+        <table class="ventana_id1"><tr><td>
+            <a href="coleccion.php?id=1">Item A1</a>
+        </td></tr></table>
+        <h2>Editorial B</h2>
+        <h2>Martes, 2 Enero 2024</h2>
+        <table class="ventana_id5"><tr><td>
+            <a href="coleccion.php?id=2">Item B1</a>
+        </td></tr></table>
+    </body></html>"""
+    items = lm.parse_calendar_page(html)
+    assert len(items) == 2
+    assert items[0].publisher == "Editorial A"
+    assert items[1].publisher == "Editorial B"
+    assert items[0].release_date == "2024-01-01"
+    assert items[1].release_date == "2024-01-02"
+
+
+# ---------------------------------------------------------------------------
 # Derivación de tipo de producto
 # ---------------------------------------------------------------------------
 

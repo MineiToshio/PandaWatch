@@ -36,6 +36,7 @@ import html
 import json
 import os
 import re
+import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -2963,6 +2964,88 @@ class DiagnosticRecorder:
         lines.append("")
 
 
+def _parse_wiki_month(value: str, default_year: int, default_month: int) -> tuple[int, int]:
+    """Parsea 'YYYY-MM' a (year, month). Si está vacío, usa defaults."""
+    if not value:
+        return default_year, default_month
+    try:
+        y, m = value.split("-")
+        return int(y), int(m)
+    except (ValueError, AttributeError):
+        raise SystemExit(f"--wiki-from/--wiki-to debe ser YYYY-MM. Recibido: {value!r}")
+
+
+def _run_wiki_bootstrap(
+    args: argparse.Namespace,
+    session: requests.Session,
+    state: dict[str, Any],
+    state_path: Path,
+    items_path: Path,
+    report_path: Path,
+) -> int:
+    """Modo --bootstrap-wiki: importa items de una wiki comunitaria al state."""
+    today = dt.date.today()
+    yf, mf = _parse_wiki_month(args.wiki_from, 2024, 1)
+    yt, mt = _parse_wiki_month(args.wiki_to, today.year, today.month)
+
+    print(f"[BOOTSTRAP-WIKI] fuente: {args.bootstrap_wiki}")
+    print(f"                rango: {yf:04d}-{mf:02d} → {yt:04d}-{mt:02d}")
+    print(f"                min-score: {args.min_score}")
+    print()
+
+    if args.bootstrap_wiki == "listadomanga":
+        # Asegurar que scripts/ esté en sys.path para que 'wikis' sea importable
+        # tanto si corremos desde root como desde el wrapper.
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from wikis.listadomanga import bootstrap as bootstrap_listadomanga, iter_year_months
+        candidates = bootstrap_listadomanga(
+            yf, mf, yt, mt,
+            session=session,
+            sleep_seconds=args.sleep_seconds,
+            timeout=(args.connect_timeout, args.read_timeout),
+            min_score=args.min_score,
+        )
+        months = iter_year_months(yf, mf, yt, mt)
+    else:
+        raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
+
+    print(f"\n[BOOTSTRAP-WIKI] {len(candidates)} candidates con score>={args.min_score} sobre {len(months)} meses")
+
+    # process_state aplica el dedup en cascada (URL normalizada + ISBN).
+    reportable, state = process_state(
+        candidates=candidates,
+        state=state,
+        min_score=args.min_score,
+        include_seen=args.include_seen,
+    )
+
+    if not args.dry_run:
+        save_state(state_path, state)
+        new_or_changed = [
+            candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
+        ]
+        append_jsonl(items_path, new_or_changed)
+        write_markdown_report(
+            path=report_path,
+            reportable=reportable,
+            errors=[],
+            problems=[],
+            min_score=args.min_score,
+        )
+
+    print()
+    print("[RESUMEN BOOTSTRAP-WIKI]")
+    print(f"  candidates totales: {len(candidates)}")
+    print(f"  reportables (new/changed): {sum(1 for c in reportable if c.status in {'new', 'changed'})}")
+    print(f"  ya conocidos (seen): {sum(1 for c in reportable if c.status == 'seen')}")
+    print(f"  jsonl: {items_path}")
+    print(f"  state: {state_path}")
+    print(f"  reporte: {report_path}")
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
@@ -3009,6 +3092,10 @@ def run(args: argparse.Namespace) -> int:
     state = load_state(state_path)
     session = make_session(args.user_agent)
     robots = RobotsCache(args.user_agent)
+
+    # === Fase 2: bootstrap desde wiki comunitaria ===
+    if args.bootstrap_wiki:
+        return _run_wiki_bootstrap(args, session, state, state_path, items_path, report_path)
 
     all_candidates: list[Candidate] = []
     errors: list[str] = []
@@ -3394,6 +3481,21 @@ def parse_args() -> argparse.Namespace:
         help="Score mínimo para hacer detail-fetch. Default: 70 (solo urgentes).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
+    parser.add_argument(
+        "--bootstrap-wiki",
+        choices=["listadomanga"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria (Fase 2 del PRD). Actualmente soporta: listadomanga (España).",
+    )
+    parser.add_argument(
+        "--wiki-from",
+        default="2024-01",
+        help="Mes inicial para --bootstrap-wiki (formato YYYY-MM). Default: 2024-01",
+    )
+    parser.add_argument(
+        "--wiki-to",
+        default="",
+        help="Mes final para --bootstrap-wiki (YYYY-MM). Default: mes actual.",
+    )
     return parser.parse_args()
 
 
