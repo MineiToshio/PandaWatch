@@ -200,17 +200,30 @@ manga-watch/
 
 ## 12. Cómo se usa
 
+Hay **dos modos**, elegí el que te guste:
+
+### Modo A — Single-file (recomendado, doble-click)
+
 ```bash
-# 1. Asegurate de que data/items.jsonl existe
-ls data/items.jsonl
+# Embebe data/items.jsonl dentro de web/index.html
+.venv/bin/python scripts/build_web.py
 
-# 2. Lanzá el server local
+# Abre con doble-click (file://)
+open web/index.html
+```
+
+El HTML queda autocontenido. Lo podés mover de carpeta, mandar por mail, etc.
+Hay que volver a correr `build_web.py` cuando hay nuevos items.
+
+### Modo B — Server local (más vivo)
+
+```bash
 ./web/serve.sh
-# (o: python -m http.server 8000 desde la raíz)
-
-# 3. Abre el browser
+# o: python -m http.server 8000 desde la raíz
 open http://localhost:8000/web/
 ```
+
+No requiere build step. Cada refresh re-fetcha `data/items.jsonl`.
 
 ## 13. Performance esperada
 
