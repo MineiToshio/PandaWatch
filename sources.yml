@@ -23,6 +23,8 @@ sources:
     url: "https://www.ivrea.com.ar/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.vc_col-sm-2.vc_column_container.wpb_column"
 
   - name: "AR - Ivreality"
     country: "Argentina"
@@ -33,6 +35,10 @@ sources:
     url: "https://www.ivreality.com.ar/"
     enabled: true
     tags: ["manga", "news", "official"]
+    selectors:
+      item_selector: "div.td_module_flex"
+      title_selector: "h3.entry-title a, .td-module-title a"
+      link_selector: "h3.entry-title a, .td-module-title a"
 
   - name: "AR - La Comiquería"
     country: "Argentina"
@@ -192,6 +198,7 @@ sources:
     url: "https://www.editorialivrea.com/ESP/news/"
     enabled: true
     tags: ["manga", "official"]
+    notes: "Página de tiles de solo imagen con alts cortos. Sin texto útil sin JS."
 
   - name: "ES - Milky Way Próximamente"
     country: "España"
@@ -222,6 +229,9 @@ sources:
     url: "https://arechimanga.com/novedades/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "li.wc-block-grid__product"
+      title_selector: ".wc-block-grid__product-title, a"
 
   - name: "ES - Kibook Novedades"
     country: "España"
@@ -242,6 +252,8 @@ sources:
     url: "https://hablamosdelibros.es/editorial/pika-ediciones/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.ae-bg-gallery-type-default.e-con.e-con-boxed"
 
   # -------------------------
   # Estados Unidos / Inglés - oficiales y medios
@@ -367,6 +379,9 @@ sources:
     url: "https://usa.kinokuniya.com/kinokuniya-exclusives"
     enabled: true
     tags: ["retailer", "exclusive", "variant", "shikishi"]
+    selectors:
+      item_selector: "div.margin-wrapper"
+      title_selector: "p, h3, .sqs-block-content p:first-child"
 
   - name: "US - Barnes & Noble Manga Exclusives"
     country: "Estados Unidos"
@@ -473,6 +488,9 @@ sources:
     url: "https://www.ki-oon.com/"
     enabled: true
     tags: ["manga", "collector", "official"]
+    selectors:
+      item_selector: "article.new"
+      title_selector: "h2, h3, a"
 
   - name: "FR - Kana"
     country: "Francia"
@@ -543,6 +561,9 @@ sources:
     url: "https://www.akata.fr/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.views-field-view-comment"
+      title_selector: "a"
 
   - name: "FR - Vega Dupuis"
     country: "Francia"
@@ -636,6 +657,9 @@ sources:
     url: "https://www.starcomics.com/"
     enabled: true
     tags: ["manga", "official", "news"]
+    selectors:
+      item_selector: "div.fumetto-card"
+      title_selector: "h3, h4, a, .card-title"
 
   - name: "IT - J-Pop Manga"
     country: "Italia"
@@ -656,6 +680,9 @@ sources:
     url: "https://www.edizionibd.it/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.product.product-item"
+      title_selector: ".product-item-link, .product-item-name a"
 
   - name: "IT - Dynit"
     country: "Italia"
@@ -666,6 +693,9 @@ sources:
     url: "https://www.dynit.it/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.sc_extended_products_content"
+      title_selector: ".woocommerce-loop-product__title, h2, h3, a"
 
   - name: "IT - Magic Press"
     country: "Italia"
@@ -696,6 +726,9 @@ sources:
     url: "https://www.rwedizioni.it/goen/"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "div.vc_grid-item"
+      title_selector: ".vc_gitem-post-data-source-post_title, h4, h3"
 
   - name: "IT - MangaYo Esclusive"
     country: "Italia"
