@@ -1000,20 +1000,8 @@ sources:
       - "deluxe"
       - "integrale"
 
-  - name: "FR - Ki-oon (search)"
-    country: "Francia"
-    language: "Francés"
-    publisher: "Ki-oon"
-    source_class: "official"
-    kind: "html"
-    enabled: true
-    tags: ["manga", "official"]
-    search_template: "https://www.ki-oon.com/recherche?controller=search&s={query}"
-    keywords:
-      - "edition collector"
-      - "edition limitee"
-      - "coffret"
-      - "integrale"
+  # FR - Ki-oon: sitio sin buscador URL-accesible (eliminado de Fase 1).
+  # El catálogo se cubre con la fuente canónica "FR - Ki-oon" (selectors YAML).
 
   - name: "US - Dark Horse Direct (search)"
     country: "Estados Unidos"
@@ -1039,8 +1027,9 @@ sources:
     publisher: "Yen Press"
     source_class: "official"
     kind: "html"
-    enabled: true
+    enabled: false
     tags: ["manga", "official"]
+    notes: "Búsqueda interna no responde a queries vía URL (probable JS/AJAX). Investigar endpoint o usar Playwright."
     search_template: "https://yenpress.com/search?type=product&q={query}"
     keywords:
       - "limited edition"
@@ -1058,7 +1047,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "official"]
-    search_template: "https://www.starcomics.com/search?text={query}"
+    search_template: "https://www.starcomics.com/ricerca-fumetti?q={query}"
     keywords:
       - "edizione limitata"
       - "edizione speciale"
