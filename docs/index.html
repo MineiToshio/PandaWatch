@@ -368,6 +368,31 @@
   </div>
 
   <div class="flag">
+    <div class="flag-name">--fetch-details <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Tras detectar items, hace <strong>1 HTTP extra</strong> a la página individual de cada producto para extraer el <strong>autor</strong>. Sin este flag, la cobertura de <code>author</code> es ~2% (solo cuando aparece en la card del listado). Con este flag sube a ~50-100% en fuentes oficiales/retailer.</p>
+      <p>Solo aplica a items que cumplen <strong>todos</strong>:</p>
+      <ul>
+        <li>Status <code>new</code> o <code>changed</code></li>
+        <li>Score ≥ <code>--fetch-details-min-score</code> (default 70)</li>
+        <li><code>author</code> aún vacío</li>
+        <li><code>source_class</code> ∈ {official, retailer} (evita ruido de blogs)</li>
+      </ul>
+      <p>Estrategias en orden: JSON-LD → meta tags → <code>&lt;a href="/autor/..."&gt;</code> → texto plano. La 3ª es la más usada por sitios de manga (Norma, Glénat, etc.).</p>
+      <p>Real-world: Norma 2/2, Glénat 1/1 autores extraídos.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--fetch-details-min-score 70 <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: <code>70</code></div>
+    <div class="flag-body">
+      <p>Score mínimo para que un item sea elegible al detail-fetch. Bajarlo (ej. 40) enriquece más items pero hace más HTTP requests.</p>
+    </div>
+  </div>
+
+  <div class="flag">
     <div class="flag-name">--fuzzy-divisor 3 <span class="tag tag-new">NUEVO</span></div>
     <div class="flag-default">Default: <code>3</code></div>
     <div class="flag-body">

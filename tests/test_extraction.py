@@ -415,3 +415,78 @@ def test_derive_stock_type_from_japanese_text():
 def test_derive_stock_type_empty_when_no_signal():
     # Ausencia de señal NO afirma "regular"; queda vacío.
     assert mw.derive_stock_type([], "Manga regular", "Disponible en librerías.") == ""
+
+
+# ---------------------------------------------------------------------------
+# JSON-LD author extraction
+# ---------------------------------------------------------------------------
+
+
+def test_json_ld_author_string():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@type": "Book", "name": "Berserk", "author": "Kentaro Miura"}
+    </script></head><body></body></html>"""
+    soup = make_soup(html)
+    assert mw._extract_json_ld_author(soup) == "Kentaro Miura"
+
+
+def test_json_ld_author_object_with_name():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@type": "Book", "author": {"@type": "Person", "name": "Akira Toriyama"}}
+    </script></head></html>"""
+    soup = make_soup(html)
+    assert mw._extract_json_ld_author(soup) == "Akira Toriyama"
+
+
+def test_json_ld_author_list():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@type": "Book", "author": [{"name": "First Author"}, {"name": "Second"}]}
+    </script></head></html>"""
+    soup = make_soup(html)
+    assert mw._extract_json_ld_author(soup) == "First Author"
+
+
+def test_json_ld_no_author_returns_empty():
+    html = '<html><script type="application/ld+json">{"@type": "Book"}</script></html>'
+    soup = make_soup(html)
+    assert mw._extract_json_ld_author(soup) == ""
+
+
+def test_json_ld_invalid_json_handled():
+    html = '<html><script type="application/ld+json">{ broken json</script></html>'
+    soup = make_soup(html)
+    assert mw._extract_json_ld_author(soup) == ""
+
+
+# ---------------------------------------------------------------------------
+# Author link patterns (/autor/, /auteur/, /author/)
+# ---------------------------------------------------------------------------
+
+
+def test_author_link_spanish_path():
+    html = '<html><body><a href="/autor/isayama-hajime">Hajime Isayama</a></body></html>'
+    soup = make_soup(html)
+    assert mw._extract_author_from_links(soup) == "Hajime Isayama"
+
+
+def test_author_link_french_path():
+    html = '<html><body><a href="/auteur/akira-toriyama">Akira Toriyama (Auteur)</a></body></html>'
+    soup = make_soup(html)
+    result = mw._extract_author_from_links(soup)
+    assert "Akira Toriyama" in result
+
+
+def test_author_link_skips_see_all():
+    html = '<html><body><a href="/autor/lista">Ver todos los autores</a></body></html>'
+    soup = make_soup(html)
+    assert mw._extract_author_from_links(soup) == ""
+
+
+def test_author_link_skips_lowercase_first_char():
+    # Defensive: link a /autor/ con texto que empieza minúscula no es nombre propio.
+    html = '<html><body><a href="/autor/x">la editorial</a></body></html>'
+    soup = make_soup(html)
+    assert mw._extract_author_from_links(soup) == ""

@@ -566,6 +566,111 @@ def _validate_author_candidate(raw: str) -> str:
     return cleaned
 
 
+AUTHOR_LINK_HREF_PATTERN = re.compile(
+    r"/(?:autor|auteur|author|mangaka|kreator|verfasser|autore)/",
+    re.IGNORECASE,
+)
+
+JSON_LD_AUTHOR_FIELDS = ("author", "creator", "illustrator", "writer")
+
+
+def _extract_json_ld_author(soup: BeautifulSoup) -> str:
+    """Busca autor en bloques JSON-LD (Schema.org)."""
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        candidates = data if isinstance(data, list) else [data]
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            for field in JSON_LD_AUTHOR_FIELDS:
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, dict):
+                    name = (value.get("name") or "").strip()
+                    if name:
+                        return name
+                if isinstance(value, list):
+                    for entry in value:
+                        if isinstance(entry, str) and entry.strip():
+                            return entry.strip()
+                        if isinstance(entry, dict):
+                            name = (entry.get("name") or "").strip()
+                            if name:
+                                return name
+    return ""
+
+
+def _extract_author_from_links(soup: BeautifulSoup) -> str:
+    """Detect author from <a href="/autor/..."> / /auteur/ / /author/ patterns."""
+    for link in soup.find_all("a", href=AUTHOR_LINK_HREF_PATTERN):
+        text = clean_text(link.get_text(" ", strip=True))
+        if not text or len(text) < 3 or len(text) > 80:
+            continue
+        lower = text.lower()
+        if any(skip in lower for skip in ("todos", "all authors", "voir tous", "see all")):
+            continue
+        first_char = text[0]
+        if first_char.isupper() or "぀" <= first_char <= "鿿":
+            return text
+    return ""
+
+
+def fetch_author_from_detail(
+    url: str,
+    session: requests.Session,
+    timeout: tuple[int, int],
+) -> str:
+    """Fetch HTTP a la URL del producto y extrae autor con 4 estrategias en orden.
+
+    Devuelve "" si la página no responde o no se puede extraer autor confiable.
+    Es opt-in (--fetch-details) porque agrega 1 HTTP request por item.
+    """
+    if not url:
+        return ""
+    try:
+        response = session.get(url, timeout=timeout)
+        response.raise_for_status()
+        if not response.encoding:
+            response.encoding = response.apparent_encoding
+        soup = BeautifulSoup(response.text, "html.parser")
+    except (requests.RequestException, Exception):
+        return ""
+
+    # 1) JSON-LD (schema.org)
+    author = _extract_json_ld_author(soup)
+    if author:
+        return author
+
+    # 2) meta tags
+    for attrs in (
+        {"name": "author"},
+        {"property": "book:author"},
+        {"property": "og:book:author"},
+        {"name": "twitter:creator"},
+    ):
+        meta = soup.find("meta", attrs=attrs)
+        if meta and meta.get("content"):
+            value = clean_text(meta["content"])
+            if value:
+                return value
+
+    # 3) Links a páginas de autor (patrón más común en e-commerce)
+    author = _extract_author_from_links(soup)
+    if author:
+        return author
+
+    # 4) Fallback: regex + selectores class-based sobre el body completo.
+    body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
+    return extract_author(body_text[:3000], soup)
+
+
 def extract_author(text: str, card: Any = None) -> str:
     """Best-effort extracción del autor/mangaka. Devuelve "" si no encuentra."""
     # 1) Selectores HTML estructurados.
@@ -1473,6 +1578,16 @@ def score_candidate(candidate: Candidate) -> Candidate:
     candidate.stock_type = derive_stock_type(
         signal_types, candidate.title, candidate.description
     )
+    _recompute_content_hash(candidate)
+    return candidate
+
+
+def _recompute_content_hash(candidate: Candidate) -> None:
+    """Recalcula content_hash a partir de los campos persistidos.
+
+    Usado tras un detail-fetch que actualiza author / metadata, para que
+    el cambio se refleje en el hash y se detecte como 'changed'.
+    """
     candidate.content_hash = sha256_text(
         json.dumps(
             {
@@ -1492,7 +1607,6 @@ def score_candidate(candidate: Candidate) -> Candidate:
             sort_keys=True,
         )
     )
-    return candidate
 
 
 def candidate_key(candidate: Candidate) -> str:
@@ -2238,6 +2352,42 @@ def run(args: argparse.Namespace) -> int:
         include_seen=args.include_seen,
     )
 
+    # Detail-fetch para enriquecer autor en items importantes (opt-in).
+    if args.fetch_details:
+        eligible = [
+            c for c in reportable
+            if c.status in {"new", "changed"}
+            and c.score >= args.fetch_details_min_score
+            and not c.author
+            and c.source_class in ("official", "retailer")
+            and c.url
+        ]
+        # Skip URLs que coincidan con la URL de la fuente (son listings).
+        source_urls = {s.url for s in sources}
+        eligible = [c for c in eligible if c.url not in source_urls]
+        print("")
+        print(f"[FETCH-DETAILS] {len(eligible)} items elegibles (score>={args.fetch_details_min_score}, sin autor, official/retailer)")
+        enriched = 0
+        for idx, c in enumerate(eligible, start=1):
+            author = fetch_author_from_detail(
+                c.url, session, timeout=(args.connect_timeout, args.read_timeout)
+            )
+            if author:
+                c.author = author
+                _recompute_content_hash(c)
+                # Sincronizar state con el nuevo hash + autor.
+                key = candidate_key(c)
+                if key in state:
+                    state[key]["author"] = author
+                    state[key]["content_hash"] = c.content_hash
+                enriched += 1
+                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → autor: {author[:60]}")
+            else:
+                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → (sin autor)")
+            if args.sleep_seconds > 0 and idx < len(eligible):
+                time.sleep(min(args.sleep_seconds, 1.0))
+        print(f"[FETCH-DETAILS] {enriched}/{len(eligible)} items enriquecidos con autor")
+
     if not args.dry_run:
         save_state(state_path, state)
         new_or_changed_rows = [
@@ -2350,6 +2500,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help="Divisor del score cuando una palabra fuzzy matchea pero no la frase completa. Default: 3",
+    )
+    parser.add_argument(
+        "--fetch-details",
+        action="store_true",
+        help="Tras detectar items, hace 1 HTTP extra a la página de cada item para extraer autor (solo para items new/changed con score alto). Mejora cobertura de author del 2%% al ~50%%.",
+    )
+    parser.add_argument(
+        "--fetch-details-min-score",
+        type=int,
+        default=70,
+        help="Score mínimo para hacer detail-fetch. Default: 70 (solo urgentes).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()

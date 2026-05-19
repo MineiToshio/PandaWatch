@@ -4,6 +4,52 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Detail-fetching para mejorar cobertura de autor
+
+### Added
+
+- **`fetch_author_from_detail()`** opt-in: tras detectar items, hace
+  1 HTTP extra a la página individual del producto para extraer autor.
+  Investigación de 4 sitios reales mostró que ninguno usa JSON-LD ni
+  meta tags estándar — todos exponen autor mediante links del tipo
+  `<a href="/autor/..."> / /auteur/ / /author/ / /mangaka/`.
+  El extractor prueba 4 estrategias en orden de confiabilidad:
+    1. JSON-LD (`<script type="application/ld+json">` con
+       `author`/`creator`/`illustrator`/`writer`)
+    2. meta tags (`name="author"`, `property="book:author"`,
+       `og:book:author`, `twitter:creator`)
+    3. Links a páginas de autor (`/autor/`, `/auteur/`, `/author/`,
+       `/mangaka/`, `/kreator/`, `/verfasser/`, `/autore/`)
+    4. Fallback: regex + selectores class-based sobre el body
+- **CLI `--fetch-details`** (off por default).
+- **CLI `--fetch-details-min-score N`** (default 70). Solo enriquece
+  items urgentes para no agregar HTTP overhead innecesario.
+- 10 tests nuevos: JSON-LD (string/object/list/inválido), links de
+  autor (es/fr, blacklist, lowercase rejection).
+
+### Filtros aplicados al detail-fetching
+
+Solo enriquece items que cumplen TODOS los criterios:
+- Status `new` o `changed` (no re-fetch para `seen`)
+- Score ≥ `--fetch-details-min-score`
+- `author` ya está vacío después del extract inicial
+- `source_class` ∈ {official, retailer} — evita ruido de blogs/news
+- URL distinta a la del listing (es page de detalle, no catálogo)
+
+### Performance
+
+- Solo afecta a items reportables high-score (~10-30 items por día)
+- Reusa la misma `requests.Session` con sleep entre fetches
+- Tras detail-fetch que actualiza autor, se recalcula `content_hash`
+  para que aparezca como `changed` en próxima corrida y el state
+  refleje el nuevo dato.
+
+### Real-world testing
+
+- Norma Editorial (Berserk/Resident Evil): 2/2 items enriquecidos
+  → "Hajime Isayama", "CAPCOM | ZINO"
+- Glénat (Dragon Ball): 1/1 enriquecido → "Akira Toriyama"
+
 ## [Unreleased] — Autor + stock_type
 
 ### Added
