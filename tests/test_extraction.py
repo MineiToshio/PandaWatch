@@ -582,3 +582,71 @@ def test_filter_no_tag_filter_returns_all():
     b = _src_tagged("b")
     out = mw.filter_sources([a, b], None, None, False)
     assert len(out) == 2
+
+
+# ---------------------------------------------------------------------------
+# Paginación: find_next_page_url
+# ---------------------------------------------------------------------------
+
+
+def test_next_page_via_link_rel_next():
+    html = '<html><head><link rel="next" href="/page/2"></head><body></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
+    assert url == "https://example.com/page/2"
+
+
+def test_next_page_via_class_next():
+    html = '<html><body><a class="next" href="?page=2">Next</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list?page=1", set())
+    assert "page=2" in (url or "")
+
+
+def test_next_page_via_aria_label():
+    html = '<html><body><a aria-label="Next page" href="/list/p/2">2</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
+    assert url == "https://example.com/list/p/2"
+
+
+def test_next_page_via_text_siguiente():
+    html = '<html><body><a href="/list?page=2">Siguiente</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list?page=1", set())
+    assert url == "https://example.com/list?page=2"
+
+
+def test_next_page_via_text_arrows():
+    html = '<html><body><a href="/list?page=2">›</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
+    assert "page=2" in (url or "")
+
+
+def test_next_page_skips_already_visited():
+    html = '<html><body><a class="next" href="?page=2">Next</a></body></html>'
+    visited = {"https://example.com/list?page=2"}
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list?page=1", visited)
+    assert url is None
+
+
+def test_next_page_skips_self_loop():
+    # Link "next" que apunta a la misma URL no debe contar.
+    html = '<html><body><a class="next" href="?page=1">Next</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list?page=1", set())
+    assert url is None
+
+
+def test_next_page_no_link_returns_none():
+    html = '<html><body><p>Just text, no pagination.</p></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
+    assert url is None
+
+
+def test_next_page_param_increment_only_if_link_exists():
+    # Aunque current_url tenga ?page=1, no inventamos page=2 si no hay anchor con N+1
+    html = '<html><body><a href="/other">link no relacionado</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list?page=1", set())
+    assert url is None
+
+
+def test_next_page_skips_cross_origin():
+    html = '<html><body><a class="next" href="https://otherdomain.com/x">Next</a></body></html>'
+    url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
+    assert url is None

@@ -448,6 +448,16 @@
   </div>
 
   <div class="flag">
+    <div class="flag-name">--max-pages 3 <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: <code>3</code></div>
+    <div class="flag-body">
+      <p>Máximo de páginas a seguir por fuente cuando hay link "siguiente". Tras extraer una página, el scraper detecta el link "Siguiente / Next / ›" y lo sigue, hasta este límite o hasta que no haya más páginas.</p>
+      <p>Override individual en YAML con <code>max_pages: 10</code> para catálogos grandes.</p>
+      <p>Real-world: Panini MX Boxsets pasó de 12 a 29 candidatos con 3 páginas. RSS siempre = 1 (no se pagina).</p>
+    </div>
+  </div>
+
+  <div class="flag">
     <div class="flag-name">--max-items-per-source 80</div>
     <div class="flag-default">Default: <code>80</code></div>
     <div class="flag-body">

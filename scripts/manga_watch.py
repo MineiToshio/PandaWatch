@@ -265,6 +265,7 @@ class Source:
     tags: list[str] = field(default_factory=list)
     notes: str = ""
     selectors: dict[str, str] = field(default_factory=dict)
+    max_pages: int = 0  # 0 = usar default global (--max-pages); >0 = override
 
 
 @dataclass
@@ -811,6 +812,7 @@ def load_sources(path: Path) -> list[Source]:
                     tags=tags,
                     notes=str(item.get("notes", "")).strip(),
                     selectors=dict(item.get("selectors", {}) or {}),
+                    max_pages=int(item.get("max_pages", 0) or 0),
                 )
             )
 
@@ -921,6 +923,105 @@ def fetch_text(session: requests.Session, url: str, timeout: tuple[int, int]) ->
     if not response.encoding:
         response.encoding = response.apparent_encoding
     return response.text
+
+
+NEXT_PAGE_TEXTS: frozenset[str] = frozenset({
+    "siguiente", "next", "next page", "next »", "›", "»", "→",
+    "suivant", "successivo", "次へ", "次のページ", "下一页", "下一頁",
+    "más resultados", "load more", "ver más",
+})
+
+NEXT_PAGE_SELECTORS: tuple[str, ...] = (
+    "link[rel='next']",
+    "a[rel='next']",
+    "a.next",
+    "a.pagination__next",
+    "a.pagination-next",
+    "li.next a",
+    "li.pagination-next a",
+    "a[class*='-next']",
+    "a[class*='Next']",
+    "a[class*='next-page']",
+    "a[aria-label*='Next' i]",
+    "a[aria-label*='Siguiente' i]",
+    "a[aria-label*='Suivant' i]",
+    "a[aria-label*='Página siguiente' i]",
+    "a[aria-label*='Pagina successiva' i]",
+)
+
+
+def find_next_page_url(
+    soup: BeautifulSoup, current_url: str, visited: set[str]
+) -> str | None:
+    """Detecta el link a la próxima página. Devuelve URL absoluta o None.
+
+    Estrategias en orden de confiabilidad:
+    1. <link rel="next"> en <head> (estándar SEO)
+    2. Selectores conocidos: .next, .pagination__next, [aria-label*=Next], etc.
+    3. Texto del link: Siguiente / Next / › / » / Suivant / 次へ / ...
+    4. Detección de patrón ?page=N en current_url → buscar ?page=N+1
+
+    Evita loops: no devuelve URLs ya visitadas ni la misma current_url.
+    """
+
+    def _accept(href: str | None) -> str | None:
+        if not href:
+            return None
+        url = canonicalize_url(current_url, href)
+        if not url or url == current_url or url in visited:
+            return None
+        # Ignorar URLs de otros dominios (paginación normalmente es same-origin).
+        if urlparse(url).netloc and urlparse(current_url).netloc:
+            if urlparse(url).netloc != urlparse(current_url).netloc:
+                return None
+        return url
+
+    # 1 + 2: Selectores conocidos.
+    for selector in NEXT_PAGE_SELECTORS:
+        try:
+            node = soup.select_one(selector)
+        except Exception:
+            continue
+        if node and node.get("href"):
+            result = _accept(node.get("href"))
+            if result:
+                return result
+
+    # 3: Texto del link.
+    for anchor in soup.find_all("a", href=True):
+        text = clean_text(anchor.get_text(" ", strip=True)).lower()
+        if text in NEXT_PAGE_TEXTS:
+            result = _accept(anchor.get("href"))
+            if result:
+                return result
+
+    # 4: Detectar parámetro ?page=N / ?p=N / ?paged=N en current_url y buscar N+1.
+    parsed = urlparse(current_url)
+    if parsed.query:
+        from urllib.parse import parse_qs, urlencode, urlunparse
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        for page_param in ("page", "p", "paged"):
+            values = params.get(page_param)
+            if not values:
+                continue
+            try:
+                current_page = int(values[0])
+            except (ValueError, TypeError):
+                continue
+            next_params = {k: v[:] for k, v in params.items()}
+            next_params[page_param] = [str(current_page + 1)]
+            next_query = urlencode(next_params, doseq=True)
+            next_url = urlunparse(
+                (parsed.scheme, parsed.netloc, parsed.path, parsed.params, next_query, parsed.fragment)
+            )
+            if next_url != current_url and next_url not in visited:
+                # Verificar que el N+1 aparezca explícitamente en algún anchor de la página.
+                # Esto evita generar URLs que no existen.
+                for anchor in soup.find_all("a", href=True):
+                    href = anchor.get("href", "")
+                    if f"{page_param}={current_page + 1}" in href:
+                        return next_url
+    return None
 
 
 def fetch_with_metadata(
@@ -1986,6 +2087,7 @@ class DiagnosticRecorder:
             "anchor_count": None,
             "anchor_count_significant": None,
             "extraction_method": None,
+            "pages_visited": 1,
             "cards_found": None,
             "candidates_after_signals": 0,
             "candidates_after_scoring": 0,
@@ -2186,6 +2288,8 @@ class DiagnosticRecorder:
             )
         if entry.get("extraction_method"):
             lines.append(f"- **Método extracción:** {entry['extraction_method']}")
+        if entry.get("pages_visited", 1) > 1:
+            lines.append(f"- **Páginas visitadas:** {entry['pages_visited']}")
         if entry.get("cards_found") is not None:
             lines.append(f"- **Cards detectados:** {entry['cards_found']}")
         skips = []
@@ -2295,6 +2399,15 @@ def run(args: argparse.Namespace) -> int:
                 diagnostic.record_status("robots", message)
                 continue
 
+            # Determinar max_pages efectivo para esta fuente.
+            if source.kind in {"rss", "feed", "atom"}:
+                effective_max_pages = 1  # RSS no se pagina
+            elif source.max_pages > 0:
+                effective_max_pages = source.max_pages
+            else:
+                effective_max_pages = args.max_pages
+
+            # Pre-validación para kind:js.
             if source.kind == "js":
                 if not args.enable_js:
                     message = "Fuente kind:js requiere --enable-js (Playwright)"
@@ -2309,62 +2422,100 @@ def run(args: argparse.Namespace) -> int:
                     record_problem(source.name, "other", message)
                     diagnostic.record_status("other", message)
                     continue
-                text, fetch_meta = fetch_with_playwright(
-                    url=source.url,
-                    timeout_ms=args.read_timeout * 1000,
-                )
-            else:
-                text, fetch_meta = fetch_with_metadata(
-                    session=session,
-                    url=source.url,
-                    timeout=(args.connect_timeout, args.read_timeout),
-                )
-            diagnostic.record_fetch(fetch_meta, text)
 
-            if source.kind in {"rss", "feed", "atom"}:
-                candidates = extract_rss(
-                    source,
-                    text,
-                    max_items=args.max_items_per_source,
-                    max_age_days=args.max_age_days,
-                )
-                if diagnostic.enabled and info is not None:
-                    info["extraction_method"] = "rss"
-                    info["candidates_after_signals"] = len(candidates)
-            else:
-                pre_soup = BeautifulSoup(text, "html.parser")
-                for stripped in pre_soup(["script", "style", "noscript", "svg"]):
-                    stripped.decompose()
-                diagnostic.record_anchor_counts(pre_soup)
-                # Si ya renderizamos con Playwright, saltamos el check de JS-shell
-                # (era para detectar páginas que necesitan exactamente esto).
+            # Loop de paginación.
+            visited_urls: set[str] = set()
+            current_url = source.url
+            all_candidates_source: list[Candidate] = []
+            pages_visited = 0
+            skipped_for_js = False
+
+            for page_num in range(1, effective_max_pages + 1):
+                visited_urls.add(current_url)
+                pages_visited = page_num
+
+                # Fetch (HTTP normal o Playwright según kind).
                 if source.kind == "js":
-                    candidates = extract_generic_html(
+                    text, fetch_meta = fetch_with_playwright(
+                        url=current_url,
+                        timeout_ms=args.read_timeout * 1000,
+                    )
+                else:
+                    text, fetch_meta = fetch_with_metadata(
+                        session=session,
+                        url=current_url,
+                        timeout=(args.connect_timeout, args.read_timeout),
+                    )
+
+                # Solo registramos fetch/anchors de la página 1 en diagnostic.
+                if page_num == 1:
+                    diagnostic.record_fetch(fetch_meta, text)
+
+                # Extract según kind.
+                if source.kind in {"rss", "feed", "atom"}:
+                    page_candidates = extract_rss(
                         source,
                         text,
                         max_items=args.max_items_per_source,
-                        info=info,
+                        max_age_days=args.max_age_days,
+                    )
+                    if diagnostic.enabled and info is not None and page_num == 1:
+                        info["extraction_method"] = "rss"
+                        info["candidates_after_signals"] = len(page_candidates)
+                    all_candidates_source.extend(page_candidates)
+                    break  # RSS no pagina
+
+                pre_soup = BeautifulSoup(text, "html.parser")
+                for stripped in pre_soup(["script", "style", "noscript", "svg"]):
+                    stripped.decompose()
+                if page_num == 1:
+                    diagnostic.record_anchor_counts(pre_soup)
+
+                if source.kind == "js":
+                    page_candidates = extract_generic_html(
+                        source,
+                        text,
+                        max_items=args.max_items_per_source,
+                        info=info if page_num == 1 else None,
                     )
                 else:
-                    js_check = detect_empty_or_js(text, pre_soup)
+                    js_check = detect_empty_or_js(text, pre_soup) if page_num == 1 else None
                     if js_check is not None:
                         category, message = js_check
                         print(f"[SKIP-{category}] {source.name}: {message}")
                         record_problem(source.name, category, message)
                         diagnostic.record_status(category, message)
-                        candidates = []
-                    else:
-                        candidates = extract_generic_html(
-                            source,
-                            text,
-                            max_items=args.max_items_per_source,
-                            info=info,
-                        )
+                        skipped_for_js = True
+                        break
+                    page_candidates = extract_generic_html(
+                        source,
+                        text,
+                        max_items=args.max_items_per_source,
+                        info=info if page_num == 1 else None,
+                    )
 
-            scored = [score_candidate(candidate) for candidate in candidates]
-            all_candidates.extend(scored)
-            diagnostic.record_candidates(scored)
-            print(f"    candidatos con señales: {len(scored)}")
+                all_candidates_source.extend(page_candidates)
+
+                # ¿Hay próxima página?
+                if page_num >= effective_max_pages:
+                    break
+                next_url = find_next_page_url(pre_soup, current_url, visited_urls)
+                if not next_url:
+                    break
+                # Pequeña pausa entre páginas del mismo sitio.
+                if args.sleep_seconds > 0:
+                    time.sleep(min(args.sleep_seconds, 1.0))
+                current_url = next_url
+
+            if not skipped_for_js:
+                scored = [score_candidate(candidate) for candidate in all_candidates_source]
+                all_candidates.extend(scored)
+                diagnostic.record_candidates(scored)
+                # Registrar pages_visited en diagnostic.
+                if diagnostic.enabled and info is not None:
+                    info["pages_visited"] = pages_visited
+                pages_note = f" ({pages_visited} págs)" if pages_visited > 1 else ""
+                print(f"    candidatos con señales: {len(scored)}{pages_note}")
 
         except requests.HTTPError as exc:
             message = f"{source.name}: HTTP error {exc}"
@@ -2494,6 +2645,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reports-dir", default="reports", help="Directorio de reportes Markdown. Default: reports")
     parser.add_argument("--min-score", type=int, default=30, help="Score mínimo. Default: 30, recomendado para incluir artbooks")
     parser.add_argument("--max-items-per-source", type=int, default=80, help="Máximo candidatos por fuente. Default: 80")
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=3,
+        help="Máximo de páginas a seguir por fuente cuando hay link 'siguiente'. Default: 3. Override en YAML con 'max_pages: N'. RSS siempre = 1.",
+    )
     parser.add_argument("--sleep-seconds", type=float, default=1.5, help="Pausa entre fuentes. Default: 1.5")
     parser.add_argument("--connect-timeout", type=int, default=10, help="Timeout conexión HTTP. Default: 10")
     parser.add_argument("--read-timeout", type=int, default=30, help="Timeout lectura HTTP. Default: 30")

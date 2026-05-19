@@ -9,7 +9,7 @@
 #   3. Embebe los datos nuevos en web/index.html
 #   4. Imprime estadísticas comparativas
 #
-# Tiempo estimado: 15-25 minutos (depende de red y de cuántas fuentes JS hay)
+# Tiempo estimado: 25-40 minutos con paginación (~3 págs por fuente)
 #
 # Uso:
 #   ./scripts/full_run.sh
@@ -18,6 +18,7 @@
 #   SLEEP=0.5          # sleep entre fuentes (default 0.5)
 #   MIN_SCORE=30       # score mínimo para reportar (default 30)
 #   SKIP_DETAILS=1     # saltea --fetch-details para ir más rápido
+#   MAX_PAGES=5        # paginación profunda (default 3)
 
 set -uo pipefail  # set -e desactivado para que veas errores aunque algo falle
 
@@ -26,6 +27,7 @@ cd "$(dirname "$0")/.."
 SLEEP="${SLEEP:-0.5}"
 MIN_SCORE="${MIN_SCORE:-30}"
 SKIP_DETAILS="${SKIP_DETAILS:-0}"
+MAX_PAGES="${MAX_PAGES:-3}"
 
 VENV_PY=".venv/bin/python"
 if [ ! -x "$VENV_PY" ]; then
@@ -65,6 +67,7 @@ echo "==> Run completo"
 echo "    Log:        $LOG_FILE"
 echo "    Sleep:      ${SLEEP}s entre fuentes"
 echo "    Min score:  $MIN_SCORE"
+echo "    Max pages:  $MAX_PAGES por fuente (paginación automática)"
 echo "    JS render:  on (--enable-js)"
 echo "    Fuzzy:      on (--fuzzy-keywords)"
 if [ "$SKIP_DETAILS" = "1" ]; then
@@ -84,6 +87,7 @@ START_TS=$(date +%s)
 PYTHONUNBUFFERED=1 "$VENV_PY" -u manga_watch.py \
     --enable-js \
     --fuzzy-keywords \
+    --max-pages "$MAX_PAGES" \
     $DETAIL_FLAG \
     --diagnostic \
     --sleep-seconds "$SLEEP" \

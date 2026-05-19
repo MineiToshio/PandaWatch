@@ -4,6 +4,51 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Paginación automática
+
+### Added
+
+- **`find_next_page_url()`**: detecta link "siguiente página" usando 4
+  estrategias en orden de confiabilidad:
+  1. `<link rel="next">` en `<head>` (estándar SEO)
+  2. Selectores comunes: `.next`, `.pagination__next`, `[aria-label*=Next]`,
+     `li.next a`, etc.
+  3. Texto del link: "Siguiente", "Next", "›", "»", "→", "Suivant",
+     "Successivo", "次へ"
+  4. Si la URL actual tiene `?page=N` (o `?p=N`, `?paged=N`) y existe un
+     anchor en la página con `page=N+1`, devolver esa URL.
+- **Loop de paginación en el scraper**: tras extraer una página, intenta
+  buscar la siguiente y la procesa, hasta `--max-pages` o no-link.
+- **CLI `--max-pages N`** (default 3): cap global de páginas por fuente.
+- **YAML `max_pages: N`** por fuente: override del default (ej. catálogos
+  grandes podrían usar 10).
+- **Diagnostic** registra `pages_visited` por fuente.
+- 10 tests nuevos para detección de paginación (rel=next, class, aria,
+  texto, loops, cross-origin).
+
+### Anti-features
+
+- RSS feeds NO se paginan (siempre 1 página).
+- Guardia anti-loop: URLs ya visitadas se ignoran.
+- Cross-origin guard: el "next" debe ser del mismo dominio.
+- Si una URL `?page=N+1` no aparece literalmente en algún anchor de la
+  página, no se inventa.
+
+### Real-world smoke test
+
+| Fuente | Antes | Con paginación (3 págs) |
+|---|---:|---:|
+| MX - Panini México Boxsets | 12 candidatos | **29** (2.4×) |
+
+Estimación para el próximo run completo: dataset 493 → **1500-2500** items.
+
+### Performance
+
+Cada fuente puede hacer hasta `max_pages` HTTP requests en serie.
+- 150 fuentes × ~2 págs promedio = ~300 fetches extra.
+- Sleep entre páginas: `min(args.sleep_seconds, 1.0)`.
+- Estimación: run completo 20 min → ~30-40 min con --max-pages 3.
+
 ## [Unreleased] — Fase 1: Expansión de catálogo vía búsquedas dirigidas
 
 Primer paso del plan de 3 fases documentado en `docs/PRD-catalog.md`.
