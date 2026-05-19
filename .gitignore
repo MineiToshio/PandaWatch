@@ -7,3 +7,4 @@ data/items.jsonl
 data/state.json
 data/*.broken.json
 reports/
+logs/

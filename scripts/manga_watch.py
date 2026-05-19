@@ -471,6 +471,25 @@ def fetch_text(session: requests.Session, url: str, timeout: tuple[int, int]) ->
     return response.text
 
 
+def fetch_with_metadata(
+    session: requests.Session, url: str, timeout: tuple[int, int]
+) -> tuple[str, dict[str, Any]]:
+    """Como fetch_text pero devuelve también metadata útil para diagnóstico."""
+    start = time.perf_counter()
+    response = session.get(url, timeout=timeout)
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    response.raise_for_status()
+    if not response.encoding:
+        response.encoding = response.apparent_encoding
+    metadata = {
+        "http_status": response.status_code,
+        "content_type": response.headers.get("Content-Type", ""),
+        "fetch_ms": elapsed_ms,
+        "final_url": response.url,
+    }
+    return response.text, metadata
+
+
 def candidate_from_source(source: Source, title: str, url: str, description: str, published_at: str = "") -> Candidate:
     return Candidate(
         title=title or f"Hallazgo en {source.name}",
@@ -728,7 +747,12 @@ def detect_empty_or_js(html_text: str, soup: BeautifulSoup) -> tuple[str, str] |
     return None
 
 
-def extract_generic_html(source: Source, html_text: str, max_items: int) -> list[Candidate]:
+def extract_generic_html(
+    source: Source,
+    html_text: str,
+    max_items: int,
+    info: dict[str, Any] | None = None,
+) -> list[Candidate]:
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
@@ -736,6 +760,10 @@ def extract_generic_html(source: Source, html_text: str, max_items: int) -> list
     # 1) Selectores manuales del YAML tienen prioridad.
     selector_candidates = extract_with_selectors(source, soup, max_items=max_items)
     if selector_candidates:
+        if info is not None:
+            info["extraction_method"] = "yaml-selectors"
+            info["cards_found"] = len(selector_candidates)
+            info["candidates_after_signals"] = len(selector_candidates)
         return selector_candidates
 
     # 2) Quitamos menú/footer/nav del soup antes de buscar productos.
@@ -743,6 +771,16 @@ def extract_generic_html(source: Source, html_text: str, max_items: int) -> list
 
     # 3) Detectamos clusters de productos repetidos.
     cards = detect_product_clusters(soup, source.url)
+    if info is not None:
+        info["extraction_method"] = "clusters" if cards else "none"
+        info["cards_found"] = len(cards)
+        info["cards_skipped_no_anchor"] = 0
+        info["cards_skipped_short_desc"] = 0
+        info["cards_skipped_long_desc"] = 0
+        info["cards_skipped_dup_url"] = 0
+        info["cards_skipped_no_signals"] = 0
+        info["candidates_after_signals"] = 0
+
     if not cards:
         # Sin patrón repetido detectable. Es preferible silencio que ruido.
         return []
@@ -752,15 +790,35 @@ def extract_generic_html(source: Source, html_text: str, max_items: int) -> list
     for card in cards[:max_items]:
         candidate = _candidate_from_card(source, card)
         if candidate is None:
+            if info is not None:
+                # Inspeccionamos por qué fue None para diagnóstico.
+                anchor = card.find("a", href=True)
+                if not anchor:
+                    info["cards_skipped_no_anchor"] += 1
+                else:
+                    raw_desc_len = len(clean_text(card.get_text(" ", strip=True)))
+                    if raw_desc_len < 40:
+                        info["cards_skipped_short_desc"] += 1
+                    elif raw_desc_len > 2000:
+                        info["cards_skipped_long_desc"] += 1
+                    else:
+                        info["cards_skipped_no_anchor"] += 1
             continue
         if candidate.url in seen_urls:
+            if info is not None:
+                info["cards_skipped_dup_url"] += 1
             continue
         combined = f"{candidate.title}\n{candidate.description}"
         score, _signals, _types = detect_signals(combined)
         if score <= 0:
+            if info is not None:
+                info["cards_skipped_no_signals"] += 1
             continue
         seen_urls.add(candidate.url)
         candidates.append(candidate)
+
+    if info is not None:
+        info["candidates_after_signals"] = len(candidates)
 
     return candidates
 
@@ -1117,6 +1175,284 @@ def parse_csv_arg(value: str | None) -> set[str] | None:
     return items or None
 
 
+def _slugify(value: str) -> str:
+    """Slug seguro para nombres de archivo."""
+    text = unicodedata.normalize("NFKD", value)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    return text or "source"
+
+
+class DiagnosticRecorder:
+    """Captura información detallada por fuente para análisis posterior.
+
+    Activado con --diagnostic. Genera tres outputs en log_dir:
+    - diagnostic-<timestamp>.json (estructurado, machine-readable)
+    - diagnostic-<timestamp>.md   (legible para humanos, agrupado por estado)
+    - raw/<slug>.html             (HTML crudo de fuentes problemáticas)
+    """
+
+    DUMP_CATEGORIES = {"empty", "js-shell", "no-links", "no-candidates", "http", "request"}
+    DUMP_MAX_BYTES = 80 * 1024  # 80 KB por fuente
+
+    def __init__(self, enabled: bool, log_dir: Path) -> None:
+        self.enabled = enabled
+        self.log_dir = log_dir
+        self.raw_dir = log_dir / "raw"
+        self.entries: list[dict[str, Any]] = []
+        self.current: dict[str, Any] | None = None
+        self.run_started_at = dt.datetime.now()
+
+    def begin(self, source: Source) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+        entry: dict[str, Any] = {
+            "name": source.name,
+            "url": source.url,
+            "country": source.country,
+            "language": source.language,
+            "publisher": source.publisher,
+            "source_class": source.source_class,
+            "kind": source.kind,
+            "status": "pending",
+            "http_status": None,
+            "content_type": "",
+            "fetch_ms": None,
+            "html_size": None,
+            "anchor_count": None,
+            "anchor_count_significant": None,
+            "extraction_method": None,
+            "cards_found": None,
+            "candidates_after_signals": 0,
+            "candidates_after_scoring": 0,
+            "top_titles": [],
+            "top_signals": [],
+            "error": None,
+            "raw_dump_path": None,
+        }
+        self.current = entry
+        self.entries.append(entry)
+        return entry
+
+    def record_fetch(self, metadata: dict[str, Any], html_text: str) -> None:
+        if not self.enabled or self.current is None:
+            return
+        self.current["http_status"] = metadata.get("http_status")
+        self.current["content_type"] = metadata.get("content_type", "")
+        self.current["fetch_ms"] = metadata.get("fetch_ms")
+        self.current["html_size"] = len(html_text or "")
+
+    def record_anchor_counts(self, soup: BeautifulSoup) -> None:
+        if not self.enabled or self.current is None:
+            return
+        all_anchors = soup.find_all("a", href=True)
+        significant = 0
+        for anchor in all_anchors:
+            if len(clean_text(anchor.get_text(" ", strip=True))) >= 10:
+                significant += 1
+        self.current["anchor_count"] = len(all_anchors)
+        self.current["anchor_count_significant"] = significant
+
+    def record_status(self, status: str, message: str = "") -> None:
+        if not self.enabled or self.current is None:
+            return
+        self.current["status"] = status
+        if message:
+            self.current["error"] = message
+
+    def record_error(self, exc: Exception) -> None:
+        if not self.enabled or self.current is None:
+            return
+        self.current["status"] = self.current.get("status") or "other"
+        self.current["error"] = f"{type(exc).__name__}: {exc}"
+
+    def record_candidates(self, candidates: list[Candidate]) -> None:
+        if not self.enabled or self.current is None:
+            return
+        scored_with_signals = [c for c in candidates if c.score > 0]
+        self.current["candidates_after_scoring"] = len(scored_with_signals)
+        top = sorted(scored_with_signals, key=lambda c: c.score, reverse=True)[:5]
+        self.current["top_titles"] = [
+            {"score": c.score, "title": c.title[:160], "url": c.url} for c in top
+        ]
+        seen_signals: list[str] = []
+        for c in top:
+            for sig in c.signals:
+                if sig not in seen_signals:
+                    seen_signals.append(sig)
+        self.current["top_signals"] = seen_signals[:10]
+
+    def maybe_dump_html(self, entry: dict[str, Any] | None, html_text: str) -> None:
+        if not self.enabled or entry is None:
+            return
+        status = entry.get("status")
+        if status not in self.DUMP_CATEGORIES:
+            return
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        slug = _slugify(entry["name"])
+        path = self.raw_dir / f"{slug}.html"
+        snippet = (html_text or "")[: self.DUMP_MAX_BYTES]
+        path.write_text(snippet, encoding="utf-8", errors="replace")
+        entry["raw_dump_path"] = str(path)
+
+    def end(self) -> dict[str, Any] | None:
+        """Finaliza el status del entry actual y devuelve el entry (o None)."""
+        if not self.enabled or self.current is None:
+            self.current = None
+            return None
+        entry = self.current
+        if entry.get("status") == "pending":
+            if entry.get("candidates_after_scoring", 0) > 0:
+                entry["status"] = "ok"
+            else:
+                entry["status"] = "no-candidates"
+        self.current = None
+        return entry
+
+    def write(self) -> tuple[Path, Path] | None:
+        if not self.enabled:
+            return None
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = self.run_started_at.strftime("%Y-%m-%d-%H%M%S")
+        json_path = self.log_dir / f"diagnostic-{timestamp}.json"
+        md_path = self.log_dir / f"diagnostic-{timestamp}.md"
+
+        # ---- JSON ----
+        summary = self._build_summary()
+        payload = {
+            "run_started_at": self.run_started_at.isoformat(),
+            "summary": summary,
+            "sources": self.entries,
+        }
+        json_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        # ---- Markdown ----
+        md_path.write_text(self._build_markdown(summary), encoding="utf-8")
+        return json_path, md_path
+
+    def _build_summary(self) -> dict[str, Any]:
+        by_status: dict[str, int] = {}
+        slow_sources: list[dict[str, Any]] = []
+        no_candidate_sources: list[str] = []
+        for entry in self.entries:
+            status = entry.get("status") or "unknown"
+            by_status[status] = by_status.get(status, 0) + 1
+            fetch_ms = entry.get("fetch_ms") or 0
+            if fetch_ms > 5000:
+                slow_sources.append({"name": entry["name"], "fetch_ms": fetch_ms})
+            if status == "no-candidates":
+                no_candidate_sources.append(entry["name"])
+        return {
+            "total_sources": len(self.entries),
+            "by_status": by_status,
+            "slow_sources_over_5s": slow_sources,
+            "no_candidate_sources": no_candidate_sources,
+        }
+
+    def _build_markdown(self, summary: dict[str, Any]) -> str:
+        STATUS_ORDER = [
+            ("ok", "✅ OK — candidatos con señales"),
+            ("no-candidates", "⚠️ OK pero sin candidatos detectados"),
+            ("empty", "🚫 HTML vacío / muy corto"),
+            ("js-shell", "🧩 JS-rendered (SPA shell)"),
+            ("no-links", "🔗 Sin enlaces significativos"),
+            ("http", "❌ Error HTTP"),
+            ("request", "🌐 Error de red / timeout"),
+            ("robots", "🤖 Bloqueado por robots.txt"),
+            ("other", "💥 Otros errores"),
+        ]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for entry in self.entries:
+            grouped.setdefault(entry.get("status") or "unknown", []).append(entry)
+
+        lines: list[str] = []
+        lines.append(f"# Manga Watch — diagnóstico {self.run_started_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
+        lines.append("## Resumen")
+        lines.append("")
+        lines.append(f"- Fuentes totales analizadas: **{summary['total_sources']}**")
+        for status, count in summary["by_status"].items():
+            label = next((lbl for s, lbl in STATUS_ORDER if s == status), status)
+            lines.append(f"- {label}: **{count}**")
+        if summary["slow_sources_over_5s"]:
+            lines.append("")
+            lines.append("### Fuentes lentas (>5s)")
+            for item in summary["slow_sources_over_5s"]:
+                lines.append(f"- {item['name']} — {item['fetch_ms']} ms")
+        lines.append("")
+
+        for status, label in STATUS_ORDER:
+            items = grouped.get(status, [])
+            if not items:
+                continue
+            lines.append(f"## {label} ({len(items)})")
+            lines.append("")
+            for entry in items:
+                self._render_entry(lines, entry)
+        # Estados no mapeados
+        rendered = {s for s, _ in STATUS_ORDER}
+        for status, items in grouped.items():
+            if status in rendered:
+                continue
+            lines.append(f"## {status} ({len(items)})")
+            lines.append("")
+            for entry in items:
+                self._render_entry(lines, entry)
+        return "\n".join(lines)
+
+    def _render_entry(self, lines: list[str], entry: dict[str, Any]) -> None:
+        lines.append(f"### {entry['name']}")
+        lines.append("")
+        lines.append(f"- **URL:** {entry['url']}")
+        lines.append(f"- **Clase / país:** {entry['source_class']} · {entry['country']}")
+        lines.append(f"- **Kind:** {entry['kind']}")
+        if entry.get("http_status") is not None:
+            lines.append(f"- **HTTP:** {entry['http_status']} · {entry.get('content_type', '')}")
+        if entry.get("fetch_ms") is not None:
+            lines.append(f"- **Tiempo fetch:** {entry['fetch_ms']} ms")
+        if entry.get("html_size") is not None:
+            lines.append(f"- **Tamaño HTML:** {entry['html_size']} chars")
+        if entry.get("anchor_count") is not None:
+            lines.append(
+                f"- **Anchors:** {entry['anchor_count']} totales · "
+                f"{entry['anchor_count_significant']} con texto ≥10 chars"
+            )
+        if entry.get("extraction_method"):
+            lines.append(f"- **Método extracción:** {entry['extraction_method']}")
+        if entry.get("cards_found") is not None:
+            lines.append(f"- **Cards detectados:** {entry['cards_found']}")
+        skips = []
+        for key, label in [
+            ("cards_skipped_no_anchor", "sin anchor"),
+            ("cards_skipped_short_desc", "desc <40"),
+            ("cards_skipped_long_desc", "desc >2000"),
+            ("cards_skipped_dup_url", "url duplicada"),
+            ("cards_skipped_no_signals", "sin señales"),
+        ]:
+            value = entry.get(key)
+            if value:
+                skips.append(f"{label}: {value}")
+        if skips:
+            lines.append(f"- **Cards descartados:** {' · '.join(skips)}")
+        lines.append(
+            f"- **Candidatos con señales:** {entry.get('candidates_after_scoring', 0)}"
+        )
+        if entry.get("top_signals"):
+            lines.append(f"- **Top señales:** {', '.join(entry['top_signals'])}")
+        if entry.get("top_titles"):
+            lines.append("- **Top títulos:**")
+            for top in entry["top_titles"]:
+                lines.append(f"    - `[{top['score']}]` {top['title']} → {top['url']}")
+        if entry.get("error"):
+            lines.append(f"- **Error:** `{entry['error']}`")
+        if entry.get("raw_dump_path"):
+            lines.append(f"- **HTML crudo:** `{entry['raw_dump_path']}`")
+        lines.append("")
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
@@ -1160,6 +1496,9 @@ def run(args: argparse.Namespace) -> int:
     errors: list[str] = []
     problems: list[dict[str, str]] = []
 
+    log_dir = Path(getattr(args, "log_dir", "logs"))
+    diagnostic = DiagnosticRecorder(enabled=bool(getattr(args, "diagnostic", False)), log_dir=log_dir)
+
     def record_problem(source_name: str, category: str, message: str) -> None:
         problems.append({"source": source_name, "category": category, "message": message})
 
@@ -1172,15 +1511,22 @@ def run(args: argparse.Namespace) -> int:
 
     for index, source in enumerate(sources, start=1):
         print(f"[{index}/{len(sources)}] {source.name} :: {source.url}")
+        diagnostic.begin(source)
+        text = ""
+        info: dict[str, Any] | None = diagnostic.current if diagnostic.enabled else None
         try:
             if args.respect_robots and not robots.allowed(source.url):
                 message = f"robots.txt no permite acceder a {source.url}"
                 print(f"[SKIP] {message}")
                 errors.append(f"{source.name}: {message}")
                 record_problem(source.name, "robots", message)
+                diagnostic.record_status("robots", message)
                 continue
 
-            text = fetch_text(session=session, url=source.url, timeout=(args.connect_timeout, args.read_timeout))
+            text, fetch_meta = fetch_with_metadata(
+                session=session, url=source.url, timeout=(args.connect_timeout, args.read_timeout)
+            )
+            diagnostic.record_fetch(fetch_meta, text)
 
             if source.kind in {"rss", "feed", "atom"}:
                 candidates = extract_rss(
@@ -1189,22 +1535,33 @@ def run(args: argparse.Namespace) -> int:
                     max_items=args.max_items_per_source,
                     max_age_days=args.max_age_days,
                 )
+                if diagnostic.enabled and info is not None:
+                    info["extraction_method"] = "rss"
+                    info["candidates_after_signals"] = len(candidates)
             else:
                 # Pre-check JS-heavy / vacío antes de extraer.
                 pre_soup = BeautifulSoup(text, "html.parser")
                 for stripped in pre_soup(["script", "style", "noscript", "svg"]):
                     stripped.decompose()
+                diagnostic.record_anchor_counts(pre_soup)
                 js_check = detect_empty_or_js(text, pre_soup)
                 if js_check is not None:
                     category, message = js_check
                     print(f"[SKIP-{category}] {source.name}: {message}")
                     record_problem(source.name, category, message)
+                    diagnostic.record_status(category, message)
                     candidates = []
                 else:
-                    candidates = extract_generic_html(source, text, max_items=args.max_items_per_source)
+                    candidates = extract_generic_html(
+                        source,
+                        text,
+                        max_items=args.max_items_per_source,
+                        info=info,
+                    )
 
             scored = [score_candidate(candidate) for candidate in candidates]
             all_candidates.extend(scored)
+            diagnostic.record_candidates(scored)
             print(f"    candidatos con señales: {len(scored)}")
 
         except requests.HTTPError as exc:
@@ -1212,16 +1569,22 @@ def run(args: argparse.Namespace) -> int:
             print(f"[ERROR] {message}")
             errors.append(message)
             record_problem(source.name, "http", str(exc))
+            diagnostic.record_status("http", str(exc))
         except requests.RequestException as exc:
             message = f"{source.name}: request error {exc}"
             print(f"[ERROR] {message}")
             errors.append(message)
             record_problem(source.name, "request", str(exc))
+            diagnostic.record_status("request", str(exc))
         except Exception as exc:
             message = f"{source.name}: error inesperado {exc}"
             print(f"[ERROR] {message}")
             errors.append(message)
             record_problem(source.name, "other", str(exc))
+            diagnostic.record_error(exc)
+        finally:
+            finalized = diagnostic.end()
+            diagnostic.maybe_dump_html(finalized, text)
 
         if args.sleep_seconds > 0 and index < len(sources):
             time.sleep(args.sleep_seconds)
@@ -1253,6 +1616,17 @@ def run(args: argparse.Namespace) -> int:
     print(f"  reportables: {len(reportable)}")
     print(f"  errores: {len(errors)}")
     print(f"  reporte: {report_path}")
+
+    diagnostic_paths = diagnostic.write()
+    if diagnostic_paths is not None:
+        json_path, md_path = diagnostic_paths
+        print("")
+        print("[DIAGNÓSTICO]")
+        print(f"  json: {json_path}")
+        print(f"  markdown: {md_path}")
+        if (diagnostic.raw_dir).exists():
+            dumps = sorted(diagnostic.raw_dir.glob("*.html"))
+            print(f"  HTMLs crudos (fuentes problemáticas): {len(dumps)} en {diagnostic.raw_dir}/")
 
     if args.list_empty_sources:
         empty_categories = {"empty", "js-shell", "no-links"}
@@ -1306,6 +1680,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help="Para feeds RSS, ignora entradas más viejas que N días. 0 = sin filtro. Default: 30",
+    )
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="Activa modo diagnóstico: dumpea JSON/Markdown con stats por fuente y HTML crudo de fuentes problemáticas",
+    )
+    parser.add_argument(
+        "--log-dir",
+        default="logs",
+        help="Directorio para logs diagnósticos. Default: logs",
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     return parser.parse_args()

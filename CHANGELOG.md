@@ -4,6 +4,35 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Modo diagnóstico
+
+### Added
+
+- **`DiagnosticRecorder`** clase que captura por fuente: HTTP status,
+  content-type, tiempo de fetch (ms), tamaño HTML, conteo de anchors
+  totales y "significativos" (texto ≥10 chars), método de extracción
+  usado (`yaml-selectors` / `clusters` / `rss` / `none`), # de cards
+  detectados, breakdown de cards descartados (sin anchor, desc <40,
+  desc >2000, url duplicada, sin señales), # de candidatos con señales,
+  top 5 títulos con score, top 10 señales únicas, y error si lo hubo.
+- **CLI `--diagnostic`** activa la grabación. Sin el flag, nada cambia.
+- **CLI `--log-dir`** (default `logs/`) destino de los outputs.
+- **`logs/diagnostic-<timestamp>.json`** estructurado, machine-readable.
+- **`logs/diagnostic-<timestamp>.md`** legible para humanos, agrupado por
+  estado: ok / no-candidates / empty / js-shell / no-links / http /
+  request / robots / other.
+- **`logs/raw/<slug>.html`** dump de los primeros 80 KB del HTML de
+  fuentes problemáticas (no-candidates, empty, js-shell, no-links, http,
+  request) para inspección posterior.
+- **`fetch_with_metadata()`** nuevo helper: devuelve `(text, metadata)`
+  con `http_status`, `content_type`, `fetch_ms`, `final_url`.
+- **`extract_generic_html()`** acepta `info: dict | None` opcional;
+  cuando se pasa, llena el dict con stats de extracción.
+
+### Changed
+
+- `.gitignore` ignora `logs/`.
+
 ## [Unreleased] — Fase 1: ruido y JS-rendered
 
 ### Added

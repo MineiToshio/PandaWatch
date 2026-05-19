@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manga Watch — Guía de uso</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666;
+    --accent: #d63384;
+    --accent-soft: #fce4ec;
+    --border: #e5e5e0;
+    --code-bg: #2b2b2b;
+    --code-text: #f8f8f2;
+    --tag-new: #16a34a;
+    --tag-new-bg: #dcfce7;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    margin: 0;
+    padding: 0;
+  }
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  header {
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 32px;
+    padding-bottom: 24px;
+  }
+  h1 {
+    font-size: 2.4em;
+    margin: 0 0 8px;
+    color: var(--accent);
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 1.1em;
+    margin: 0;
+  }
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 40px;
+  }
+  nav.toc h2 {
+    margin: 0 0 12px;
+    font-size: 1.1em;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  nav.toc ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    columns: 2;
+    column-gap: 24px;
+  }
+  nav.toc li {
+    margin-bottom: 6px;
+    break-inside: avoid;
+  }
+  nav.toc a {
+    color: var(--text);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--border);
+  }
+  nav.toc a:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  h2 {
+    font-size: 1.6em;
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    margin-top: 32px;
+    font-size: 1.2em;
+  }
+  p { margin: 12px 0; }
+  code {
+    font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.92em;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.9em;
+    line-height: 1.5;
+  }
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+  }
+  .flag {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+  .flag-name {
+    font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .flag-default {
+    color: var(--muted);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+  }
+  .flag-body {
+    margin-top: 8px;
+  }
+  .flag-body p:first-child { margin-top: 0; }
+  .flag-body p:last-child { margin-bottom: 0; }
+  .tag {
+    display: inline-block;
+    font-size: 0.75em;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .tag-new {
+    background: var(--tag-new-bg);
+    color: var(--tag-new);
+  }
+  .tag-warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+  }
+  .callout {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn);
+    padding: 12px 18px;
+    border-radius: 6px;
+    margin: 16px 0;
+    color: #5a3a05;
+  }
+  .callout strong { color: var(--warn); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--card);
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: 0.78em;
+    letter-spacing: 0.05em;
+  }
+  td code { font-size: 0.85em; }
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.9em;
+    text-align: center;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Manga Watch</h1>
+  <p class="subtitle">Tracker personal de ediciones especiales, limitadas, deluxe, boxsets y artbooks de manga. Guía rápida de uso.</p>
+</header>
+
+<nav class="toc">
+  <h2>Contenido</h2>
+  <ul>
+    <li><a href="#que-es">¿Qué es?</a></li>
+    <li><a href="#instalacion">Instalación</a></li>
+    <li><a href="#primer-uso">Tu primer run</a></li>
+    <li><a href="#flags">Todos los flags</a></li>
+    <li><a href="#fuentes">Selección de fuentes</a></li>
+    <li><a href="#deteccion">Filtros de detección</a></li>
+    <li><a href="#http">Comportamiento HTTP</a></li>
+    <li><a href="#output">Output y modo</a></li>
+    <li><a href="#diagnostico">Modo diagnóstico</a></li>
+    <li><a href="#combos">Combinaciones útiles</a></li>
+    <li><a href="#salida">Cómo leer el reporte</a></li>
+    <li><a href="#telegram">Telegram</a></li>
+    <li><a href="#tests">Correr los tests</a></li>
+  </ul>
+</nav>
+
+<section id="que-es">
+  <h2>¿Qué es?</h2>
+  <p>
+    Un script en Python que recorre <strong>82 fuentes</strong> (editoriales oficiales, tiendas, medios y redes) en
+    cinco idiomas (español, inglés, francés, italiano y japonés) y busca señales de ediciones coleccionables: tapa dura,
+    limitadas, numeradas, boxsets, variant covers, artbooks, 限定版, 特装版, etc.
+  </p>
+  <p>
+    Cada día genera un <strong>reporte Markdown</strong> con lo nuevo y lo cambiado respecto al día anterior,
+    para que no tengas que pasar por 82 webs a mano.
+  </p>
+</section>
+
+<section id="instalacion">
+  <h2>Instalación</h2>
+  <p>Solo si todavía no tenés el entorno listo:</p>
+  <pre><code>python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt</code></pre>
+  <p>Para correr los tests también:</p>
+  <pre><code>.venv/bin/pip install -r requirements-dev.txt</code></pre>
+</section>
+
+<section id="primer-uso">
+  <h2>Tu primer run</h2>
+  <p>Lo más seguro: corré primero un <em>dry run</em> para ver qué encuentra sin escribir nada en disco.</p>
+  <pre><code>.venv/bin/python manga_watch.py --dry-run</code></pre>
+  <p>Esto va a:</p>
+  <ul>
+    <li>Pegar las 82 fuentes (con 1.5s de pausa entre cada una → tarda 3–5 min).</li>
+    <li>Mostrarte en consola qué candidatos detectó por fuente.</li>
+    <li><strong>No escribir</strong> <code>state.json</code>, <code>items.jsonl</code> ni reporte.</li>
+  </ul>
+  <p>Cuando estés conforme, sin <code>--dry-run</code> ya escribe el reporte en <code>reports/YYYY-MM-DD.md</code>.</p>
+</section>
+
+<section id="flags">
+  <h2>Todos los flags</h2>
+  <p>Estos son todos los flags del CLI, agrupados por para qué sirven. Los marcados con <span class="tag tag-new">NUEVO</span> son de la última iteración (Fase 1).</p>
+</section>
+
+<!-- ========================= SELECCIÓN DE FUENTES ========================= -->
+<section id="fuentes">
+  <h3>Selección de fuentes</h3>
+
+  <div class="flag">
+    <div class="flag-name">--sources &lt;ruta&gt;</div>
+    <div class="flag-default">Default: <code>sources.yml</code></div>
+    <div class="flag-body">
+      <p>Path al YAML con la lista de fuentes. Solo lo tocarías si tenés varios YAMLs (por ejemplo <code>sources-test.yml</code> para probar fuentes nuevas sin romper el flujo).</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--source-classes official,retailer</div>
+    <div class="flag-default">Default: vacío (todas las clases)</div>
+    <div class="flag-body">
+      <p>Filtra por <strong>clase</strong> de fuente. Valores válidos:</p>
+      <ul>
+        <li><code>official</code> — editoriales oficiales (Panini, Norma, Ivrea, VIZ…).</li>
+        <li><code>retailer</code> — tiendas con exclusivas (Kinokuniya, Amazon JP…).</li>
+        <li><code>trusted_media</code> — medios especializados (ListadoManga, Manga-news…).</li>
+        <li><code>social</code> — redes/blogs (menos estables, más ruido).</li>
+      </ul>
+      <p>Ejemplo típico para reducir ruido:</p>
+      <pre><code>--source-classes official,retailer</code></pre>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--countries "España,Francia"</div>
+    <div class="flag-default">Default: todos</div>
+    <div class="flag-body">
+      <p>Filtra por país, <strong>exactamente</strong> como aparece en el YAML (con tildes y todo). Útil si solo te interesa una región.</p>
+      <pre><code>--countries Japón</code></pre>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--only-source "MX - Panini Manga México" <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: vacío</div>
+    <div class="flag-body">
+      <p>Procesa <strong>una sola fuente</strong> por nombre exacto. Si te equivocás escribiendo el nombre, el script lista los nombres disponibles para que copies el correcto.</p>
+      <p>Es la forma rápida de iterar sobre una fuente puntual sin esperar a las 82.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--include-disabled</div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Por default las fuentes con <code>enabled: false</code> en el YAML se saltan. Con este flag se incluyen igual. Útil para reactivar temporalmente una fuente sin tocar el YAML.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--list-sources</div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Imprime las fuentes (después de aplicar los filtros de arriba) y <strong>termina sin hacer fetch</strong>. Sirve para chequear "¿qué se va a correr?" antes de lanzar el run completo.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= FILTROS DE DETECCIÓN ========================= -->
+<section id="deteccion">
+  <h3>Filtros de detección</h3>
+
+  <div class="flag">
+    <div class="flag-name">--min-score 30</div>
+    <div class="flag-default">Default: <code>30</code></div>
+    <div class="flag-body">
+      <p>Score mínimo para que un candidato aparezca en el <strong>reporte</strong>.</p>
+      <ul>
+        <li>Bajarlo (<code>--min-score 20</code>) muestra más cosas, incluyendo señales débiles.</li>
+        <li>Subirlo (<code>--min-score 60</code>) deja solo hallazgos fuertes.</li>
+      </ul>
+      <div class="callout">
+        <strong>Ojo:</strong> esto NO filtra lo que se guarda en <code>state.json</code> ni los logs en consola. Solo afecta lo que termina en el Markdown.
+      </div>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--max-age-days 30 <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: <code>30</code> días</div>
+    <div class="flag-body">
+      <p>Solo se aplica a fuentes <strong>RSS</strong>: descarta entradas con fecha publicada más vieja que N días. Con <code>0</code> se desactiva el filtro.</p>
+      <p>Si una entrada tiene una fecha rara que el script no puede parsear, se deja pasar (no penalizamos a feeds con formatos no estándar).</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--include-seen</div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Por default el reporte solo muestra hallazgos <code>new</code> o <code>changed</code>. Con este flag también incluye los <code>seen</code> (los que ya viste antes).</p>
+      <p>Útil cuando querés ver "todo lo que matchea hoy", no solo lo nuevo. También útil para auditar qué está detectando en general.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--max-items-per-source 80</div>
+    <div class="flag-default">Default: <code>80</code></div>
+    <div class="flag-body">
+      <p>Máximo de candidatos a extraer por fuente. Solo se nota en páginas con muchísimos productos. Bajarlo acelera el procesamiento; subirlo no suele cambiar nada.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= HTTP ========================= -->
+<section id="http">
+  <h3>Comportamiento HTTP</h3>
+
+  <div class="flag">
+    <div class="flag-name">--sleep-seconds 1.5</div>
+    <div class="flag-default">Default: <code>1.5</code> segundos</div>
+    <div class="flag-body">
+      <p>Pausa entre fuente y fuente.</p>
+      <ul>
+        <li>Bajarlo a <code>0.5</code> acelera el run pero podés llamar la atención de Cloudflare.</li>
+        <li>Subirlo a <code>3</code> es más educado con los servidores.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--connect-timeout 10</div>
+    <div class="flag-default">Default: <code>10</code> segundos</div>
+    <div class="flag-body">
+      <p>Cuánto espera para establecer la conexión TCP. Si una fuente no responde en ese tiempo, se cancela el intento.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--read-timeout 30</div>
+    <div class="flag-default">Default: <code>30</code> segundos</div>
+    <div class="flag-body">
+      <p>Cuánto espera para terminar de leer la respuesta una vez conectado. Si una página tarda más en cargar, se cancela.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--user-agent "..."</div>
+    <div class="flag-default">Default: <code>manga-watch-personal/0.2 (+personal-use)</code></div>
+    <div class="flag-body">
+      <p>El <em>User-Agent</em> que mandamos en cada request. Algunas tiendas filtran UAs raros. Si una fuente te bloquea con 403, probá uno de Chrome.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--respect-robots</div>
+    <div class="flag-default">Default: off <span class="tag tag-warn">FASE 2</span></div>
+    <div class="flag-body">
+      <p>Si está presente, lee <code>robots.txt</code> de cada dominio y saltea las URLs que no permite.</p>
+      <p>Está <strong>off por default</strong>. En la Fase 2 vamos a invertir esto: debería ser opt-out.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= OUTPUT ========================= -->
+<section id="output">
+  <h3>Output y modo de ejecución</h3>
+
+  <div class="flag">
+    <div class="flag-name">--data-dir data</div>
+    <div class="flag-default">Default: <code>data/</code></div>
+    <div class="flag-body">
+      <p>Dónde se escriben <code>state.json</code> (estado para diff entre días) y <code>items.jsonl</code> (historial append-only).</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--reports-dir reports</div>
+    <div class="flag-default">Default: <code>reports/</code></div>
+    <div class="flag-body">
+      <p>Dónde se escribe el reporte Markdown del día (<code>YYYY-MM-DD.md</code>).</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--dry-run</div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Corre todo el pipeline pero <strong>no escribe nada</strong>: ni state, ni JSONL, ni reporte, ni Telegram. Ideal para probar cambios sin contaminar el estado.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--send-telegram</div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Después de generar el reporte, manda un resumen por Telegram. Requiere <code>TELEGRAM_BOT_TOKEN</code> y <code>TELEGRAM_CHAT_ID</code> en <code>.env</code>.</p>
+      <p>Se ignora si <code>--dry-run</code> está activo.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--diagnostic <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Activa el <strong>modo diagnóstico</strong>: durante el run captura por fuente HTTP status, content-type, tiempo de fetch, tamaño del HTML, # de anchors, método de extracción usado, # de cards detectados, # de candidatos con señales, top títulos y señales, y errores.</p>
+      <p>Al final escribe:</p>
+      <ul>
+        <li><code>logs/diagnostic-&lt;timestamp&gt;.json</code> — estructurado, machine-readable.</li>
+        <li><code>logs/diagnostic-&lt;timestamp&gt;.md</code> — legible, agrupado por estado.</li>
+        <li><code>logs/raw/&lt;slug&gt;.html</code> — primeros 80 KB del HTML para fuentes problemáticas (sin candidatos, vacías, JS, errores).</li>
+      </ul>
+      <p>Ideal para auditar qué fuentes funcionan bien, cuáles necesitan selectores manuales, cuáles requieren Playwright, etc.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--log-dir logs <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: <code>logs/</code></div>
+    <div class="flag-body">
+      <p>Directorio donde escribir los outputs del modo diagnóstico. Solo se usa cuando <code>--diagnostic</code> está activo.</p>
+    </div>
+  </div>
+
+  <div class="flag">
+    <div class="flag-name">--list-empty-sources <span class="tag tag-new">NUEVO</span></div>
+    <div class="flag-default">Default: off</div>
+    <div class="flag-body">
+      <p>Al final del run imprime las fuentes que se detectaron como <strong>vacías o JS-rendered</strong>. El detector marca como problemáticas las páginas con:</p>
+      <ul>
+        <li>HTML muy corto (menos de 5000 chars).</li>
+        <li>SPA shells vacíos: <code>&lt;div id="root"&gt;</code>, <code>#app</code>, <code>#__next</code>…</li>
+        <li>Menos de 5 enlaces con texto significativo.</li>
+      </ul>
+      <p>Sirve para decidir cuáles van a necesitar Playwright en una próxima fase.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= DIAGNÓSTICO ========================= -->
+<section id="diagnostico">
+  <h2>Modo diagnóstico — auditar qué funciona y qué no <span class="tag tag-new">NUEVO</span></h2>
+
+  <p>Cuando quieras saber <strong>por qué</strong> una fuente no devuelve nada, o qué páginas son JS-rendered, o cuáles tardan demasiado, corré con <code>--diagnostic</code>:</p>
+
+  <pre><code>.venv/bin/python manga_watch.py --diagnostic --dry-run</code></pre>
+
+  <p>Esto genera tres tipos de archivos en <code>logs/</code>:</p>
+
+  <h3>1. <code>logs/diagnostic-&lt;timestamp&gt;.md</code> — el reporte legible</h3>
+  <p>Agrupa las fuentes por estado para que veas de un golpe qué anda:</p>
+  <table>
+    <thead><tr><th>Estado</th><th>Significa</th></tr></thead>
+    <tbody>
+      <tr><td><strong>✅ OK</strong></td><td>La fuente devolvió candidatos con señales.</td></tr>
+      <tr><td><strong>⚠️ OK pero sin candidatos</strong></td><td>El HTML cargó bien pero no detectó cards / no hay matches de keywords. Suele necesitar selectores manuales en el YAML.</td></tr>
+      <tr><td><strong>🚫 Vacío / muy corto</strong></td><td>HTML &lt; 5000 chars.</td></tr>
+      <tr><td><strong>🧩 JS-rendered</strong></td><td>SPA shell vacío. Necesita Playwright.</td></tr>
+      <tr><td><strong>🔗 Sin enlaces</strong></td><td>Menos de 5 anchors con texto significativo.</td></tr>
+      <tr><td><strong>❌ HTTP error</strong></td><td>404, 403, 503, etc.</td></tr>
+      <tr><td><strong>🌐 Error de red</strong></td><td>Timeout, DNS, SSL, etc.</td></tr>
+      <tr><td><strong>🤖 Robots</strong></td><td>Bloqueada por robots.txt.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Por cada fuente vas a ver:</p>
+  <ul>
+    <li>HTTP status + content-type + tiempo de fetch.</li>
+    <li>Tamaño del HTML y cantidad de anchors.</li>
+    <li>Método de extracción usado (<code>yaml-selectors</code>, <code>clusters</code>, <code>rss</code>, <code>none</code>).</li>
+    <li>Cuántos "cards" se descartaron y por qué (sin anchor, descripción muy corta/larga, URL duplicada, sin señales).</li>
+    <li>Top 5 títulos con score y top señales.</li>
+    <li>Mensaje de error si lo hubo.</li>
+  </ul>
+
+  <h3>2. <code>logs/diagnostic-&lt;timestamp&gt;.json</code> — para análisis programático</h3>
+  <p>Mismo contenido pero estructurado. Útil si querés hacer queries con <code>jq</code> o cargarlo en un script para comparar runs.</p>
+  <pre><code># ejemplos con jq
+jq '.summary.by_status' logs/diagnostic-*.json
+jq '.sources[] | select(.status == "no-candidates") | .name' logs/diagnostic-*.json
+jq '.sources[] | select(.fetch_ms &gt; 5000) | {name, fetch_ms}' logs/diagnostic-*.json</code></pre>
+
+  <h3>3. <code>logs/raw/&lt;slug&gt;.html</code> — HTML crudo de fuentes problemáticas</h3>
+  <p>Para cada fuente que terminó como <em>no-candidates / vacía / JS / error</em>, se guarda un dump de los primeros 80 KB del HTML que devolvió el servidor. Esto te deja (o me deja, si compartís los archivos) abrirlo y ver exactamente qué hay que cambiar:</p>
+  <ul>
+    <li>¿Hay productos pero con un layout raro? → agregar <code>selectors</code> al YAML.</li>
+    <li>¿Hay <code>&lt;div id="root"&gt;</code> vacío? → necesita Playwright.</li>
+    <li>¿Hay un challenge de Cloudflare? → ajustar User-Agent o saltear.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>Recomendado para tu primer audit:</strong>
+    <pre style="margin-top: 10px;"><code>.venv/bin/python manga_watch.py \
+  --diagnostic \
+  --dry-run \
+  --source-classes official,retailer \
+  --sleep-seconds 0.5</code></pre>
+    Solo fuentes oficiales y retailers (las más accionables), sin pausas largas, sin escribir nada al state. Tarda ~1-2 minutos y deja todo lo necesario para revisar.
+  </div>
+</section>
+
+<!-- ========================= COMBOS ========================= -->
+<section id="combos">
+  <h2>Combinaciones útiles</h2>
+
+  <h3>Solo ver qué se va a correr (sin fetch)</h3>
+  <pre><code>.venv/bin/python manga_watch.py --source-classes official,retailer --list-sources</code></pre>
+
+  <h3>Debug rápido de una sola fuente</h3>
+  <pre><code>.venv/bin/python manga_watch.py \
+  --only-source "MX - Panini Manga México" \
+  --dry-run</code></pre>
+
+  <h3>Run de prueba con audit de fuentes JS-rendered</h3>
+  <pre><code>.venv/bin/python manga_watch.py \
+  --dry-run \
+  --list-empty-sources</code></pre>
+
+  <h3>Run real, solo fuentes confiables</h3>
+  <pre><code>.venv/bin/python manga_watch.py \
+  --source-classes official,retailer</code></pre>
+
+  <h3>Run agresivo: ver señales débiles y todo lo visto</h3>
+  <pre><code>.venv/bin/python manga_watch.py \
+  --min-score 20 \
+  --include-seen \
+  --dry-run</code></pre>
+
+  <h3>RSS solo de la última semana</h3>
+  <pre><code>.venv/bin/python manga_watch.py --max-age-days 7</code></pre>
+</section>
+
+<!-- ========================= SALIDA ========================= -->
+<section id="salida">
+  <h2>Cómo leer el reporte</h2>
+  <p>El reporte Markdown (<code>reports/YYYY-MM-DD.md</code>) tiene esta estructura:</p>
+
+  <table>
+    <thead>
+      <tr><th>Sección</th><th>Qué contiene</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Resumen</strong></td><td>Conteo de hallazgos urgentes, interesantes, bajos y errores.</td></tr>
+      <tr><td><strong>🔥 Urgentes</strong></td><td>Score ≥ 70. Señales fuertes: limitada, numerada, collector, boxset…</td></tr>
+      <tr><td><strong>✅ Interesantes</strong></td><td>Score 35–69. Tapa dura, deluxe, hardcover, etc.</td></tr>
+      <tr><td><strong>🎨 Bajos</strong></td><td>Score &lt; 35. Suelen ser artbooks simples o cosas a revisar.</td></tr>
+      <tr><td><strong>Tabla rápida</strong></td><td>Una fila por hallazgo con score, país, editorial, título y link.</td></tr>
+      <tr><td><strong>Fuentes problemáticas</strong> <span class="tag tag-new">NUEVO</span></td><td>Fuentes JS-rendered, vacías, con error HTTP, bloqueadas por robots.txt, etc. — agrupadas por categoría.</td></tr>
+      <tr><td><strong>Errores</strong></td><td>Lista cruda de errores por fuente.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Cada hallazgo tiene:</p>
+  <ul>
+    <li><strong>Score</strong>: la suma de las señales detectadas (cap a 100).</li>
+    <li><strong>Estado</strong>: <code>new</code> (nuevo), <code>changed</code> (cambió respecto a la última vez), <code>seen</code> (ya visto).</li>
+    <li><strong>Señales</strong>: las frases concretas que matchearon ("edición limitada", "hardcover", "限定版"…).</li>
+    <li><strong>Fragmento</strong>: un extracto del bloque donde se detectó.</li>
+  </ul>
+</section>
+
+<!-- ========================= TELEGRAM ========================= -->
+<section id="telegram">
+  <h2>Telegram (opcional)</h2>
+  <p>Para recibir un resumen diario en Telegram:</p>
+  <ol>
+    <li>Hablá con <a href="https://t.me/BotFather">@BotFather</a> en Telegram y creá un bot. Te da un <strong>token</strong>.</li>
+    <li>Mandale un mensaje cualquiera a tu bot.</li>
+    <li>Abrí <code>https://api.telegram.org/bot&lt;TU_TOKEN&gt;/getUpdates</code> en el browser y copiá tu <strong>chat_id</strong>.</li>
+    <li>Pegalos en <code>.env</code>:</li>
+  </ol>
+  <pre><code>TELEGRAM_BOT_TOKEN=123456:ABC-def...
+TELEGRAM_CHAT_ID=987654321</code></pre>
+  <p>Después corré con:</p>
+  <pre><code>.venv/bin/python manga_watch.py --send-telegram</code></pre>
+</section>
+
+<!-- ========================= TESTS ========================= -->
+<section id="tests">
+  <h2>Correr los tests</h2>
+  <p>Si tocaste lógica de extracción o querés verificar que todo sigue funcionando:</p>
+  <pre><code>.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -v</code></pre>
+  <p>Los tests cubren las funciones nuevas de Fase 1: detección de clusters de productos, detección de páginas JS-rendered, y parseo de fechas RSS.</p>
+</section>
+
+<footer>
+  Generado para uso personal · Manga Watch · Fase 1 completada
+</footer>
+
+</div>
+</body>
+</html>
