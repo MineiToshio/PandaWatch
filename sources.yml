@@ -1118,6 +1118,56 @@ sources:
       - "variant"
       - "esclusiva"
 
+  # ===================================================================
+  # Búsquedas dirigidas para Japón (keywords en japonés)
+  # ===================================================================
+
+  - name: "JP - Honto (search)"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Honto / 丸善ジュンク堂"
+    source_class: "retailer"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "retailer", "japan"]
+    search_template: "https://honto.jp/netstore/search.html?cidGnrNm=comic&srchTrm={query}"
+    selectors:
+      item_selector: "div.stContents"
+      title_selector: "h2.stHeading a.dyTitle"
+      link_selector: "h2.stHeading a.dyTitle"
+      description_selector: "ul.stData"
+    keywords:
+      - "限定版"
+      - "特装版"
+      - "初回限定"
+      - "数量限定"
+      - "完全受注生産"
+      - "特典付き"
+      - "グッズ付き"
+      - "画集"
+      - "イラスト集"
+
+  - name: "JP - Rakuten Books (search)"
+    country: "Japón"
+    language: "Japonés"
+    publisher: "Rakuten Books / 楽天ブックス"
+    source_class: "retailer"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "retailer", "japan"]
+    search_template: "https://books.rakuten.co.jp/search?sitem={query}&g=001"
+    selectors:
+      item_selector: "div.rbcomp__item-list__item"
+      title_selector: ".rbcomp__item-list__item__details__lead a"
+    keywords:
+      - "限定版"
+      - "特装版"
+      - "初回限定"
+      - "数量限定"
+      - "特典付き"
+      - "グッズ付き"
+      - "画集"
+
   - name: "IT - Edizioni BD (search)"
     country: "Italia"
     language: "Italiano"
