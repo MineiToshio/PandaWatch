@@ -396,7 +396,9 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
 
     matched_phrases = list(dict.fromkeys(matched_phrases))
     matched_types = list(dict.fromkeys(matched_types))
-    score = min(score, 100)
+    # Cap a 300 (antes 100). Da más resolución para ordenar items con muchas señales.
+    # Items "edición limitada + hardcover + variant + exclusivo" pueden llegar a 200+.
+    score = min(score, 300)
     return score, matched_phrases, matched_types
 
 
@@ -1610,7 +1612,7 @@ def score_candidate(candidate: Candidate) -> Candidate:
         elif candidate.source_class == "social":
             score -= 5
 
-    candidate.score = max(0, min(score, 100))
+    candidate.score = max(0, min(score, 300))
     candidate.signals = signals
     candidate.signal_types = signal_types
     candidate.product_type = derive_product_type(

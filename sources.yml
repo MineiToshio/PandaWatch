@@ -1003,6 +1003,57 @@ sources:
   # FR - Ki-oon: sitio sin buscador URL-accesible (eliminado de Fase 1).
   # El catálogo se cubre con la fuente canónica "FR - Ki-oon" (selectors YAML).
 
+  - name: "US - VIZ Media (search)"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "VIZ Media"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.viz.com/search?search={query}"
+    keywords:
+      - "deluxe"
+      - "limited edition"
+      - "hardcover"
+      - "boxset"
+      - "omnibus"
+      - "collector"
+      - "exclusive"
+
+  - name: "US - Kodansha USA (search)"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Kodansha USA"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://kodansha.us/?s={query}"
+    keywords:
+      - "deluxe"
+      - "limited edition"
+      - "hardcover"
+      - "boxset"
+      - "collector"
+      - "omnibus"
+
+  - name: "ES - Milky Way (search)"
+    country: "España"
+    language: "Español"
+    publisher: "Milky Way Ediciones"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    search_template: "https://www.milkywayediciones.com/search?q={query}"
+    keywords:
+      - "edicion limitada"
+      - "edicion especial"
+      - "deluxe"
+      - "tapa dura"
+      - "kanzenban"
+
   - name: "US - Dark Horse Direct (search)"
     country: "Estados Unidos"
     language: "Inglés"
