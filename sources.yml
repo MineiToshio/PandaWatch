@@ -896,3 +896,189 @@ sources:
     enabled: false
     tags: ["retailer", "bonus", "manga", "japan"]
     notes: "Bloqueada por bot detection. Requiere Playwright + User-Agent realista."
+
+  # ===================================================================
+  # FASE 1: Búsquedas dirigidas multi-keyword (catalog expansion)
+  # ===================================================================
+  # Cada entrada con `search_template + keywords` se expande
+  # automáticamente en N "fuentes virtuales", una por keyword.
+  # Todas reciben tag "expansion" para poder filtrar:
+  #   --exclude-tags expansion        ← run rápido sin búsquedas
+  #   --only-tags expansion           ← solo bootstrap del catálogo
+  # ===================================================================
+
+  - name: "MX - Panini México (search)"
+    country: "México"
+    language: "Español"
+    publisher: "Panini Manga México"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    search_template: "https://tiendapanini.com.mx/catalogsearch/result/?q={query}"
+    keywords:
+      - "edicion limitada"
+      - "edicion especial"
+      - "edicion coleccionista"
+      - "deluxe"
+      - "cofre"
+      - "kanzenban"
+      - "tapa dura"
+      - "variante"
+      - "gran formato"
+      - "boxset"
+
+  - name: "ES - Panini España (search)"
+    country: "España"
+    language: "Español"
+    publisher: "Panini Manga España"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    search_template: "https://www.panini.es/shp_esp_es/catalogsearch/result/?q={query}"
+    keywords:
+      - "edicion limitada"
+      - "edicion especial"
+      - "edicion coleccionista"
+      - "deluxe"
+      - "cofre"
+      - "kanzenban"
+      - "tapa dura"
+      - "variante"
+      - "gran formato"
+
+  - name: "ES - Norma (search)"
+    country: "España"
+    language: "Español"
+    publisher: "Norma Editorial"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.normaeditorial.com/?s={query}"
+    keywords:
+      - "edicion coleccionista"
+      - "edicion limitada"
+      - "deluxe"
+      - "cofre"
+      - "integral"
+      - "kanzenban"
+      - "tapa dura"
+
+  - name: "FR - Glénat (search)"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Glénat Manga"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.glenat.com/?keys={query}"
+    keywords:
+      - "edition collector"
+      - "edition limitee"
+      - "tirage limite"
+      - "coffret"
+      - "deluxe"
+      - "prestige"
+      - "integrale"
+
+  - name: "FR - Pika (search)"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Pika Édition"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.pika.fr/?s={query}"
+    keywords:
+      - "edition collector"
+      - "edition limitee"
+      - "coffret"
+      - "deluxe"
+      - "integrale"
+
+  - name: "FR - Ki-oon (search)"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Ki-oon"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.ki-oon.com/recherche?controller=search&s={query}"
+    keywords:
+      - "edition collector"
+      - "edition limitee"
+      - "coffret"
+      - "integrale"
+
+  - name: "US - Dark Horse Direct (search)"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Dark Horse Direct"
+    source_class: "retailer"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "retailer", "exclusive"]
+    search_template: "https://www.darkhorsedirect.com/search?q={query}"
+    keywords:
+      - "limited edition"
+      - "deluxe"
+      - "hardcover"
+      - "boxset"
+      - "slipcase"
+      - "exclusive"
+      - "variant"
+
+  - name: "US - Yen Press (search)"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Yen Press"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://yenpress.com/search?type=product&q={query}"
+    keywords:
+      - "limited edition"
+      - "deluxe"
+      - "hardcover"
+      - "boxset"
+      - "collector"
+      - "omnibus"
+
+  - name: "IT - Star Comics (search)"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Star Comics"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.starcomics.com/search?text={query}"
+    keywords:
+      - "edizione limitata"
+      - "edizione speciale"
+      - "deluxe"
+      - "cofanetto"
+      - "variant"
+      - "esclusiva"
+
+  - name: "IT - Edizioni BD (search)"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Edizioni BD"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official"]
+    search_template: "https://www.edizionibd.it/catalogsearch/result/?q={query}"
+    keywords:
+      - "edizione limitata"
+      - "edizione speciale"
+      - "deluxe"
+      - "cofanetto"
+      - "variant"

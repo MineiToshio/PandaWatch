@@ -490,3 +490,95 @@ def test_author_link_skips_lowercase_first_char():
     html = '<html><body><a href="/autor/x">la editorial</a></body></html>'
     soup = make_soup(html)
     assert mw._extract_author_from_links(soup) == ""
+
+
+# ---------------------------------------------------------------------------
+# Fase 1: search_template + keywords expansion
+# ---------------------------------------------------------------------------
+
+
+def test_expand_search_template_basic():
+    raw = {
+        "name": "Test Source",
+        "search_template": "https://example.com/?q={query}",
+        "keywords": ["edicion limitada", "cofre"],
+        "country": "X",
+        "tags": ["base"],
+    }
+    expanded = mw._expand_search_template(raw)
+    assert len(expanded) == 2
+    assert expanded[0]["name"] == "Test Source [search: edicion limitada]"
+    assert expanded[0]["url"] == "https://example.com/?q=edicion+limitada"
+    assert "expansion" in expanded[0]["tags"]
+    assert "search:edicion limitada" in expanded[0]["tags"]
+    assert "base" in expanded[0]["tags"]
+    # search_template y keywords no deben aparecer en el output expandido
+    assert "search_template" not in expanded[0]
+    assert "keywords" not in expanded[0]
+
+
+def test_expand_search_template_no_keywords_returns_original():
+    raw = {"name": "Plain", "url": "https://x.com/", "country": "X"}
+    expanded = mw._expand_search_template(raw)
+    assert len(expanded) == 1
+    assert expanded[0] is raw
+
+
+def test_expand_search_template_url_encoding():
+    raw = {
+        "name": "Enc",
+        "search_template": "https://example.com/?q={query}",
+        "keywords": ["edición limitada con espacios"],
+    }
+    expanded = mw._expand_search_template(raw)
+    # quote_plus codifica acentos y espacios
+    assert "edici%C3%B3n+limitada+con+espacios" in expanded[0]["url"]
+
+
+def test_expand_search_template_empty_keywords_filtered():
+    raw = {
+        "name": "Mixed",
+        "search_template": "https://example.com/?q={query}",
+        "keywords": ["valid", "", "  ", "otro"],
+    }
+    expanded = mw._expand_search_template(raw)
+    assert len(expanded) == 2
+    assert expanded[0]["url"].endswith("?q=valid")
+    assert expanded[1]["url"].endswith("?q=otro")
+
+
+# ---------------------------------------------------------------------------
+# Filtros por tags
+# ---------------------------------------------------------------------------
+
+
+def _src_tagged(name="x", tags=None, country="ES"):
+    return mw.Source(
+        name=name, url=f"https://example.com/{name}",
+        country=country, language="Español", publisher="P",
+        source_class="official", kind="html", enabled=True,
+        tags=list(tags or []),
+    )
+
+
+def test_filter_only_tags_keeps_matching():
+    a = _src_tagged("a", tags=["expansion"])
+    b = _src_tagged("b", tags=["manga", "news"])
+    c = _src_tagged("c", tags=["expansion", "manga"])
+    out = mw.filter_sources([a, b, c], None, None, False, only_tags={"expansion"})
+    assert {s.name for s in out} == {"a", "c"}
+
+
+def test_filter_exclude_tags_drops_matching():
+    a = _src_tagged("a", tags=["expansion"])
+    b = _src_tagged("b", tags=["manga"])
+    c = _src_tagged("c", tags=["expansion", "manga"])
+    out = mw.filter_sources([a, b, c], None, None, False, exclude_tags={"expansion"})
+    assert {s.name for s in out} == {"b"}
+
+
+def test_filter_no_tag_filter_returns_all():
+    a = _src_tagged("a", tags=["expansion"])
+    b = _src_tagged("b")
+    out = mw.filter_sources([a, b], None, None, False)
+    assert len(out) == 2

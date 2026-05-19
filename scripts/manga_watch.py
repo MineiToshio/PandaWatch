@@ -41,7 +41,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import urljoin, urlparse, urldefrag, quote_plus
 from urllib.robotparser import RobotFileParser
 
 import feedparser
@@ -752,6 +752,35 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
     return "manga" if (title or description) else ""
 
 
+def _expand_search_template(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expande una entrada con search_template+keywords en N entradas virtuales.
+
+    Cada keyword genera una "fuente expandida" con:
+    - name: "<base name> [search: <keyword>]"
+    - url: search_template.format(query=quote_plus(keyword))
+    - tags: tags base + ["expansion", "search:<keyword>"]
+    """
+    template = item.get("search_template")
+    keywords = item.get("keywords") or []
+    if not template or not isinstance(keywords, list) or not keywords:
+        return [item]
+
+    base_tags = item.get("tags", []) or []
+    expanded: list[dict[str, Any]] = []
+    base_name = str(item.get("name", "")).strip() or "search"
+    for kw in keywords:
+        kw_str = str(kw).strip()
+        if not kw_str:
+            continue
+        url = template.format(query=quote_plus(kw_str))
+        new_item = {k: v for k, v in item.items() if k not in {"search_template", "keywords"}}
+        new_item["name"] = f"{base_name} [search: {kw_str}]"
+        new_item["url"] = url
+        new_item["tags"] = list(base_tags) + ["expansion", f"search:{kw_str}"]
+        expanded.append(new_item)
+    return expanded
+
+
 def load_sources(path: Path) -> list[Source]:
     if not path.exists():
         raise FileNotFoundError(f"No existe {path}. Crea sources.yml o usa el paquete que te pasé.")
@@ -760,26 +789,28 @@ def load_sources(path: Path) -> list[Source]:
     sources_raw = raw.get("sources", [])
     sources: list[Source] = []
 
-    for item in sources_raw:
-        if not isinstance(item, dict):
+    for raw_item in sources_raw:
+        if not isinstance(raw_item, dict):
             continue
-        tags_raw = item.get("tags", []) or []
-        tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
-        sources.append(
-            Source(
-                name=str(item.get("name", "")).strip(),
-                url=str(item.get("url", "")).strip(),
-                country=str(item.get("country", "")).strip(),
-                language=str(item.get("language", "")).strip(),
-                publisher=str(item.get("publisher", "")).strip(),
-                source_class=str(item.get("source_class", "official")).strip(),
-                kind=str(item.get("kind", "html")).strip().lower(),
-                enabled=bool(item.get("enabled", True)),
-                tags=tags,
-                notes=str(item.get("notes", "")).strip(),
-                selectors=dict(item.get("selectors", {}) or {}),
+        # Expandir search_template+keywords si está presente.
+        for item in _expand_search_template(raw_item):
+            tags_raw = item.get("tags", []) or []
+            tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
+            sources.append(
+                Source(
+                    name=str(item.get("name", "")).strip(),
+                    url=str(item.get("url", "")).strip(),
+                    country=str(item.get("country", "")).strip(),
+                    language=str(item.get("language", "")).strip(),
+                    publisher=str(item.get("publisher", "")).strip(),
+                    source_class=str(item.get("source_class", "official")).strip(),
+                    kind=str(item.get("kind", "html")).strip().lower(),
+                    enabled=bool(item.get("enabled", True)),
+                    tags=tags,
+                    notes=str(item.get("notes", "")).strip(),
+                    selectors=dict(item.get("selectors", {}) or {}),
+                )
             )
-        )
 
     return [source for source in sources if source.name and source.url]
 
@@ -789,6 +820,9 @@ def filter_sources(
     source_classes: set[str] | None,
     countries: set[str] | None,
     include_disabled: bool,
+    include_tags: set[str] | None = None,
+    exclude_tags: set[str] | None = None,
+    only_tags: set[str] | None = None,
 ) -> list[Source]:
     filtered: list[Source] = []
     for source in sources:
@@ -797,6 +831,13 @@ def filter_sources(
         if source_classes and source.source_class not in source_classes:
             continue
         if countries and source.country not in countries:
+            continue
+        source_tags = set(source.tags or [])
+        if only_tags and not (source_tags & only_tags):
+            continue
+        if include_tags and not (source_tags & include_tags):
+            continue
+        if exclude_tags and (source_tags & exclude_tags):
             continue
         filtered.append(source)
     return filtered
@@ -2192,6 +2233,9 @@ def run(args: argparse.Namespace) -> int:
         source_classes=parse_csv_arg(args.source_classes),
         countries=parse_csv_arg(args.countries),
         include_disabled=args.include_disabled,
+        include_tags=parse_csv_arg(getattr(args, "include_tags", "")),
+        exclude_tags=parse_csv_arg(getattr(args, "exclude_tags", "")),
+        only_tags=parse_csv_arg(getattr(args, "only_tags", "")),
     )
 
     only_source = (args.only_source or "").strip()
@@ -2457,6 +2501,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-disabled", action="store_true", help="Incluye fuentes enabled:false")
     parser.add_argument("--source-classes", default="", help="Filtra por clases: official,retailer,trusted_media,social")
     parser.add_argument("--countries", default="", help="Filtra por país exacto, separado por comas. Ej: España,Francia,Japón")
+    parser.add_argument(
+        "--include-tags",
+        default="",
+        help="Solo procesa fuentes que tienen AL MENOS uno de estos tags (CSV). Ej: expansion,manga",
+    )
+    parser.add_argument(
+        "--exclude-tags",
+        default="",
+        help="Excluye fuentes que tienen alguno de estos tags (CSV). Ej: expansion para skipear las búsquedas.",
+    )
+    parser.add_argument(
+        "--only-tags",
+        default="",
+        help="Alias estricto: solo fuentes con AL MENOS uno de estos tags (igual a --include-tags). Ej: --only-tags expansion",
+    )
     parser.add_argument("--send-telegram", action="store_true", help="Envía resumen por Telegram")
     parser.add_argument("--list-sources", action="store_true", help="Lista fuentes tras filtros y termina")
     parser.add_argument(

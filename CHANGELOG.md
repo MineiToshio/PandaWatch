@@ -4,6 +4,59 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Fase 1: Expansión de catálogo vía búsquedas dirigidas
+
+Primer paso del plan de 3 fases documentado en `docs/PRD-catalog.md`.
+
+### Added
+
+- **`search_template + keywords` en sources.yml**: una entry con estos
+  dos campos se expande automáticamente en N fuentes virtuales (1 por
+  keyword). Ejemplo:
+  ```yaml
+  - name: "MX - Panini México (search)"
+    search_template: "https://tiendapanini.com.mx/catalogsearch/result/?q={query}"
+    keywords: ["edicion limitada", "deluxe", "cofre", ...]
+  ```
+  Genera 10 fuentes virtuales con nombres como
+  `"MX - Panini México (search) [search: deluxe]"` y URLs con la query
+  URL-encoded.
+- **Tag automático `expansion`** en todas las fuentes virtuales para
+  poder filtrarlas en runs específicos.
+- **CLI flags nuevos**:
+  - `--include-tags csv`: solo fuentes con al menos uno de esos tags.
+  - `--exclude-tags csv`: ignora fuentes con esos tags.
+  - `--only-tags csv`: alias estricto (mismo comportamiento que include).
+- **10 entries de búsqueda** agregadas a `sources.yml` para editoriales
+  prioritarias:
+  - Panini MX, Panini ES (Magento search)
+  - Norma Editorial ES (WordPress search)
+  - Glénat FR, Pika FR, Ki-oon FR
+  - Dark Horse Direct US, Yen Press US
+  - Star Comics IT, Edizioni BD IT
+  → Total: 66 fuentes virtuales adicionales.
+- **9 tests nuevos** (67/67 total) para expansion + filtros por tags.
+
+### Smoke test (Panini MX)
+
+Solo de las 10 queries de búsqueda de Panini MX (vs 1 catálogo único antes):
+- Candidatos con señales: 32 (vs ~12 antes)
+- Reportables: 30
+- 3x mejora con la misma editorial.
+
+### Comandos sugeridos
+
+```bash
+# Bootstrap inicial del catálogo (solo búsquedas)
+.venv/bin/python manga_watch.py --enable-js --only-tags expansion
+
+# Run normal sin búsquedas (rápido, solo novedades)
+.venv/bin/python manga_watch.py --enable-js --exclude-tags expansion
+
+# Todo combinado
+.venv/bin/python manga_watch.py --enable-js --fuzzy-keywords
+```
+
 ## [Unreleased] — Detail-fetching para mejorar cobertura de autor
 
 ### Added
