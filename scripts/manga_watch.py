@@ -289,6 +289,8 @@ class Candidate:
     image_url: str = ""
     release_date: str = ""
     product_type: str = ""
+    author: str = ""
+    stock_type: str = ""
 
 
 def clean_text(value: Any) -> str:
@@ -523,6 +525,106 @@ PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
     ]),
     ("novel", ["light novel", "novel", "novela", "ranobe", "ライトノベル"]),
 ]
+
+
+AUTHOR_PREFIX_PATTERN = re.compile(
+    r"(?:autor[ae]?s?|author|auteur|autore|著者|作者|原作|作画)"
+    r"\s*[:：]\s*"
+    r"([^.,;\n|\\/()\[\]<>0-9]{2,80}?)"
+    r"(?=\s*(?:[.,;\n|·\\/]|\s-\s|$))",
+    re.IGNORECASE | re.UNICODE,
+)
+
+AUTHOR_BY_PATTERN = re.compile(
+    r"(?:^|\s)(?:by|par|di|du)\s+"
+    r"([^.,;\n|\\/()\[\]<>0-9]{2,80}?)"
+    r"(?=\s*(?:[.,;\n|·\\/]|\s-\s|$))",
+    re.IGNORECASE | re.UNICODE,
+)
+
+AUTHOR_FIRST_WORD_BLACKLIST = frozenset({
+    "la", "el", "los", "las", "the", "this", "that", "le", "les",
+    "una", "uno", "il", "lo", "manga", "edicion", "edition", "edizione",
+    "tomo", "libro", "book", "vol", "volume", "editorial", "publisher",
+    "sin", "without", "no", "not", "with", "con", "y", "and", "or",
+})
+
+
+def _validate_author_candidate(raw: str) -> str:
+    cleaned = clean_text(raw)
+    if not cleaned or len(cleaned) < 3 or len(cleaned) > 80:
+        return ""
+    first_word = cleaned.split()[0]
+    if first_word.lower() in AUTHOR_FIRST_WORD_BLACKLIST:
+        return ""
+    first_char = first_word[0]
+    # Aceptar: mayúscula latina, o carácter CJK (Hiragana/Katakana/Han).
+    is_uppercase_latin = first_char.isupper() and first_char.isalpha()
+    is_cjk = "぀" <= first_char <= "鿿"
+    if not (is_uppercase_latin or is_cjk):
+        return ""
+    return cleaned
+
+
+def extract_author(text: str, card: Any = None) -> str:
+    """Best-effort extracción del autor/mangaka. Devuelve "" si no encuentra."""
+    # 1) Selectores HTML estructurados.
+    if card is not None:
+        for selector in (
+            "[itemprop='author']",
+            "[class*='author']",
+            "[class*='Author']",
+            "[class*='byline']",
+            "[class*='mangaka']",
+            "meta[name='author']",
+        ):
+            try:
+                node = card.select_one(selector)
+            except Exception:
+                continue
+            if node is None:
+                continue
+            value = node.get("content") if node.name == "meta" else node.get_text(" ", strip=True)
+            cleaned = clean_text(value or "")
+            if cleaned and 2 < len(cleaned) < 80:
+                return cleaned
+    # 2) Regex sobre texto plano.
+    if text:
+        for pattern in (AUTHOR_PREFIX_PATTERN, AUTHOR_BY_PATTERN):
+            match = pattern.search(text)
+            if match:
+                result = _validate_author_candidate(match.group(1))
+                if result:
+                    return result
+    return ""
+
+
+# Stock limitado: solo lo afirmamos cuando hay señal clara. La ausencia de
+# señal NO implica que sea stock permanente — simplemente no lo sabemos.
+LIMITED_STOCK_SIGNAL_TYPES = frozenset({
+    "limited", "made_to_order", "retailer_exclusive",
+})
+
+LIMITED_STOCK_KEYWORDS = (
+    "while supplies last", "mientras haya stock", "hasta agotar",
+    "tirage limité", "tirage limite",
+    "数量限定", "完全受注生産", "受注生産", "予約限定", "初回限定",
+    "limitata 500", "limitata 1000", "numbered",
+    "numerada", "numerée", "numerata",
+)
+
+
+def derive_stock_type(signal_types: list[str], title: str, description: str) -> str:
+    """Devuelve 'limited' si hay señal explícita de stock limitado, "" si no."""
+    if any(t in LIMITED_STOCK_SIGNAL_TYPES for t in signal_types or []):
+        return "limited"
+    if not (title or description):
+        return ""
+    text = normalize_text(f"{title} {description}")
+    for kw in LIMITED_STOCK_KEYWORDS:
+        if normalize_text(kw) in text:
+            return "limited"
+    return ""
 
 
 def derive_product_type(title: str, description: str, signal_types: list[str]) -> str:
@@ -921,6 +1023,7 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             candidate.price = extract_price(description)
             candidate.image_url = extract_image_url(card, source.url)
             candidate.release_date = extract_release_date(description)
+            candidate.author = extract_author(description, card)
             candidates.append(candidate)
 
     return candidates
@@ -1157,6 +1260,7 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     candidate.price = extract_price(description)
     candidate.image_url = extract_image_url(card, source.url)
     candidate.release_date = extract_release_date(description)
+    candidate.author = extract_author(description, card)
     return candidate
 
 
@@ -1334,6 +1438,7 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
             except Exception:
                 pass
         candidate.release_date = extract_release_date(summary) or published_at
+        candidate.author = extract_author(summary)
         candidates.append(candidate)
     return candidates
 
@@ -1365,6 +1470,9 @@ def score_candidate(candidate: Candidate) -> Candidate:
     candidate.product_type = derive_product_type(
         candidate.title, candidate.description, signal_types
     )
+    candidate.stock_type = derive_stock_type(
+        signal_types, candidate.title, candidate.description
+    )
     candidate.content_hash = sha256_text(
         json.dumps(
             {
@@ -1377,6 +1485,8 @@ def score_candidate(candidate: Candidate) -> Candidate:
                 "price": candidate.price,
                 "release_date": candidate.release_date,
                 "product_type": candidate.product_type,
+                "author": candidate.author,
+                "stock_type": candidate.stock_type,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -1435,6 +1545,8 @@ def process_state(
             "image_url": candidate.image_url,
             "release_date": candidate.release_date,
             "product_type": candidate.product_type,
+            "author": candidate.author,
+            "stock_type": candidate.stock_type,
         }
 
         if candidate.score >= min_score and (include_seen or candidate.status in {"new", "changed"}):
@@ -1467,6 +1579,8 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "image_url": candidate.image_url,
         "release_date": candidate.release_date,
         "product_type": candidate.product_type,
+        "author": candidate.author,
+        "stock_type": candidate.stock_type,
     }
 
 
@@ -1541,6 +1655,10 @@ def write_markdown_report(
             lines.append(f"- **Fuente:** {item.source}")
             if item.product_type:
                 lines.append(f"- **Tipo de producto:** {item.product_type}")
+            if item.author:
+                lines.append(f"- **Autor:** {item.author}")
+            if item.stock_type == "limited":
+                lines.append("- **Stock:** ⚠️ limitado / numerado")
             if item.price:
                 lines.append(f"- **Precio:** {item.price}")
             if item.release_date:

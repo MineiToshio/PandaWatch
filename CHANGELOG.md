@@ -4,6 +4,37 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Autor + stock_type
+
+### Added
+
+- **`author`**: extracción del mangaka/autor.
+  - Selectores HTML estructurados (`[itemprop="author"]`,
+    `[class*="author"]`, `[class*="byline"]`, `meta[name="author"]`).
+  - Regex con prefijos: "Autor:", "Author:", "Auteur:", "Autore:",
+    "著者:", "作者:", "原作:", "作画:", "by ", "par ", "di ", "du ".
+  - Validación post-match: primer carácter debe ser mayúscula latina
+    o CJK; blacklist filtra "la editorial", "sin autor", etc.
+  - Vacío si no se encuentra (best-effort).
+- **`stock_type`**: indicador de stock limitado.
+  - Valor `"limited"` cuando hay señal explícita (signal_types
+    `limited` / `made_to_order` / `retailer_exclusive`, o keywords
+    "numerada", "while supplies last", "tirage limité", "数量限定",
+    "完全受注生産", "受注生産", "予約限定", "初回限定", "limitata 500"…).
+  - Valor `""` (vacío) cuando no hay señal — esto **NO afirma "regular
+    permanente"**, simplemente no se pudo confirmar.
+- 12 tests nuevos: regex multi-idioma, selectores HTML, blacklist,
+  validación de mayúscula inicial, derivación desde signal_types.
+
+### Changed
+
+- `Candidate`: agrega `author` y `stock_type` (default `""`).
+- `state.json`, `items.jsonl`, reporte Markdown incluyen los 2 campos.
+  El reporte muestra `- **Autor:** X` y `- **Stock:** ⚠️ limitado /
+  numerado` cuando aplica.
+- `content_hash` ahora incluye author + stock_type para detectar
+  cambios reales.
+
 ## [Unreleased] — Metadata extra por producto
 
 ### Added

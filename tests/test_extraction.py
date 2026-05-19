@@ -348,3 +348,70 @@ def test_derive_product_type_manga_default():
 
 def test_derive_product_type_empty_when_no_input():
     assert mw.derive_product_type("", "", []) == ""
+
+
+# ---------------------------------------------------------------------------
+# Extracción de autor
+# ---------------------------------------------------------------------------
+
+
+def test_extract_author_spanish():
+    assert mw.extract_author("Autor: Kentaro Miura. Edición especial.") == "Kentaro Miura"
+
+
+def test_extract_author_english():
+    assert mw.extract_author("Manga by Kentaro Miura, published in 1989.") == "Kentaro Miura"
+
+
+def test_extract_author_japanese():
+    # No esperamos parse perfecto pero debería extraer algo razonable.
+    result = mw.extract_author("著者: 三浦建太郎. 限定版.")
+    assert result and len(result) >= 2
+
+
+def test_extract_author_from_html_meta():
+    soup = make_soup('<div><meta name="author" content="Kentaro Miura"><p>Edición</p></div>')
+    div = soup.find("div")
+    assert mw.extract_author("Edición coleccionista", div) == "Kentaro Miura"
+
+
+def test_extract_author_from_html_class():
+    soup = make_soup('<div><span class="author-name">Kentaro Miura</span></div>')
+    div = soup.find("div")
+    assert mw.extract_author("", div) == "Kentaro Miura"
+
+
+def test_extract_author_skips_blacklisted_starts():
+    # "By the way", "By la editorial" no deben confundir.
+    assert mw.extract_author("Manga published by la editorial Norma") == ""
+
+
+def test_extract_author_empty():
+    assert mw.extract_author("") == ""
+    assert mw.extract_author("Manga sin autor mencionado.") == ""
+
+
+# ---------------------------------------------------------------------------
+# Derivación de stock_type
+# ---------------------------------------------------------------------------
+
+
+def test_derive_stock_type_from_signal_types_limited():
+    assert mw.derive_stock_type(["limited"], "x", "y") == "limited"
+
+
+def test_derive_stock_type_from_made_to_order():
+    assert mw.derive_stock_type(["made_to_order"], "x", "y") == "limited"
+
+
+def test_derive_stock_type_from_text_numerada():
+    assert mw.derive_stock_type([], "Berserk", "Edición numerada de 500 copias.") == "limited"
+
+
+def test_derive_stock_type_from_japanese_text():
+    assert mw.derive_stock_type([], "x", "数量限定で販売") == "limited"
+
+
+def test_derive_stock_type_empty_when_no_signal():
+    # Ausencia de señal NO afirma "regular"; queda vacío.
+    assert mw.derive_stock_type([], "Manga regular", "Disponible en librerías.") == ""
