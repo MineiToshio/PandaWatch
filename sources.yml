@@ -384,13 +384,14 @@ sources:
       title_selector: "p, h3, .sqs-block-content p:first-child"
 
   - name: "US - Barnes & Noble Manga Exclusives"
+    notes: "Akamai bot WAF. Requiere residential proxy + fingerprint real."
     country: "Estados Unidos"
     language: "Inglés"
     publisher: "Barnes & Noble"
     source_class: "retailer"
-    kind: "html"
+    kind: "js"
     url: "https://www.barnesandnoble.com/b/barnes-noble-exclusives/graphic-novels-comics-manga/_/N-2o2bZ1fZ2y35"
-    enabled: true
+    enabled: false
     tags: ["retailer", "exclusive", "variant"]
 
   - name: "US - Crunchyroll Store Manga"
@@ -527,10 +528,11 @@ sources:
     language: "Francés"
     publisher: "Kurokawa"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.lisez.com/editeurs/kurokawa"
-    enabled: true
+    enabled: false
     tags: ["manga", "official"]
+    notes: "CloudFront geoblock por país. Requiere VPN/proxy a Francia."
 
   - name: "FR - Meian"
     country: "Francia"
@@ -735,10 +737,11 @@ sources:
     language: "Italiano"
     publisher: "MangaYo"
     source_class: "retailer"
-    kind: "html"
+    kind: "js"
     url: "https://mangayo.it/150-esclusive-"
-    enabled: true
+    enabled: false
     tags: ["retailer", "exclusive", "variant", "italy"]
+    notes: "DataDome bot challenge. Headless detectable. Requiere undetected-chromedriver o residential proxy."
 
   # -------------------------
   # Japón - editoriales oficiales, tiendas oficiales y trackers de especiales

@@ -523,7 +523,15 @@ def _get_playwright_browser() -> Any:
         return _PLAYWRIGHT_BROWSER
     from playwright.sync_api import sync_playwright
     _PLAYWRIGHT_INSTANCE = sync_playwright().start()
-    _PLAYWRIGHT_BROWSER = _PLAYWRIGHT_INSTANCE.chromium.launch(headless=True)
+    # Argumentos para reducir señales de automation detectables por WAF.
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--no-sandbox",
+    ]
+    _PLAYWRIGHT_BROWSER = _PLAYWRIGHT_INSTANCE.chromium.launch(
+        headless=True, args=launch_args
+    )
     return _PLAYWRIGHT_BROWSER
 
 
@@ -561,12 +569,47 @@ def fetch_with_playwright(
         user_agent=_PLAYWRIGHT_REAL_UA,
         locale="es-ES",
         viewport={"width": 1366, "height": 900},
+        extra_http_headers={
+            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Upgrade-Insecure-Requests": "1",
+        },
+    )
+    # Stealth: ocultar señales de automation (navigator.webdriver, etc.)
+    context.add_init_script(
+        """
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [
+            { name: 'PDF Viewer' }, { name: 'Chrome PDF Viewer' },
+            { name: 'Chromium PDF Viewer' }, { name: 'Microsoft Edge PDF Viewer' },
+            { name: 'WebKit built-in PDF' }
+          ]
+        });
+        Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es', 'en-US', 'en'] });
+        window.chrome = { runtime: {} };
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+          parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(parameters);
+        """
     )
     page = context.new_page()
     start = time.perf_counter()
     response = None
     try:
         response = page.goto(url, timeout=timeout_ms, wait_until=wait_until)
+        # Si la página parece ser un challenge de Cloudflare/Akamai, esperar más.
+        try:
+            title = page.title().lower()
+            if any(t in title for t in ("just a moment", "attention required", "access denied", "verification")):
+                page.wait_for_timeout(6000)
+        except Exception:
+            pass
         # Esperar a que aparezca algún <a> con texto (best-effort, no falla si no llega).
         try:
             page.wait_for_function(
