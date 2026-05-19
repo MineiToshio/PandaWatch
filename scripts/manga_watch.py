@@ -616,46 +616,89 @@ def _container_signature(tag: Any) -> tuple[str, tuple[str, ...]] | None:
     return (tag.name, tuple(sorted(classes)))
 
 
+def _median_description_length(tags: list[Any]) -> int:
+    """Devuelve la longitud mediana del texto agrupado de una lista de tags."""
+    if not tags:
+        return 0
+    lengths = sorted(len(clean_text(t.get_text(" ", strip=True))) for t in tags)
+    return lengths[len(lengths) // 2]
+
+
+def _detect_table_rows(soup: BeautifulSoup, source_url: str) -> list[Any]:
+    """Detecta filas de tabla con anchors únicos.
+
+    Estrategia: agrega TODOS los <tr> del documento con anchor único.
+    Algunos sitios (Listado Manga) usan muchas mini-tablas en lugar de una grande;
+    el conjunto global todavía representa una lista de productos.
+    """
+    usable: list[Any] = []
+    seen: set[str] = set()
+    for row in soup.find_all("tr"):
+        anchor = row.find("a", href=True)
+        if not anchor:
+            continue
+        url = canonicalize_url(source_url, anchor.get("href"))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        usable.append(row)
+    if len(usable) >= 10:
+        return usable
+    return []
+
+
 def detect_product_clusters(soup: BeautifulSoup, source_url: str) -> list[Any]:
     """Detecta clusters de tarjetas de producto en el HTML.
 
     Estrategia:
-    1. Si hay matches directos en selectores típicos de e-commerce, devolvemos esos.
-    2. Si no, agrupamos `article|li|div` por (tag, classes); el grupo más grande
-       con >=3 elementos y al menos un <a href> distinto en cada uno gana.
+    1. Selectores directos típicos de e-commerce (cualquier tag).
+    2. Filas de tabla repetidas (sitios tipo Listado Manga).
+    3. Agrupación por (tag, classes); el grupo gana por tamaño * calidad
+       de descripción (clusters image-only pierden frente a cards reales).
     """
     direct_selectors = [
-        ".product-item",
-        ".product-card",
-        ".product",
         "[class*='product-item']",
         "[class*='product-card']",
         "[class*='ProductCard']",
         "[class*='ProductItem']",
+        "[class*='product-tile']",
+        "[class*='ProductTile']",
+        ".product-item",
+        ".product-card",
+        ".product",
         "li[class*='product']",
+        "div[class*='product']",
         "article[class*='product']",
         "article[class*='post']",
+        "article[class*='entry']",
+        "[class*='item-product']",
+        "[class*='news-item']",
+        "[class*='post-item']",
     ]
     for selector in direct_selectors:
         try:
             matches = soup.select(selector)
         except Exception:
             continue
-        # Filtramos a los que realmente tienen un link.
         usable = [m for m in matches if m.find("a", href=True)]
         if len(usable) >= 3:
             return usable
 
-    # Agrupación por firma de tag+classes.
+    # 2) Tablas con filas repetidas (Listado Manga y similares).
+    table_rows = _detect_table_rows(soup, source_url)
+    if table_rows:
+        return table_rows
+
+    # 3) Agrupación por firma de tag+classes, ponderada por calidad de descripción.
     groups: dict[tuple[str, tuple[str, ...]], list[Any]] = {}
-    for tag in soup.find_all(["article", "li", "div"]):
+    for tag in soup.find_all(["article", "li", "div", "section"]):
         signature = _container_signature(tag)
         if signature is None:
             continue
         groups.setdefault(signature, []).append(tag)
 
-    best: list[Any] = []
-    best_score = 0
+    candidates_with_score: list[tuple[float, list[Any]]] = []
+    fallback_best: list[Any] = []
     for tags in groups.values():
         if len(tags) < 3:
             continue
@@ -672,17 +715,62 @@ def detect_product_clusters(soup: BeautifulSoup, source_url: str) -> list[Any]:
             usable.append(tag)
         if len(usable) < 3:
             continue
-        # Bonus si la firma menciona producto/item/card/post.
+        if len(usable) > len(fallback_best):
+            fallback_best = usable
         joined_classes = " ".join(usable[0].get("class") or []).lower()
         keyword_bonus = sum(
-            keyword in joined_classes for keyword in ("product", "item", "card", "post", "tile", "article")
+            keyword in joined_classes
+            for keyword in ("product", "item", "card", "post", "tile", "article", "entry")
         )
-        score = len(usable) + keyword_bonus * 2
-        if score > best_score:
-            best_score = score
-            best = usable
+        median_desc = _median_description_length(usable)
+        # Score: tamaño * (1 + log2 calidad de descripción) + bonus de keywords.
+        # Esto hace que un cluster de cards reales (median 200) le gane a uno de
+        # solo imágenes (median 5) aunque tenga menos elementos.
+        import math
+        quality = math.log2(max(median_desc, 1) + 1)
+        score = len(usable) * (1 + quality * 0.4) + keyword_bonus * 3
+        candidates_with_score.append((score, usable))
 
-    return best
+    if candidates_with_score:
+        candidates_with_score.sort(key=lambda x: x[0], reverse=True)
+        return candidates_with_score[0][1]
+    return fallback_best
+
+
+def _derive_title(card: Any, anchor: Any) -> str:
+    """Extrae título de un card en orden de prioridad razonable."""
+    title = clean_text(anchor.get_text(" ", strip=True))
+    if title:
+        return title
+    # Anchor envuelve solo una imagen: probar alt.
+    img = anchor.find("img")
+    if img:
+        alt = clean_text(img.get("alt") or img.get("title") or "")
+        if alt:
+            return alt
+    # Headings dentro de la card.
+    heading = card.find(["h1", "h2", "h3", "h4", "h5", "h6"])
+    if heading:
+        text = clean_text(heading.get_text(" ", strip=True))
+        if text:
+            return text
+    # Elementos con class title/name/heading.
+    for selector in ("[class*='title']", "[class*='Title']", "[class*='name']", "[class*='Name']"):
+        try:
+            node = card.select_one(selector)
+        except Exception:
+            continue
+        if node:
+            text = clean_text(node.get_text(" ", strip=True))
+            if text:
+                return text
+    # Última opción: img alt de cualquier imagen dentro de la card.
+    img = card.find("img")
+    if img:
+        alt = clean_text(img.get("alt") or img.get("title") or "")
+        if alt:
+            return alt
+    return ""
 
 
 def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
@@ -692,17 +780,13 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     url = canonicalize_url(source.url, anchor.get("href"))
     if not url:
         return None
-    title = clean_text(anchor.get_text(" ", strip=True))
-    if not title:
-        # Algunas tarjetas tienen el título en otro nodo.
-        heading = card.find(["h1", "h2", "h3", "h4", "h5"])
-        if heading:
-            title = clean_text(heading.get_text(" ", strip=True))
+    title = _derive_title(card, anchor)
     if not title or len(title) < 3:
         return None
     description = clean_text(card.get_text(" ", strip=True))
-    # Filtro de longitudes: menos de 40 = probable menú; más de 2000 = bloque contaminado.
-    if len(description) < 40 or len(description) > 2000:
+    # Filtro de longitudes: bloques contaminados (>2000) o ruido (<25).
+    # 25 chars permite cards de e-commerce con título corto + precio.
+    if len(description) < 25 or len(description) > 2000:
         return None
     return candidate_from_source(source, title[:260], url, description)
 
@@ -797,7 +881,7 @@ def extract_generic_html(
                     info["cards_skipped_no_anchor"] += 1
                 else:
                     raw_desc_len = len(clean_text(card.get_text(" ", strip=True)))
-                    if raw_desc_len < 40:
+                    if raw_desc_len < 25:
                         info["cards_skipped_short_desc"] += 1
                     elif raw_desc_len > 2000:
                         info["cards_skipped_long_desc"] += 1
@@ -1193,7 +1277,7 @@ class DiagnosticRecorder:
     """
 
     DUMP_CATEGORIES = {"empty", "js-shell", "no-links", "no-candidates", "http", "request"}
-    DUMP_MAX_BYTES = 80 * 1024  # 80 KB por fuente
+    DUMP_MAX_BYTES = 250 * 1024  # 250 KB por fuente (suficiente para skipear preloads)
 
     def __init__(self, enabled: bool, log_dir: Path) -> None:
         self.enabled = enabled
