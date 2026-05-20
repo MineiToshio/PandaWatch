@@ -213,6 +213,16 @@ def parse_planning_page(html_text: str) -> list[Candidate]:
         if "sortie" in cls and "post" in cls:
             cand = _parse_post(el, current_date, source)
             if cand:
+                # Filtro non-manga (figuras, estatuas, etc. — algunos releases
+                # de Manga-Sanctuary planning son productos derivados).
+                try:
+                    from manga_watch import is_likely_manga  # type: ignore
+                except ImportError:
+                    is_likely_manga = None  # noqa: N816
+                if is_likely_manga is not None:
+                    keep, _reason = is_likely_manga(cand.title, cand.description)
+                    if not keep:
+                        continue
                 candidates.append(cand)
 
     return candidates

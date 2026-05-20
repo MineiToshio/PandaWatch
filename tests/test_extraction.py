@@ -961,6 +961,63 @@ def test_clean_title_strips_es_proximamente_prefix():
         assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
 
 
+def test_is_likely_manga_rescues_strong_hints():
+    # Cualquier indicador inequívoco de manga → True.
+    cases = [
+        "Berserk Deluxe Edition Vol. 1",
+        "ONE PIECE 漫画 第108巻",
+        "Naruto - Tome 72 - édition collector",
+        "Yu-Gi-Oh! Kanzenban nº 03/22",
+        "The Art of Studio Ghibli (artbook)",
+        "Bleach 3 en 1 #14",
+        "Sailor Moon Eternal Edition Volume 5",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should be manga: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rescues_packs_with_extras():
+    # Un manga edición especial que viene CON una figura debe mantenerse.
+    cases = [
+        "Mujina into the deep nº1 - Edición Especial + Sobrecubierta + 4 Postales",
+        "My Hero Academia nº42 - Cofre especial + Llavero + Camiseta + Shikishi",
+        "Demon Slayer Coffret Collector + Figurine",
+        "Attack on Titan Boxset + Poster Reversible",
+        "Cofanetto Naruto + Statuette Kakashi",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should be manga (pack): {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_pure_merchandise():
+    # Objetos derivados puros (sin manga implícito) → False.
+    cases = [
+        ("Usagi Yojimbo 40th Anniversary Deluxe Vinyl Figure", "vinyl figure"),
+        ("Hellboy 30th Anniversary Deluxe Vinyl Figure (Variant)", "vinyl figure"),
+        ("The Last of Us: Bloater Statue", "statue"),
+        ("The Witcher: Geralt and Ciri Fireside Premium Statue", "premium statue"),
+        ("Ori and the Blind Forest - Ori and Naru PVC Statue", "PVC statue"),
+        ("Mignola Convention Variant Spaceboy Maquette", "maquette"),
+        ("Funko Pop Deluxe: Demon Slayer", "funko"),
+        ("FUNKO POP DELUXE: JUJUTSU KAISEN - RYOMEN SUKUNA", "funko"),
+        ("Usagi Yojimbo Year of the Dragon Puzzle (Convention Exclusive)", "puzzle"),
+        ("神の庭付き楠木邸 Blu-ray BOX 下巻", "DVD/Blu-ray"),
+        ("Astérix Trading Card Treasure Box - Archivador Deluxe", "trading card"),
+        ("Hellboy Skate Deck: Hellboy, Liz, and Abe", "skate deck"),
+    ]
+    for t, label in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should NOT be manga ({label}): {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_default_accepts_unknown():
+    # Sin pattern claro: aceptar (mejor false-positive que perder mangas reales).
+    is_manga, _ = mw.is_likely_manga("Some Unusual Title Here")
+    assert is_manga
+
+
 def test_clean_title_repairs_mojibake():
     # UTF-8 leído como Latin-1/cp1252 (típico Glénat/Pika con encoding mal seteado).
     # Tras reparar, los prefijos FR ya conocidos también deben caer.

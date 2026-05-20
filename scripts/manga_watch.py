@@ -1499,6 +1499,153 @@ def derive_stock_type(signal_types: list[str], title: str, description: str) -> 
     return ""
 
 
+# --- Filtro non-manga -------------------------------------------------------
+#
+# Algunas fuentes oficiales (Dark Horse Direct, Panini MX search, KADOKAWA
+# Store) mezclan en su catálogo figuras, estatuas, puzzles, DVDs, Funkos y
+# otros productos derivados que NO son manga. La regla del usuario:
+#   "Solo quiero mangas, pero asegúrate de no descartar un manga con extras
+#    por error. Por ejemplo, un manga edición especial que vino con una
+#    figura de extras."
+#
+# Estrategia:
+#   1. STRONG_MANGA_HINTS: si el título contiene cualquier indicador
+#      inequívoco de manga (manga, tomo N, vol N, kanzenban, artbook,
+#      doujinshi, etc.), se acepta SIEMPRE.
+#   2. PACK_EXTRAS_HINTS: si el título contiene patrones tipo
+#      "edición especial + figura", "incluye figurita", "shikishi", etc.
+#      → es un manga con extras, se acepta.
+#   3. NON_MANGA_HEAD: si el título empieza o destaca con figura/estatua/
+#      Funko/DVD/puzzle/etc. SIN ningún rescue de (1) o (2), se descarta.
+#   4. Default: aceptar (conservador, mejor false-positive que perder mangas).
+
+# Indicadores fuertes de manga/libro de manga. Si está en el título, se
+# acepta sin importar lo demás.
+_STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bmanga\b", re.IGNORECASE),
+    re.compile(r"\b(?:vol(?:ume|umen|\.)?|tome|tomo|band)\s*\.?\s*\d", re.IGNORECASE),
+    re.compile(r"\b(?:kanzenban|kanzeban|bunko|aizoban|tankōbon|tankobon|wideban|ultimate edition)\b", re.IGNORECASE),
+    re.compile(r"\b(?:art\s*book|artbook|fan\s*book|fanbook|data\s*book|guide\s*book|illustrations? book|character book)\b", re.IGNORECASE),
+    re.compile(r"\b(?:doujinshi|d[oō]jinshi|d[oō]jin)\b", re.IGNORECASE),
+    re.compile(r"\b(?:light\s*novel|novela ligera|roman l[ée]ger)\b", re.IGNORECASE),
+    re.compile(r"\bn[º°o]\s*\d+\b"),     # "nº 12", "n° 5"
+    re.compile(r"#\d+\b"),                # "#22"
+    re.compile(r"(?:\d+[\s\-]?en[\s\-]?1|3 en 1|integral)", re.IGNORECASE),
+    # Términos japoneses inequívocos de manga/libro
+    re.compile(r"巻|コミック|漫画|単行本|愛蔵版|完全版|文庫|新書|画集|設定資料集"),
+)
+
+# Patrones que confirman "manga + extras" (set / pack / edición coleccionista).
+# Si el título es una figura PERO también dice "incluye manga", se acepta.
+_MANGA_WITH_EXTRAS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\+\s*(?:figura|figurine|figure|statue|estatua|maquette)\b", re.IGNORECASE),
+    re.compile(r"(?:edición|edicion|edizione|edition|édition)\s+(?:especial|coleccionista|limit\w+|collector|coffret|deluxe)", re.IGNORECASE),
+    re.compile(r"\bcofre\s+especial\b|\bcofanetto\b|\bcoffret\b|\bbox\s*set\b|\bboxset\b", re.IGNORECASE),
+    re.compile(r"(?:incluye|includes|inclut|incluye además|con extras|with bonus|con bonus)", re.IGNORECASE),
+    re.compile(r"\bshikishi\b|\bmarcap[áa]ginas\b|\bbloc de notas\b|\bpostales\b|\bp[óo]ster\s+reversible\b", re.IGNORECASE),
+)
+
+# NON-MANGA tier HARD: productos que SIEMPRE son productos completos, jamás
+# extras dentro de una edición especial de manga. Match aquí → descarte
+# inmediato, sin pasar por rescue de strong-manga (esto es importante para
+# casos como "<título japonés> Blu-ray BOX 下巻" donde "巻" matchearía como
+# strong-manga pero el ítem real es Blu-ray).
+_NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:DVD|blu-?ray)(?:\s*(?:BOX|SET|EDITION|DISC)|\b)", re.IGNORECASE),
+    re.compile(r"\bvinyl\s*figure\b", re.IGNORECASE),
+    re.compile(r"\bPVC\s*(?:figure|statue)\b", re.IGNORECASE),
+    re.compile(r"\baction\s*figure\b", re.IGNORECASE),
+    re.compile(r"\bnendoroid\b|\bfigma\b", re.IGNORECASE),
+    re.compile(r"\b(?:pop!?\s+)?funko\b|\bfunko\s+pop\b", re.IGNORECASE),
+    re.compile(r"\bmodel\s*kit\b", re.IGNORECASE),
+    # Marcas dedicadas a figuras coleccionables (no manga).
+    re.compile(r"\bQ[\s\-]?Posket\b", re.IGNORECASE),
+    re.compile(r"\bYou\s?Tooz\b", re.IGNORECASE),
+    re.compile(r"\bBanpresto\b", re.IGNORECASE),
+    # "Figure Bundle / Set / Pack / Series" — pack de figuras, no manga.
+    re.compile(r"\bFigure\s+(?:Bundle|Set|Pack|Series)\b", re.IGNORECASE),
+    re.compile(r"ブルーレイ|DVD\s*BOX|フィギュア"),
+)
+
+# NON-MANGA tier SOFT: pueden aparecer como extras en packs de manga. Por eso
+# solo aplica si NO se rescató antes via strong-manga o pack-extras.
+_NON_MANGA_SOFT: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:premium\s+)?statu(?:e|ette)\b", re.IGNORECASE),
+    re.compile(r"\bmaquette\b", re.IGNORECASE),
+    re.compile(r"\bbust\b(?!\s*card)", re.IGNORECASE),
+    re.compile(r"\bdiorama\b", re.IGNORECASE),
+    re.compile(r"\bplush\b|\bpeluche\b", re.IGNORECASE),
+    re.compile(r"\bskate\s*deck\b", re.IGNORECASE),
+    re.compile(r"\b(?:puzzle|jigsaw|rompecabeza)\b", re.IGNORECASE),
+    re.compile(r"\b(?:keychain|llavero|porte-?cl[ée]s)\b", re.IGNORECASE),
+    re.compile(r"\bposter\s+only\b", re.IGNORECASE),
+    re.compile(r"\b(?:card\s*game|trading\s*card)\b", re.IGNORECASE),
+    re.compile(r"\bcosplay\s+(?:costume|suit|outfit|wig)\b", re.IGNORECASE),
+    re.compile(r"\b(?:soundtrack|OST original)\b", re.IGNORECASE),
+    re.compile(r"\b(?:mug|taza)\b", re.IGNORECASE),
+    re.compile(r"\b(?:backpack|mochila)\b", re.IGNORECASE),
+    re.compile(r"\bT-?shirt\b|\bcamiseta\b|\bplayera\b", re.IGNORECASE),
+    re.compile(r"\bsticker\s+pack\b", re.IGNORECASE),
+    # "Figure" como sustantivo principal (al final del título, con o sin paréntesis).
+    re.compile(r"\bFigure\b\s*(?:\([^)]*\))?\s*$", re.IGNORECASE),
+    # "Art for X Figure" / "Preview for X Figure" → noticia sobre la figura.
+    re.compile(r"\bArt\s+for\s+.+\s+Figure\b", re.IGNORECASE),
+    # "Statuettes" plural — packs de estatuillas (single 'statuette' ya cae arriba)
+    re.compile(r"\bstatuettes\b", re.IGNORECASE),
+)
+
+
+def is_likely_manga(title: str, description: str = "", tags: list[str] | None = None) -> tuple[bool, str]:
+    """Heurística para decidir si un candidato es un manga (o libro relacionado:
+    artbook, novela ligera, edición coleccionista con manga) versus un producto
+    derivado puro (figura, estatua, Funko, DVD, puzzle, taza, etc.).
+
+    Returns:
+        (is_manga, reason) — `reason` describe la regla que aplicó.
+
+    Reglas (en orden):
+      0. NON-MANGA HARD (DVD, Blu-ray, Funko, Vinyl Figure, etc.) → False.
+         Estos productos NUNCA son extras en un pack de manga, por lo que
+         deben evaluarse ANTES de las reglas de rescue.
+      1. STRONG manga hint en título o descripción → True
+      2. PACK / extras hint (edición especial + figura, cofanetto, etc.) → True
+      3. NON-MANGA SOFT (statue, puzzle, mug, plush…) → False
+      4. Default → True (conservador, mejor false-positive que perder mangas)
+    """
+    if not title:
+        return True, "default:empty"
+    blob = title
+    if description:
+        # Mirar también en descripción para 'incluye manga' etc. pero NO
+        # para detectar non-manga: la descripción de un manga puede mencionar
+        # "figura de regalo" sin que el manga deje de ser manga.
+        blob_extra = f"{title}\n{description}"
+    else:
+        blob_extra = title
+
+    # 0) Non-manga HARD: discriminante absoluto.
+    for pat in _NON_MANGA_HARD:
+        if pat.search(blob):
+            return False, f"non_manga_hard:{pat.pattern[:40]}"
+
+    # 1) Strong manga hints
+    for pat in _STRONG_MANGA_PATTERNS:
+        if pat.search(blob_extra):
+            return True, f"strong:{pat.pattern[:40]}"
+
+    # 2) Pack / extras (manga con figura/poster/etc.)
+    for pat in _MANGA_WITH_EXTRAS_PATTERNS:
+        if pat.search(blob_extra):
+            return True, f"pack:{pat.pattern[:40]}"
+
+    # 3) Non-manga SOFT: solo si no se rescató antes.
+    for pat in _NON_MANGA_SOFT:
+        if pat.search(blob):
+            return False, f"non_manga_soft:{pat.pattern[:40]}"
+
+    return True, "default:no_match"
+
+
 def derive_product_type(title: str, description: str, signal_types: list[str]) -> str:
     """Devuelve el tipo de producto detectado (manga / artbook / boxset / etc.)."""
     if not (title or description):
@@ -2455,6 +2602,13 @@ def extract_generic_html(
             if info is not None:
                 info["cards_skipped_no_signals"] += 1
             continue
+        # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
+        # con rescue para mangas que vienen con extras (figura de regalo, etc.).
+        is_manga, _reason = is_likely_manga(candidate.title, candidate.description)
+        if not is_manga:
+            if info is not None:
+                info["cards_skipped_non_manga"] = info.get("cards_skipped_non_manga", 0) + 1
+            continue
         seen_urls.add(candidate.url)
         candidates.append(candidate)
 
@@ -2509,6 +2663,10 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
         score, _signals, _types = detect_signals(combined)
         # Para RSS guardamos solo entradas con señales. Esto baja muchísimo el ruido.
         if score <= 0:
+            continue
+        # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
+        is_manga, _reason = is_likely_manga(title, summary)
+        if not is_manga:
             continue
         candidate = candidate_from_source(source, title, link, summary, published_at=published_at)
         candidate.price = extract_price(summary)
@@ -3351,6 +3509,10 @@ def _run_sitemap_mining(
             cand.isbn = md.get("isbn", "")
             cand.tags = list(source.tags or []) + ["sitemap"]
             score_candidate(cand)
+            # Filtro non-manga (figuras, estatuas, DVDs, etc.).
+            is_manga, _reason = is_likely_manga(cand.title, cand.description)
+            if not is_manga:
+                continue
             if cand.score >= args.min_score:
                 all_candidates.append(cand)
                 kept += 1
