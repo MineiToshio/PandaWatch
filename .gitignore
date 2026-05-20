@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 data/items.jsonl
 data/items.jsonl.*
+data/items.non_manga.jsonl
 data/state.json
 data/*.broken.json
 reports/
