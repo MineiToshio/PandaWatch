@@ -130,7 +130,7 @@ sources:
     url: "https://tiendapanini.com.mx/coleccionables/item-3"
     enabled: true
     tags: ["manga", "official", "store"]
-
+    purity: "mixed"  # url '/coleccionables' incluye cromos, no solo manga
     max_pages: 15
   - name: "MX - Panini México Boxsets"
     country: "México"
@@ -151,6 +151,7 @@ sources:
     url: "https://tiendapanini.com.mx/catalogsearch/result/?q=edicion%20especial"
     enabled: true
     tags: ["manga", "special", "official"]
+    purity: "mixed"  # trae CONMEBOL Libertadores, Hot Wheels, Dragon Ball Cards, etc.
 
   # -------------------------
   # España - fuentes transversales y medios
@@ -360,6 +361,7 @@ sources:
     url: "https://kodansha.us/news/"
     enabled: true
     tags: ["manga", "official", "news"]
+    purity: "mixed"  # es un blog de noticias, no un catálogo de productos.
 
   - name: "US - Yen Press News"
     country: "Estados Unidos"

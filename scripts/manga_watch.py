@@ -780,6 +780,21 @@ IMAGE_URL_BAD_PATTERNS = (
     "/sys/", "/category/", "/badges/", "/badge/", "/banner/",
     "/promo/", "/btn", "/button", "/arrow", "/separator",
     "/star", "/rating", "/cart",
+    # Placeholders genéricos detectados en distintos retailers
+    "/placeholders/", "/placeholder/", "placeholder_",
+    "visuel_defaut",                        # Manga-Sanctuary
+    "kodansha--placeholder",                # Kodansha USA
+    "panini-placeholder",                   # Panini MX
+    "productno_selection",                  # Panini IT cuando no hay foto
+    "no_image", "no-image", "noimage", "no_photo",
+    "coming_soon", "coming-soon", "comingsoon",
+    "image_not_available", "image-not-available",
+    "default_book", "default-book",
+    "logo-glenat",                          # Glénat (logo se cuela como imagen)
+    # Data URIs de 1x1 transparente (típico lazy-loading: la imagen real
+    # vive en data-src o data-original, el src es solo placeholder).
+    "data:image/gif;base64,r0lgodlh",
+    "data:image/png;base64,ivborw0kggo",    # 1x1 PNG transparente común
 )
 
 IMAGE_URL_GOOD_PATTERNS = (
@@ -1257,6 +1272,25 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
     return result
 
 
+def _is_placeholder_image(url: str) -> bool:
+    """Devuelve True si la URL parece un placeholder genérico de retailer
+    (no es la portada real del producto). Centralizamos el check para que
+    tanto el detail extractor como el listing extractor lo usen.
+    """
+    if not url:
+        return True
+    lower = url.lower()
+    if any(p in lower for p in IMAGE_URL_BAD_PATTERNS):
+        return True
+    # URL truncada/sin nombre de archivo: termina en "/" o solo tiene
+    # carpetas (caso visto: https://manga-sanctuary.com/img/o/).
+    # Excepción: URLs sin extensión válidas como CDN modernos sin ext sí
+    # se aceptan, pero deben tener algo después de la última /.
+    if lower.rstrip("?#").endswith("/"):
+        return True
+    return False
+
+
 def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
     """Extrae URL de portada de una página de detalle, varias estrategias.
 
@@ -1265,7 +1299,16 @@ def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str
     3) meta itemprop="image"
     4) <img> con clases típicas de portada (cover, product-image, etc.)
     5) Ranking general de <img> tags del body (mismo scoring que el listing).
+
+    Filtra placeholders conocidos via _is_placeholder_image — algunos sites
+    devuelven cover.png / placeholder.jpg en og:image cuando el producto
+    no tiene foto cargada, y queremos devolver "" en ese caso para que el
+    item pueda ser re-fetcheado más tarde.
     """
+    def _accept(url: str) -> str:
+        """Devuelve url si no es placeholder; "" si lo es."""
+        return "" if _is_placeholder_image(url) else url
+
     # 1) JSON-LD
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         raw = script.string or script.get_text() or ""
@@ -1281,25 +1324,25 @@ def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str
                 continue
             value = item.get("image")
             if isinstance(value, str) and value.strip():
-                url = canonicalize_url(source_url, value.strip())
+                url = _accept(canonicalize_url(source_url, value.strip()))
                 if url:
                     return url
             if isinstance(value, dict):
                 v = (value.get("url") or value.get("@id") or "").strip()
                 if v:
-                    url = canonicalize_url(source_url, v)
+                    url = _accept(canonicalize_url(source_url, v))
                     if url:
                         return url
             if isinstance(value, list) and value:
                 for v in value:
                     if isinstance(v, str) and v.strip():
-                        url = canonicalize_url(source_url, v.strip())
+                        url = _accept(canonicalize_url(source_url, v.strip()))
                         if url:
                             return url
                     if isinstance(v, dict):
                         s = (v.get("url") or v.get("@id") or "").strip()
                         if s:
-                            url = canonicalize_url(source_url, s)
+                            url = _accept(canonicalize_url(source_url, s))
                             if url:
                                 return url
 
@@ -1312,14 +1355,14 @@ def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str
     ):
         meta = soup.find("meta", attrs=attrs)
         if meta and meta.get("content"):
-            url = canonicalize_url(source_url, meta["content"].strip())
+            url = _accept(canonicalize_url(source_url, meta["content"].strip()))
             if url:
                 return url
 
     # 3) meta itemprop="image"
     meta = soup.find("meta", attrs={"itemprop": "image"})
     if meta and meta.get("content"):
-        url = canonicalize_url(source_url, meta["content"].strip())
+        url = _accept(canonicalize_url(source_url, meta["content"].strip()))
         if url:
             return url
 
@@ -1722,6 +1765,16 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:San\s+Diego\s+Comic\s+Con|SDCC|Comic\s+Con\s+\d{4})\s*[:\-]", re.IGNORECASE),
     # Packs Panini México "Paquete Especial" (cromos/coleccionables)
     re.compile(r"\bPaquete\s+Especial\b", re.IGNORECASE),
+    # Estampas/álbumes faltantes (cromos Panini)
+    re.compile(r"\bEstampas?\s+Faltantes?\b", re.IGNORECASE),
+    re.compile(r"\bCONMEBOL\b", re.IGNORECASE),
+    re.compile(r"\bLibertadores\b", re.IGNORECASE),
+    # Items "basura" de menú de navegación (Glénat search trae /bd/,
+    # /notre-histoire/, "rss"… como si fueran productos):
+    re.compile(r"^BD\s+arrow_forward\s*$", re.IGNORECASE),
+    re.compile(r"^arrow_(forward|back|down|up)\b", re.IGNORECASE),
+    re.compile(r"^D[ée]couvrir\s+l'histoire\b", re.IGNORECASE),
+    re.compile(r"^rss\s*$", re.IGNORECASE),
     # Podcast episodes (ES Norma)
     re.compile(r"^Episodio\s+\d+\s*[|—–\-]", re.IGNORECASE),
     re.compile(r"^Episode\s+\d+\s*[|—–\-]", re.IGNORECASE),
@@ -1735,6 +1788,12 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bNew\s+(?:Print\s+)?(?:Manga\s+)?Licenses?\b", re.IGNORECASE),
     re.compile(r"\bAnnouncements?\s*\(?\d{4}\)?\s*$", re.IGNORECASE),
     re.compile(r"\bGives\s+\w+\s+a\s+", re.IGNORECASE),  # "Gives Luffy a Tribute"
+    # Concursos / sweepstakes (Kodansha USA, Yen Press, etc.)
+    re.compile(r"\bContest\s*[:\-]?\s*Win\s+", re.IGNORECASE),
+    re.compile(r"\bSweepstakes?\b", re.IGNORECASE),
+    re.compile(r"\bGiveaway\b", re.IGNORECASE),
+    # "Preorder: <X> with exclusive items!" — formato de blog post de anuncio.
+    re.compile(r"^Pre-?order\s*[:\-]\s*", re.IGNORECASE),
     # DC/Marvel facsímil (cómic, no manga)
     re.compile(r"\b(?:DC|Marvel)\s+Edici[óo]n\s+Facs[íi]mil\b", re.IGNORECASE),
     # JP: enciclopedias 図鑑 (Gakken animal/insect guides), revistas (X月号),
