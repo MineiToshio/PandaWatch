@@ -1033,6 +1033,54 @@ def test_is_likely_manga_rejects_by_source_tag():
         assert not is_manga, f"Should be rejected: {title!r} tags={tags} reason={reason}"
 
 
+def test_extract_label_value_pairs_li_span_structure():
+    # Estructura típica de Manga-Sanctuary y similares.
+    from bs4 import BeautifulSoup
+    html = """<html><body><ul>
+        <li><span>Dessinateur</span> Koyoharu GOTŌGE</li>
+        <li><span>Editeur</span> Panini manga</li>
+        <li><span>Date parution</span> mer. 30 mars 2022</li>
+        <li><span>Prix</span> 15,58 EUR</li>
+        <li><span>EAN-13</span> 9791039105101</li>
+        <li><span>Pages</span> 200</li>
+    </ul></body></html>"""
+    soup = BeautifulSoup(html, "html.parser")
+    pairs = mw._extract_label_value_pairs(soup)
+    assert pairs.get("author") == "Koyoharu GOTŌGE"
+    assert pairs.get("publisher") == "Panini manga"
+    assert pairs.get("release_date") == "mer. 30 mars 2022"
+    assert pairs.get("price") == "15,58 EUR"
+    assert pairs.get("isbn") == "9791039105101"
+
+
+def test_extract_label_value_pairs_dl_structure():
+    from bs4 import BeautifulSoup
+    html = """<dl>
+        <dt>Author</dt><dd>Naoki Urasawa</dd>
+        <dt>Publisher</dt><dd>Shogakukan</dd>
+        <dt>ISBN-13</dt><dd>9784091234567</dd>
+    </dl>"""
+    soup = BeautifulSoup(html, "html.parser")
+    pairs = mw._extract_label_value_pairs(soup)
+    assert pairs.get("author") == "Naoki Urasawa"
+    assert pairs.get("publisher") == "Shogakukan"
+    assert pairs.get("isbn") == "9784091234567"
+
+
+def test_extract_label_value_pairs_table_structure():
+    from bs4 import BeautifulSoup
+    html = """<table>
+        <tr><th>著者</th><td>大暮維人</td></tr>
+        <tr><th>出版社</th><td>講談社</td></tr>
+        <tr><th>発売日</th><td>2024年5月17日</td></tr>
+    </table>"""
+    soup = BeautifulSoup(html, "html.parser")
+    pairs = mw._extract_label_value_pairs(soup)
+    assert pairs.get("author") == "大暮維人"
+    assert pairs.get("publisher") == "講談社"
+    assert pairs.get("release_date") == "2024年5月17日"
+
+
 def test_is_likely_manga_keeps_special_manga_packs_from_wiki():
     # "type:produit spécial manga" SÍ es manga (packs manga + artbook, etc.).
     cases = [

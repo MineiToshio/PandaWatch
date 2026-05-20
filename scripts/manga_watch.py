@@ -1354,6 +1354,107 @@ def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str
     return best_url if best_score >= 5 else ""
 
 
+# Etiquetas conocidas (multilingüe) que aparecen en páginas de detalle como
+# pares clave-valor: <li><span>LABEL</span>VALUE</li>, <dt>L</dt><dd>V</dd>,
+# <tr><th>L</th><td>V</td></tr>, <div class='label'>L</div><div>V</div>...
+_FIELD_LABELS: dict[str, tuple[str, ...]] = {
+    "author": (
+        "dessinateur", "scénariste", "scenariste", "auteur", "auteurs",
+        "autor", "autores", "author", "authors", "autore", "autori",
+        "mangaka", "writer", "creator",
+        "著者", "作者", "原作", "漫画",
+    ),
+    "publisher": (
+        "editeur", "éditeur", "editeurs", "éditeurs",
+        "editor", "editorial", "publisher", "editore",
+        "出版社", "発行",
+    ),
+    "release_date": (
+        "date parution", "date de parution", "date de sortie",
+        "fecha publicación", "fecha publicacion", "fecha de salida",
+        "release date", "release", "publication date",
+        "data uscita", "data di pubblicazione", "data di uscita",
+        "発売日", "刊行日", "publication",
+    ),
+    "price": (
+        "prix", "precio", "price", "prezzo",
+        "価格", "本体価格", "税込価格", "定価",
+    ),
+    "isbn": (
+        "ean-13", "ean", "isbn", "isbn-13", "isbn-10",
+    ),
+}
+
+# Mapa inverso: label_lower -> field_name (pre-computado para lookup rápido)
+_LABEL_TO_FIELD: dict[str, str] = {
+    label.lower(): field
+    for field, labels in _FIELD_LABELS.items()
+    for label in labels
+}
+
+
+def _extract_label_value_pairs(soup) -> dict[str, str]:
+    """Extrae pares (label → value) de páginas de detalle con estructuras tipo
+    'ficha técnica'. Soporta:
+
+      - <li><span>LABEL</span>VALUE</li>     (Manga-Sanctuary, Pika, Glénat)
+      - <dt>LABEL</dt><dd>VALUE</dd>          (sitios con definition lists)
+      - <tr><th>LABEL</th><td>VALUE</td></tr> (tablas de specs)
+      - <tr><td>LABEL</td><td>VALUE</td></tr> (tablas sin th)
+
+    Devuelve dict con claves normalizadas (author, publisher, release_date,
+    price, isbn) si encuentra un label conocido. Solo el PRIMER valor por
+    campo se conserva.
+    """
+    found: dict[str, str] = {}
+
+    def _try_register(label: str, value: str) -> None:
+        if not label or not value:
+            return
+        # Normaliza la etiqueta: minúsculas, sin ':', sin signos extra.
+        norm = label.strip().rstrip(":").rstrip(" :").strip().lower()
+        # Quita parens al final: "Auteur(s)" → "auteur"
+        norm = re.sub(r"\(s\)$", "", norm).strip()
+        field = _LABEL_TO_FIELD.get(norm)
+        if not field or field in found:
+            return
+        cleaned = clean_text(value)
+        if not cleaned or len(cleaned) > 200:
+            return
+        found[field] = cleaned
+
+    # 1) <li><span>LABEL</span>VALUE</li>
+    for li in soup.find_all("li"):
+        span = li.find("span")
+        if not span:
+            continue
+        label = span.get_text(" ", strip=True)
+        if not label or len(label) > 30:
+            continue
+        full_text = li.get_text(" ", strip=True)
+        if not full_text.startswith(label):
+            continue
+        value = full_text[len(label):].strip(" :\xa0")
+        _try_register(label, value)
+
+    # 2) <dt>LABEL</dt><dd>VALUE</dd>
+    for dt in soup.find_all("dt"):
+        label = dt.get_text(" ", strip=True)
+        dd = dt.find_next_sibling("dd")
+        if dd and label:
+            _try_register(label, dd.get_text(" ", strip=True))
+
+    # 3) <tr><th>LABEL</th><td>VALUE</td></tr> o <tr><td>LABEL</td><td>VALUE</td></tr>
+    for tr in soup.find_all("tr"):
+        cells = tr.find_all(["th", "td"], recursive=False)
+        if len(cells) >= 2:
+            label = cells[0].get_text(" ", strip=True)
+            value = cells[1].get_text(" ", strip=True)
+            _try_register(label, value)
+
+    return found
+
+
 def fetch_metadata_from_detail(
     url: str,
     session: requests.Session,
@@ -1392,6 +1493,14 @@ def fetch_metadata_from_detail(
         result["isbn"] = schema["isbn"]
     if schema.get("author"):
         result["author"] = schema["author"]
+
+    # === Extractor genérico de pares LABEL/VALUE (ficha técnica) ===
+    # Cubre Manga-Sanctuary, Pika, Glénat y muchos otros sitios que estructuran
+    # los metadatos del producto como una lista de pares.
+    label_pairs = _extract_label_value_pairs(soup)
+    for field in ("author", "publisher", "release_date", "price", "isbn"):
+        if not result.get(field) and label_pairs.get(field):
+            result[field] = label_pairs[field]
 
     # === Author (si Schema.org no lo trajo) ===
     if not result["author"]:
