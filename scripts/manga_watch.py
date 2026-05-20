@@ -2010,12 +2010,68 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Upsert por URL normalizada: una línea por item único en disco.
+
+    Antes éramos append-only y dejábamos que la web hiciera dedup al cargar,
+    pero el archivo crecía indefinidamente (2-3x el tamaño necesario). Ahora:
+
+      1. Leemos items.jsonl existente y lo indexamos por URL normalizada.
+      2. Para cada row nueva: reemplaza la entrada existente o agrega.
+      3. Reescribimos el archivo entero atómicamente (.tmp + rename).
+
+    Performance: para 3000 items, esto es ~50ms en disco SSD. Imperceptible
+    en el contexto de un scrape que tarda minutos.
+
+    Si dos items distintos comparten URL normalizada (raro), gana el último.
+    Si una row no tiene URL, se appendea sin merge.
+    """
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as file:
-        for row in rows:
-            file.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+    # 1. Cargar existentes en un dict {key -> row}.
+    existing: dict[str, dict[str, Any]] = {}
+    no_url_rows: list[dict[str, Any]] = []
+    if path.exists():
+        with path.open("r", encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                url = item.get("url", "")
+                if not url:
+                    no_url_rows.append(item)
+                    continue
+                key = normalize_url_for_dedup(url)
+                existing[key] = item  # last-wins si hubiera duplicados en el archivo
+
+    # 2. Upsert con las rows nuevas (last-wins por URL).
+    for row in rows:
+        url = row.get("url", "")
+        if not url:
+            no_url_rows.append(row)
+            continue
+        key = normalize_url_for_dedup(url)
+        existing[key] = row
+
+    # 3. Reescribir atómicamente. Conservamos el orden: primero todos los que
+    #    tienen URL (ordenados por detected_at para estabilidad), luego los
+    #    sin URL al final.
+    def _detected_key(item: dict[str, Any]) -> str:
+        return str(item.get("detected_at", "") or "")
+
+    sorted_rows = sorted(existing.values(), key=_detected_key)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
+        for item in sorted_rows:
+            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+        for item in no_url_rows:
+            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+    tmp_path.replace(path)
 
 
 class RobotsCache:

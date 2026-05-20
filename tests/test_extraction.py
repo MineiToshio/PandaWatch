@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from bs4 import BeautifulSoup
 
 from scripts import manga_watch as mw
@@ -1559,6 +1561,42 @@ def test_next_page_skips_cross_origin():
     html = '<html><body><a class="next" href="https://otherdomain.com/x">Next</a></body></html>'
     url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
     assert url is None
+
+
+def test_append_jsonl_upserts_by_url(tmp_path):
+    """append_jsonl debe ser upsert: 1 línea por URL única en disco."""
+    path = tmp_path / "items.jsonl"
+
+    # Estado inicial: 2 items
+    mw.append_jsonl(path, [
+        {"url": "https://example.com/a", "title": "A original", "detected_at": "2026-01-01"},
+        {"url": "https://example.com/b", "title": "B", "detected_at": "2026-01-01"},
+    ])
+    assert sum(1 for _ in path.open()) == 2
+
+    # Update a 'A' y add 'C'
+    mw.append_jsonl(path, [
+        {"url": "https://example.com/a", "title": "A actualizado", "detected_at": "2026-02-01"},
+        {"url": "https://example.com/c", "title": "C", "detected_at": "2026-02-01"},
+    ])
+    lines = list(path.open())
+    assert len(lines) == 3, f"esperaba 3 líneas únicas, hay {len(lines)}"
+
+    items = [json.loads(l) for l in lines]
+    by_url = {i["url"]: i for i in items}
+    assert by_url["https://example.com/a"]["title"] == "A actualizado"
+    assert by_url["https://example.com/b"]["title"] == "B"
+    assert by_url["https://example.com/c"]["title"] == "C"
+
+
+def test_append_jsonl_keeps_rows_without_url(tmp_path):
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [
+        {"url": "https://example.com/a", "title": "A"},
+        {"title": "no-url 1"},
+        {"title": "no-url 2"},
+    ])
+    assert sum(1 for _ in path.open()) == 3
 
 
 # ----- otaku_calendar.py (wiki EN) -----

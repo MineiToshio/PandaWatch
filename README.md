@@ -34,8 +34,10 @@ python scripts/manga_watch.py
 
 ## Salidas
 
-- `data/state.json`: estado para no repetir hallazgos.
-- `data/items.jsonl`: historial de hallazgos nuevos o cambiados.
+- `data/state.json`: estado para no repetir hallazgos (cache incremental).
+- `data/items.jsonl`: base de datos de mangas. **Upsert por URL**: una
+  línea por item único; las actualizaciones reescriben la entrada
+  existente (no se appendean duplicados históricos).
 - `reports/YYYY-MM-DD.md`: reporte diario en Markdown.
 
 ## Browser web
