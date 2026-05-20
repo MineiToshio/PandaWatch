@@ -410,7 +410,10 @@ sources:
     url: "https://www.darkhorsedirect.com/collections/comics"
     enabled: true
     tags: ["manga", "hardcover", "official", "store"]
-
+    # Catálogo mixto: comics + manga + figuras + estatuas + prints +
+    # bookends. Solo aceptamos ítems con STRONG manga hint (no rescatamos
+    # por "Collector's Edition" sola).
+    purity: "mixed"
     max_pages: 15
   - name: "US - Square Enix Manga Coming Soon"
     country: "Estados Unidos"
@@ -1152,6 +1155,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "retailer", "exclusive"]
+    purity: "mixed"  # catálogo mixto (comics + manga + figuras + prints)
     search_template: "https://www.darkhorsedirect.com/search?q={query}"
     keywords:
       - "limited edition"

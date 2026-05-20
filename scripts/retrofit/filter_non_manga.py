@@ -27,7 +27,41 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import is_likely_manga  # type: ignore
+from manga_watch import is_likely_manga, load_sources  # type: ignore
+
+
+def _build_source_purity_map() -> dict[str, str]:
+    """Lee sources.yml y devuelve {source_name: purity} (default manga_only).
+
+    Para los items históricos en items.jsonl, el campo 'source' es el name
+    de la fuente. Como las sources con search-template expanden a múltiples
+    nombres ('AR - X (search) [search: variant]'), también guardamos
+    prefijos: si una source con purity='mixed' se llama 'US - Dark Horse
+    Direct', todos los 'US - Dark Horse Direct...' heredan 'mixed'.
+    """
+    purity_map: dict[str, str] = {}
+    try:
+        sources = load_sources(Path("sources.yml"))
+    except Exception:
+        return purity_map
+    for s in sources:
+        if s.purity and s.purity != "manga_only":
+            purity_map[s.name] = s.purity
+    return purity_map
+
+
+def _purity_for(source_name: str, purity_map: dict[str, str]) -> str:
+    """Devuelve purity para un item; chequea exact match + prefix match."""
+    if not source_name:
+        return "manga_only"
+    if source_name in purity_map:
+        return purity_map[source_name]
+    # Prefix match para items de search-template ("X [search: variant]"
+    # hereda de "X").
+    for name, purity in purity_map.items():
+        if source_name.startswith(name):
+            return purity
+    return "manga_only"
 
 
 def main() -> int:
@@ -50,6 +84,10 @@ def main() -> int:
     reason_counter: Counter[str] = Counter()
     sample_rejected: list[tuple[str, str, str]] = []
 
+    purity_map = _build_source_purity_map()
+    if purity_map:
+        print(f"[INFO] Cargando purity para {len(purity_map)} sources con purity ≠ manga_only")
+
     for line in lines:
         line = line.strip()
         if not line:
@@ -62,7 +100,10 @@ def main() -> int:
         title = item.get("title", "")
         description = item.get("description", "")
         tags = item.get("tags", []) or []
-        is_manga, reason = is_likely_manga(title, description, tags=tags)
+        purity = _purity_for(item.get("source", ""), purity_map)
+        is_manga, reason = is_likely_manga(
+            title, description, tags=tags, source_purity=purity
+        )
         if is_manga:
             kept_lines.append(line)
         else:

@@ -1081,6 +1081,52 @@ def test_extract_label_value_pairs_table_structure():
     assert pairs.get("release_date") == "2024年5月17日"
 
 
+def test_is_likely_manga_rejects_decor_items_hard():
+    # Patrones nuevos para Dark Horse Direct: prints, bookends, painted statues.
+    cases = [
+        "Hellboy: His Life and Times Fine Art Print",
+        "DOOM Eternal - Slayer Gate Bookend",
+        "Berserk: Dragon Slayer Sword Bookends (Manga Paint Variant)",
+        "The Legend of Zelda: Breath of the Wild - Link (Collector's Edition) - 10\" PVC Painted Statue",
+        "Metroid Prime: Samus Varia Suit 11\" PVC Painted Statue (Collector's Edition)",
+        "Masters of the Universe: Revelation Comic Cover Fine Art Print by Bill Sienkiewicz",
+        "Alien: The Original Screenplay #1 Exclusive Variant Bundle",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should be rejected: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_mixed_purity_strict():
+    # En sources 'mixed', pack-extras NO basta para rescatar. Solo STRONG hint.
+    # 'Hellboy 30th Anniversary Deluxe Vinyl Figure' ya cae por HARD (vinyl figure).
+    # Pero ítems sutiles como "Some Collector's Edition Item" deberían pasar en
+    # manga_only y FALLAR en mixed.
+    title = "Some Random Series Collector's Edition Bundle"
+    # En source manga_only: rescate por pack-extras → True
+    ok, _ = mw.is_likely_manga(title, source_purity="manga_only")
+    assert ok, "manga_only debe rescatar por pack-extras"
+    # En source mixed: sin STRONG hint, no se rescata por pack-extras y el
+    # default es FALSE (estricto). Descarta.
+    ok, reason = mw.is_likely_manga(title, source_purity="mixed")
+    assert not ok, f"mixed sin STRONG hint debe descartar: {reason}"
+    # Pero un ítem mixed CON strong hint debe pasar:
+    ok, _ = mw.is_likely_manga(
+        "Berserk Deluxe Edition Vol. 1", source_purity="mixed"
+    )
+    assert ok, "mixed con STRONG hint debe pasar"
+    # Mejor caso: ahora un título sutil con Collector's Edition + arte/print
+    # que ANTES rescataba en mixed y ahora se va por non_manga (porque cae a
+    # SOFT/HARD).
+    title2 = "Some Item Collector's Edition Fine Art Print"
+    # En manga_only: rescate por pack-extras antes de evaluar HARD → True
+    # Pero "Fine Art Print" está en HARD, que se evalúa ANTES.
+    ok, reason = mw.is_likely_manga(title2, source_purity="manga_only")
+    assert not ok, f"Fine Art Print debe caer en HARD aunque sea manga_only ({reason})"
+    ok, reason = mw.is_likely_manga(title2, source_purity="mixed")
+    assert not ok, f"Fine Art Print en mixed: definitivamente no ({reason})"
+
+
 def test_is_likely_manga_keeps_special_manga_packs_from_wiki():
     # "type:produit spécial manga" SÍ es manga (packs manga + artbook, etc.).
     cases = [

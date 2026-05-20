@@ -267,6 +267,13 @@ class Source:
     notes: str = ""
     selectors: dict[str, str] = field(default_factory=dict)
     max_pages: int = 0  # 0 = usar default global (--max-pages); >0 = override
+    # purity: "manga_only" → catálogo cerrado (Norma, Ivrea, ListadoManga…).
+    # Confiamos en el rescate por pack-extras (manga + figura de regalo, etc.).
+    # purity: "mixed" → catálogo mixto (Dark Horse Direct, Amazon, retailers
+    # genéricos). Solo se acepta el ítem si hay un STRONG manga hint en
+    # título/descripción — no basta con "Collector's Edition".
+    # Default "manga_only" para no romper el comportamiento histórico.
+    purity: str = "manga_only"
 
 
 @dataclass
@@ -1640,6 +1647,12 @@ _STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bn[º°o]\s*\d+\b"),     # "nº 12", "n° 5"
     re.compile(r"#\d+\b"),                # "#22"
     re.compile(r"(?:\d+[\s\-]?en[\s\-]?1|3 en 1|integral)", re.IGNORECASE),
+    # Formatos físicos de libro/cómic coleccionable: Dark Horse Direct y
+    # otros retailers mixtos publican muchos manga + comic deluxe. Estos
+    # formatos confirman que el producto es un LIBRO, no figura/print/bookend.
+    re.compile(r"\b(?:Deluxe\s+(?:Hardcover|Edition|Volume)|Library\s+Edition|Hardcover\s+Volumes?|Omnibus|Compendium|Slipcase\s+Edition)\b", re.IGNORECASE),
+    re.compile(r"\bThe\s+Art\s+of\b", re.IGNORECASE),  # artbooks "The Art of X"
+    re.compile(r"\b(?:Encyclopedia|Visual\s+Companion|Visual\s+Guide)\b", re.IGNORECASE),
     # Términos japoneses inequívocos de manga/libro
     re.compile(r"巻|コミック|漫画|単行本|愛蔵版|完全版|文庫|新書|画集|設定資料集"),
 )
@@ -1662,7 +1675,8 @@ _MANGA_WITH_EXTRAS_PATTERNS: tuple[re.Pattern[str], ...] = (
 _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:DVD|blu-?ray)(?:\s*(?:BOX|SET|EDITION|DISC)|\b)", re.IGNORECASE),
     re.compile(r"\bvinyl\s*figure\b", re.IGNORECASE),
-    re.compile(r"\bPVC\s*(?:figure|statue)\b", re.IGNORECASE),
+    re.compile(r"\bPVC\s*(?:figure|statue|painted)\b", re.IGNORECASE),
+    re.compile(r"\bpainted\s+statue\b", re.IGNORECASE),
     re.compile(r"\baction\s*figure\b", re.IGNORECASE),
     re.compile(r"\bnendoroid\b|\bfigma\b", re.IGNORECASE),
     re.compile(r"\b(?:pop!?\s+)?funko\b|\bfunko\s+pop\b", re.IGNORECASE),
@@ -1673,6 +1687,17 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bBanpresto\b", re.IGNORECASE),
     # "Figure Bundle / Set / Pack / Series" — pack de figuras, no manga.
     re.compile(r"\bFigure\s+(?:Bundle|Set|Pack|Series)\b", re.IGNORECASE),
+    # Prints decorativos, bookends, standees (Dark Horse Direct los mezcla
+    # con manga en el catálogo). Son productos completos, nunca extras.
+    re.compile(r"\bfine\s+art\s+print\b", re.IGNORECASE),
+    re.compile(r"\bart\s+print\b(?!\s+(?:edition|collection))", re.IGNORECASE),
+    re.compile(r"\bbookends?\b", re.IGNORECASE),
+    re.compile(r"\bstandees?\b", re.IGNORECASE),
+    re.compile(r"\bcomic\s+cover\s+(?:art\s+)?print\b", re.IGNORECASE),
+    re.compile(r"\bpaperweight\b", re.IGNORECASE),
+    re.compile(r"\b(?:enamel\s+)?pin\s+set\b", re.IGNORECASE),
+    # Bundles de cómics (no manga) — Dark Horse pack de variantes Alien/Conan/etc.
+    re.compile(r"\b(?:Exclusive\s+)?Variant\s+Bundle\b", re.IGNORECASE),
     re.compile(r"ブルーレイ|DVD\s*BOX|フィギュア"),
 )
 
@@ -1726,10 +1751,17 @@ def is_likely_manga(
     title: str,
     description: str = "",
     tags: list[str] | None = None,
+    source_purity: str = "manga_only",
 ) -> tuple[bool, str]:
     """Heurística para decidir si un candidato es un manga (o libro relacionado:
     artbook, novela ligera, edición coleccionista con manga) versus un producto
     derivado puro (figura, estatua, Funko, DVD, puzzle, taza, etc.).
+
+    Args:
+        source_purity: "manga_only" (default) o "mixed". Cuando es "mixed",
+            no permitimos rescue por pack-extras solo — exigimos STRONG manga
+            hint adicional. Esto cierra el agujero donde "Collector's Edition"
+            rescataba estatuas/prints en sources tipo Dark Horse Direct.
 
     Returns:
         (is_manga, reason) — `reason` describe la regla que aplicó.
@@ -1740,7 +1772,10 @@ def is_likely_manga(
       0b. NON-MANGA HARD del título (DVD, Blu-ray, Funko, Vinyl Figure...).
           Estos productos NUNCA son extras en un pack de manga.
       1. STRONG manga hint en título o descripción → True
-      2. PACK / extras hint (edición especial + figura, cofanetto...) → True
+      2. PACK / extras hint (edición especial + figura, cofanetto...) → True,
+         EXCEPTO cuando source_purity='mixed' y NO hay STRONG hint — la
+         editorial publica figuras/prints/etc. donde "Collector's Edition"
+         no implica manga.
       3. NON-MANGA SOFT (statue, puzzle, mug, plush…) → False
       4. Default → True (conservador, mejor false-positive que perder mangas)
     """
@@ -1774,15 +1809,26 @@ def is_likely_manga(
             return True, f"strong:{pat.pattern[:40]}"
 
     # 2) Pack / extras (manga con figura/poster/etc.)
-    for pat in _MANGA_WITH_EXTRAS_PATTERNS:
-        if pat.search(blob_extra):
-            return True, f"pack:{pat.pattern[:40]}"
+    # En fuentes "mixed" (catálogo no-100%-manga), pack-extras NO basta como
+    # rescate — exigimos STRONG hint. Esto evita que "Collector's Edition"
+    # rescate prints, bookends, estatuas, etc. en Dark Horse Direct y
+    # retailers genéricos.
+    if source_purity != "mixed":
+        for pat in _MANGA_WITH_EXTRAS_PATTERNS:
+            if pat.search(blob_extra):
+                return True, f"pack:{pat.pattern[:40]}"
 
     # 3) Non-manga SOFT: solo si no se rescató antes.
     for pat in _NON_MANGA_SOFT:
         if pat.search(blob):
             return False, f"non_manga_soft:{pat.pattern[:40]}"
 
+    # 4) Default según purity.
+    # En sources 'manga_only' confiamos en su catálogo: aceptar si no hay
+    # señal explícita de non-manga. En sources 'mixed' (Dark Horse Direct,
+    # retailers mixtos) somos estrictos: sin STRONG manga hint, descartar.
+    if source_purity == "mixed":
+        return False, "default:mixed_no_strong_hint"
     return True, "default:no_match"
 
 
@@ -1864,6 +1910,7 @@ def load_sources(path: Path) -> list[Source]:
                     notes=str(item.get("notes", "")).strip(),
                     selectors=dict(item.get("selectors", {}) or {}),
                     max_pages=int(item.get("max_pages", 0) or 0),
+                    purity=str(item.get("purity", "manga_only")).strip().lower(),
                 )
             )
 
@@ -2744,8 +2791,10 @@ def extract_generic_html(
             continue
         # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
         # con rescue para mangas que vienen con extras (figura de regalo, etc.).
+        # En sources mixed (Dark Horse Direct, etc.), exigimos STRONG manga hint.
         is_manga, _reason = is_likely_manga(
-            candidate.title, candidate.description, tags=candidate.tags
+            candidate.title, candidate.description,
+            tags=candidate.tags, source_purity=source.purity,
         )
         if not is_manga:
             if info is not None:
@@ -2807,7 +2856,7 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
         if score <= 0:
             continue
         # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
-        is_manga, _reason = is_likely_manga(title, summary)
+        is_manga, _reason = is_likely_manga(title, summary, source_purity=source.purity)
         if not is_manga:
             continue
         candidate = candidate_from_source(source, title, link, summary, published_at=published_at)
@@ -3657,7 +3706,8 @@ def _run_sitemap_mining(
             score_candidate(cand)
             # Filtro non-manga (figuras, estatuas, DVDs, etc.).
             is_manga, _reason = is_likely_manga(
-                cand.title, cand.description, tags=cand.tags
+                cand.title, cand.description,
+                tags=cand.tags, source_purity=source.purity,
             )
             if not is_manga:
                 continue
