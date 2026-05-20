@@ -78,24 +78,93 @@ def dedupe_by_url(items: list[dict]) -> list[dict]:
         key = normalize_url_for_dedup(url)
         by_url[key] = pick(by_url.get(key), item)
 
-    # Pase 2: por ISBN cuando exista (mismo SKU en distintos retailers).
-    by_isbn: dict[str, dict] = {}
-    final: list[dict] = []
-    for item in by_url.values():
+    # Pase 2: agrupar por ISBN (mismo libro en distintos retailers).
+    # Antes descartábamos los duplicados, ahora los preservamos como
+    # sources[] dentro del item canónico, así el modal puede listar
+    # todas las tiendas donde está disponible.
+    return _group_by_isbn(list(by_url.values()), pick)
+
+
+def _source_entry(item: dict) -> dict:
+    """Subconjunto del item que tiene sentido por-source (cada tienda
+    tiene su precio, URL, imagen, stock, etc.)."""
+    return {
+        "name":         item.get("source", ""),
+        "source_class": item.get("source_class", ""),
+        "country":      item.get("country", ""),
+        "publisher":    item.get("publisher", ""),
+        "language":     item.get("language", ""),
+        "url":          item.get("url", ""),
+        "price":        item.get("price", ""),
+        "image_url":    item.get("image_url", ""),
+        "stock_type":   item.get("stock_type", ""),
+        "detected_at":  item.get("detected_at", ""),
+        "release_date": item.get("release_date", ""),
+        "score":        item.get("score", 0),
+    }
+
+
+def _merged_canonical(group: list[dict], pick) -> dict:
+    """Combina N items con el mismo ISBN en una sola entrada.
+
+    - El item con mayor score gana como base ("canonical")
+    - Si al canónico le falta algún campo (cover, autor, precio, fecha,
+      ISBN, descripción), se completa desde cualquier source del grupo
+      que sí lo tenga (best-of merge).
+    - sources[] preserva la entrada por-source (precio, URL, país, etc.).
+    """
+    canonical = group[0]
+    for item in group[1:]:
+        canonical = pick(canonical, item)
+    merged = dict(canonical)
+    completable = ("image_url", "author", "price", "release_date",
+                   "description", "isbn", "publisher")
+    for field in completable:
+        if not merged.get(field):
+            for item in group:
+                if item.get(field):
+                    merged[field] = item[field]
+                    break
+    # Score máximo del grupo (mejor representa el "interés combinado").
+    merged["score"] = max((i.get("score") or 0) for i in group)
+    # Lista de sources, ordenada: la canónica primero, después por país.
+    sources = [_source_entry(i) for i in group]
+    sources.sort(key=lambda s: (
+        s["url"] != canonical.get("url", ""),  # canónica primero
+        s.get("country", ""),
+        s.get("name", ""),
+    ))
+    merged["sources"] = sources
+    return merged
+
+
+def _group_by_isbn(items: list[dict], pick) -> list[dict]:
+    """Devuelve la misma lista de items pero con los grupos por ISBN
+    fusionados en un único item con sources[].
+    Items sin ISBN quedan tal cual (sources[] tiene 1 sola entrada)."""
+    by_isbn: dict[str, list[dict]] = {}
+    no_isbn: list[dict] = []
+    for item in items:
         isbn = (item.get("isbn") or "").strip()
         if not isbn:
-            final.append(item)
+            no_isbn.append(item)
             continue
-        existing = by_isbn.get(isbn)
-        if existing is None:
-            by_isbn[isbn] = item
-            final.append(item)
+        by_isbn.setdefault(isbn, []).append(item)
+
+    final: list[dict] = []
+    for group in by_isbn.values():
+        if len(group) == 1:
+            merged = dict(group[0])
+            merged["sources"] = [_source_entry(group[0])]
+            final.append(merged)
         else:
-            winner = pick(existing, item)
-            if winner is not existing:
-                by_isbn[isbn] = winner
-                i = final.index(existing)
-                final[i] = winner
+            final.append(_merged_canonical(group, pick))
+
+    # Items sin ISBN: cada uno como source único
+    for item in no_isbn:
+        merged = dict(item)
+        merged["sources"] = [_source_entry(item)]
+        final.append(merged)
     return final
 
 
