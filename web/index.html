@@ -241,14 +241,14 @@
 
     <!-- Paginación -->
     <div class="flex items-center justify-center gap-2 mt-8" x-show="totalPages > 1">
-      <button @click="page = Math.max(1, page - 1)" :disabled="page === 1"
+      <button @click="goToPage(page - 1)" :disabled="page === 1"
               class="px-3 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed">
         ← Anterior
       </button>
       <span class="text-sm text-gray-600">
         Página <span x-text="page"></span> / <span x-text="totalPages"></span>
       </span>
-      <button @click="page = Math.min(totalPages, page + 1)" :disabled="page === totalPages"
+      <button @click="goToPage(page + 1)" :disabled="page === totalPages"
               class="px-3 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed">
         Siguiente →
       </button>
@@ -576,6 +576,15 @@ function mangaApp() {
 
     openModal(item) { this.selectedItem = item; this.copiedTitle = false; document.body.style.overflow = "hidden"; },
     closeModal() { this.selectedItem = null; this.copiedTitle = false; document.body.style.overflow = ""; },
+
+    goToPage(n) {
+      const clamped = Math.max(1, Math.min(this.totalPages, n));
+      if (clamped === this.page) return;
+      this.page = clamped;
+      // Scroll suave al inicio para que al cambiar de página el usuario
+      // vea el principio del listado, no quede al final de la anterior.
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
 
     copiedTitle: false,
     async copyTitle() {
