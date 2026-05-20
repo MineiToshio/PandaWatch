@@ -816,8 +816,10 @@ def test_clean_title_strips_shopify_price_junk():
     cases = [
         ("Berserk Deluxe Hardcover Sale price: $44.99 Regular price: $49.99 On Sale",
          "Berserk Deluxe Hardcover"),
+        # 'Mazebook HC (Dark Horse Direct Exclusive) Price: $125.00' ahora se limpia
+        # el sufijo de retailer-exclusive también. Test ajustado.
         ("Mazebook HC (Dark Horse Direct Exclusive) Price: $125.00",
-         "Mazebook HC (Dark Horse Direct Exclusive)"),
+         "Mazebook HC"),
         ("Trigun Maximum Deluxe Edition Hardcovers Sale price: $44.99 Regular price: $49.99 On Sale",
          "Trigun Maximum Deluxe Edition Hardcovers"),
         ("Berserk Deluxe Hardcover Volumes Price: On Sale from $44.99 On Sale",
@@ -848,6 +850,37 @@ def test_clean_title_preserves_clean_titles():
 def test_clean_title_empty_input():
     assert mw.clean_title("") == ""
     assert mw.clean_title(None) is None
+
+
+def test_clean_title_strips_announcement_prefix():
+    # Los 6 ejemplos exactos que el usuario pasó.
+    cases = [
+        ("New Product Announcement - Mazebook HC (Dark Horse Direct Exclusive)",
+         "Mazebook HC"),
+        ("New Product Announcement - Star Wars: Hyperspace Stories Annual—Jaxxon 2023 (Mike Mignola Exclusive Variant)",
+         "Star Wars: Hyperspace Stories Annual—Jaxxon 2023 (Mike Mignola Exclusive Variant)"),
+        ("Panini: Fumetti_21st Century Boys: Ultimate Deluxe Edition 12",
+         "21st Century Boys: Ultimate Deluxe Edition 12"),
+        ("Mignola Convention Variant Spaceboy Maquette Pre-Order Bonus",
+         "Mignola Convention Variant Spaceboy Maquette"),
+        ("Panini: Fumetti_Shangri-La Frontier Expansion Pass 21",
+         "Shangri-La Frontier Expansion Pass 21"),
+        ("New Product Announcement: The Art of Dragon Age: The Veilguard HC (Deluxe Edition)",
+         "The Art of Dragon Age: The Veilguard HC (Deluxe Edition)"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_keeps_artist_exclusives():
+    # 'Mike Mignola Exclusive Variant' es metadata del producto: mantener.
+    # 'Dark Horse Direct Exclusive' es metadata del retailer: quitar.
+    assert mw.clean_title("Some Comic (Mike Mignola Exclusive Variant)") == \
+        "Some Comic (Mike Mignola Exclusive Variant)"
+    assert mw.clean_title("Some Comic (Dark Horse Direct Exclusive)") == "Some Comic"
+    assert mw.clean_title("Some Comic (Barnes & Noble Exclusive)") == "Some Comic"
+    assert mw.clean_title("Some Comic (Kinokuniya Exclusive)") == "Some Comic"
 
 
 def test_listadomanga_parse_handles_multiple_editorials():

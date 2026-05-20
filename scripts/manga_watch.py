@@ -307,6 +307,40 @@ def clean_text(value: Any) -> str:
     return text.strip()
 
 
+# Prefijos de "announcement" o etiqueta de editorial que se pegan al inicio.
+TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^New\s+Product\s+Announcement\s*[:\-–—]\s*", re.IGNORECASE),
+    re.compile(r"^Panini\s*[:_\-]?\s*Fumetti\s*[:_\-]?\s*", re.IGNORECASE),
+    re.compile(r"^Now\s+Shipping\s*[:\-]\s*", re.IGNORECASE),
+    re.compile(r"^Coming\s+Soon\s*[:\-]\s*", re.IGNORECASE),
+    re.compile(r"^Pre-?Order\s+Now\s*[:\-]\s*", re.IGNORECASE),
+    re.compile(r"^Available\s+Now\s*[:\-]\s*", re.IGNORECASE),
+    re.compile(r"^Just\s+Released\s*[:\-]\s*", re.IGNORECASE),
+)
+
+# Retailers cuyo "(X Exclusive)" en el sufijo es metadata redundante.
+# Si el paréntesis menciona algo distinto (un artista, un evento), se mantiene.
+_RETAILER_NAMES_ALT = (
+    r"Dark\s+Horse\s+Direct",
+    r"Kinokuniya",
+    r"Barnes\s*(?:&|and)\s*Noble",
+    r"B&N",
+    r"Amazon",
+    r"Walmart",
+    r"Target",
+    r"BAM",
+    r"Books[-\s]?a[-\s]?Million",
+    r"Crunchyroll",
+    r"FYE",
+    r"Forbidden\s+Planet",
+    r"Right\s+Stuf",
+    r"Hot\s+Topic",
+)
+_RETAILER_EXCLUSIVE_SUFFIX = re.compile(
+    r"\s+\((?:" + "|".join(_RETAILER_NAMES_ALT) + r")\s+Exclusive\)\s*$",
+    re.IGNORECASE,
+)
+
 # Patrones que indican "basura de e-commerce" pegada al título.
 # Cada uno corta DESDE el match hasta el final del string.
 TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -316,6 +350,11 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s+Price\s*:.*$", re.IGNORECASE),
     re.compile(r"\s+(?:On\s+Sale|Sold\s+Out|In\s+Stock|Out\s+of\s+Stock|Coming\s+Soon|Pre-?Order)\s*$", re.IGNORECASE),
     re.compile(r"\s+from\s+\$\s*\d[\d.,]*.*$", re.IGNORECASE),
+    # Sufijos "marketing" comunes
+    re.compile(r"\s+Pre-?Order\s+Bonus\s*$", re.IGNORECASE),
+    re.compile(r"\s+(?:NEW|NOVEDAD|NOUVEAU|NOVITÀ|新刊)\s*$", re.IGNORECASE),
+    # Retailer exclusive en paréntesis (lista controlada)
+    _RETAILER_EXCLUSIVE_SUFFIX,
     # E-commerce francés (Manga-Sanctuary y similares)
     re.compile(r"\s+Acheter\s+\d.*$", re.IGNORECASE),
     re.compile(r"\s+Ajouter\s+au\s+panier.*$", re.IGNORECASE),
@@ -341,21 +380,22 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def clean_title(title: str) -> str:
-    """Strippea basura de e-commerce pegada al final del título.
+    """Strippea basura de e-commerce y prefijos de announcement del título.
 
-    Ejemplos:
-      'Berserk Deluxe Hardcover Sale price: $44.99 On Sale'
-        → 'Berserk Deluxe Hardcover'
-      'One Piece 10 [glénat manga] / simple Manga Acheter 7,95€'
-        → 'One Piece 10 [glénat manga] / simple Manga'
-      'Title here ¥3,850'  → 'Title here'
+    Aplica en orden:
+      1) Quita prefijos tipo 'New Product Announcement -', 'Panini: Fumetti_', etc.
+      2) Quita sufijos (precios, 'On Sale', '(Dark Horse Direct Exclusive)', etc.)
+    Iterando hasta estabilizar para que patrones cascading se resuelvan.
     """
     if not title:
         return title
     cleaned = title
-    # Iteramos hasta estabilizar (los patrones pueden cascadear: precio + estado).
     for _ in range(5):
         prev = cleaned
+        # Prefijos
+        for pattern in TITLE_JUNK_PREFIXES:
+            cleaned = pattern.sub("", cleaned).strip()
+        # Sufijos
         for pattern in TITLE_JUNK_PATTERNS:
             cleaned = pattern.sub("", cleaned).strip()
         if cleaned == prev:
