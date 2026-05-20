@@ -5,9 +5,9 @@
 títulos guardados con basura de e-commerce.
 
 Uso:
-    python scripts/clean_titles.py
-    python scripts/clean_titles.py --dry-run        # solo cuenta, no escribe
-    python scripts/clean_titles.py --input X --output Y
+    python scripts/retrofit/clean_titles.py
+    python scripts/retrofit/clean_titles.py --dry-run        # solo cuenta, no escribe
+    python scripts/retrofit/clean_titles.py --input X --output Y
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-_SCRIPTS = Path(__file__).resolve().parent
+_SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

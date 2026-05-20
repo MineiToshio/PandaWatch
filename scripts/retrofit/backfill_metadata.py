@@ -6,13 +6,13 @@ si tiene una URL accesible, hace HTTP GET al detalle y rellena los campos
 faltantes. NO sobreescribe valores ya presentes.
 
 Uso:
-    python scripts/backfill_metadata.py                  # rellena todo
-    python scripts/backfill_metadata.py --dry-run        # solo cuenta
-    python scripts/backfill_metadata.py --only image_url # solo cover
-    python scripts/backfill_metadata.py --limit 50       # primeros 50 candidatos
-    python scripts/backfill_metadata.py --max-per-source 20  # max 20/source
-    python scripts/backfill_metadata.py --sleep 0.5      # 500ms entre requests
-    python scripts/backfill_metadata.py --skip-domain darkhorse.com  # excluir dominios
+    python scripts/retrofit/backfill_metadata.py                  # rellena todo
+    python scripts/retrofit/backfill_metadata.py --dry-run        # solo cuenta
+    python scripts/retrofit/backfill_metadata.py --only image_url # solo cover
+    python scripts/retrofit/backfill_metadata.py --limit 50       # primeros 50 candidatos
+    python scripts/retrofit/backfill_metadata.py --max-per-source 20  # max 20/source
+    python scripts/retrofit/backfill_metadata.py --sleep 0.5      # 500ms entre requests
+    python scripts/retrofit/backfill_metadata.py --skip-domain darkhorse.com  # excluir dominios
 
 Campos targeteables: image_url, author, isbn, release_date, price.
 Por defecto rellena todos los que estén vacíos.
@@ -28,7 +28,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.parse import urlparse
 
-_SCRIPTS = Path(__file__).resolve().parent
+_SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

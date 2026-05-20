@@ -5,9 +5,9 @@ Usa is_likely_manga() de manga_watch.py para clasificar los items existentes
 en items.jsonl y mover los no-mangas a un archivo separado para revisión.
 
 Uso:
-    python scripts/filter_non_manga.py                    # ejecuta y escribe
-    python scripts/filter_non_manga.py --dry-run          # solo cuenta
-    python scripts/filter_non_manga.py --input X --kept-output Y --rejected-output Z
+    python scripts/retrofit/filter_non_manga.py                    # ejecuta y escribe
+    python scripts/retrofit/filter_non_manga.py --dry-run          # solo cuenta
+    python scripts/retrofit/filter_non_manga.py --input X --kept-output Y --rejected-output Z
 
 Por defecto:
     - keeps items en data/items.jsonl
@@ -23,7 +23,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-_SCRIPTS = Path(__file__).resolve().parent
+_SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
