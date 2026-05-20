@@ -1595,7 +1595,29 @@ _NON_MANGA_SOFT: tuple[re.Pattern[str], ...] = (
 )
 
 
-def is_likely_manga(title: str, description: str = "", tags: list[str] | None = None) -> tuple[bool, str]:
+# Tags taxonómicos de fuentes externas (Manga-Sanctuary, ListadoManga) que
+# indican que el item NO es un manga: anime, films, OAV, merchandising,
+# productos derivados. "produit spécial manga" se preserva porque son packs
+# de manga reales (coffret manga + artbook, etc.).
+_NON_MANGA_TAG_PREFIXES = (
+    "type:série tv animée",
+    "type:série tv",
+    "type:OAV",
+    "type:film",
+    "type:produit dérivé",
+    "type:produit spécial anime",
+    "type:webtoon",   # técnicamente parecido a manga pero el usuario quiere manga
+    "type:goodies",
+    "type:dvd",
+    "type:blu-ray",
+)
+
+
+def is_likely_manga(
+    title: str,
+    description: str = "",
+    tags: list[str] | None = None,
+) -> tuple[bool, str]:
     """Heurística para decidir si un candidato es un manga (o libro relacionado:
     artbook, novela ligera, edición coleccionista con manga) versus un producto
     derivado puro (figura, estatua, Funko, DVD, puzzle, taza, etc.).
@@ -1604,16 +1626,25 @@ def is_likely_manga(title: str, description: str = "", tags: list[str] | None = 
         (is_manga, reason) — `reason` describe la regla que aplicó.
 
     Reglas (en orden):
-      0. NON-MANGA HARD (DVD, Blu-ray, Funko, Vinyl Figure, etc.) → False.
-         Estos productos NUNCA son extras en un pack de manga, por lo que
-         deben evaluarse ANTES de las reglas de rescue.
+      0a. Tag externo indica anime/film/OAV/dérivé → False (alta confianza,
+          viene de la taxonomía oficial de la fuente).
+      0b. NON-MANGA HARD del título (DVD, Blu-ray, Funko, Vinyl Figure...).
+          Estos productos NUNCA son extras en un pack de manga.
       1. STRONG manga hint en título o descripción → True
-      2. PACK / extras hint (edición especial + figura, cofanetto, etc.) → True
+      2. PACK / extras hint (edición especial + figura, cofanetto...) → True
       3. NON-MANGA SOFT (statue, puzzle, mug, plush…) → False
       4. Default → True (conservador, mejor false-positive que perder mangas)
     """
     if not title:
         return True, "default:empty"
+
+    # 0a) Tag taxonómico de la fuente (Manga-Sanctuary categoriza con "type:...").
+    if tags:
+        for tag in tags:
+            for prefix in _NON_MANGA_TAG_PREFIXES:
+                if tag == prefix or tag.startswith(prefix + " "):
+                    return False, f"non_manga_tag:{tag}"
+
     blob = title
     if description:
         # Mirar también en descripción para 'incluye manga' etc. pero NO
@@ -2604,7 +2635,9 @@ def extract_generic_html(
             continue
         # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
         # con rescue para mangas que vienen con extras (figura de regalo, etc.).
-        is_manga, _reason = is_likely_manga(candidate.title, candidate.description)
+        is_manga, _reason = is_likely_manga(
+            candidate.title, candidate.description, tags=candidate.tags
+        )
         if not is_manga:
             if info is not None:
                 info["cards_skipped_non_manga"] = info.get("cards_skipped_non_manga", 0) + 1
@@ -3510,7 +3543,9 @@ def _run_sitemap_mining(
             cand.tags = list(source.tags or []) + ["sitemap"]
             score_candidate(cand)
             # Filtro non-manga (figuras, estatuas, DVDs, etc.).
-            is_manga, _reason = is_likely_manga(cand.title, cand.description)
+            is_manga, _reason = is_likely_manga(
+                cand.title, cand.description, tags=cand.tags
+            )
             if not is_manga:
                 continue
             if cand.score >= args.min_score:

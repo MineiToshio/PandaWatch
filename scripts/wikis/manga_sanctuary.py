@@ -220,7 +220,9 @@ def parse_planning_page(html_text: str) -> list[Candidate]:
                 except ImportError:
                     is_likely_manga = None  # noqa: N816
                 if is_likely_manga is not None:
-                    keep, _reason = is_likely_manga(cand.title, cand.description)
+                    keep, _reason = is_likely_manga(
+                        cand.title, cand.description, tags=cand.tags
+                    )
                     if not keep:
                         continue
                 candidates.append(cand)

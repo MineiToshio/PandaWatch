@@ -1018,6 +1018,32 @@ def test_is_likely_manga_default_accepts_unknown():
     assert is_manga
 
 
+def test_is_likely_manga_rejects_by_source_tag():
+    # Tags taxonómicos de Manga-Sanctuary: "type:série tv animée" / "type:film" /
+    # "type:produit dérivé" → no es manga aunque el título sea ambiguo.
+    cases = [
+        ("Fairy Tail 1", ["wiki", "manga-sanctuary", "type:série tv animée"]),
+        ("Black Butler : Book of the Atlantic", ["wiki", "type:film"]),
+        ("Marque-pages Manga Luxe Bulle en Stock 1", ["type:produit dérivé"]),
+        ("Some Title", ["type:OAV"]),
+        ("Another", ["type:webtoon"]),
+    ]
+    for title, tags in cases:
+        is_manga, reason = mw.is_likely_manga(title, "", tags=tags)
+        assert not is_manga, f"Should be rejected: {title!r} tags={tags} reason={reason}"
+
+
+def test_is_likely_manga_keeps_special_manga_packs_from_wiki():
+    # "type:produit spécial manga" SÍ es manga (packs manga + artbook, etc.).
+    cases = [
+        ("Naruto - Coffret des artbooks", ["type:produit spécial manga"]),
+        ("The promised Neverland - Coffret manga + roman 1", ["type:produit spécial manga"]),
+    ]
+    for title, tags in cases:
+        is_manga, _ = mw.is_likely_manga(title, "", tags=tags)
+        assert is_manga, f"Should be kept: {title!r}"
+
+
 def test_clean_title_repairs_mojibake():
     # UTF-8 leído como Latin-1/cp1252 (típico Glénat/Pika con encoding mal seteado).
     # Tras reparar, los prefijos FR ya conocidos también deben caer.

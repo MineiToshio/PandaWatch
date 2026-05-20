@@ -61,7 +61,8 @@ def main() -> int:
             continue
         title = item.get("title", "")
         description = item.get("description", "")
-        is_manga, reason = is_likely_manga(title, description)
+        tags = item.get("tags", []) or []
+        is_manga, reason = is_likely_manga(title, description, tags=tags)
         if is_manga:
             kept_lines.append(line)
         else:
