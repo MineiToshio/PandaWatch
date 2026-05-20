@@ -1097,6 +1097,62 @@ def test_is_likely_manga_rejects_decor_items_hard():
         assert not is_manga, f"Should be rejected: {t!r} (reason={reason})"
 
 
+def test_is_likely_manga_rejects_panini_collectibles():
+    # Trading cards, sobres, álbumes de cromos: Panini publica MUCHO esto.
+    cases = [
+        "Colección de cards oficial One Piece Treasure Box de Panini",
+        "Colección Dragon Ball Super Ultimate. Caja Con 50 Sobres.",
+        "Colección Dragon Ball Super Ultimate. Álbum Pasta Dura.",
+        "Colección Dragon Ball Super Ultimate. Álbum Pasta Suave + 4 Sobres.",
+        "Colección Dragon Ball Super Ultimate. Blíster 7 Sobres.",
+        "Colección Lady Bug 10° Aniversario. Álbum Pasta Suave + 4 Sobres.",
+        "Colección Lady Bug 10° Aniversario. Caja Con 36 Sobres.",
+        "ÁLBUM TAPA DURA “EDICIÓN ORO” + 3 SOBRES LIGA ESTE 2024/25",
+        "ÁLBUM TAPA DURA “EDICIÓN DIAMANTE” + 3 SOBRES LIGA ESTE 2024/25",
+        "Liga Este 2025/26 - Pack Album tapa dura Edición ORO + 3 sobres - Colección Oficial Panini",
+        "FIFA Club World Cup 2025™ Trading Cards. Lata.",
+        "EDICIÓN ESPECIAL JUGÓN EUROCOPA 2024",
+        "WORLD CUP 2026. PAQUETE ESPECIAL VERDE",
+        "WORLD CUP 2026. PAQUETE ESPECIAL BLANCO",
+        "WORLD CUP 2026. PAQUETE ESPECIAL ROJO",
+        "Corbata Vitaliano X Panini de Pura Seda – Edición Limitada",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_jp_non_manga():
+    cases = [
+        "【数量限定特典付き】危険生物 （学研の図鑑LIVE）",
+        "【数量限定特典付き】魚 （学研の図鑑LIVE）",
+        "【数量限定特典付き】昆虫 （学研の図鑑LIVE）",
+        "【数量限定特典付き】バァフアウト! 7月号 JULY 2019 Volume 286 窪田正孝 【ポスター】",
+        "菊池風磨 30th Anniversary プレミアムBOX【初回限定版】",
+        "山田涼介 30th Anniversary プレミアムBOX【初回限定版】",
+        "特典情報 2026.05.15 「LaLa」7月号 5月22日 発売記念",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_podcast_and_news():
+    cases = [
+        "Episodio 124 | Especial 8M",
+        "Episodio 100 | Especial con Rafa Martínez y Óscar Valiente",
+        "Episodio 70 | Especial Norma Comics 40 aniversario",
+        "Kodansha Reveals Fall 2025 New Print Manga Licenses in Multi-day Announcement",
+        "One Piece Gives Luffy a Truly Godlike Birthday Tribute",
+        "DC Edicion Facsímil. Limited Collectors' Edition C-59: Los casos más extraños de Batman",
+        "San Diego Comic Con 2025: Convention Exclusives",
+        "The Witcher (NETFLIX SEASON 3): Wolf Medallion Necklace Deluxe Edition (CONVENTION EXCLUSIVE)",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject: {t!r} (reason={reason})"
+
+
 def test_is_likely_manga_mixed_purity_strict():
     # En sources 'mixed', pack-extras NO basta para rescatar. Solo STRONG hint.
     # 'Hellboy 30th Anniversary Deluxe Vinyl Figure' ya cae por HARD (vinyl figure).

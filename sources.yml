@@ -434,6 +434,7 @@ sources:
     url: "https://www.animenewsnetwork.com/news/rss.xml?ann-edition=us"
     enabled: true
     tags: ["rss", "news", "anime", "manga"]
+    purity: "mixed"  # noticias, no productos. Solo aceptar con STRONG manga hint.
 
   - name: "US - Anime News Network News"
     country: "Estados Unidos"
@@ -455,6 +456,7 @@ sources:
     url: "https://comicbook.com/category/anime/"
     enabled: true
     tags: ["news", "anime", "manga"]
+    purity: "mixed"  # noticias/blog posts, no productos.
 
   # Retailers de variantes/exclusivas en inglés
   - name: "US - Kinokuniya Exclusives"
@@ -1006,6 +1008,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "official", "store"]
+    purity: "mixed"  # catálogo trae trading cards FIFA/WC, Hot Wheels, Lady Bug, etc.
     search_template: "https://tiendapanini.com.mx/catalogsearch/result/?q={query}"
     keywords:
       - "edicion limitada"
@@ -1027,6 +1030,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "official", "store"]
+    purity: "mixed"  # catálogo trae cromos LIGA ESTE, Eurocopa, corbatas, etc.
     search_template: "https://www.panini.es/shp_esp_es/catalogsearch/result/?q={query}"
     keywords:
       - "edicion limitada"
@@ -1047,6 +1051,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "official"]
+    purity: "mixed"  # search devuelve episodios de podcast + posts del blog además de mangas.
     search_template: "https://www.normaeditorial.com/?s={query}"
     keywords:
       - "edicion coleccionista"
@@ -1238,6 +1243,7 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "retailer", "japan"]
+    purity: "mixed"  # search trae enciclopedias 図鑑, revistas 月号, idol boxes プレミアムBOX.
     search_template: "https://books.rakuten.co.jp/search?sitem={query}&g=001"
     selectors:
       item_selector: "div.rbcomp__item-list__item"

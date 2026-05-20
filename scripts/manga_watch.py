@@ -1644,13 +1644,17 @@ _STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:art\s*book|artbook|fan\s*book|fanbook|data\s*book|guide\s*book|illustrations? book|character book)\b", re.IGNORECASE),
     re.compile(r"\b(?:doujinshi|d[oō]jinshi|d[oō]jin)\b", re.IGNORECASE),
     re.compile(r"\b(?:light\s*novel|novela ligera|roman l[ée]ger)\b", re.IGNORECASE),
-    re.compile(r"\bn[º°o]\s*\d+\b"),     # "nº 12", "n° 5"
+    re.compile(r"\b[Nn][º°o\.]\s*\d+\b"),     # "nº 12", "n° 5", "N.1"
     re.compile(r"#\d+\b"),                # "#22"
     re.compile(r"(?:\d+[\s\-]?en[\s\-]?1|3 en 1|integral)", re.IGNORECASE),
     # Formatos físicos de libro/cómic coleccionable: Dark Horse Direct y
     # otros retailers mixtos publican muchos manga + comic deluxe. Estos
     # formatos confirman que el producto es un LIBRO, no figura/print/bookend.
     re.compile(r"\b(?:Deluxe\s+(?:Hardcover|Edition|Volume)|Library\s+Edition|Hardcover\s+Volumes?|Omnibus|Compendium|Slipcase\s+Edition)\b", re.IGNORECASE),
+    # Boxsets/cofanettos/coffrets: formato de libro coleccionable.
+    re.compile(r"\b(?:Box\s*Set|Boxset|Cofanetto|Coffret\s+Collector|Slipcase\s+Set|Box\s+Edition)\b", re.IGNORECASE),
+    # Frame Art / Frame Book: libros de arte de manga (Tian Guan Ci Fu, etc.)
+    re.compile(r"\bFrame\s+(?:Art|Book)\b", re.IGNORECASE),
     re.compile(r"\bThe\s+Art\s+of\b", re.IGNORECASE),  # artbooks "The Art of X"
     re.compile(r"\b(?:Encyclopedia|Visual\s+Companion|Visual\s+Guide)\b", re.IGNORECASE),
     # Términos japoneses inequívocos de manga/libro
@@ -1698,6 +1702,47 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:enamel\s+)?pin\s+set\b", re.IGNORECASE),
     # Bundles de cómics (no manga) — Dark Horse pack de variantes Alien/Conan/etc.
     re.compile(r"\b(?:Exclusive\s+)?Variant\s+Bundle\b", re.IGNORECASE),
+    # Trading cards / cromos / coleccionables Panini (no manga, deporte/marca).
+    re.compile(r"\bTrading\s+Cards?\b", re.IGNORECASE),
+    re.compile(r"\b(?:Caja|Cajita)\s+Con\s+\d+\s+Sobres?\b", re.IGNORECASE),
+    re.compile(r"\bBl[íi]ster\s+\d+\s+Sobres?\b", re.IGNORECASE),
+    re.compile(r"\b[ÁA]lbum\s+(?:Pasta|tapa)\s+(?:Dura|Suave)\b", re.IGNORECASE),
+    re.compile(r"\bMegapack\b|\bPocket\s+tin\b", re.IGNORECASE),
+    re.compile(r"\bPack\s+Album\b", re.IGNORECASE),
+    re.compile(r"\bTreasure\s+Box\s+de\s+Panini\b", re.IGNORECASE),
+    re.compile(r"\bCromos?\b(?!\s+de\s+manga)", re.IGNORECASE),
+    # Colecciones marca/franquicia no-manga (Panini México)
+    re.compile(r"\bColecci[óo]n\s+(?:Hot\s+Wheels|Marvel\s+Cromos|Dragon\s+Ball\s+Super\s+Ultimate|Lady\s+Bug|Panini\s+FIFA|UEFA|Sticker\s+Album|de\s+cards?)\b", re.IGNORECASE),
+    # Deportes / cromos de fútbol
+    re.compile(r"\b(?:LIGA\s+ESTE|WORLD\s+CUP|FIFA(?:\s+\d|\s+Club|\s+\d{4})|UEFA|Champions\s+League|Eurocopa|Copa\s+America|JUG[ÓO]N\s+EUROCOPA)\b", re.IGNORECASE),
+    # Joyería / accesorios / textiles
+    re.compile(r"\b(?:Necklace|Medallion\s+Necklace|Pendant|Earring|Bracelet|Corbata|Pin\s+Set)\b", re.IGNORECASE),
+    # Convenciones y "convention exclusives" como listado
+    re.compile(r"\bConvention\s+Exclusives?\s*$", re.IGNORECASE),
+    re.compile(r"\b(?:San\s+Diego\s+Comic\s+Con|SDCC|Comic\s+Con\s+\d{4})\s*[:\-]", re.IGNORECASE),
+    # Packs Panini México "Paquete Especial" (cromos/coleccionables)
+    re.compile(r"\bPaquete\s+Especial\b", re.IGNORECASE),
+    # Podcast episodes (ES Norma)
+    re.compile(r"^Episodio\s+\d+\s*[|—–\-]", re.IGNORECASE),
+    re.compile(r"^Episode\s+\d+\s*[|—–\-]", re.IGNORECASE),
+    # Titulares de noticias/anuncios (no productos): vienen antes que STRONG
+    # porque pueden contener la palabra "manga" en titular pero no son items.
+    # "Kodansha Reveals Fall 2025 New Print Manga Licenses..."
+    # "One Piece Gives Luffy a Truly Godlike Birthday Tribute"
+    re.compile(r"\b(?:Reveals?|Announces?|Unveils?)\s+(?:New\s+|Fall\s+|Spring\s+|Summer\s+|Winter\s+)?\w", re.IGNORECASE),
+    re.compile(r"\b(?:Birthday|Anniversary)\s+Tribute\b", re.IGNORECASE),
+    re.compile(r"\bAnime\s+Film\s+Reveal\b", re.IGNORECASE),
+    re.compile(r"\bNew\s+(?:Print\s+)?(?:Manga\s+)?Licenses?\b", re.IGNORECASE),
+    re.compile(r"\bAnnouncements?\s*\(?\d{4}\)?\s*$", re.IGNORECASE),
+    re.compile(r"\bGives\s+\w+\s+a\s+", re.IGNORECASE),  # "Gives Luffy a Tribute"
+    # DC/Marvel facsímil (cómic, no manga)
+    re.compile(r"\b(?:DC|Marvel)\s+Edici[óo]n\s+Facs[íi]mil\b", re.IGNORECASE),
+    # JP: enciclopedias 図鑑 (Gakken animal/insect guides), revistas (X月号),
+    # idol boxes (プレミアムBOX), bonus prefix sin contenido manga.
+    re.compile(r"図鑑"),
+    re.compile(r"\d+月号"),                  # "7月号" = revista mensual
+    re.compile(r"プレミアムBOX"),
+    re.compile(r"学研の図鑑"),
     re.compile(r"ブルーレイ|DVD\s*BOX|フィギュア"),
 )
 
