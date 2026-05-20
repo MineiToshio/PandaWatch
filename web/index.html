@@ -215,8 +215,8 @@
                 <span x-text="item.country || '—'"></span>
                 <template x-if="item.sources && item.sources.length > 1">
                   <span class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-[10px]"
-                        :title="item.sources.length + ' tiendas disponibles'">
-                    🛒 <span x-text="item.sources.length"></span>
+                        :title="item.sources.length + ' fuentes encontradas'">
+                    🔗 <span x-text="item.sources.length"></span>
                   </span>
                 </template>
               </div>
@@ -321,7 +321,7 @@
               <template x-if="selectedItem.sources && selectedItem.sources.length > 1">
                 <span>
                   <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-xs">
-                    🛒 <span x-text="selectedItem.sources.length"></span> tiendas
+                    🔗 <span x-text="selectedItem.sources.length"></span> fuentes
                   </span>
                   · <span x-text="selectedItem.status" class="capitalize"></span>
                 </span>
@@ -376,12 +376,12 @@
           </div>
         </div>
 
-        <!-- Sources / tiendas disponibles -->
+        <!-- Sources / fuentes donde aparece el item -->
         <template x-if="selectedItem.sources && selectedItem.sources.length > 0">
           <div class="px-6 pb-5">
             <h3 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
-              Disponible en <span x-text="selectedItem.sources.length"></span>
-              <span x-text="selectedItem.sources.length === 1 ? 'tienda' : 'tiendas'"></span>
+              Encontrado en <span x-text="selectedItem.sources.length"></span>
+              <span x-text="selectedItem.sources.length === 1 ? 'fuente' : 'fuentes'"></span>
             </h3>
             <div class="space-y-2">
               <template x-for="(src, idx) in selectedItem.sources" :key="src.url || idx">
@@ -530,7 +530,7 @@ function mangaApp() {
       // Dedup en dos pases:
       // 1) Por URL normalizada (mismo producto mismo retailer, distintas URLs).
       // 2) Por ISBN: items que comparten ISBN se FUSIONAN en una sola entrada
-      //    con sources[] preservando precio/URL/imagen de cada tienda.
+      //    con sources[] preservando precio/URL/imagen de cada fuente.
       // Tie-break para canónico: mayor score gana; empate → más reciente.
       const pickWinner = (a, b) => {
         if (!a) return b;
