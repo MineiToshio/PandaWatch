@@ -58,7 +58,7 @@ sources:
     kind: "html"
     url: "https://www.ovnipress.net/manga/"
     enabled: true
-    tags: ["manga", "official", "store"]
+    tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "[data-product-id]"
       title_selector: "a[href*='/products/']"
@@ -72,7 +72,7 @@ sources:
     kind: "html"
     url: "https://www.kemuriediciones.com.ar/"
     enabled: true
-    tags: ["manga", "official", "store"]
+    tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "[data-product-id]"
       title_selector: "a[href*='/productos/']"
@@ -86,7 +86,7 @@ sources:
     kind: "html"
     url: "https://cuspide.com/editorial/distrito-manga/"
     enabled: true
-    tags: ["manga", "retailer", "store"]
+    tags: ["manga", "retailer", "store", "new-source"]
     selectors:
       item_selector: ".product"
       title_selector: "a[href*='/producto/']"
@@ -113,12 +113,12 @@ sources:
     publisher: "Editorial Kamite"
     source_class: "official"
     kind: "html"
-    url: "https://kamite.com.mx/collections/all"
+    url: "https://kamite.com.mx/productos/"
     enabled: true
-    tags: ["manga", "official", "store"]
+    tags: ["manga", "official", "store", "new-source"]
     selectors:
-      item_selector: ".grid__item, .card, [data-product-card]"
-      title_selector: "a"
+      item_selector: "[data-product-id]"
+      title_selector: "a[href*='/productos/']"
     max_pages: 5
 
   - name: "MX - Panini Manga México"
