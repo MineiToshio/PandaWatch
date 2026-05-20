@@ -38,6 +38,23 @@ python scripts/manga_watch.py
 - `data/items.jsonl`: historial de hallazgos nuevos o cambiados.
 - `reports/YYYY-MM-DD.md`: reporte diario en Markdown.
 
+## Browser web
+
+La UI está en `web/index.html` y por defecto lee los datos vía `fetch` de
+`data/items.jsonl` — siempre muestra el estado actual sin rebuildear.
+
+```bash
+./web/serve.sh             # arranca http://localhost:8000/web/ y abre el browser
+```
+
+Si necesitás abrir el HTML directo con doble-click (sin servidor),
+embebé la data en el HTML primero:
+
+```bash
+python scripts/build_web.py            # embebe data/items.jsonl en el HTML
+python scripts/build_web.py --clear    # vuelve al modo fetch dinámico
+```
+
 ## Comandos utiles
 
 ```bash
