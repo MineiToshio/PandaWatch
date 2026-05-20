@@ -812,6 +812,44 @@ def test_listadomanga_detail_empty_when_no_data():
     assert meta["price"] == ""
 
 
+def test_clean_title_strips_shopify_price_junk():
+    cases = [
+        ("Berserk Deluxe Hardcover Sale price: $44.99 Regular price: $49.99 On Sale",
+         "Berserk Deluxe Hardcover"),
+        ("Mazebook HC (Dark Horse Direct Exclusive) Price: $125.00",
+         "Mazebook HC (Dark Horse Direct Exclusive)"),
+        ("Trigun Maximum Deluxe Edition Hardcovers Sale price: $44.99 Regular price: $49.99 On Sale",
+         "Trigun Maximum Deluxe Edition Hardcovers"),
+        ("Berserk Deluxe Hardcover Volumes Price: On Sale from $44.99 On Sale",
+         "Berserk Deluxe Hardcover Volumes"),
+        ("Hellboy 30th Anniversary Deluxe Vinyl Figure Price: $149.99 Sold Out",
+         "Hellboy 30th Anniversary Deluxe Vinyl Figure"),
+    ]
+    for raw, expected in cases:
+        assert mw.clean_title(raw) == expected, f"failed: {raw!r}"
+
+
+def test_clean_title_strips_french_acheter():
+    assert mw.clean_title("One Piece 10 [glénat manga] / simple Manga Acheter 7,95€") == \
+        "One Piece 10 [glénat manga] / simple Manga"
+
+
+def test_clean_title_strips_isolated_price():
+    assert mw.clean_title("My Manga Volume 1 $19.99") == "My Manga Volume 1"
+    assert mw.clean_title("Manga Title 12,35 €") == "Manga Title"
+    assert mw.clean_title("Manga japonés ¥1,980") == "Manga japonés"
+
+
+def test_clean_title_preserves_clean_titles():
+    assert mw.clean_title("Berserk Deluxe Edition Vol 14") == "Berserk Deluxe Edition Vol 14"
+    assert mw.clean_title("限定版 Special Edition") == "限定版 Special Edition"
+
+
+def test_clean_title_empty_input():
+    assert mw.clean_title("") == ""
+    assert mw.clean_title(None) is None
+
+
 def test_listadomanga_parse_handles_multiple_editorials():
     from wikis import listadomanga as lm
     html = """<html><body>

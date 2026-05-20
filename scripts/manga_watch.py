@@ -307,6 +307,62 @@ def clean_text(value: Any) -> str:
     return text.strip()
 
 
+# Patrones que indican "basura de e-commerce" pegada al título.
+# Cada uno corta DESDE el match hasta el final del string.
+TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Shopify / e-commerce inglés
+    re.compile(r"\s+Sale\s+price\s*:.*$", re.IGNORECASE),
+    re.compile(r"\s+Regular\s+price\s*:.*$", re.IGNORECASE),
+    re.compile(r"\s+Price\s*:.*$", re.IGNORECASE),
+    re.compile(r"\s+(?:On\s+Sale|Sold\s+Out|In\s+Stock|Out\s+of\s+Stock|Coming\s+Soon|Pre-?Order)\s*$", re.IGNORECASE),
+    re.compile(r"\s+from\s+\$\s*\d[\d.,]*.*$", re.IGNORECASE),
+    # E-commerce francés (Manga-Sanctuary y similares)
+    re.compile(r"\s+Acheter\s+\d.*$", re.IGNORECASE),
+    re.compile(r"\s+Ajouter\s+au\s+panier.*$", re.IGNORECASE),
+    # E-commerce español
+    re.compile(r"\s+Añadir\s+al\s+carrito.*$", re.IGNORECASE),
+    re.compile(r"\s+Agregar\s+al\s+carrito.*$", re.IGNORECASE),
+    re.compile(r"\s+Comprar\s+ahora.*$", re.IGNORECASE),
+    re.compile(r"\s+Aggiungi\s+al\s+(?:carrello|confronto|lista).*$", re.IGNORECASE),
+    re.compile(r"\s+Aggiungi\s+alla\s+lista.*$", re.IGNORECASE),
+    re.compile(r"\s+Rimuovi\s+questo.*$", re.IGNORECASE),
+    # E-commerce japonés
+    re.compile(r"\s+カートに入れる.*$"),
+    re.compile(r"\s+ほしい本に追加.*$"),
+    re.compile(r"\s+詳細を見る.*$"),
+    # Precio suelto al final ($X.XX, X,YY €, ¥XXX, etc.)
+    re.compile(r"\s+(?:\$|US\$|USD)\s*\d[\d.,]*\s*$", re.IGNORECASE),
+    re.compile(r"\s+\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*€\s*$"),
+    re.compile(r"\s+€\s*\d[\d.,]*\s*$"),
+    re.compile(r"\s+¥\s*[\d,]+\s*$"),
+    re.compile(r"\s+[\d,]+\s*円\s*$"),
+    re.compile(r"\s+£\s*\d[\d.,]*\s*$"),
+)
+
+
+def clean_title(title: str) -> str:
+    """Strippea basura de e-commerce pegada al final del título.
+
+    Ejemplos:
+      'Berserk Deluxe Hardcover Sale price: $44.99 On Sale'
+        → 'Berserk Deluxe Hardcover'
+      'One Piece 10 [glénat manga] / simple Manga Acheter 7,95€'
+        → 'One Piece 10 [glénat manga] / simple Manga'
+      'Title here ¥3,850'  → 'Title here'
+    """
+    if not title:
+        return title
+    cleaned = title
+    # Iteramos hasta estabilizar (los patrones pueden cascadear: precio + estado).
+    for _ in range(5):
+        prev = cleaned
+        for pattern in TITLE_JUNK_PATTERNS:
+            cleaned = pattern.sub("", cleaned).strip()
+        if cleaned == prev:
+            break
+    return cleaned
+
+
 def normalize_text(value: str) -> str:
     text = clean_text(value).casefold()
     text = text.replace("’", "'").replace("`", "'")
@@ -1142,12 +1198,17 @@ def fetch_metadata_from_detail(
     session: requests.Session,
     timeout: tuple[int, int],
 ) -> dict[str, str]:
-    """Fetch HTTP a la URL del producto y extrae autor + imagen.
+    """Fetch HTTP a la URL del producto y extrae todos los metadatos posibles.
 
-    Devuelve {"author": "...", "image_url": "..."} (campos vacíos si no
-    se encuentra). Hace 1 HTTP request opt-in (--fetch-details).
+    Devuelve dict con author / image_url / isbn / name / price / release_date /
+    publisher / description (campos vacíos si no se encuentra). Hace 1 HTTP
+    request opt-in (--fetch-details).
     """
-    result = {"author": "", "image_url": "", "isbn": ""}
+    result = {
+        "author": "", "image_url": "", "isbn": "",
+        "name": "", "price": "", "release_date": "",
+        "publisher": "", "description": "",
+    }
     if not url:
         return result
     try:
@@ -1159,37 +1220,49 @@ def fetch_metadata_from_detail(
     except (requests.RequestException, Exception):
         return result
 
-    # === Author ===
-    author = _extract_json_ld_author(soup)
-    if not author:
-        for attrs in (
-            {"name": "author"},
-            {"property": "book:author"},
-            {"property": "og:book:author"},
-            {"name": "twitter:creator"},
-        ):
-            meta = soup.find("meta", attrs=attrs)
-            if meta and meta.get("content"):
-                value = clean_text(meta["content"])
-                if value:
-                    author = value
-                    break
-    if not author:
-        author = _extract_author_from_links(soup)
-    if not author:
+    # === Schema.org/JSON-LD primero (es la fuente más confiable) ===
+    schema = extract_schema_org_product(soup, url)
+    for key in ("name", "price", "release_date", "publisher", "description"):
+        if schema.get(key):
+            result[key] = schema[key]
+    if schema.get("image_url"):
+        result["image_url"] = schema["image_url"]
+    if schema.get("isbn"):
+        result["isbn"] = schema["isbn"]
+    if schema.get("author"):
+        result["author"] = schema["author"]
+
+    # === Author (si Schema.org no lo trajo) ===
+    if not result["author"]:
+        author = _extract_json_ld_author(soup)
+        if not author:
+            for attrs in (
+                {"name": "author"},
+                {"property": "book:author"},
+                {"property": "og:book:author"},
+                {"name": "twitter:creator"},
+            ):
+                meta = soup.find("meta", attrs=attrs)
+                if meta and meta.get("content"):
+                    value = clean_text(meta["content"])
+                    if value:
+                        author = value
+                        break
+        if not author:
+            author = _extract_author_from_links(soup)
+        if not author:
+            body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
+            author = extract_author(body_text[:3000], soup)
+        result["author"] = author
+
+    # === Image (si Schema.org no lo trajo) ===
+    if not result["image_url"]:
+        result["image_url"] = _extract_image_from_detail_soup(soup, url)
+
+    # === ISBN (si Schema.org no lo trajo) ===
+    if not result["isbn"]:
         body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
-        author = extract_author(body_text[:3000], soup)
-    result["author"] = author
-
-    # === Image ===
-    result["image_url"] = _extract_image_from_detail_soup(soup, url)
-
-    # === ISBN ===
-    # Buscamos en HTML completo: muchos sites lo ponen en <span> o <dl><dd> en
-    # secciones de "detalles técnicos" que pueden estar después de mucho ruido
-    # en el body.
-    body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
-    result["isbn"] = extract_isbn(f"{body_text}\n{url}", soup)
+        result["isbn"] = extract_isbn(f"{body_text}\n{url}", soup)
 
     return result
 
@@ -1733,8 +1806,9 @@ def fetch_with_playwright(
 
 
 def candidate_from_source(source: Source, title: str, url: str, description: str, published_at: str = "") -> Candidate:
+    cleaned_title = clean_title(title) if title else title
     return Candidate(
-        title=title or f"Hallazgo en {source.name}",
+        title=cleaned_title or f"Hallazgo en {source.name}",
         url=url or source.url,
         source=source.name,
         source_url=source.url,
@@ -1801,7 +1875,7 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             candidate = candidate_from_source(source, title, link or source.url, description)
             schema = extract_schema_org_product(card, source.url)
             if schema.get("name") and len(schema["name"]) >= 3:
-                candidate.title = schema["name"][:260]
+                candidate.title = clean_title(schema["name"])[:260]
             if schema.get("description") and len(schema["description"]) > len(candidate.description):
                 candidate.description = schema["description"][:2500]
             candidate.price = schema.get("price") or extract_price(candidate.description)
@@ -2091,7 +2165,7 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
 
     # Title: si Schema.org tiene un name más específico, lo usamos.
     if schema.get("name") and len(schema["name"]) >= 3:
-        candidate.title = schema["name"][:260]
+        candidate.title = clean_title(schema["name"])[:260]
 
     # Description: si la de Schema es más sustancial, la preferimos.
     if schema.get("description") and len(schema["description"]) > len(candidate.description):
@@ -3051,6 +3125,128 @@ def _run_wiki_bootstrap(
     return 0
 
 
+def _run_sitemap_mining(
+    args: argparse.Namespace,
+    sources: list[Source],
+    session: requests.Session,
+    state: dict[str, Any],
+    state_path: Path,
+    items_path: Path,
+    report_path: Path,
+) -> int:
+    """Modo --discover-sitemaps: descubre productos vía /sitemap.xml."""
+    _scripts_dir = str(Path(__file__).resolve().parent)
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+    from sitemap_miner import discover_and_filter
+
+    # Solo sources canónicas HTML (no rss, no js, no search-template).
+    eligible = [
+        s for s in sources
+        if s.kind == "html"
+        and s.enabled
+        and not any(t.startswith("search:") for t in (s.tags or []))
+        and "expansion" not in (s.tags or [])
+    ]
+    print(f"[SITEMAP] {len(eligible)} sources elegibles (kind=html, no expansion)")
+    print(f"[SITEMAP] max-urls por source: {args.sitemap_max_urls}")
+    print()
+
+    all_candidates: list[Candidate] = []
+    sitemap_stats: list[dict[str, Any]] = []
+
+    for idx, source in enumerate(eligible, start=1):
+        print(f"[{idx}/{len(eligible)}] {source.name}")
+        result = discover_and_filter(
+            source.url, session,
+            max_urls=args.sitemap_max_urls * 10,  # más amplio antes de filtrar
+            timeout=(args.connect_timeout, args.read_timeout),
+        )
+        if not result["sitemap_url"]:
+            print(f"    (sin sitemap accesible)")
+            sitemap_stats.append({"source": source.name, "sitemap": "", "urls": 0, "products": 0, "candidates": 0})
+            continue
+
+        product_urls = result["product_urls"][: args.sitemap_max_urls]
+        print(f"    sitemap: {result['sitemap_url']}")
+        print(f"    URLs totales: {len(result['all_urls'])} · productos filtrados: {len(result['product_urls'])} · a procesar: {len(product_urls)}")
+
+        # Procesar cada URL: 1 HTTP por URL (fetch_metadata_from_detail ahora
+        # devuelve TODOS los campos incluido name/price/release/publisher).
+        kept = 0
+        for u_idx, prod_url in enumerate(product_urls, start=1):
+            md = fetch_metadata_from_detail(
+                prod_url, session,
+                timeout=(args.connect_timeout, args.read_timeout),
+            )
+            title = md.get("name") or _slugify(urlparse(prod_url).path).replace("-", " ")[:200]
+            description = md.get("description") or title
+            cand = candidate_from_source(source, title=title[:260], url=prod_url, description=description[:2500])
+            cand.publisher = md.get("publisher") or source.publisher
+            cand.price = md.get("price", "")
+            cand.image_url = md.get("image_url", "")
+            cand.release_date = md.get("release_date", "")
+            cand.author = md.get("author", "")
+            cand.isbn = md.get("isbn", "")
+            cand.tags = list(source.tags or []) + ["sitemap"]
+            score_candidate(cand)
+            if cand.score >= args.min_score:
+                all_candidates.append(cand)
+                kept += 1
+            if args.sleep_seconds > 0 and u_idx < len(product_urls):
+                time.sleep(min(args.sleep_seconds, 0.5))
+            if u_idx % 50 == 0:
+                print(f"    [{u_idx}/{len(product_urls)}] kept={kept}")
+
+        print(f"    → {kept} candidates con score >= {args.min_score}")
+        sitemap_stats.append({
+            "source": source.name,
+            "sitemap": result["sitemap_url"],
+            "urls": len(result["all_urls"]),
+            "products": len(result["product_urls"]),
+            "candidates": kept,
+        })
+
+    print()
+    print(f"[SITEMAP] Total candidates con señales: {len(all_candidates)}")
+
+    reportable, state = process_state(
+        candidates=all_candidates,
+        state=state,
+        min_score=args.min_score,
+        include_seen=args.include_seen,
+    )
+
+    if not args.dry_run:
+        save_state(state_path, state)
+        new_or_changed = [
+            candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
+        ]
+        append_jsonl(items_path, new_or_changed)
+        write_markdown_report(
+            path=report_path,
+            reportable=reportable,
+            errors=[],
+            problems=[],
+            min_score=args.min_score,
+        )
+
+    print("\n[RESUMEN SITEMAP MINING]")
+    print(f"  sources procesadas: {len(eligible)}")
+    print(f"  con sitemap útil:   {sum(1 for s in sitemap_stats if s['sitemap'])}")
+    print(f"  candidates totales: {len(all_candidates)}")
+    print(f"  reportables (new/changed): {sum(1 for c in reportable if c.status in {'new', 'changed'})}")
+    print(f"  ya conocidos (seen):       {sum(1 for c in reportable if c.status == 'seen')}")
+    print(f"  jsonl: {items_path}")
+    print()
+    print(f"Top 5 sources por items aportados:")
+    sitemap_stats.sort(key=lambda x: -x["candidates"])
+    for s in sitemap_stats[:5]:
+        if s["candidates"] > 0:
+            print(f"  {s['candidates']:4d}  ({s['products']:4d} productos del sitemap)  {s['source']}")
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
@@ -3101,6 +3297,10 @@ def run(args: argparse.Namespace) -> int:
     # === Fase 2: bootstrap desde wiki comunitaria ===
     if args.bootstrap_wiki:
         return _run_wiki_bootstrap(args, session, state, state_path, items_path, report_path)
+
+    # === Fase 3: sitemap mining ===
+    if args.discover_sitemaps:
+        return _run_sitemap_mining(args, sources, session, state, state_path, items_path, report_path)
 
     all_candidates: list[Candidate] = []
     errors: list[str] = []
@@ -3500,6 +3700,17 @@ def parse_args() -> argparse.Namespace:
         "--wiki-to",
         default="",
         help="Mes final para --bootstrap-wiki (YYYY-MM). Default: mes actual.",
+    )
+    parser.add_argument(
+        "--discover-sitemaps",
+        action="store_true",
+        help="Fase 3: descubre URLs de producto vía /sitemap.xml de cada source HTML. Procesa cada URL con detail-fetch para extraer Schema.org metadata. Itera por todas las sources canónicas html.",
+    )
+    parser.add_argument(
+        "--sitemap-max-urls",
+        type=int,
+        default=500,
+        help="Máximo de URLs a procesar por source con --discover-sitemaps. Default: 500.",
     )
     return parser.parse_args()
 
