@@ -310,12 +310,29 @@ def clean_text(value: Any) -> str:
 # Prefijos de "announcement" o etiqueta de editorial que se pegan al inicio.
 TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^New\s+Product\s+Announcement\s*[:\-–—]\s*", re.IGNORECASE),
-    re.compile(r"^Panini\s*[:_\-]?\s*Fumetti\s*[:_\-]?\s*", re.IGNORECASE),
+    # Panini genérico: "Panini: <cualquier categoría>_" → "<resto>"
+    # Captura Fumetti_, Libri_, Manga_, Comics_, Productos de colección_, etc.
+    re.compile(r"^Panini\s*:\s*[^_]{1,40}_\s*", re.IGNORECASE),
     re.compile(r"^Now\s+Shipping\s*[:\-]\s*", re.IGNORECASE),
     re.compile(r"^Coming\s+Soon\s*[:\-]\s*", re.IGNORECASE),
     re.compile(r"^Pre-?Order\s+Now\s*[:\-]\s*", re.IGNORECASE),
     re.compile(r"^Available\s+Now\s*[:\-]\s*", re.IGNORECASE),
     re.compile(r"^Just\s+Released\s*[:\-]\s*", re.IGNORECASE),
+    # ES: estado "Próximamente / Próxima salida"
+    re.compile(r"^Pr[óo]xima(?:mente)?\s+(?:salida\s+)?", re.IGNORECASE),
+    # FR: estado "Nouveauté" / "À paraître" (con o sin acento, posiblemente con
+    # mojibake si el encoding no se arregló antes).
+    re.compile(r"^(?:Nouveaut[ée]s?|À\s+para[îi]tre)\s+", re.IGNORECASE),
+    # FR: editorial pegada al inicio, con categoría opcional. P.ej.
+    # "Glénat Manga ...", "Pika Seinen ...", "Pika Dreamland..." (sin categoría).
+    # Solo se aplica al inicio, ningún manga real empieza por "Glénat"/"Pika".
+    re.compile(
+        r"^(?:Gl[ée]nat|Pika)\s+"
+        r"(?:(?:Manga|Sh[ôo]nen|Sh[ôo]jo|Seinen|Josei|"
+        r"[ÉE]dition\s+\S+|Art\s+Books?|Comics|Livres|Planning|"
+        r"Nouveaut[ée]s?|Coll(?:ection)?|Aventure)\s+)?",
+        re.IGNORECASE,
+    ),
 )
 
 # Retailers cuyo "(X Exclusive)" en el sufijo es metadata redundante.
@@ -376,20 +393,124 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s+¥\s*[\d,]+\s*$"),
     re.compile(r"\s+[\d,]+\s*円\s*$"),
     re.compile(r"\s+£\s*\d[\d.,]*\s*$"),
+    # Trailing date dd/mm/yyyy o dd-mm-yyyy (típico Glénat/Pika, listings con
+    # fecha de salida embedded en el título).
+    re.compile(r"\s+\d{1,2}[/\-]\d{1,2}[/\-]20\d{2}\s*$"),
+    # Cola descriptiva tipo Norma Editorial:
+    # "Con sobrecubierta Incluye desplegable y páginas a color Formato A5 400
+    # págs. aprox. En comiquerías y cadena de librerías MÁS INFO"
+    # Estrategia: cortar DESDE la primera bandera descriptiva hasta el final.
+    re.compile(
+        r"\s+(?:Con\s+sobrecubierta|Incluye\s+(?:desplegable|p[áa]ginas)|"
+        r"Formato\s+[AB]\d|En\s+comiquer[íi]as\s+y\s+cadena)\b.*$",
+        re.IGNORECASE,
+    ),
+    # Sufijo "MÁS INFO" suelto (cuando el resto ya se limpió).
+    re.compile(r"\s+M[ÁA]S\s+INFO\s*$", re.IGNORECASE),
+    # "Pre-Order" suelto al final (sin "Bonus" ni "Now").
+    re.compile(r"\s+Pre-?Order\s*$", re.IGNORECASE),
+    # ".aprox" / "págs aprox" lone.
+    re.compile(r"\s+\d+\s*p[áa]gs?\.?\s*(?:aprox\.?)?\s*$", re.IGNORECASE),
 )
+
+
+# Heurística: si el título contiene secuencias típicas de mojibake
+# (UTF-8 decoded as Latin-1 o cp1252), se intenta reparar via round-trip.
+_MOJIBAKE_HINT = re.compile(
+    # 'Ã' seguido de un caracter ASCII alto (típico de UTF-8 leído como Latin-1):
+    # incluye letras acentuadas (Ã©, Ã¨, Ã¡, Ã®, Ã´, Ã§, Ã±...) y también 'Ã '
+    # (= "à " en UTF-8, preposición FR frecuente en títulos como "Tomes 91 à 104").
+    r"Ã[\x80-\xbf\xa0©¨ª«¬®°±²³´µ¶·¸¹º»¼½¾¿ ]"
+    r"|â€[™œžŸ\x9d\x99\x98]"
+    r"|Â[\xa0-\xbf]"
+)
+
+
+# Fallback cuando el round-trip estricto falla por bytes inválidos en
+# medio del título (típico: "Ã " donde "Ã" es mojibake de "à" y el espacio
+# rompe la decodificación UTF-8). Cubre los pares más frecuentes.
+_MOJIBAKE_PAIRS: tuple[tuple[str, str], ...] = (
+    # Latin minúsculas: 'Ã' + byte high → letra acentuada
+    ("Ã©", "é"), ("Ã¨", "è"), ("Ãª", "ê"), ("Ã ", "à "),
+    ("Ã¢", "â"), ("Ã®", "î"), ("Ã´", "ô"), ("Ã»", "û"),
+    ("Ã§", "ç"), ("Ã±", "ñ"), ("Ã¡", "á"), ("Ã³", "ó"),
+    ("Ãº", "ú"), ("Ã­", "í"), ("Ã¼", "ü"), ("Ã¶", "ö"),
+    # Latin mayúsculas
+    ("Ã„", "Ä"), ("Ã‰", "É"), ("Ãˆ", "È"), ("Ã€", "À"),
+    ("Ã‚", "Â"), ("Ã‡", "Ç"), ("Ã™", "Ù"), ("Ãš", "Ú"),
+    ("Ã”", "Ô"), ("ÃŠ", "Ê"), ("Ã“", "Ó"),
+    ("Ã", "Ñ"),  # Ã + U+0091 → Ñ (U+00D1)
+    # Comillas / guiones tipográficos (UTF-8 leído como cp1252)
+    ("â€™", "'"),   # â€™ → '
+    ("â€œ", "\""),  # â€œ → "
+    ("â€", "\""),  # â€\x9d → "
+    ("â€“", "–"),    # â€" → –
+    ("â€”", "—"),    # â€" → —
+    # Â + algo (sobrante de codificación)
+    ("Â°", "°"), ("Â·", "·"), ("Â¡", "¡"), ("Â¿", "¿"),
+)
+
+
+def _fix_mojibake(text: str) -> str:
+    """Repara texto con encoding UTF-8 decodificado como Latin-1/cp1252.
+
+    Estrategia en cascada:
+      1) Si NO hay hint de mojibake, devuelve el texto tal cual.
+      2) Intenta round-trip (cp1252|latin-1 → utf-8), itera hasta 3 veces
+         para cubrir doble-mojibake.
+      3) Si el round-trip estricto falla por bytes inválidos (caso típico:
+         'Ã ' en medio del título), aplica un mapeo directo de pares
+         comunes (_MOJIBAKE_PAIRS) y vuelve a iterar.
+    """
+    if not text:
+        return text
+    current = text
+    for _ in range(3):
+        if not _MOJIBAKE_HINT.search(current):
+            return current
+        next_state: str | None = None
+        for src_enc in ("cp1252", "latin-1"):
+            try:
+                candidate = current.encode(src_enc, errors="strict").decode(
+                    "utf-8", errors="strict"
+                )
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            if "�" in candidate:
+                continue
+            next_state = candidate
+            break
+        if next_state is None:
+            # Fallback: sustitución de pares conocidos para arreglar lo que
+            # se pueda. Si no cambia nada, abortamos para no entrar en bucle.
+            replaced = current
+            for bad, good in _MOJIBAKE_PAIRS:
+                if bad in replaced:
+                    replaced = replaced.replace(bad, good)
+            if replaced == current:
+                return current
+            current = replaced
+            continue
+        if next_state == current:
+            return current
+        current = next_state
+    return current
 
 
 def clean_title(title: str) -> str:
     """Strippea basura de e-commerce y prefijos de announcement del título.
 
     Aplica en orden:
-      1) Quita prefijos tipo 'New Product Announcement -', 'Panini: Fumetti_', etc.
-      2) Quita sufijos (precios, 'On Sale', '(Dark Horse Direct Exclusive)', etc.)
+      0) Repara mojibake (FR Glénat/Pika a veces vienen mal codificados).
+      1) Quita prefijos tipo 'New Product Announcement -', 'Panini: Fumetti_',
+         'Nouveauté Glénat Manga', 'Próximamente', etc.
+      2) Quita sufijos (precios, 'On Sale', '(Dark Horse Direct Exclusive)',
+         fechas trailing, colas descriptivas tipo Norma).
     Iterando hasta estabilizar para que patrones cascading se resuelvan.
     """
     if not title:
         return title
-    cleaned = title
+    cleaned = _fix_mojibake(title)
     for _ in range(5):
         prev = cleaned
         # Prefijos

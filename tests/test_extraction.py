@@ -883,6 +883,101 @@ def test_clean_title_keeps_artist_exclusives():
     assert mw.clean_title("Some Comic (Kinokuniya Exclusive)") == "Some Comic"
 
 
+def test_clean_title_strips_panini_generic_prefix():
+    # Ejemplos reales del corpus: Panini agrupa por categoría con prefijo `_`.
+    cases = [
+        ("Panini: Libri_Noblesse 17/19 – Cofanetto 6 6",
+         "Noblesse 17/19 – Cofanetto 6 6"),
+        ("Panini: Libri_Food Wars – Cofanetto 6",
+         "Food Wars – Cofanetto 6"),
+        ("Panini: Manga_Moglie di una Spia – Cofanetto",
+         "Moglie di una Spia – Cofanetto"),
+        ("Panini: Productos de colección_Liga Este 2025/26 - Pack Album",
+         "Liga Este 2025/26 - Pack Album"),
+        ("Panini: Comics_X-Men Vol. 1",
+         "X-Men Vol. 1"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_strips_norma_descriptive_tail():
+    # Norma Editorial pega una "ficha de producto" al final del título.
+    cases = [
+        ("BAKI THE GRAPPLER EDICIÓN KANZENBAN #14 Con sobrecubierta y páginas a color Formato A5 350 págs. aprox. En comiquerías y cadena de librerías MÁS INFO",
+         "BAKI THE GRAPPLER EDICIÓN KANZENBAN #14"),
+        ("DNANGEL: EDICIÓN KANZENBAN #10 ¡ÚLTIMO TOMO! Con sobrecubierta Incluye desplegable y páginas a color Formato A5 400 págs. aprox. En comiquerías y cadena de librerías MÁS INFO",
+         "DNANGEL: EDICIÓN KANZENBAN #10 ¡ÚLTIMO TOMO!"),
+        ("EL REY BESTIA Y LAS HIERBAS MEDICINALES #2 Formato B6 Con sobrecubierta Incluye págs a color 200 págs. aprox.",
+         "EL REY BESTIA Y LAS HIERBAS MEDICINALES #2"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_strips_trailing_date():
+    # Glénat/Pika dejan la fecha de salida pegada al final del título.
+    cases = [
+        ("Dragon Ball Le super art book Akira Toriyama 22/04/2026",
+         "Dragon Ball Le super art book Akira Toriyama"),
+        ("One Piece Color Walk - Tome 10 Eiichiro Oda 21/05/2025",
+         "One Piece Color Walk - Tome 10 Eiichiro Oda"),
+        ("Manga release date 8-7-2026",
+         "Manga release date"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_strips_fr_status_and_publisher_prefix():
+    # Estado FR ("Nouveauté", "À paraître") + categoría editorial.
+    cases = [
+        ("Nouveauté Glénat Manga Dragon Ball Le super art book",
+         "Dragon Ball Le super art book"),
+        ("Nouveauté Pika Seinen L'Atelier des Sorciers T15 - Collector",
+         "L'Atelier des Sorciers T15 - Collector"),
+        ("À paraître Pika Dreamland T24 - édition collector",
+         "Dreamland T24 - édition collector"),
+        # Sin prefijo de status, pero con categoría editorial pegada:
+        ("Glénat Manga L'Art de Kiki la petite sorcière",
+         "L'Art de Kiki la petite sorcière"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_strips_es_proximamente_prefix():
+    cases = [
+        ("Próximamente Yu-Gi-Oh! Kanzenban nº 03/22", "Yu-Gi-Oh! Kanzenban nº 03/22"),
+        ("Próximamente One Piece nº 14 (3 en 1)", "One Piece nº 14 (3 en 1)"),
+        ("Próxima salida La guerra de los mundos (integral)", "La guerra de los mundos (integral)"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
+def test_clean_title_repairs_mojibake():
+    # UTF-8 leído como Latin-1/cp1252 (típico Glénat/Pika con encoding mal seteado).
+    # Tras reparar, los prefijos FR ya conocidos también deben caer.
+    cases = [
+        ("NouveautÃ© GlÃ©nat Manga Dragon Ball Le super art book Akira Toriyama 22/04/2026",
+         "Dragon Ball Le super art book Akira Toriyama"),
+        ("NouveautÃ© Pika ShÃ´nen Blue Lock T32 - Ã©dition collector",
+         "Blue Lock T32 - édition collector"),
+        # Texto sin mojibake debe pasar tal cual.
+        ("L'Atelier des Sorciers - Édition collector",
+         "L'Atelier des Sorciers - Édition collector"),
+    ]
+    for raw, expected in cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+
 def test_listadomanga_parse_handles_multiple_editorials():
     from wikis import listadomanga as lm
     html = """<html><body>
