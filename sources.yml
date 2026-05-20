@@ -50,9 +50,77 @@ sources:
     enabled: true
     tags: ["manga", "store", "stock"]
 
+  - name: "AR - Ovni Press Manga"
+    country: "Argentina"
+    language: "Español"
+    publisher: "OVNI Press"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.ovnipress.net/manga/"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    selectors:
+      item_selector: "[data-product-id]"
+      title_selector: "a[href*='/products/']"
+    max_pages: 5
+
+  - name: "AR - Kemuri Ediciones"
+    country: "Argentina"
+    language: "Español"
+    publisher: "Kemuri Ediciones"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.kemuriediciones.com.ar/"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    selectors:
+      item_selector: "[data-product-id]"
+      title_selector: "a[href*='/productos/']"
+    max_pages: 5
+
+  - name: "AR - Distrito Manga (Cúspide)"
+    country: "Argentina"
+    language: "Español"
+    publisher: "Distrito Manga Argentina"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://cuspide.com/editorial/distrito-manga/"
+    enabled: true
+    tags: ["manga", "retailer", "store"]
+    selectors:
+      item_selector: ".product"
+      title_selector: "a[href*='/producto/']"
+    max_pages: 5
+    notes: "Distrito Manga es sello de Penguin Random House; Cúspide tiene catálogo completo."
+
   # -------------------------
   # México
   # -------------------------
+  - name: "MX - Manga México (catálogo wiki)"
+    country: "México"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://mangamexico.blogspot.com/"
+    enabled: true
+    tags: ["wiki", "catalog", "manga", "mexico", "manga-mexico"]
+    notes: "Catálogo wiki community-maintained de Panini México, Kamite, Vid. Usado via --bootstrap-wiki manga-mexico."
+
+  - name: "MX - Editorial Kamite"
+    country: "México"
+    language: "Español"
+    publisher: "Editorial Kamite"
+    source_class: "official"
+    kind: "html"
+    url: "https://kamite.com.mx/collections/all"
+    enabled: true
+    tags: ["manga", "official", "store"]
+    selectors:
+      item_selector: ".grid__item, .card, [data-product-card]"
+      title_selector: "a"
+    max_pages: 5
+
   - name: "MX - Panini Manga México"
     country: "México"
     language: "Español"
@@ -262,6 +330,17 @@ sources:
   # -------------------------
   # Estados Unidos / Inglés - oficiales y medios
   # -------------------------
+  - name: "EN - Otaku Calendar"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://otakucalendar.com/Calendar"
+    enabled: true
+    tags: ["wiki", "calendar", "manga", "english", "otakucalendar"]
+    notes: "Calendar releases by date for the English manga/LN market. Used via --bootstrap-wiki otaku-calendar."
+
   - name: "US - VIZ Blog"
     country: "Estados Unidos"
     language: "Inglés"

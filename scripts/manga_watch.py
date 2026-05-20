@@ -3538,6 +3538,10 @@ def _run_wiki_bootstrap(
         from wikis.listadomanga import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "manga-sanctuary":
         from wikis.manga_sanctuary import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "otaku-calendar":
+        from wikis.otaku_calendar import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "manga-mexico":
+        from wikis.manga_mexico import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -4155,8 +4159,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "manga-sanctuary"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria (Fase 2 del PRD). Soporta: listadomanga (España), manga-sanctuary (Francia).",
+        choices=["listadomanga", "manga-sanctuary", "otaku-calendar", "manga-mexico"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (España), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial).",
     )
     parser.add_argument(
         "--wiki-from",

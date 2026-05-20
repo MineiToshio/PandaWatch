@@ -1457,3 +1457,107 @@ def test_next_page_skips_cross_origin():
     html = '<html><body><a class="next" href="https://otherdomain.com/x">Next</a></body></html>'
     url = mw.find_next_page_url(make_soup(html), "https://example.com/list", set())
     assert url is None
+
+
+# ----- otaku_calendar.py (wiki EN) -----
+
+def test_otaku_calendar_parse_date_text():
+    from wikis import otaku_calendar as oc
+    assert oc._parse_date_text("Tuesday 5 May 2026") == "2026-05-05"
+    assert oc._parse_date_text("Wednesday 31 December 2025") == "2025-12-31"
+    assert oc._parse_date_text("not a date") == ""
+
+
+def test_otaku_calendar_strip_format_and_country():
+    from wikis import otaku_calendar as oc
+    cleaned, fmt, country = oc._strip_format_and_country(
+        "Blue Box Volume 20 (Manga) US"
+    )
+    assert cleaned == "Blue Box Volume 20"
+    assert fmt == "manga"
+    assert country == "US"
+
+    cleaned, fmt, country = oc._strip_format_and_country(
+        "Classroom of the Elite: Year 3 (Light Novel) Volume 1 (Manga) US"
+    )
+    assert "Classroom of the Elite" in cleaned
+    # Either format detected is acceptable; country must be US.
+    assert country == "US"
+
+
+def test_otaku_calendar_parse_extracts_releases():
+    from wikis import otaku_calendar as oc
+    html = """<html><body>
+        <div class="dateListing">
+          <h3>May 2026</h3>
+          <div class="dateListingContainer">
+            Tuesday 5 May 2026
+            <div>
+              <a href="/Release/100/manga-A">Manga A (Deluxe Edition) Volume 1 (Manga) US</a><br/>
+              <a href="/Release/101/manga-B-au">Manga B Volume 2 (Manga) AU</a><br/>
+            </div>
+          </div>
+          <div class="dateListingContainer">
+            Wednesday 6 May 2026
+            <div>
+              <a href="/Release/102/manga-C">Manga C (Collector's Edition) Volume 3 (Manga) US</a><br/>
+            </div>
+          </div>
+        </div>
+    </body></html>"""
+    items = oc.parse_calendar_page(html, allowed_countries=("US",))
+    # AU debe quedar filtrado, solo 2 US releases (A y C).
+    assert len(items) == 2
+    titles = [i.title for i in items]
+    assert any("Manga A" in t for t in titles)
+    assert any("Manga C" in t for t in titles)
+    dates = [i.release_date for i in items]
+    assert "2026-05-05" in dates
+    assert "2026-05-06" in dates
+
+
+# ----- manga_mexico.py (wiki MX) -----
+
+def test_manga_mexico_split_title():
+    from wikis import manga_mexico as mm
+    title, meta = mm._split_title(
+        "Chainsaw Man - Volúmenes: 19/20+ ( Publicándose ) | Precio actual: 169 MXN"
+    )
+    assert title == "Chainsaw Man"
+    assert "Volúmenes" in meta
+
+
+def test_manga_mexico_parse_catalog_extracts_items():
+    from wikis import manga_mexico as mm
+    html = """<html><body>
+        <div class="post-body">
+          <ul>
+            <li>Chainsaw Man - Volúmenes: 19/20+ ( Publicándose ) | Bimestral (Próx. en junio) | Precio actual: 169 MXN</li>
+            <li>Akame Ga Kill - Volúmenes: 15/15 ( Finalizado )</li>
+            <li>Berserk [ Edición Deluxe ] - Volúmenes: 5/14 ( Publicándose ) | Trimestral | Precio actual: 449 MXN</li>
+          </ul>
+        </div>
+    </body></html>"""
+    items = mm.parse_catalog_page(html, publisher_slug="panini")
+    assert len(items) == 3
+    # Cada item tiene URL única para no colapsar en dedup.
+    urls = [i.url for i in items]
+    assert len(set(urls)) == len(urls)
+    # Precios
+    by_title = {i.title: i for i in items}
+    assert by_title["Chainsaw Man"].price == "$169 MXN"
+    assert by_title["Akame Ga Kill"].price == ""  # finalizado, no precio actual
+    # Tags con metadata extraída
+    cm = by_title["Chainsaw Man"]
+    assert any(t.startswith("status:") for t in cm.tags)
+    assert any(t.startswith("periodicity:") for t in cm.tags)
+
+
+def test_manga_mexico_skips_duplicate_titles():
+    from wikis import manga_mexico as mm
+    html = """<html><body><div class="post-body"><ul>
+        <li>Berserk - Volúmenes: 1/14</li>
+        <li>Berserk - Volúmenes: 1/14</li>
+    </ul></div></body></html>"""
+    items = mm.parse_catalog_page(html, publisher_slug="panini")
+    assert len(items) == 1
