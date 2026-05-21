@@ -216,6 +216,184 @@ recognize (e.g. a new JP label, or a new way of saying "publisher"):
    ```
    (Restrict to the source(s) you expect to benefit so the run is fast.)
 
+## Recipe: bootstrap-wiki for historical archives
+
+Some sources expose both a **recent feed** (RSS, current month, latest
+posts) and a **historical archive** (months/years back). The differential
+flow (RSS/HTML scrape in each regular run) covers the recent feed. To
+backfill the historical archive there's a separate one-shot wiki bootstrap.
+
+Example: listadomanga.es has BOTH:
+- Blog RSS feed (`/blog/feed/`) — last ~10 posts. Covered by source
+  `ES - Listado Manga Blog RSS` (kind:rss).
+- Monthly archive (`/blog/YYYY/MM/page/N/`) — every post since 2009-11.
+  Covered by:
+  ```bash
+  python scripts/manga_watch.py --bootstrap-wiki listadomanga-blog \
+      --wiki-from 2009-11 --wiki-to 2026-05
+  ```
+  One-shot, ~30-60 min. Items get upserted into items.jsonl just like the
+  regular flow — dedup-by-URL handles overlaps with the RSS run.
+
+When to use which:
+- **Daily/weekly runs** → RSS in normal scrape. Captures novedades del día.
+- **First-time bootstrap** → run blog historical once. Recupera anuncios
+  pre-fecha-de-instalación.
+- **Forensic recovery** → cuando se descubre que un item de hace meses
+  no está en items.jsonl, basta correr el bootstrap acotado al rango
+  del lanzamiento sospechoso.
+
+Mismo patrón aplica a otras wikis con archivo histórico — añadir su
+parser en `scripts/wikis/<name>.py` siguiendo `listadomanga_blog.py`.
+
+## Recipe: Whakoom spider
+
+Whakoom (whakoom.com) tiene **descubrimiento limitado sin login** pero
+suficiente para un spider de 3 niveles:
+
+```
+/newtitles  (~415 últimas novedades, kind:html source en sources.yml)
+    ↓ extract anchors /comics/{shortcode}
+/comics/{X}
+    ↓ extract /ediciones/{id} (la edición principal del volumen)
+/ediciones/{id}
+    ↓ extract OG metadata + OTRAS /ediciones/{id'} (variantes hermanas:
+      portada alternativa, deluxe, exclusiva retailer)
+```
+
+Modos:
+- **DIFERENCIAL** (en cada scrape regular): la source
+  `ES/LatAm - Whakoom Novedades` (kind:html) procesa solo nivel 1 →
+  ~1-5 items reportables nuevos por run, lightweight.
+- **BOOTSTRAP/SPIDER** (one-shot):
+  ```bash
+  python scripts/manga_watch.py --bootstrap-wiki whakoom
+  ```
+  Recorre los 3 niveles BFS — ~1500 HTTP requests, ~25-40 min.
+  Descubre **variantes y portadas alternativas** que `/newtitles` solo
+  no expone (ej. "Spy x Family 1 Portada Alternativa Ivrea Argentina"
+  se descubre vía la edición regular de Spy x Family 1).
+
+**Rate limit (importante)**: Whakoom usa Cloudflare con bloqueo agresivo.
+El módulo tiene 4 capas de protección:
+
+1. **Headers browser-like** (Chrome 120 UA, Accept-Language es-ES, Referer)
+   para parecer tráfico humano y reducir falsos positivos de Cloudflare.
+2. **Sleep default 2.0s** entre requests. Subir a 3.0 si ves 429s.
+3. **Backoff en 429**: 10s → 20s → 40s, max 3 retries por URL.
+4. **Detección de Cloudflare challenge** (página "Just a moment...",
+   `cf-chl-bypass`, etc.). Si se detecta, el spider **aborta inmediatamente**
+   con `WhakoomBlocked`. Seguir presionando empeoraría el bloqueo a nivel
+   de IP (afecta TODOS los dispositivos en tu red — verificado).
+5. **Throttle local**: `~/.cache/manga-watch/whakoom_lastrun` impide runs
+   <6h del último bootstrap. Pasá `ignore_throttle=True` (CLI: TBD)
+   para saltarlo si cambió tu IP.
+
+**Si tu IP queda bloqueada por Cloudflare**:
+- Verificá abriendo `whakoom.com` en un navegador desde tu red.
+- Esperá **1-2h** para que se libere.
+- Si urgente, cambia de red (datos móviles) o usá una VPN distinta.
+
+## Recipe: search discovery (Gemini API + DuckDuckGo)
+
+`scripts/retrofit/search_discovery.py` cubre el gap de discovery que
+ningún source directo cubre: items en sitios que bloquean scraping
+directo (Fnac → 403), items que sólo Google indexa profundo
+(Whakoom `/ediciones/{N}`), y anuncios en social.
+
+### Setup Gemini API (free, sin tarjeta)
+
+El viejo Custom Search JSON API quedó cerrado a nuevos clientes en 2025.
+Google lo reemplazó por la tool "Grounding with Google Search" del
+Gemini API — misma calidad de resultados (index de Google directo),
+free tier mayor (500 RPD), sin tarjeta.
+
+1. Andate a https://aistudio.google.com — NO Google Cloud Console.
+2. Click **"Get API key"** arriba a la derecha.
+3. **"Create API key in new project"** → te devuelve algo tipo `AIzaSy...`.
+4. Pegala en `.env`:
+   ```bash
+   GEMINI_API_KEY=AIzaSy...
+   ```
+
+Quota free tier 2026: Gemini 2.5 Flash con grounding incluido,
+500 RPD compartido + 15 RPM. Eso son ~10 corridas del script al día
+(con 50 queries cada una). Más que suficiente para uso personal.
+
+Si te quedás corto, podés cambiar al modelo Gemini 3.x (más quota:
+5,000 prompts/mes free) editando `GEMINI_MODEL` en `.env`.
+
+### Setup Tavily (fallback recommended, free)
+
+Cuando Gemini agota su quota (típico ~10-15 prompts/día), Tavily entra
+como fallback automático. Free tier: 1,000 búsquedas/mes, sin tarjeta.
+
+1. Andate a https://tavily.com → Sign up.
+2. Dashboard → API key tipo `tvly-...`.
+3. Pegala en `.env`:
+   ```bash
+   TAVILY_API_KEY=tvly-...
+   ```
+
+Tavily usa un index propio (no Google), por lo que NO ve Whakoom
+profundo. Pero cubre Reddit, Fnac, Casa del Libro, blogs, etc.
+Ideal para queries `site:reddit.com`, `site:fnac.es`, lore-words.
+
+### Setup DuckDuckGo (no requiere API)
+
+Funciona out-of-the-box. Solo necesita conexión. NO sirve para
+whakoom (DDG usa Bing+propio y ninguno indexa /ediciones/ profundo).
+Útil como último fallback para Reddit, FB público, blogs.
+
+### Cómo correr
+
+```bash
+# Run completo (todas las queries de data/search_queries.yml)
+.venv/bin/python scripts/retrofit/search_discovery.py
+
+# Solo DDG (si Gemini no está configurado o quota agotada)
+.venv/bin/python scripts/retrofit/search_discovery.py --engines ddg
+
+# Solo Gemini (forzar; alias "google" también acepta por compat)
+.venv/bin/python scripts/retrofit/search_discovery.py --engines gemini
+
+# Dry-run: lista queries sin ejecutar
+.venv/bin/python scripts/retrofit/search_discovery.py --dry-run
+
+# Limitar a las primeras N queries (test)
+.venv/bin/python scripts/retrofit/search_discovery.py --limit 5
+```
+
+### Cómo añadir queries
+
+Editar `data/search_queries.yml`:
+
+```yaml
+queries:
+  # Sólo Gemini (sitios que DDG no indexa bien)
+  - q: 'whakoom "tu serie favorita" "edición coleccionista"'
+    engines: [gemini]
+  # Gemini preferred, DDG fallback
+  - q: 'site:fnac.es "edición limitada" "tu serie"'
+    engines: [gemini, ddg]
+  # DDG preferred (Reddit/social)
+  - q: 'site:reddit.com/r/manga "limited edition" 2026'
+    engines: [ddg, gemini]
+```
+
+NOTA: el script acepta `google` como alias de `gemini` (yamls viejos
+siguen funcionando).
+
+### Rate limits y costes
+
+- **Gemini 2.5 Flash**: 500 RPD (compartido) + 15 RPM en free tier 2026.
+  Eso son ~10 corridas/día con 50 queries cada una. Sleep default 4.5s
+  entre llamadas para respetar el RPM. Sin tarjeta de crédito.
+- **DDG**: ~10-50 queries/min. Si saturás, devuelve HTTP 202 (soft rate-limit)
+  y esperás ~1h. El script registra el error claramente.
+- **Por query**: ~5-15 URLs candidatas (Gemini decide cuánto buscar) →
+  ~3-5 nuevas tras dedup+gates → ~30-80 items reales por run completo.
+
 ## Recipe: when a source starts producing garbage
 
 If after a re-scrape you see lots of new junk from one specific source:
@@ -243,6 +421,42 @@ If after a re-scrape you see lots of new junk from one specific source:
      that should pass in Dark Horse Direct mixed source).
    - Run `pytest` and `filter_non_manga.py --dry-run` to ensure you
      didn't accidentally re-include too much.
+
+## Recipe: extend the comics blacklist
+
+`data/comics_blacklist.yml` rejects items that are clearly Western
+comics (Marvel/DC franchises, BD franco-belga, graphic novels) — but
+**only** in sources flagged `purity: "mixed"` (Panini ES/MX, Dark Horse
+Direct). Sources that are 100% manga (Norma, Ivrea, Glénat manga) ignore
+the blacklist completely, so manga series can never be falsely rejected.
+
+Three fields, each optional:
+
+```yaml
+publishers:               # exact match against item.publisher
+  - "Marvel"
+  - "DC Comics"
+franchise_keywords:       # case-insensitive substring match in title
+  - "Spider-Man"
+  - "Batman"
+  - "Asterix"
+format_keywords:          # word-boundary match (case-insensitive)
+  - "graphic novel"
+  - "novela gráfica"
+  - "Facsímil"
+```
+
+When to extend:
+- A new mixed source starts leaking specific cómic series → add to
+  `franchise_keywords`.
+- A publisher that *only* publishes Western comics shows up in a mixed
+  source → add to `publishers` (Marvel/DC are the safe defaults; do NOT
+  add Panini/Norma/Planeta — they publish both).
+- A new cómic-exclusive format keyword surfaces → add to
+  `format_keywords`. Don't add "comic" or "manga"-related words.
+
+Edits to this file take effect at the next run (loaded lazily, cached
+per-process).
 
 ## What NOT to add as a source
 

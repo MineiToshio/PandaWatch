@@ -66,6 +66,7 @@ scripts/
   manga_watch.py     — main module (filters, scoring, IO)
   build_web.py       — embeds items.jsonl into web/index.html
   serve.py           — local HTTP server with / → /web/ redirect
+                       AND POST /api/feedback → data/feedback.jsonl
   wikis/             — dedicated parsers for community wiki sources
     listadomanga.py     (ES — month calendar)
     manga_sanctuary.py  (FR — Unix timestamp planning)
@@ -80,6 +81,9 @@ web/
   index.html         — Alpine.js dashboard
   serve.sh           — convenience wrapper for scripts/serve.py
 data/                — gitignored: items.jsonl, state.json, backups
+  feedback.jsonl     — user "👎" feedback from web modal (see "Feedback
+                       de mala elección" below). Used to feed an AI
+                       review pass over weak filter / score decisions.
 tests/test_extraction.py — pytest suite (159 tests)
 docs/
   CLAUDE.md          — THIS FILE
@@ -196,6 +200,40 @@ CORS and you'll see an error message.
 
 To embed data for offline / double-click use: `python scripts/build_web.py`.
 To revert: `python scripts/build_web.py --clear`.
+
+## Feedback de "mala elección" desde el modal
+
+El dashboard tiene un botón **👎** en el footer del modal de detalle.
+Al clickearlo se abre un textarea pidiendo el motivo por el que el item
+NO debería estar en el catálogo. Al enviar:
+
+1. JS hace `POST /api/feedback` con `{title, url, reason}`.
+2. `scripts/serve.py.do_POST()` valida el body y hace append a
+   `data/feedback.jsonl` con la línea:
+
+   ```json
+   {"title": "...", "url": "...", "reason": "...", "submitted_at": "<ISO 8601 UTC>"}
+   ```
+
+**Propósito.** Este archivo es la entrada para una pasada de revisión
+con IA: el dueño marca items que se colaron pese a los filtros, escribe
+por qué, y luego se le pasa el JSONL al asistente para que sugiera qué
+patrón añadir (`_NON_MANGA_HARD` / `_NON_MANGA_SOFT` / `purity: mixed`
+del source / regla nueva en `is_collectible_edition`, etc.).
+
+**Diseño.**
+- **No incluye ISBN** intencionalmente — muchos items JP no lo tienen
+  y el ID práctico es la URL (ya es única en `items.jsonl`).
+- **Sin auth ni rate-limit.** Single-user, server local. El POST está
+  capado a 100 kB de body y exige los 3 campos no vacíos.
+- **JSONL append-only** (a diferencia de `items.jsonl` que es upsert).
+  Cada 👎 es un evento histórico — si el mismo item se marca dos veces
+  con motivos distintos, ambas líneas se conservan.
+- El archivo es gitignored junto con el resto de `data/`.
+
+**No modificar el formato** sin actualizar el handler en `serve.py` y
+el `submitFeedback()` en `web/index.html` a la vez. La IA que lee el
+archivo asume las 4 claves de arriba.
 
 ## Conventions for code changes
 
