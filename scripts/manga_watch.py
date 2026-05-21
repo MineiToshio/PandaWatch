@@ -37,8 +37,11 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import unicodedata
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -4252,8 +4255,16 @@ class DiagnosticRecorder:
         self.log_dir = log_dir
         self.raw_dir = log_dir / "raw"
         self.entries: list[dict[str, Any]] = []
+        self._entries_lock = threading.Lock()
+        # `current` mantiene compatibilidad con código serial existente
+        # (e.g. wiki bootstraps). En el loop principal paralelo cada worker
+        # maneja su propio `entry` explícitamente.
         self.current: dict[str, Any] | None = None
         self.run_started_at = dt.datetime.now()
+
+    def _target(self, entry: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Devuelve el entry a mutar: el explícito si se pasa, si no self.current."""
+        return entry if entry is not None else self.current
 
     def begin(self, source: Source) -> dict[str, Any] | None:
         if not self.enabled:
@@ -4284,48 +4295,66 @@ class DiagnosticRecorder:
             "raw_dump_path": None,
         }
         self.current = entry
-        self.entries.append(entry)
+        with self._entries_lock:
+            self.entries.append(entry)
         return entry
 
-    def record_fetch(self, metadata: dict[str, Any], html_text: str) -> None:
-        if not self.enabled or self.current is None:
+    def record_fetch(
+        self, metadata: dict[str, Any], html_text: str,
+        entry: dict[str, Any] | None = None,
+    ) -> None:
+        e = self._target(entry)
+        if not self.enabled or e is None:
             return
-        self.current["http_status"] = metadata.get("http_status")
-        self.current["content_type"] = metadata.get("content_type", "")
-        self.current["fetch_ms"] = metadata.get("fetch_ms")
-        self.current["html_size"] = len(html_text or "")
+        e["http_status"] = metadata.get("http_status")
+        e["content_type"] = metadata.get("content_type", "")
+        e["fetch_ms"] = metadata.get("fetch_ms")
+        e["html_size"] = len(html_text or "")
 
-    def record_anchor_counts(self, soup: BeautifulSoup) -> None:
-        if not self.enabled or self.current is None:
+    def record_anchor_counts(
+        self, soup: BeautifulSoup, entry: dict[str, Any] | None = None,
+    ) -> None:
+        e = self._target(entry)
+        if not self.enabled or e is None:
             return
         all_anchors = soup.find_all("a", href=True)
         significant = 0
         for anchor in all_anchors:
             if len(clean_text(anchor.get_text(" ", strip=True))) >= 10:
                 significant += 1
-        self.current["anchor_count"] = len(all_anchors)
-        self.current["anchor_count_significant"] = significant
+        e["anchor_count"] = len(all_anchors)
+        e["anchor_count_significant"] = significant
 
-    def record_status(self, status: str, message: str = "") -> None:
-        if not self.enabled or self.current is None:
+    def record_status(
+        self, status: str, message: str = "",
+        entry: dict[str, Any] | None = None,
+    ) -> None:
+        e = self._target(entry)
+        if not self.enabled or e is None:
             return
-        self.current["status"] = status
+        e["status"] = status
         if message:
-            self.current["error"] = message
+            e["error"] = message
 
-    def record_error(self, exc: Exception) -> None:
-        if not self.enabled or self.current is None:
+    def record_error(
+        self, exc: Exception, entry: dict[str, Any] | None = None,
+    ) -> None:
+        e = self._target(entry)
+        if not self.enabled or e is None:
             return
-        self.current["status"] = self.current.get("status") or "other"
-        self.current["error"] = f"{type(exc).__name__}: {exc}"
+        e["status"] = e.get("status") or "other"
+        e["error"] = f"{type(exc).__name__}: {exc}"
 
-    def record_candidates(self, candidates: list[Candidate]) -> None:
-        if not self.enabled or self.current is None:
+    def record_candidates(
+        self, candidates: list[Candidate], entry: dict[str, Any] | None = None,
+    ) -> None:
+        e = self._target(entry)
+        if not self.enabled or e is None:
             return
         scored_with_signals = [c for c in candidates if c.score > 0]
-        self.current["candidates_after_scoring"] = len(scored_with_signals)
+        e["candidates_after_scoring"] = len(scored_with_signals)
         top = sorted(scored_with_signals, key=lambda c: c.score, reverse=True)[:5]
-        self.current["top_titles"] = [
+        e["top_titles"] = [
             {"score": c.score, "title": c.title[:160], "url": c.url} for c in top
         ]
         seen_signals: list[str] = []
@@ -4333,7 +4362,7 @@ class DiagnosticRecorder:
             for sig in c.signals:
                 if sig not in seen_signals:
                     seen_signals.append(sig)
-        self.current["top_signals"] = seen_signals[:10]
+        e["top_signals"] = seen_signals[:10]
 
     def maybe_dump_html(self, entry: dict[str, Any] | None, html_text: str) -> None:
         if not self.enabled or entry is None:
@@ -4348,19 +4377,24 @@ class DiagnosticRecorder:
         path.write_text(snippet, encoding="utf-8", errors="replace")
         entry["raw_dump_path"] = str(path)
 
-    def end(self) -> dict[str, Any] | None:
-        """Finaliza el status del entry actual y devuelve el entry (o None)."""
-        if not self.enabled or self.current is None:
-            self.current = None
+    def end(self, entry: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Finaliza el status del entry y lo devuelve.
+
+        Si `entry` se pasa explícitamente, se usa ese (thread-safe). Si no,
+        cae al self.current global (compat con código serial)."""
+        target = entry if entry is not None else self.current
+        if not self.enabled or target is None:
+            if entry is None:
+                self.current = None
             return None
-        entry = self.current
-        if entry.get("status") == "pending":
-            if entry.get("candidates_after_scoring", 0) > 0:
-                entry["status"] = "ok"
+        if target.get("status") == "pending":
+            if target.get("candidates_after_scoring", 0) > 0:
+                target["status"] = "ok"
             else:
-                entry["status"] = "no-candidates"
-        self.current = None
-        return entry
+                target["status"] = "no-candidates"
+        if entry is None:
+            self.current = None
+        return target
 
     def write(self) -> tuple[Path, Path] | None:
         if not self.enabled:
@@ -4796,9 +4830,6 @@ def run(args: argparse.Namespace) -> int:
     log_dir = Path(getattr(args, "log_dir", "logs"))
     diagnostic = DiagnosticRecorder(enabled=bool(getattr(args, "diagnostic", False)), log_dir=log_dir)
 
-    def record_problem(source_name: str, category: str, message: str) -> None:
-        problems.append({"source": source_name, "category": category, "message": message})
-
     print(f"[INFO] Fuentes totales en YAML: {len(sources_all)}")
     print(f"[INFO] Fuentes activas tras filtros: {len(sources)}")
     print(f"[INFO] Score mínimo: {args.min_score}")
@@ -4806,189 +4837,261 @@ def run(args: argparse.Namespace) -> int:
     print(f"[INFO] Países: {args.countries or 'todos'}")
     print(f"[INFO] Respetar robots.txt: {args.respect_robots}")
 
-    for index, source in enumerate(sources, start=1):
-        print(f"[{index}/{len(sources)}] {source.name} :: {source.url}")
-        diagnostic.begin(source)
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    per_host_limit = max(1, int(getattr(args, "per_host_limit", 2) or 2))
+    if workers > 1:
+        print(f"[INFO] Concurrencia: workers={workers}, per-host-limit={per_host_limit}")
+
+    # Per-host semaphore para no martillar el mismo dominio bajo concurrencia.
+    host_semaphores: dict[str, threading.Semaphore] = defaultdict(
+        lambda: threading.Semaphore(per_host_limit)
+    )
+    host_locks_lock = threading.Lock()
+    # Playwright sync NO es thread-safe → todos los kind:js van por este lock.
+    js_lock = threading.Lock()
+    print_lock = threading.Lock()
+
+    def _safe_print(line: str) -> None:
+        with print_lock:
+            print(line)
+
+    def _host_sem_for(url: str) -> threading.Semaphore:
+        host = (urlparse(url).hostname or "").lower()
+        with host_locks_lock:
+            return host_semaphores[host]
+
+    def _scrape_one(index: int, source: Source) -> dict[str, Any]:
+        """Ejecuta el scrape completo de una fuente. Thread-safe.
+
+        Devuelve dict con: candidates, errors, problems, text (último HTML
+        fetcheado para dump diagnóstico), entry (DiagnosticRecorder entry o
+        None)."""
+        local_errors: list[str] = []
+        local_problems: list[dict[str, str]] = []
+        local_candidates: list[Candidate] = []
         text = ""
-        info: dict[str, Any] | None = diagnostic.current if diagnostic.enabled else None
+        entry = diagnostic.begin(source) if diagnostic.enabled else None
+        _safe_print(f"[{index}/{len(sources)}] {source.name} :: {source.url}")
+
+        def _record_problem(category: str, message: str) -> None:
+            local_problems.append({"source": source.name, "category": category, "message": message})
+
         try:
             if args.respect_robots and not robots.allowed(source.url):
                 message = f"robots.txt no permite acceder a {source.url}"
-                print(f"[SKIP] {message}")
-                errors.append(f"{source.name}: {message}")
-                record_problem(source.name, "robots", message)
-                diagnostic.record_status("robots", message)
-                continue
+                _safe_print(f"[SKIP] {message}")
+                local_errors.append(f"{source.name}: {message}")
+                _record_problem("robots", message)
+                diagnostic.record_status("robots", message, entry=entry)
+                return {
+                    "candidates": local_candidates, "errors": local_errors,
+                    "problems": local_problems, "text": text, "entry": entry,
+                }
 
-            # Determinar max_pages efectivo para esta fuente.
             if source.kind in {"rss", "feed", "atom", "bluesky"}:
-                effective_max_pages = 1  # RSS/Bluesky no pagina (1 fetch = N posts)
+                effective_max_pages = 1
             elif source.max_pages > 0:
                 effective_max_pages = source.max_pages
             else:
                 effective_max_pages = args.max_pages
 
-            # Pre-validación para kind:js.
             if source.kind == "js":
                 if not args.enable_js:
                     message = "Fuente kind:js requiere --enable-js (Playwright)"
-                    print(f"[SKIP-js] {source.name}: {message}")
-                    record_problem(source.name, "js-shell", message)
-                    diagnostic.record_status("js-shell", message)
-                    continue
+                    _safe_print(f"[SKIP-js] {source.name}: {message}")
+                    _record_problem("js-shell", message)
+                    diagnostic.record_status("js-shell", message, entry=entry)
+                    return {
+                        "candidates": local_candidates, "errors": local_errors,
+                        "problems": local_problems, "text": text, "entry": entry,
+                    }
                 if not _playwright_available():
                     message = "Playwright no instalado. Ver requirements-playwright.txt"
-                    print(f"[ERROR] {source.name}: {message}")
-                    errors.append(f"{source.name}: {message}")
-                    record_problem(source.name, "other", message)
-                    diagnostic.record_status("other", message)
-                    continue
+                    _safe_print(f"[ERROR] {source.name}: {message}")
+                    local_errors.append(f"{source.name}: {message}")
+                    _record_problem("other", message)
+                    diagnostic.record_status("other", message, entry=entry)
+                    return {
+                        "candidates": local_candidates, "errors": local_errors,
+                        "problems": local_problems, "text": text, "entry": entry,
+                    }
 
-            # Loop de paginación.
             visited_urls: set[str] = set()
             current_url = source.url
             all_candidates_source: list[Candidate] = []
             pages_visited = 0
             skipped_for_js = False
+            host_sem = _host_sem_for(source.url)
 
             for page_num in range(1, effective_max_pages + 1):
                 visited_urls.add(current_url)
                 pages_visited = page_num
 
-                # Fetch (HTTP normal, Playwright, o Bluesky API según kind).
+                # Fetch con per-host semaphore (HTTP) o js_lock (Playwright).
                 if source.kind == "js":
-                    text, fetch_meta = fetch_with_playwright(
-                        url=current_url,
-                        timeout_ms=args.read_timeout * 1000,
-                    )
+                    with js_lock:
+                        text, fetch_meta = fetch_with_playwright(
+                            url=current_url,
+                            timeout_ms=args.read_timeout * 1000,
+                        )
                 elif source.kind == "bluesky":
                     handle = bluesky_handle_from_url(current_url)
                     if not handle:
                         message = f"URL de Bluesky sin handle: {current_url}"
-                        print(f"[ERROR] {source.name}: {message}")
-                        errors.append(message)
-                        record_problem(source.name, "bluesky-handle", message)
+                        _safe_print(f"[ERROR] {source.name}: {message}")
+                        local_errors.append(message)
+                        _record_problem("bluesky-handle", message)
                         break
                     api_url = bluesky_api_url(handle, limit=args.max_items_per_source)
-                    text, fetch_meta = fetch_with_metadata(
-                        session=session,
-                        url=api_url,
-                        timeout=(args.connect_timeout, args.read_timeout),
-                    )
+                    with _host_sem_for(api_url):
+                        text, fetch_meta = fetch_with_metadata(
+                            session=session,
+                            url=api_url,
+                            timeout=(args.connect_timeout, args.read_timeout),
+                        )
                 else:
-                    text, fetch_meta = fetch_with_metadata(
-                        session=session,
-                        url=current_url,
-                        timeout=(args.connect_timeout, args.read_timeout),
-                    )
+                    with host_sem:
+                        text, fetch_meta = fetch_with_metadata(
+                            session=session,
+                            url=current_url,
+                            timeout=(args.connect_timeout, args.read_timeout),
+                        )
 
-                # Solo registramos fetch/anchors de la página 1 en diagnostic.
                 if page_num == 1:
-                    diagnostic.record_fetch(fetch_meta, text)
+                    diagnostic.record_fetch(fetch_meta, text, entry=entry)
 
-                # Extract según kind.
                 if source.kind in {"rss", "feed", "atom"}:
                     page_candidates = extract_rss(
-                        source,
-                        text,
+                        source, text,
                         max_items=args.max_items_per_source,
                         max_age_days=args.max_age_days,
                     )
-                    if diagnostic.enabled and info is not None and page_num == 1:
-                        info["extraction_method"] = "rss"
-                        info["candidates_after_signals"] = len(page_candidates)
+                    if diagnostic.enabled and entry is not None and page_num == 1:
+                        entry["extraction_method"] = "rss"
+                        entry["candidates_after_signals"] = len(page_candidates)
                     all_candidates_source.extend(page_candidates)
-                    break  # RSS no pagina
+                    break
 
                 if source.kind == "bluesky":
                     page_candidates = extract_bluesky_posts(
-                        source,
-                        text,
+                        source, text,
                         max_items=args.max_items_per_source,
                         max_age_days=args.max_age_days,
                     )
-                    if diagnostic.enabled and info is not None and page_num == 1:
-                        info["extraction_method"] = "bluesky"
-                        info["candidates_after_signals"] = len(page_candidates)
+                    if diagnostic.enabled and entry is not None and page_num == 1:
+                        entry["extraction_method"] = "bluesky"
+                        entry["candidates_after_signals"] = len(page_candidates)
                     all_candidates_source.extend(page_candidates)
-                    break  # Bluesky API trae N posts en 1 fetch
+                    break
 
                 pre_soup = BeautifulSoup(text, "html.parser")
                 for stripped in pre_soup(["script", "style", "noscript", "svg"]):
                     stripped.decompose()
                 if page_num == 1:
-                    diagnostic.record_anchor_counts(pre_soup)
+                    diagnostic.record_anchor_counts(pre_soup, entry=entry)
 
                 if source.kind == "js":
                     page_candidates = extract_generic_html(
-                        source,
-                        text,
+                        source, text,
                         max_items=args.max_items_per_source,
-                        info=info if page_num == 1 else None,
+                        info=entry if page_num == 1 else None,
                     )
                 else:
                     js_check = detect_empty_or_js(text, pre_soup) if page_num == 1 else None
                     if js_check is not None:
                         category, message = js_check
-                        print(f"[SKIP-{category}] {source.name}: {message}")
-                        record_problem(source.name, category, message)
-                        diagnostic.record_status(category, message)
+                        _safe_print(f"[SKIP-{category}] {source.name}: {message}")
+                        _record_problem(category, message)
+                        diagnostic.record_status(category, message, entry=entry)
                         skipped_for_js = True
                         break
                     page_candidates = extract_generic_html(
-                        source,
-                        text,
+                        source, text,
                         max_items=args.max_items_per_source,
-                        info=info if page_num == 1 else None,
+                        info=entry if page_num == 1 else None,
                     )
 
                 all_candidates_source.extend(page_candidates)
 
-                # ¿Hay próxima página?
                 if page_num >= effective_max_pages:
                     break
                 next_url = find_next_page_url(pre_soup, current_url, visited_urls)
                 if not next_url:
                     break
-                # Pequeña pausa entre páginas del mismo sitio.
-                if args.sleep_seconds > 0:
+                # Pequeña pausa entre páginas del mismo sitio (solo aplica
+                # cuando no estamos en paralelo — con concurrencia el host_sem
+                # ya serializa requests al mismo dominio).
+                if workers == 1 and args.sleep_seconds > 0:
                     time.sleep(min(args.sleep_seconds, 1.0))
                 current_url = next_url
 
             if not skipped_for_js:
                 scored = [score_candidate(candidate) for candidate in all_candidates_source]
-                all_candidates.extend(scored)
-                diagnostic.record_candidates(scored)
-                # Registrar pages_visited en diagnostic.
-                if diagnostic.enabled and info is not None:
-                    info["pages_visited"] = pages_visited
+                local_candidates.extend(scored)
+                diagnostic.record_candidates(scored, entry=entry)
+                if diagnostic.enabled and entry is not None:
+                    entry["pages_visited"] = pages_visited
                 pages_note = f" ({pages_visited} págs)" if pages_visited > 1 else ""
-                print(f"    candidatos con señales: {len(scored)}{pages_note}")
+                _safe_print(f"    [{source.name[:30]:30s}] candidatos con señales: {len(scored)}{pages_note}")
 
         except requests.HTTPError as exc:
             message = f"{source.name}: HTTP error {exc}"
-            print(f"[ERROR] {message}")
-            errors.append(message)
-            record_problem(source.name, "http", str(exc))
-            diagnostic.record_status("http", str(exc))
+            _safe_print(f"[ERROR] {message}")
+            local_errors.append(message)
+            _record_problem("http", str(exc))
+            diagnostic.record_status("http", str(exc), entry=entry)
         except requests.RequestException as exc:
             message = f"{source.name}: request error {exc}"
-            print(f"[ERROR] {message}")
-            errors.append(message)
-            record_problem(source.name, "request", str(exc))
-            diagnostic.record_status("request", str(exc))
+            _safe_print(f"[ERROR] {message}")
+            local_errors.append(message)
+            _record_problem("request", str(exc))
+            diagnostic.record_status("request", str(exc), entry=entry)
         except Exception as exc:
             message = f"{source.name}: error inesperado {exc}"
-            print(f"[ERROR] {message}")
-            errors.append(message)
-            record_problem(source.name, "other", str(exc))
-            diagnostic.record_error(exc)
-        finally:
-            finalized = diagnostic.end()
-            diagnostic.maybe_dump_html(finalized, text)
+            _safe_print(f"[ERROR] {message}")
+            local_errors.append(message)
+            _record_problem("other", str(exc))
+            diagnostic.record_error(exc, entry=entry)
 
-        if args.sleep_seconds > 0 and index < len(sources):
-            time.sleep(args.sleep_seconds)
+        return {
+            "candidates": local_candidates, "errors": local_errors,
+            "problems": local_problems, "text": text, "entry": entry,
+        }
+
+    if workers == 1:
+        # Path serial: idéntico al comportamiento histórico.
+        for index, source in enumerate(sources, start=1):
+            result = _scrape_one(index, source)
+            all_candidates.extend(result["candidates"])
+            errors.extend(result["errors"])
+            problems.extend(result["problems"])
+            finalized = diagnostic.end(entry=result["entry"])
+            diagnostic.maybe_dump_html(finalized, result["text"])
+            if args.sleep_seconds > 0 and index < len(sources):
+                time.sleep(args.sleep_seconds)
+    else:
+        # Path paralelo: ThreadPoolExecutor con per-host semaphore.
+        # JS sources se serializan vía js_lock interno.
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="scrape") as pool:
+            futures = {
+                pool.submit(_scrape_one, idx, src): src
+                for idx, src in enumerate(sources, start=1)
+            }
+            for fut in as_completed(futures):
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    src = futures[fut]
+                    msg = f"{src.name}: error en worker {exc}"
+                    _safe_print(f"[ERROR] {msg}")
+                    errors.append(msg)
+                    problems.append({"source": src.name, "category": "other", "message": str(exc)})
+                    continue
+                all_candidates.extend(result["candidates"])
+                errors.extend(result["errors"])
+                problems.extend(result["problems"])
+                finalized = diagnostic.end(entry=result["entry"])
+                diagnostic.maybe_dump_html(finalized, result["text"])
 
     reportable, state = process_state(
         candidates=all_candidates,
@@ -5018,10 +5121,19 @@ def run(args: argparse.Namespace) -> int:
         )
         enriched_author = 0
         enriched_image = 0
-        for idx, c in enumerate(eligible, start=1):
-            metadata = fetch_metadata_from_detail(
-                c.url, session, timeout=(args.connect_timeout, args.read_timeout)
-            )
+
+        def _fetch_one_detail(c: Candidate) -> tuple[Candidate, dict[str, str]]:
+            """Worker thread-safe: solo hace HTTP + parsing, no muta nada."""
+            host_sem = _host_sem_for(c.url)
+            with host_sem:
+                metadata = fetch_metadata_from_detail(
+                    c.url, session, timeout=(args.connect_timeout, args.read_timeout)
+                )
+            return c, metadata
+
+        def _apply_metadata(idx: int, c: Candidate, metadata: dict[str, str]) -> None:
+            """Aplica metadata al candidate y al state. Llamado SECUENCIALMENTE."""
+            nonlocal enriched_author, enriched_image
             new_author = metadata.get("author") or ""
             new_image = metadata.get("image_url") or ""
             new_isbn = metadata.get("isbn") or ""
@@ -5045,11 +5157,33 @@ def run(args: argparse.Namespace) -> int:
                     state[key]["image_url"] = c.image_url
                     state[key]["isbn"] = c.isbn
                     state[key]["content_hash"] = c.content_hash
-                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → {', '.join(updates)}")
+                _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → {', '.join(updates)}")
             else:
-                print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → (sin cambios)")
-            if args.sleep_seconds > 0 and idx < len(eligible):
-                time.sleep(min(args.sleep_seconds, 1.0))
+                _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → (sin cambios)")
+
+        if workers == 1:
+            for idx, c in enumerate(eligible, start=1):
+                try:
+                    _, metadata = _fetch_one_detail(c)
+                except Exception as exc:
+                    _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → ERROR: {exc}")
+                    metadata = {}
+                _apply_metadata(idx, c, metadata)
+                if args.sleep_seconds > 0 and idx < len(eligible):
+                    time.sleep(min(args.sleep_seconds, 1.0))
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="detail") as pool:
+                futures = {pool.submit(_fetch_one_detail, c): (idx, c)
+                           for idx, c in enumerate(eligible, start=1)}
+                for fut in as_completed(futures):
+                    idx, c = futures[fut]
+                    try:
+                        _, metadata = fut.result()
+                    except Exception as exc:
+                        _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → ERROR: {exc}")
+                        metadata = {}
+                    _apply_metadata(idx, c, metadata)
+
         print(
             f"[FETCH-DETAILS] {enriched_author} autores · {enriched_image} imágenes enriquecidas"
         )
@@ -5121,6 +5255,17 @@ def parse_args() -> argparse.Namespace:
         help="Máximo de páginas a seguir por fuente cuando hay link 'siguiente'. Default: 5 (suficiente para búsquedas Fase 1 y categorías específicas). Override por fuente en YAML con 'max_pages: 15' para catálogos grandes. RSS siempre = 1.",
     )
     parser.add_argument("--sleep-seconds", type=float, default=1.5, help="Pausa entre fuentes. Default: 1.5")
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Cantidad de fuentes a procesar en paralelo. Default: 1 (serial — comportamiento histórico). "
+             "Recomendado: 6-8 para overnight runs (corta phase 1 de ~25min a ~5min). kind:js se serializa "
+             "internamente porque Playwright sync no es thread-safe.",
+    )
+    parser.add_argument(
+        "--per-host-limit", type=int, default=2,
+        help="Bajo --workers > 1, máximo de requests concurrentes al mismo dominio. Default: 2. "
+             "Sube si tu red lo permite y los retailers no rate-limitean; baja a 1 para sitios sensibles.",
+    )
     parser.add_argument("--connect-timeout", type=int, default=10, help="Timeout conexión HTTP. Default: 10")
     parser.add_argument("--read-timeout", type=int, default=30, help="Timeout lectura HTTP. Default: 30")
     parser.add_argument("--user-agent", default="manga-watch-personal/0.2 (+personal-use)", help="User-Agent")

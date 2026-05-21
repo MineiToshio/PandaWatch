@@ -31,6 +31,9 @@
 #   GEMINI_SLEEP=4.5             # sleep entre queries Gemini (default 4.5 = 15 RPM safe)
 #   INCLUDE_WAYBACK_RECOVERY=1   # añade fase 4f: recupera items 404 vía Wayback (default OFF;
 #                                #   pesado: ~3000 HEAD requests + Wayback queries. Correr 1x/semana)
+#   SCRAPE_WORKERS=8             # paralelismo de Phase 1. Default: 8 (corta ~25min → ~5min).
+#                                #   Bajar a 1 para regresión / depurar; 4 si tu red es lenta.
+#   PER_HOST_LIMIT=2             # bajo SCRAPE_WORKERS > 1, requests concurrentes al mismo dominio
 
 set +e  # NO fallar si una fase rompe — seguir con las siguientes
 set -u
@@ -62,6 +65,8 @@ SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 GEMINI_SLEEP="${GEMINI_SLEEP:-4.5}"
 INCLUDE_WAYBACK_RECOVERY="${INCLUDE_WAYBACK_RECOVERY:-0}"
+SCRAPE_WORKERS="${SCRAPE_WORKERS:-8}"
+PER_HOST_LIMIT="${PER_HOST_LIMIT:-2}"
 
 GLOBAL_START=$(date +%s)
 
@@ -73,8 +78,10 @@ echo "========================================================"
 echo
 echo "Config:"
 echo "  INCLUDE_WHAKOOM_SPIDER=$INCLUDE_WHAKOOM_SPIDER"
+echo "  INCLUDE_WAYBACK_RECOVERY=$INCLUDE_WAYBACK_RECOVERY"
 echo "  LISTADO_BLOG range:    $LISTADO_BLOG_FROM → $LISTADO_BLOG_TO"
 echo "  GEMINI_SLEEP=${GEMINI_SLEEP}s"
+echo "  SCRAPE_WORKERS=$SCRAPE_WORKERS (per-host limit=$PER_HOST_LIMIT)"
 echo "  Skips: scrape=$SKIP_SCRAPE wikis=$SKIP_WIKIS search=$SKIP_SEARCH cleanup=$SKIP_CLEANUP build=$SKIP_BUILD"
 echo
 
@@ -111,7 +118,7 @@ count_lines() {
 # PHASE 1: Scrape principal
 # ============================================================
 if [ "$SKIP_SCRAPE" != "1" ]; then
-    phase_header 1 "Scrape principal (195 sources, JS+fetch-details)"
+    phase_header 1 "Scrape principal (195 sources, JS+fetch-details, workers=${SCRAPE_WORKERS})"
     P1_START=$(date +%s)
     PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --enable-js \
@@ -119,6 +126,8 @@ if [ "$SKIP_SCRAPE" != "1" ]; then
         --max-pages 5 \
         --fetch-details \
         --diagnostic \
+        --workers "$SCRAPE_WORKERS" \
+        --per-host-limit "$PER_HOST_LIMIT" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/01-scrape.log" 2>&1
