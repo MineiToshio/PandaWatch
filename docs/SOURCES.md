@@ -11,11 +11,29 @@ Minimum:
   language: "Language Name"
   publisher: "Publisher Name"
   source_class: "official | retailer | trusted_media | social"
-  kind: "html | rss | js | wiki"
+  kind: "html | rss | js | bluesky | wiki"
   url: "https://example.com/manga/"
   enabled: true
   tags: ["manga", "official", "store"]
 ```
+
+The five live `kind`s, in rough order of how often you'll add one:
+- **`html`** — most retailer catalogs. Listing-page parsing via
+  `extract_listing_candidates` with `item_selector` from
+  `selectors:` (or auto-detected).
+- **`rss`** — publisher/blog feeds. Parsed via `feedparser`.
+- **`bluesky`** — publisher Bluesky profiles. URL must be
+  `https://bsky.app/profile/<handle>`. Uses the public XRPC API
+  `public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed` — no auth,
+  no API key. One request returns up to ~30 recent posts.
+- **`js`** — pages that need a real browser. Requires `--enable-js`
+  at runtime + `pip install playwright && playwright install chromium`.
+  Under `--workers > 1` these sources serialize through `_js_lock`
+  (Playwright sync isn't thread-safe).
+- **`wiki`** — NOT a runtime kind. Documents that the source is
+  handled by a dedicated parser in `scripts/wikis/` and activated via
+  `--bootstrap-wiki <name>`. Add the entry anyway so the source shows
+  up in `--list-sources` and in the web filters.
 
 Optional:
 ```yaml
@@ -74,6 +92,49 @@ Optional:
 
 5. **Remove the `"new-source"` tag** once you're confident it's stable
    (or keep it for selective re-runs).
+
+## Recipe: add a Bluesky publisher source
+
+Publishers (Norma, Ki-oon, Kodansha USA, Yen Press, VIZ, …) often
+announce their special editions on Bluesky before any catalog page
+exists. We poll their profiles via the public XRPC API — no auth.
+
+```yaml
+- name: "SOCIAL - VIZ Media Bluesky"
+  country: "Estados Unidos"
+  language: "Inglés"
+  publisher: "VIZ Media"
+  source_class: "social"
+  kind: "bluesky"
+  url: "https://bsky.app/profile/viz.com"
+  enabled: true
+  tags: ["social", "news", "manga", "us", "publisher"]
+  notes: "Handle viz.com — NO vizmedia.bsky.social (stale desde nov-2024)."
+```
+
+**The URL is the source of truth for the handle.** `bluesky_handle_from_url`
+parses `bsky.app/profile/<handle>` — supports both
+`username.bsky.social` and custom domains (`viz.com`, `kodansha.us`,
+`darkhorse.com`). Verify the handle still exists by opening the URL in
+a browser before adding.
+
+**Posts are NOT products.** A post from a publisher might be:
+- A real announcement of a special edition (target case).
+- A general news post.
+- A re-share or unrelated content.
+
+The same filter cascade (`is_likely_manga` → `is_pure_novel` →
+`is_comic_not_manga` → score → `is_collectible_edition`) applies, so
+non-product posts get dropped automatically. But `source_class:
+"social"` gets a -5 score penalty in `score_candidate`, so use a
+relatively low `--min-score` if you want social signals to surface
+(default 20-30 is fine).
+
+**Currently 15 Bluesky sources active.** Adding more: confirm the
+handle is live (don't add stale accounts that haven't posted in 12+
+months — verified empirically), set `enabled: true`, run
+`python scripts/manga_watch.py --only-source "SOCIAL - X Bluesky"`
+to smoke-test.
 
 ## Recipe: add a search-template entry
 
