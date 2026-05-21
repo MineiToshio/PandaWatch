@@ -78,11 +78,11 @@ def dedupe_by_url(items: list[dict]) -> list[dict]:
         key = normalize_url_for_dedup(url)
         by_url[key] = pick(by_url.get(key), item)
 
-    # Pase 2: agrupar por ISBN (mismo libro en distintos retailers).
-    # Antes descartábamos los duplicados, ahora los preservamos como
-    # sources[] dentro del item canónico, así el modal puede listar
-    # todas las tiendas donde está disponible.
-    return _group_by_isbn(list(by_url.values()), pick)
+    # Pase 2: agrupar por cluster_key (mismo libro en distintos retailers).
+    # cluster_key es ISBN cuando existe; cuando no, una clave fuzzy
+    # (idioma|serie|volumen|variantes|publisher). Preservamos los hits
+    # como sources[] dentro del item canónico.
+    return _group_by_cluster_key(list(by_url.values()), pick)
 
 
 def _source_entry(item: dict) -> dict:
@@ -138,33 +138,31 @@ def _merged_canonical(group: list[dict], pick) -> dict:
     return merged
 
 
-def _group_by_isbn(items: list[dict], pick) -> list[dict]:
-    """Devuelve la misma lista de items pero con los grupos por ISBN
-    fusionados en un único item con sources[].
-    Items sin ISBN quedan tal cual (sources[] tiene 1 sola entrada)."""
-    by_isbn: dict[str, list[dict]] = {}
-    no_isbn: list[dict] = []
+def _group_by_cluster_key(items: list[dict], pick) -> list[dict]:
+    """Agrupa items con mismo cluster_key fusionándolos en uno solo.
+
+    cluster_key viene precalculada en items.jsonl por candidate_to_json
+    (manga_watch.derive_cluster_key). Fallback para items legacy sin la
+    clave: ISBN si existe, sino URL (standalone). Claves "url:..." nunca
+    se agrupan con nada porque cada item tiene URL única.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from manga_watch import derive_cluster_key
+
+    groups: dict[str, list[dict]] = {}
     for item in items:
-        isbn = (item.get("isbn") or "").strip()
-        if not isbn:
-            no_isbn.append(item)
-            continue
-        by_isbn.setdefault(isbn, []).append(item)
+        key = item.get("cluster_key") or derive_cluster_key(item)
+        groups.setdefault(key, []).append(item)
 
     final: list[dict] = []
-    for group in by_isbn.values():
+    for key, group in groups.items():
         if len(group) == 1:
             merged = dict(group[0])
             merged["sources"] = [_source_entry(group[0])]
             final.append(merged)
         else:
             final.append(_merged_canonical(group, pick))
-
-    # Items sin ISBN: cada uno como source único
-    for item in no_isbn:
-        merged = dict(item)
-        merged["sources"] = [_source_entry(item)]
-        final.append(merged)
     return final
 
 

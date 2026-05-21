@@ -2728,3 +2728,113 @@ def test_manga_mexico_skips_duplicate_titles():
     </ul></div></body></html>"""
     items = mm.parse_catalog_page(html, publisher_slug="panini")
     assert len(items) == 1
+
+
+# ---------------------------------------------------------------------------
+# derive_cluster_key — agrupación lógica entre fuentes
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_key_isbn_authoritative():
+    """Si hay ISBN, prevalece sobre cualquier otro derivado."""
+    item = {"isbn": "9788822624697", "title": "ONE PIECE 98 CELEBRATION EDITION",
+            "language": "Italiano", "url": "https://x.com/a"}
+    assert mw.derive_cluster_key(item) == "isbn:9788822624697"
+
+
+def test_cluster_key_two_isbns_distinct():
+    a = {"isbn": "9788822624697", "title": "X", "language": "Italiano", "url": "http://a"}
+    b = {"isbn": "9788822624698", "title": "X", "language": "Italiano", "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_cluster_key_fuzzy_merges_same_series_volume_variant():
+    """Dos items sin ISBN del mismo idioma + serie + vol + variant → mismo key."""
+    a = {"title": "ONE PIECE n. 100 CELEBRATION EDITION", "language": "Italiano",
+         "publisher": "Star Comics", "signal_types": ["celebration"], "url": "http://a"}
+    b = {"title": "One Piece Celebration Edition Vol. 100", "language": "Italiano",
+         "publisher": "Star Comics", "signal_types": ["celebration"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+
+
+def test_cluster_key_different_languages_dont_merge():
+    a = {"title": "One Piece vol. 100", "language": "Italiano", "publisher": "Star",
+         "signal_types": ["celebration"], "url": "http://a"}
+    b = {"title": "One Piece tomo 100", "language": "Español", "publisher": "Planeta",
+         "signal_types": ["celebration"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_cluster_key_different_variants_dont_merge():
+    """OP100 normal y OP100 Celebration son productos distintos."""
+    a = {"title": "One Piece vol. 100", "language": "Italiano",
+         "publisher": "Star", "signal_types": [], "url": "http://a"}
+    b = {"title": "One Piece vol. 100 Celebration", "language": "Italiano",
+         "publisher": "Star", "signal_types": ["celebration"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_cluster_key_different_volumes_dont_merge():
+    a = {"title": "Berserk Deluxe vol. 1", "language": "Español",
+         "publisher": "Panini", "signal_types": ["deluxe"], "url": "http://a"}
+    b = {"title": "Berserk Deluxe vol. 2", "language": "Español",
+         "publisher": "Panini", "signal_types": ["deluxe"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_cluster_key_fallback_to_url_when_insufficient_info():
+    """Sin ISBN, sin volumen, sin variant → standalone (clave url:)."""
+    item = {"title": "Random Title No Volume", "language": "Italiano",
+            "signal_types": [], "url": "http://a"}
+    key = mw.derive_cluster_key(item)
+    assert key.startswith("url:")
+
+
+def test_cluster_key_requires_volume_even_with_variant_sig():
+    """Sin volumen detectable, NO debe agruparse aunque tenga variant_sig:
+    distintos tomos del mismo artbook con variant 'limited' colisionarían."""
+    item = {"title": "Random Artbook Limited Edition", "language": "Japonés",
+            "publisher": "X", "signal_types": ["limited"], "url": "http://a"}
+    key = mw.derive_cluster_key(item)
+    assert key.startswith("url:")
+
+
+def test_cluster_key_fallback_when_series_too_short():
+    """Series de < 3 chars no es discriminante."""
+    item = {"title": "Q vol. 1", "language": "Japonés", "publisher": "X",
+            "signal_types": ["deluxe"], "url": "http://a"}
+    key = mw.derive_cluster_key(item)
+    assert key.startswith("url:")
+
+
+def test_cluster_key_japanese_preserves_kanji():
+    """No strippeamos kanji/kana — son discriminantes para series JP."""
+    a = {"title": "ワンピース 100巻 限定版", "language": "Japonés",
+         "publisher": "集英社", "signal_types": ["limited"], "url": "http://a"}
+    b = {"title": "ワンピース 100巻 限定版", "language": "Japonés",
+         "publisher": "集英社", "signal_types": ["limited"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+    assert "ワンピース" in mw.derive_cluster_key(a)
+
+
+def test_cluster_key_strips_brackets_to_avoid_noise():
+    """Contenido entre corchetes (típico ruido de retailer JP) no afecta key."""
+    a = {"title": "Naruto Vol. 5 Deluxe (BeBoy Comics Deluxe)", "language": "Japonés",
+         "publisher": "集英社", "signal_types": ["deluxe"], "url": "http://a"}
+    b = {"title": "Naruto Vol. 5 Deluxe", "language": "Japonés",
+         "publisher": "集英社", "signal_types": ["deluxe"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+
+
+def test_extract_volume_patterns():
+    assert mw._extract_volume("One Piece vol. 100") == "100"
+    assert mw._extract_volume("Naruto Tomo 5") == "5"
+    assert mw._extract_volume("Berserk Tome 12") == "12"
+    assert mw._extract_volume("ONE PIECE n. 100") == "100"
+    assert mw._extract_volume("Naruto #42") == "42"
+    assert mw._extract_volume("ワンピース 100巻") == "100"
+    assert mw._extract_volume("Bleach Volume 7") == "7"
+    # JP/EN: volumen entre paréntesis (half o full-width)
+    assert mw._extract_volume("転生したらスライムだった件（15）限定版") == "15"
+    assert mw._extract_volume("Some Title (10)") == "10"
+    assert mw._extract_volume("Random title without volume") == ""

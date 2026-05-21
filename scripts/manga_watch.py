@@ -2459,6 +2459,137 @@ _BLOG_URL_PATTERN = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Cluster key — agrupación lógica de items que representan el "mismo producto"
+# aunque vengan de fuentes distintas.
+# ---------------------------------------------------------------------------
+
+# Patrones para extraer número de volumen del título, ordenados de más
+# específico a menos. El primero que matchee gana.
+_VOLUME_EXTRACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bvol\.?\s*(\d{1,4})\b", re.IGNORECASE),
+    re.compile(r"\bvolume\s*(\d{1,4})\b", re.IGNORECASE),
+    re.compile(r"\btomo\s*(\d{1,4})\b", re.IGNORECASE),
+    re.compile(r"\btome\s*(\d{1,4})\b", re.IGNORECASE),
+    re.compile(r"\bn[.ºo°]\s*(\d{1,4})\b", re.IGNORECASE),
+    re.compile(r"#\s*(\d{1,4})\b"),
+    re.compile(r"(\d{1,4})\s*巻"),  # JP "巻"
+    # Volumen entre paréntesis (común en JP: "タイトル（15）", "Title (10)")
+    # Acepta paréntesis half-width y full-width.
+    re.compile(r"[（(]\s*(\d{1,4})\s*[）)]"),
+)
+
+# Palabras a stripear del título para obtener `series_name`. Cubren markers
+# de volumen y variant edition en ES/IT/FR/EN/JP. Word-boundary regex.
+_SERIES_STRIP_TOKENS: tuple[str, ...] = (
+    # Variant edition keywords (lo que ya está en signal_types — los stripeamos
+    # del título para que series sea sólo el nombre de la obra).
+    "celebration edition", "edicion especial", "edición especial",
+    "edicion deluxe", "edición deluxe", "edicion coleccionista",
+    "edición coleccionista", "edicion original", "édition originale",
+    "edition collector", "edition limitee", "édition limitée",
+    "deluxe edition", "collector edition", "limited edition",
+    "variant cover", "variant edition", "box set", "boxset", "cofanetto",
+    "coffret integrale", "coffret intégrale", "coffret",
+    "kanzenban", "perfect edition", "ultimate edition",
+    "first print", "premiere edition", "première edition",
+    # Markers de volumen / pieza
+    "tomo", "tome", "volume", "vol.", "vol",
+    "n.", "n°", "nº", "no.", "no",
+    # Markers stripables varios
+    "manga", "edición", "edicion", "edition",
+)
+
+_SERIES_STRIP_RE = re.compile(
+    # Lookaround alphanumeric — soporta tokens que terminan en puntuación
+    # (e.g. "vol.", "n.") porque \b no matchea entre `.` y space.
+    r"(?<![A-Za-z0-9])(?:"
+    + "|".join(re.escape(t) for t in sorted(_SERIES_STRIP_TOKENS, key=len, reverse=True))
+    + r")(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+# Bracket/parenthesis contents (suelen contener variantes específicas que
+# rompen la identidad de "serie" — ej. "(BeBoy Comics Deluxe)" en JP).
+_BRACKETED_RE = re.compile(r"[\(\[\{【（［].*?[\)\]\}】）］]")
+
+
+def _extract_volume(title: str) -> str:
+    """Devuelve el volumen como string (e.g. "100") o "" si no detecta."""
+    if not title:
+        return ""
+    for pat in _VOLUME_EXTRACT_PATTERNS:
+        m = pat.search(title)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _normalize_series_name(title: str, volume: str) -> str:
+    """Limpia el título para quedarse sólo con el nombre de la serie.
+
+    - strip de keywords variant (deluxe, kanzenban, …)
+    - strip de markers de volumen
+    - strip de números (si están sueltos al final, casi siempre son vol)
+    - strip de bracketed content (suele ser ruido de retailer)
+    - lower + collapse whitespace
+    - NO strip de unicode (preservamos kanji/kana/accents — son discriminantes)
+    """
+    if not title:
+        return ""
+    text = _BRACKETED_RE.sub(" ", title)
+    text = _SERIES_STRIP_RE.sub(" ", text)
+    # Quitar el número de volumen específico si lo conocemos
+    if volume:
+        text = re.sub(rf"(?<!\d){re.escape(volume)}(?!\d)", " ", text)
+    # Quitar puntuación común que sobra
+    text = re.sub(r"[:\-–—_,;|]+", " ", text)
+    # Collapse y lowercase
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+def derive_cluster_key(item: dict[str, Any]) -> str:
+    """Devuelve la clave de agrupación para deduplicar items entre fuentes.
+
+    Estrategia en cascada:
+    1. Si hay ISBN → "isbn:<isbn>". Esto es autoritativo (ISBN es unique per
+       edición/mercado, así que items con mismo ISBN son el mismo objeto).
+    2. Si NO hay ISBN pero podemos derivar `(language, series, volume)` con
+       una serie de >= 3 caracteres → clave fuzzy combinando esos +
+       variant_sig (de signal_types) + publisher. Items con misma clave
+       fuzzy son tratados como el mismo producto.
+    3. Cualquier otro caso (sin ISBN y series demasiado corta o sin volumen)
+       → "url:<url>". Esto garantiza standalone — no se agrupa con nada más,
+       evitando falsos positivos.
+
+    `variant_sig` y `publisher` son discriminantes para EVITAR juntar
+    "OP100 normal" con "OP100 Celebration" (distintos signal_types) o ediciones
+    de publishers distintos. Idioma es discriminante para no mezclar mercados.
+    """
+    isbn = (item.get("isbn") or "").strip()
+    if isbn:
+        return f"isbn:{isbn}"
+    title = item.get("title") or ""
+    language = (item.get("language") or "").strip().lower()
+    publisher = (item.get("publisher") or "").strip().lower()
+    signal_types = item.get("signal_types") or []
+    variant_sig = ",".join(sorted({str(s).lower() for s in signal_types if s}))
+    volume = _extract_volume(title)
+    series = _normalize_series_name(title, volume)
+    url = (item.get("url") or "").strip()
+
+    # Guardas anti-falso-positivo: series, language y volume son
+    # requeridos para considerar dos items "el mismo producto" sin ISBN.
+    # variant_sig solo no alcanza — sin volumen distintos tomos mergean mal.
+    if (not series or len(series) < 3
+            or not language
+            or not volume):
+        return f"url:{url}"
+
+    return f"fuzzy:{language}|{series}|{volume}|{variant_sig}|{publisher}"
+
+
 def is_collectible_edition(
     title: str,
     description: str,
@@ -4004,7 +4135,7 @@ def process_state(
 
 
 def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
-    return {
+    row = {
         "detected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": candidate.status,
         "score": candidate.score,
@@ -4030,6 +4161,8 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "stock_type": candidate.stock_type,
         "isbn": candidate.isbn,
     }
+    row["cluster_key"] = derive_cluster_key(row)
+    return row
 
 
 def markdown_escape_pipe(value: str) -> str:

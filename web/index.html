@@ -60,8 +60,11 @@
       </p>
       <p class="text-sm text-gray-500" x-show="loading">Cargando datos…</p>
     </div>
-    <div class="text-right text-sm text-gray-500">
-      <span x-text="filtered.length"></span> resultados visibles
+    <div class="text-right text-sm text-gray-500 flex items-center gap-4">
+      <a href="/control" class="text-pink-600 hover:text-pink-800 underline font-medium">
+        ⚙️ Panel de control
+      </a>
+      <span><span x-text="filtered.length"></span> resultados visibles</span>
     </div>
   </div>
 </header>
@@ -626,28 +629,34 @@ function mangaApp() {
         byUrl.set(key, pickWinner(byUrl.get(key), item));
       }
 
-      // Pase 2: por ISBN (con merge a sources[]).
+      // Pase 2: por cluster_key (con merge a sources[]).
+      // cluster_key viene precalculada en items.jsonl (Python:
+      // derive_cluster_key). Es ISBN cuando existe; sino una fuzzy key
+      // (lang|serie|vol|variantes|publisher). Items con clave "url:..."
+      // no se agrupan con nadie (cada URL es única).
+      //
       // Si el item ya viene con sources[] (caso build_web.py embed), no
       // sobreescribimos — respetamos el agrupamiento del backend.
-      const isbnGroups = new Map();
-      const noIsbn = [];
+      const clusterGroups = new Map();
+      const preGrouped = [];
       for (const item of byUrl.values()) {
         if (Array.isArray(item.sources) && item.sources.length > 0) {
-          // El backend ya agrupó. Salimos directo a final.
-          noIsbn.push(item);
+          preGrouped.push(item);
           continue;
         }
-        const isbn = (item.isbn || "").trim();
-        if (!isbn) {
-          noIsbn.push(item);
-          continue;
+        // Fallback para items legacy sin cluster_key: usar ISBN si existe,
+        // o "url:<url>" para standalone.
+        let key = item.cluster_key;
+        if (!key) {
+          const isbn = (item.isbn || "").trim();
+          key = isbn ? `isbn:${isbn}` : `url:${item.url || ""}`;
         }
-        if (!isbnGroups.has(isbn)) isbnGroups.set(isbn, []);
-        isbnGroups.get(isbn).push(item);
+        if (!clusterGroups.has(key)) clusterGroups.set(key, []);
+        clusterGroups.get(key).push(item);
       }
 
       const final = [];
-      for (const group of isbnGroups.values()) {
+      for (const group of clusterGroups.values()) {
         if (group.length === 1) {
           final.push({ ...group[0], sources: [sourceEntry(group[0])] });
         } else {
@@ -675,13 +684,9 @@ function mangaApp() {
         }
       }
 
-      // Items sin ISBN o pre-agrupados: agregar sources[] de 1 elemento si no lo tienen.
-      for (const item of noIsbn) {
-        if (Array.isArray(item.sources) && item.sources.length > 0) {
-          final.push(item);
-        } else {
-          final.push({ ...item, sources: [sourceEntry(item)] });
-        }
+      // Pre-agrupados (vienen del backend con sources[]): pasan tal cual.
+      for (const item of preGrouped) {
+        final.push(item);
       }
       return final;
     },
