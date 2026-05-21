@@ -1,0 +1,83 @@
+# Queries para scripts/retrofit/search_discovery.py
+#
+# Cada query lista los engines aceptados en orden de preferencia. El runner
+# prueba el primero; si falla o devuelve 0, baja al siguiente.
+#
+# Engines disponibles:
+# - gemini: Gemini API con "Grounding with Google Search" tool. Free 500 RPD
+#   compartido (pero cobra por search interna del modelo: ~10-15 prompts/día
+#   reales). Único que ve whakoom.com/ediciones/{N} profundo. Alias: "google".
+# - tavily: Tavily Search API. Free 1k búsquedas/mes (~33/día). Sin tarjeta.
+#   Index propio (no Google) pero también ve Whakoom — sorpresa positiva.
+# - ddg: DuckDuckGo HTML, free, sin API. Bueno para Reddit/social. NO whakoom.
+#
+# PRIORIZACIÓN (decisión del usuario):
+# - "portada alternativa", "portada variante", "edición limitada" son las
+#   queries CRÍTICAS — items raros que no salen de otra forma. Estas usan
+#   Gemini PRIMERO (mejor calidad), Tavily fallback.
+# - El resto (deluxe, coleccionista, especial, Fnac, etc.) — usan Tavily
+#   PRIMERO porque su quota es mayor (1k/mes vs ~15/día de Gemini),
+#   reservando Gemini sólo para las críticas.
+# - Reddit/social usan DDG primero.
+
+queries:
+  # ===================================================================
+  # PRIORITY 1 — críticas (Gemini primary, calidad máxima)
+  # Portadas alternativas/variantes + ediciones limitadas — los items más
+  # raros y difíciles de encontrar en cualquier otra fuente.
+  # ===================================================================
+  - q: 'whakoom manga "portada alternativa"'
+    engines: [gemini, tavily]
+  - q: 'whakoom manga "portada variante" OR "variant cover"'
+    engines: [gemini, tavily]
+  - q: 'whakoom manga "edición limitada" OR "edición numerada"'
+    engines: [gemini, tavily]
+  # Variantes en otros idiomas (italiano + francés) — sólo si quedan cuota
+  - q: 'whakoom manga "couverture variante" OR "variante de cover"'
+    engines: [gemini, tavily]
+  - q: 'whakoom manga "variant esclusiva" OR "edizione variant"'
+    engines: [gemini, tavily]
+
+  # ===================================================================
+  # PRIORITY 2 — lore-words por serie (Gemini primary).
+  # Series específicas con keywords lore (Tarot, Beherit, Celebration, etc.).
+  # Si esto saca quota, no importa porque ya cubrimos las críticas arriba.
+  # ===================================================================
+  - q: '"berserk" "tarot" OR "beherit" OR "master edition" manga'
+    engines: [gemini, tavily]
+  - q: '"one piece" "celebration" OR "anniversary" OR "variant metal" manga'
+    engines: [gemini, tavily]
+  - q: '"vinland saga" OR "my hero academia" "variant" OR "tribute" manga'
+    engines: [gemini, tavily]
+
+  # ===================================================================
+  # PRIORITY 3 — resto Whakoom (Tavily primary, reservar Gemini).
+  # ===================================================================
+  - q: 'whakoom manga "edición especial"'
+    engines: [tavily, gemini]
+  - q: 'whakoom manga "edición coleccionista" OR "edición collector"'
+    engines: [tavily, gemini]
+  - q: 'whakoom manga "edición deluxe" OR "exclusiva fnac"'
+    engines: [tavily, gemini]
+
+  # ===================================================================
+  # PRIORITY 4 — retailers que bloquean nuestro scraping (Tavily primary).
+  # ===================================================================
+  - q: 'site:fnac.es manga "edición exclusiva" OR "edición limitada" OR "edición coleccionista"'
+    engines: [tavily, gemini]
+  - q: 'site:fnac.fr manga "édition collector" OR "édition limitée" OR "tirage limité"'
+    engines: [tavily, gemini]
+  - q: 'site:casadellibro.com manga "edición coleccionista" OR "edición especial" OR "edición limitada"'
+    engines: [tavily, gemini]
+  - q: 'site:amazon.es manga "edición coleccionista" OR "edición limitada" OR "edición especial"'
+    engines: [tavily, gemini]
+  - q: 'site:amazon.com.mx manga "edición especial" OR "edición coleccionista"'
+    engines: [tavily, gemini]
+
+  # ===================================================================
+  # PRIORITY 5 — Reddit/social (DDG primary, último fallback).
+  # ===================================================================
+  - q: 'site:reddit.com manga "variant cover" OR "limited edition" 2026'
+    engines: [ddg, tavily]
+  - q: 'site:reddit.com manga "edición coleccionista" OR "portada alternativa" 2026'
+    engines: [ddg, tavily]
