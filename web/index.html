@@ -153,6 +153,32 @@
 
     <div>
       <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
+        Tipo de edición
+        <span x-show="filters.signalTypes.length > 0" class="text-pink-500 normal-case font-normal" x-text="`(${filters.signalTypes.length})`"></span>
+      </label>
+      <div class="flex flex-wrap gap-1 max-h-40 overflow-y-auto pr-1">
+        <template x-for="s in unique.signalTypes" :key="s">
+          <button
+            type="button"
+            @click="toggleSignalType(s)"
+            :class="filters.signalTypes.includes(s)
+              ? 'bg-pink-500 text-white border-pink-500'
+              : 'bg-white text-gray-700 border-gray-300 hover:border-pink-300'"
+            class="px-2 py-1 text-xs rounded-md border transition cursor-pointer"
+            x-text="s">
+          </button>
+        </template>
+      </div>
+      <button
+        x-show="filters.signalTypes.length > 0"
+        @click="filters.signalTypes = []"
+        class="mt-1 text-xs text-gray-500 hover:text-pink-500 underline">
+        limpiar selección
+      </button>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
         Score mínimo: <span x-text="filters.minScore" class="accent font-bold"></span>
       </label>
       <input type="range" min="0" max="200" step="5" x-model.number="filters.minScore" class="w-full accent-pink-500">
@@ -405,12 +431,48 @@
           </div>
         </template>
 
+        <!-- Feedback (mala elección) -->
+        <div class="px-6 pb-3" x-show="feedbackOpen" x-cloak>
+          <div class="border border-red-200 bg-red-50 rounded-lg p-3">
+            <label class="block text-xs uppercase tracking-wider text-red-700 font-semibold mb-1">
+              ¿Por qué es una mala elección?
+            </label>
+            <textarea x-model="feedbackReason" rows="3" :disabled="feedbackSending"
+                      placeholder="Ej: no es manga, es un cómic occidental; o el título está roto; o es merchandising…"
+                      class="w-full px-3 py-2 text-sm border border-red-200 rounded-md focus:outline-none focus:border-red-400 disabled:bg-gray-100"></textarea>
+            <div class="mt-2 flex justify-between items-center gap-2">
+              <span class="text-xs"
+                    :class="feedbackError ? 'text-red-700' : (feedbackSent ? 'text-green-700' : 'text-gray-500')"
+                    x-text="feedbackError || (feedbackSent ? '✓ Guardado en data/feedback.jsonl' : '')"></span>
+              <div class="flex gap-2">
+                <button @click="cancelFeedback()" :disabled="feedbackSending"
+                        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50">
+                  Cancelar
+                </button>
+                <button @click="submitFeedback()" :disabled="feedbackSending || !feedbackReason.trim()"
+                        class="px-3 py-1.5 text-sm bg-red-600 text-white rounded-md font-semibold hover:opacity-90 disabled:opacity-50">
+                  <span x-show="!feedbackSending">Enviar</span>
+                  <span x-show="feedbackSending">Enviando…</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Modal footer -->
-        <div class="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-between items-center">
+        <div class="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-between items-center gap-3">
           <span class="text-xs text-gray-500">Detectado: <span x-text="formatDate(selectedItem.detected_at)"></span></span>
-          <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
-            Ver en sitio original ↗
-          </a>
+          <div class="flex items-center gap-2">
+            <button @click="toggleFeedback()"
+                    :title="feedbackOpen ? 'Cerrar feedback' : 'Marcar como mala elección'"
+                    class="px-3 py-2 rounded-md text-sm border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
+                    :class="feedbackOpen ? 'bg-red-50 border-red-300 text-red-700' : 'text-gray-500'">
+              👎
+            </button>
+            <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
+              Ver en sitio original ↗
+            </a>
+          </div>
         </div>
       </div>
     </template>
@@ -434,7 +496,8 @@ function mangaApp() {
       language: "",
       productType: "",
       sourceClass: "",
-      minScore: 30,
+      signalTypes: [],   // multi-select chip filter
+      minScore: 20,
       onlyLimited: false,
     },
     detailFields: [
@@ -625,12 +688,17 @@ function mangaApp() {
 
     get unique() {
       const u = (key) => Array.from(new Set(this.items.map(i => i[key]).filter(Boolean))).sort();
+      // signal_types es un array por item — flatten antes de dedupear.
+      const signalTypes = Array.from(new Set(
+        this.items.flatMap(i => Array.isArray(i.signal_types) ? i.signal_types : []).filter(Boolean)
+      )).sort();
       return {
         countries: u("country"),
         publishers: u("publisher"),
         languages: u("language"),
         productTypes: u("product_type"),
         sourceClasses: u("source_class"),
+        signalTypes,
       };
     },
 
@@ -658,6 +726,11 @@ function mangaApp() {
         if (f.language && i.language !== f.language) return false;
         if (f.productType && i.product_type !== f.productType) return false;
         if (f.sourceClass && i.source_class !== f.sourceClass) return false;
+        if (f.signalTypes && f.signalTypes.length > 0) {
+          // intersección no-vacía entre signal_types del item y los seleccionados
+          const itemSigs = Array.isArray(i.signal_types) ? i.signal_types : [];
+          if (!f.signalTypes.some(s => itemSigs.includes(s))) return false;
+        }
         if ((i.score || 0) < f.minScore) return false;
         if (f.onlyLimited && i.stock_type !== "limited") return false;
         return true;
@@ -708,8 +781,68 @@ function mangaApp() {
       try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
     },
 
-    openModal(item) { this.selectedItem = item; this.copiedTitle = false; document.body.style.overflow = "hidden"; },
-    closeModal() { this.selectedItem = null; this.copiedTitle = false; document.body.style.overflow = ""; },
+    openModal(item) {
+      this.selectedItem = item;
+      this.copiedTitle = false;
+      this._resetFeedback();
+      document.body.style.overflow = "hidden";
+    },
+    closeModal() {
+      this.selectedItem = null;
+      this.copiedTitle = false;
+      this._resetFeedback();
+      document.body.style.overflow = "";
+    },
+
+    feedbackOpen: false,
+    feedbackReason: "",
+    feedbackSending: false,
+    feedbackSent: false,
+    feedbackError: "",
+    _resetFeedback() {
+      this.feedbackOpen = false;
+      this.feedbackReason = "";
+      this.feedbackSending = false;
+      this.feedbackSent = false;
+      this.feedbackError = "";
+    },
+    toggleFeedback() {
+      if (this.feedbackOpen) {
+        this._resetFeedback();
+      } else {
+        this.feedbackOpen = true;
+        this.feedbackSent = false;
+        this.feedbackError = "";
+      }
+    },
+    cancelFeedback() { this._resetFeedback(); },
+    async submitFeedback() {
+      const reason = (this.feedbackReason || "").trim();
+      if (!reason || !this.selectedItem) return;
+      this.feedbackSending = true;
+      this.feedbackError = "";
+      try {
+        const res = await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: this.selectedItem.title || "",
+            url: this.selectedItem.url || "",
+            reason,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        this.feedbackSent = true;
+        this.feedbackReason = "";
+        setTimeout(() => {
+          if (this.feedbackSent) this._resetFeedback();
+        }, 1800);
+      } catch (e) {
+        this.feedbackError = "No se pudo guardar: " + e.message;
+      } finally {
+        this.feedbackSending = false;
+      }
+    },
 
     goToPage(n) {
       const clamped = Math.max(1, Math.min(this.totalPages, n));
@@ -778,8 +911,20 @@ function mangaApp() {
     resetFilters() {
       this.filters = {
         search: "", country: "", publisher: "", language: "",
-        productType: "", sourceClass: "", minScore: 30, onlyLimited: false,
+        productType: "", sourceClass: "", signalTypes: [],
+        minScore: 20, onlyLimited: false,
       };
+      this.page = 1;
+      this._syncPageToUrl();
+    },
+
+    toggleSignalType(sig) {
+      const idx = this.filters.signalTypes.indexOf(sig);
+      if (idx >= 0) {
+        this.filters.signalTypes.splice(idx, 1);
+      } else {
+        this.filters.signalTypes.push(sig);
+      }
       this.page = 1;
       this._syncPageToUrl();
     },
