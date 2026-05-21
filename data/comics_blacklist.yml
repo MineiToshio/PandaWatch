@@ -1,0 +1,160 @@
+# Blacklist de cómics — usado por is_likely_manga() para descartar items
+# que no son manga en fuentes con purity="mixed" (Panini ES/MX, Dark Horse
+# Direct, etc.). Editable sin tocar código.
+#
+# IMPORTANTE: no se blacklistean editoriales (publishers) porque Panini,
+# Norma, Planeta y otras publican manga Y cómic bajo la misma marca.
+# Marvel y DC son la excepción — sólo publican cómic, jamás manga.
+
+# Publishers que SOLO publican cómic occidental. Match exacto contra el
+# campo `publisher` del item.
+publishers:
+  - "Marvel"
+  - "Marvel Comics"
+  - "DC"
+  - "DC Comics"
+
+# Nombres de franquicia/serie que jamás aparecen en manga. Match
+# case-insensitive como substring del título.
+franchise_keywords:
+  # Marvel
+  - "Spider-Man"
+  - "Spiderman"
+  - "Spider Man"
+  - "X-Men"
+  - "Avengers"
+  - "Wolverine"
+  - "Deadpool"
+  - "Iron Man"
+  - "Thor "
+  - "Hulk "
+  - "Captain America"
+  - "Black Panther"
+  - "Doctor Strange"
+  - "Daredevil"
+  - "Punisher"
+  - "Venom"
+  - "Guardians of the Galaxy"
+  - "Fantastic Four"
+  # DC
+  - "Batman"
+  - "Superman"
+  - "Wonder Woman"
+  - "Justice League"
+  - "Aquaman"
+  - "Flash "
+  - "Green Lantern"
+  - "Harley Quinn"
+  - "Joker"
+  - "Catwoman"
+  # Image / Dark Horse comics / IDW / etc.
+  - "Hellboy"
+  - "Walking Dead"
+  - "Stranger Things"
+  - "Star Wars"
+  - "Overwatch"
+  - "Killjoys"
+  # IDW / Boom! Western comics (Mirage, Saban, Hasbro IPs sin adaptación manga)
+  - "Power Rangers"
+  - "Mighty Morphin"
+  - "Teenage Mutant Ninja Turtles"
+  - "TMNT"
+  - "Tortugas Ninja"
+  - "Tortugas por el tiempo"
+  - "El Último Ronin"
+  # Franquicias de videojuegos sin adaptación manga conocida. Aparecen en
+  # Dark Horse Direct ("The Art of <game>" como artbook del juego, no del
+  # manga). El bypass "manga" en is_comic_not_manga protege adaptaciones
+  # legítimas si las hubiera.
+  - "Mass Effect"
+  - "God of War"
+  - "Assassin's Creed"
+  - "Assassins Creed"
+  - "Dragon Age"
+  - "The Last of Us"
+  - "Horizon Zero Dawn"
+  - "Halo Infinite"
+  - "Halo Legendary"
+  - "Legend of Korra"
+  - "Avatar--The Last Airbender"
+  - "Avatar: The Last Airbender"
+  - "The Last Airbender"
+  - "Legend of Mana"
+  - "Trials of Mana"
+  - "Secret of Mana"
+  # Cómic indie occidental publicado en español
+  - "Madman Integral"
+  # Literatura clásica con edición integral (no manga, no cómic)
+  - "La guerra de los mundos"
+  - "Guerra de los mundos"
+  - "20.000 leguas de viaje submarino"
+  - "Viaje al centro de la Tierra"
+  # Autores / cabeceras inequívocas de cómic occidental (no manga).
+  # Útiles en Whakoom y otros sources mixed donde el catálogo viene
+  # mezclado y los nombres de autor son la pista más fiable.
+  - "Alan Moore"
+  - "Grant Morrison"
+  - "Frank Miller"
+  - "Neil Gaiman"
+  - "Watchmen"
+  - "Sandman"
+  - "Snoopy"
+  - "Peanuts"
+  - "Garfield"
+  - "Mafalda"
+  - "2000 AD"
+  - "Judge Dredd"
+  - "Mortadelo y Filemón"
+  - "Pulgarcito"
+  - "Mickey Mouse"
+  - "Donald Duck"
+  # NOTA: NO añadir "Disney" — sería falso positivo en "Disney Twisted
+  # Wonderland" (manga japonés oficial), Kingdom Hearts manga, etc.
+  # Cómic español clásico (Bruguera)
+  - "Superlópez"
+  - "Superlopez"
+  # Novelas bestseller que aparecen en búsquedas de "edición coleccionista"
+  # de retailers como Fnac/Casa del Libro y se confunden con manga.
+  - "Rebecca Yarros"
+  - "Empíreo"          # saga "Empyrean" en español (Yarros)
+  - "Empireo"
+  - "Alas de ónix"
+  - "Alas de hierro"   # otras de la saga
+  - "Alas de sangre"
+  - "Alas de fuego"
+  - "Sarah J. Maas"    # otra autora bestseller fantasy con ediciones coleccionista
+  # Sword & sorcery / pulp clásico (cómic, no manga). Ojo: "Conan" solo
+  # chocaría con "Detective Conan" manga; sólo blacklisteamos frases compuestas.
+  - "Conan el Bárbaro"
+  - "Conan el Barbaro"
+  - "Conan the Barbarian"
+  - "Red Sonja"
+  - "300 di Frank Miller"
+  - "Frank Miller's 300"
+  - "Sin City"            # Frank Miller — variantes italianas no llevan su nombre en title
+  # BD franco-belga
+  - "Asterix"
+  - "Astérix"
+  - "Tintin"
+  - "Tintín"
+  - "Spirou"
+  - "Lucky Luke"
+  - "Lanfeust"
+  - "Thorgal"
+  - "XIII"
+  - "Largo Winch"
+  - "Blueberry"
+  - "Boule et Bill"
+
+# Formato exclusivo de cómic occidental. Match word-boundary (case-insensitive).
+# Cuidado: "novela ligera"/"light novel" SÍ son manga-related, no los incluir aquí.
+format_keywords:
+  - "graphic novel"
+  - "novela gráfica"
+  - "novela grafica"
+  - "comic book"
+  - "comicbook"
+  - "trade paperback"
+  - "TPB"
+  - "Facsímil"        # "Marvel Edición Facsímil", "DC Facsímil"
+  - "Facsimil"

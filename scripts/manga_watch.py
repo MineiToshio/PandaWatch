@@ -131,6 +131,13 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "box set", "score": 40, "type": "box_set"},
     {"phrase": "boxset", "score": 40, "type": "box_set"},
     {"phrase": "slipcase", "score": 35, "type": "box_set"},
+    {"phrase": "slipcase edition", "score": 40, "type": "box_set"},
+    {"phrase": "omnibus", "score": 30, "type": "omnibus"},
+    {"phrase": "compendium", "score": 30, "type": "omnibus"},
+    {"phrase": "library edition", "score": 38, "type": "premium_format"},
+    {"phrase": "ultimate edition", "score": 38, "type": "premium_format"},
+    {"phrase": "definitive edition", "score": 38, "type": "premium_format"},
+    {"phrase": "absolute edition", "score": 40, "type": "premium_format"},
     {"phrase": "launch bundle", "score": 30, "type": "bundle"},
     {"phrase": "special bundle", "score": 30, "type": "bundle"},
     {"phrase": "variant cover", "score": 40, "type": "variant_cover"},
@@ -327,6 +334,9 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^Just\s+Released\s*[:\-]\s*", re.IGNORECASE),
     # ES: estado "Próximamente / Próxima salida"
     re.compile(r"^Pr[óo]xima(?:mente)?\s+(?:salida\s+)?", re.IGNORECASE),
+    # ES: badge de estado "Pre venta / Preventa" que aparece como título
+    # cuando un selector Magento captura el badge en vez del nombre real.
+    re.compile(r"^Pre[\s\-]?venta\s+", re.IGNORECASE),
     # FR: estado "Nouveauté" / "À paraître" (con o sin acento, posiblemente con
     # mojibake si el encoding no se arregló antes).
     re.compile(r"^(?:Nouveaut[ée]s?|À\s+para[îi]tre)\s+", re.IGNORECASE),
@@ -340,6 +350,15 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
         r"Nouveaut[ée]s?|Coll(?:ection)?|Aventure)\s+)?",
         re.IGNORECASE,
     ),
+    # FR Meian: el botón "En savoir plus" (≈ "Read more") se infiltraba en el
+    # título cuando el selector capturaba un wrapper sin separarlo del CTA.
+    re.compile(r"^En\s+savoir\s+plus\s+", re.IGNORECASE),
+    # EN equivalentes (por si alguna fuente shopify/squarespace los devuelve).
+    re.compile(r"^(?:Read|Learn|Find\s+out)\s+more\s+(?:about\s+)?", re.IGNORECASE),
+    # Panini ES Magento — el card de search-result empieza con "Añadir a la
+    # Lista de Deseos" (botón wishlist) cuando el selector toma el wrapper
+    # completo. Strippear el prefijo entero.
+    re.compile(r"^A[ñn]adir\s+a\s+la\s+Lista\s+de\s+Deseos\s+", re.IGNORECASE),
 )
 
 # Retailers cuyo "(X Exclusive)" en el sufijo es metadata redundante.
@@ -418,6 +437,13 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s+Pre-?Order\s*$", re.IGNORECASE),
     # ".aprox" / "págs aprox" lone.
     re.compile(r"\s+\d+\s*p[áa]gs?\.?\s*(?:aprox\.?)?\s*$", re.IGNORECASE),
+    # Panini ES Magento search-result: cola completa tras el título real.
+    # Formato: "<title> (Cómic|Manga) DD/MM/YY Regular Price X € -5% Special
+    # Price Y € (Pre-venta|No está disponible|...)"
+    re.compile(
+        r"\s+(?:C[óo]mic|Manga)\s+\d{1,2}/\d{1,2}/\d{2,4}\s+Regular\s+Price\b.*$",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -652,6 +678,42 @@ def _derive_fuzzy_tokens(phrase: str) -> list[str]:
     return [t for t in tokens if t and len(t) >= 3 and t not in FUZZY_STOPWORDS]
 
 
+def _phrase_has_letter_boundary_chars(phrase: str) -> bool:
+    """¿La phrase contiene letras/dígitos ASCII donde un boundary aplica?"""
+    return bool(re.search(r"[a-z0-9]", phrase, re.IGNORECASE))
+
+
+def _build_phrase_pattern(normalized_phrase: str) -> re.Pattern[str]:
+    """Construye un regex con word-boundary para frases con letras ASCII.
+
+    Para frases con sólo caracteres CJK (japonés/coreano/chino) o sólo
+    símbolos, no se aplica boundary porque \\b no funciona ahí — se usa
+    substring directo.
+    """
+    if _phrase_has_letter_boundary_chars(normalized_phrase):
+        # Word-boundary basado en caracteres alfanuméricos. Acentos y
+        # caracteres especiales internos a la phrase se permiten porque
+        # ya pasaron por normalize_text. \b solo funciona entre [a-z0-9_]
+        # y otro carácter; para caracteres acentuados usamos lookarounds.
+        return re.compile(
+            rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])"
+        )
+    # CJK / símbolos puros: substring directo (sin boundary).
+    return re.compile(re.escape(normalized_phrase))
+
+
+# Cache de patrones compilados por phrase para no re-compilar en cada item.
+_PHRASE_PATTERN_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _phrase_pattern(normalized_phrase: str) -> re.Pattern[str]:
+    pat = _PHRASE_PATTERN_CACHE.get(normalized_phrase)
+    if pat is None:
+        pat = _build_phrase_pattern(normalized_phrase)
+        _PHRASE_PATTERN_CACHE[normalized_phrase] = pat
+    return pat
+
+
 def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     normalized = normalize_text(text)
     matched_phrases: list[str] = []
@@ -664,7 +726,7 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
         rule_score = int(rule["score"])
         rule_type = str(rule["type"])
 
-        if normalized_phrase and normalized_phrase in normalized:
+        if normalized_phrase and _phrase_pattern(normalized_phrase).search(normalized):
             matched_phrases.append(phrase)
             matched_types.append(rule_type)
             score += rule_score
@@ -1584,6 +1646,39 @@ def fetch_metadata_from_detail(
         body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
         result["isbn"] = extract_isbn(f"{body_text}\n{url}", soup)
 
+    # === Name fallback: OG title → <title> ===
+    # JSON-LD muchas veces no trae 'name'. og:title es estándar (lo expone
+    # Whakoom, retailers Shopify/Magento, etc.) y es el title real de la
+    # página tal como aparece en buscadores.
+    if not result["name"]:
+        for attrs in (
+            {"property": "og:title"},
+            {"name": "twitter:title"},
+            {"property": "twitter:title"},
+        ):
+            meta = soup.find("meta", attrs=attrs)
+            if meta and meta.get("content"):
+                value = clean_text(meta["content"])
+                if value:
+                    result["name"] = value
+                    break
+        if not result["name"] and soup.title and soup.title.string:
+            result["name"] = clean_text(soup.title.string)
+
+    # === Description fallback: OG description ===
+    if not result["description"]:
+        for attrs in (
+            {"property": "og:description"},
+            {"name": "description"},
+            {"name": "twitter:description"},
+        ):
+            meta = soup.find("meta", attrs=attrs)
+            if meta and meta.get("content"):
+                value = clean_text(meta["content"])
+                if value:
+                    result["description"] = value
+                    break
+
     return result
 
 
@@ -1699,9 +1794,30 @@ _STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Frame Art / Frame Book: libros de arte de manga (Tian Guan Ci Fu, etc.)
     re.compile(r"\bFrame\s+(?:Art|Book)\b", re.IGNORECASE),
     re.compile(r"\bThe\s+Art\s+of\b", re.IGNORECASE),  # artbooks "The Art of X"
+    # Variantes en otras lenguas: ES "El arte de", FR "L'art de", IT "L'arte di".
+    # "El arte de Berserk", "L'art de Studio Ghibli", etc. son artbooks legítimos.
+    re.compile(r"\bEl\s+arte\s+de\b", re.IGNORECASE),
+    re.compile(r"\bL['’]?art\s+de\b", re.IGNORECASE),
+    re.compile(r"\bL['’]?arte\s+di\b", re.IGNORECASE),
     re.compile(r"\b(?:Encyclopedia|Visual\s+Companion|Visual\s+Guide)\b", re.IGNORECASE),
     # Términos japoneses inequívocos de manga/libro
     re.compile(r"巻|コミック|漫画|単行本|愛蔵版|完全版|文庫|新書|画集|設定資料集"),
+    # "<Word> Edition / Edizione / Édition / Edición" con palabra-lore.
+    # Captura "Berserk Tarot Edition", "OP Celebration Edition", "Vinland
+    # Saga Tribute Edition", etc. — productos que claramente son manga +
+    # edición especial pero cuyo título NO contiene vol/tomo/n°.
+    # Stoplist evita "First Edition", "Spanish Edition", etc. (genéricos).
+    # IGNORECASE necesario para catálogos italianos (Star Comics) que usan
+    # TODO MAYÚSCULAS: "NO GUNS LIFE n. 1 VARIANT EDITION".
+    re.compile(
+        r"\b(?!(?:The|This|That|First|Second|Third|Fourth|Fifth|Next|Last|"
+        r"Latest|New|Old|Same|Other|Another|Each|Every|Any|All|Some|Whole|"
+        r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
+        r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final)\b)"
+        r"[A-Za-z][\w\-]{2,}\s+"
+        r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
+        re.IGNORECASE,
+    ),
 )
 
 # Patrones que confirman "manga + extras" (set / pack / edición coleccionista).
@@ -1713,6 +1829,21 @@ _MANGA_WITH_EXTRAS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:incluye|includes|inclut|incluye además|con extras|with bonus|con bonus)", re.IGNORECASE),
     re.compile(r"\bshikishi\b|\bmarcap[áa]ginas\b|\bbloc de notas\b|\bpostales\b|\bp[óo]ster\s+reversible\b", re.IGNORECASE),
 )
+
+# URLs de blogs editoriales — NUNCA son productos individuales. Aplica
+# como descarte temprano en is_likely_manga(). La mayoría son posts de
+# anuncios/news con texto libre que escapa a patrones de título.
+_BLOG_URL_PATTERNS = re.compile(
+    r"listadomanga\.es/blog/"
+    r"|kodansha\.us/\d{4}/"           # kodansha.us/2025/05/13/...
+    r"|viz\.com/blog/"
+    r"|manga-news\.com/index\.php/actus/"
+    r"|bsky\.app/profile/"            # Bluesky posts (vía SOCIAL sources)
+    r"|/news/\d{4}/"                  # genérico: /news/YYYY/
+    r"|/notice/\d+"                   # genérico: /notice/123
+    , re.IGNORECASE,
+)
+
 
 # NON-MANGA tier HARD: productos que SIEMPRE son productos completos, jamás
 # extras dentro de una edición especial de manga. Match aquí → descarte
@@ -1802,7 +1933,82 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\d+月号"),                  # "7月号" = revista mensual
     re.compile(r"プレミアムBOX"),
     re.compile(r"学研の図鑑"),
-    re.compile(r"ブルーレイ|DVD\s*BOX|フィギュア"),
+    re.compile(r"ブルーレイ|DVD\s*BOX"),
+    # フィギュア (figure) sola es producto, NO matchear cuando viene seguida de
+    # 付/同梱/付録 (with/included) — eso indica "manga con figura como extra"
+    # (típico de ediciones especiales tipo "Ai Yori Aoshi 14 フィギュア付初回限定版").
+    re.compile(r"フィギュア(?!付|同梱|付録)"),
+    # --- Blog posts / news / listados editoriales -------------------------
+    # Listadomanga blog histórico es ~100% noticias. Estos patrones también
+    # capturan ruido similar de RSS feeds y resultados de search engines.
+    # "Novedades de Norma Editorial para el 7 de Junio de 2024"
+    re.compile(r"^Novedad(?:es)?\s+de\s+\w", re.IGNORECASE),
+    # "Presentación de Panini Manga en el 31 Manga Barcelona"
+    re.compile(r"^Presentaci[óo]n\s+de\s+\w", re.IGNORECASE),
+    # "Norma Editorial licencia el artbook X", "Panini Manga licencia Y"
+    re.compile(r"\b(?:Editorial|Comics?|Manga|Ediciones|Books)\s+licencia(?:n)?\s+\w", re.IGNORECASE),
+    # "Panini Manga desvela los detalles...", "X reedita Y", "X recupera Y"
+    re.compile(r"\b(?:desvela|reedita|recupera|relanza)\s+(?:los\s+|el\s+|la\s+|las\s+|todos\s+|el\s+catálogo|nuevas\s+)?\w", re.IGNORECASE),
+    # "Norma Editorial anuncia 12 nuevas licencias"
+    re.compile(r"\banuncia\s+(?:\d+\s+)?(?:nuevas?\s+)?licencias?\b", re.IGNORECASE),
+    # "Norma Editorial confirma Sailor Moon Eternal Edition para Diciembre"
+    re.compile(r"^[\w\s]+(?:Editorial|Comics?|Manga|Ediciones)\s+confirma\s+\w", re.IGNORECASE),
+    # "X autor/a invitado/a", "X invitado/a virtual del Manga Barcelona"
+    re.compile(r"\b(?:autor[ae]?s?\s+invitad[ao]s?|invitad[ao]s?\s+virtual(?:es)?)\b", re.IGNORECASE),
+    # "Grupo Anaya empezará a publicar manga como Pika Ediciones"
+    re.compile(r"\bempezar[áa]\s+a\s+publicar\b", re.IGNORECASE),
+    # Crowdfunding announcements (Verkami, Kickstarter, etc.)
+    re.compile(r"\b(?:crowdfunding|verkami|kickstarter|indiegogo)\b", re.IGNORECASE),
+    # Salones del manga / convenciones — siempre son blog posts del salón.
+    re.compile(r"\b(?:Manga\s+Barcelona|Japan\s+Weekend|Comic\s+Barcelona|Sal[óo]n\s+del\s+Manga|Manga\s+Madrid)\b", re.IGNORECASE),
+    # "Especial XVIII Salón del Manga (2) - Novedades editoriales"
+    re.compile(r"\bEspecial\s+(?:XVI{1,3}I?|\d+)[\s\w]*Sal[óo]n\b", re.IGNORECASE),
+    # Posts/news EN markers
+    re.compile(r"^FULLY\s+REVEALED\s+POST\b", re.IGNORECASE),
+    re.compile(r"\bDebut\s+Revealed!?\b", re.IGNORECASE),
+    re.compile(r"\bnovel\s+debuts?!", re.IGNORECASE),
+    # Bluesky / Twitter prosa típica de stand de convención
+    re.compile(r"\bpistoletazo\s+de\s+salida\b", re.IGNORECASE),
+    # Manga-News (FR) headlines: "Un coffret collector pour le lancement du manga X"
+    re.compile(r"^Un\s+coffret\s+collector\s+pour\s+le\s+lancement\b", re.IGNORECASE),
+    # VIZ blog: "X Final Volume Collector's Guide"
+    re.compile(r"\bFinal\s+Volume\s+Collector'?s\s+Guide\b", re.IGNORECASE),
+    # --- Artbooks / guías de videojuegos (no manga) -----------------------
+    # Square Enix guidebooks (Final Fantasy, Dragon Quest, Kingdom Hearts).
+    re.compile(r"\bUltimania\b", re.IGNORECASE),
+    # "El arte de <videojuego>", "Arte de Super Mario Odyssey"
+    re.compile(
+        r"\b(?:El\s+)?[Aa]rte\s+de\s+(?:Splatoon|Fire\s+Emblem|Super\s+Mario|Mario\s+Odyssey|Pok[ée]mon|Genshin|Persona\s+\d|Elden\s+Ring|Cyberpunk|Hyrule|Zelda)\b",
+        re.IGNORECASE,
+    ),
+    # "The Art of <videojuego puro>" — franquicias sin adaptación manga conocida.
+    # NOTA: la mayoría se manejan via comics_blacklist.yml (que se evalúa antes
+    # que HARD). Aquí cubrimos sólo lo que necesita estar en HARD.
+    re.compile(
+        r"\bThe\s+Art\s+of\s+(?:Splatoon|Fire\s+Emblem|Super\s+Mario|Pok[ée]mon|Genshin|Persona\s+\d|Elden\s+Ring|Cyberpunk|Death\s+Stranding|Sekiro|Bloodborne)\b",
+        re.IGNORECASE,
+    ),
+    # "The Making of <franquicia gaming>" — making-of de videojuegos.
+    re.compile(r"\bThe\s+Making\s+of\s+\w", re.IGNORECASE),
+    # Enciclopedias/guías de juegos de Nintendo / Square Enix
+    re.compile(r"\bHyrule\s+Historia\b", re.IGNORECASE),
+    re.compile(r"\b(?:Legend\s+of\s+)?Zelda\s*[:\-]?\s*Encyclop[ée]di?a\b", re.IGNORECASE),
+    re.compile(r"\b(?:Legend\s+of\s+)?Zelda\s*[:\-]?\s*Enciclopedia\b", re.IGNORECASE),
+    re.compile(r"\bBreath\s+of\s+the\s+Wild.{1,40}Creating\s+a\s+(?:Hero|Champion)\b", re.IGNORECASE),
+    re.compile(r"\bFinal\s+Fantasy\s*[-:]?\s*Encyclop[ée]die\b", re.IGNORECASE),
+    re.compile(r"\bLa\s+historia\s+de\s+Final\s+Fantasy\b", re.IGNORECASE),
+    re.compile(r"\bDragon\s+Quest\s+\d+\s+Aniversario.{0,30}Enciclopedia\b", re.IGNORECASE),
+    # "Hommage à Kingdom Hearts", "Génération Zelda - 35 ans"
+    re.compile(
+        r"\b(?:Hommage\s+à|G[ée]n[ée]ration)\s+(?:Kingdom\s+Hearts|Final\s+Fantasy|Zelda|Pok[ée]mon|Mario)\b",
+        re.IGNORECASE,
+    ),
+    # --- Pokémon: ensayos / biografía / magazine (no manga) ---------------
+    re.compile(r"\bPok[ée]mon\s+y\s+(?:Feminismo|Filosof[íi]a|Ciencia)\b", re.IGNORECASE),
+    re.compile(r"\bBiograf[íi]a\s+Oficial\s+de\s+Satoshi\s+Tajiri\b", re.IGNORECASE),
+    re.compile(r"^Revista\s+Pok[ée]mon\b", re.IGNORECASE),
+    # --- Cyberpunk 2077 (Tarot Deck) y otros tarot+guidebook decks --------
+    re.compile(r"\bCyberpunk\s+\d+:\s+Tarot\s+Deck\s+(?:&|and)\s+Guidebook\b", re.IGNORECASE),
 )
 
 # NON-MANGA tier SOFT: pueden aparecer como extras en packs de manga. Por eso
@@ -1851,11 +2057,156 @@ _NON_MANGA_TAG_PREFIXES = (
 )
 
 
+# --- Comics blacklist (cargada desde data/comics_blacklist.yml) ------------
+#
+# Sólo se aplica a fuentes con purity="mixed" (Panini ES/MX, Dark Horse
+# Direct, etc.). Fuentes 100% manga (Norma, Ivrea, Glénat manga…) lo
+# ignoran — series como "Sakamoto Days" no pueden matchear nada de aquí.
+
+_COMICS_BLACKLIST: dict[str, Any] | None = None  # lazy load
+_COMICS_PUBLISHERS: frozenset[str] = frozenset()
+_COMICS_FRANCHISE_PATTERN: re.Pattern[str] | None = None
+_COMICS_FORMAT_PATTERN: re.Pattern[str] | None = None
+
+
+def _load_comics_blacklist() -> dict[str, Any]:
+    """Lee data/comics_blacklist.yml; resultado se cachea en globals."""
+    global _COMICS_BLACKLIST, _COMICS_PUBLISHERS, _COMICS_FRANCHISE_PATTERN, _COMICS_FORMAT_PATTERN
+    if _COMICS_BLACKLIST is not None:
+        return _COMICS_BLACKLIST
+    path = Path("data/comics_blacklist.yml")
+    if not path.exists():
+        _COMICS_BLACKLIST = {"publishers": [], "franchise_keywords": [], "format_keywords": []}
+        return _COMICS_BLACKLIST
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:
+        data = {}
+    _COMICS_BLACKLIST = {
+        "publishers": data.get("publishers") or [],
+        "franchise_keywords": data.get("franchise_keywords") or [],
+        "format_keywords": data.get("format_keywords") or [],
+    }
+    _COMICS_PUBLISHERS = frozenset(p.strip() for p in _COMICS_BLACKLIST["publishers"] if p)
+    fr_kw = [re.escape(k) for k in _COMICS_BLACKLIST["franchise_keywords"] if k]
+    if fr_kw:
+        # Word boundaries lookahead/lookbehind para evitar substring match.
+        # Ejemplo: "Batman" NO debe matchear "Batmanga" (manga real de Jiro
+        # Kuwata sobre Batman). Para multi-word ("Conan the Barbarian") los
+        # boundaries siguen funcionando porque los espacios ya separan.
+        _COMICS_FRANCHISE_PATTERN = re.compile(
+            r"(?<![\w])(?:" + "|".join(fr_kw) + r")(?![\w])",
+            re.IGNORECASE,
+        )
+    fmt_kw = [re.escape(k) for k in _COMICS_BLACKLIST["format_keywords"] if k]
+    if fmt_kw:
+        _COMICS_FORMAT_PATTERN = re.compile(
+            r"\b(?:" + "|".join(fmt_kw) + r")\b",
+            re.IGNORECASE,
+        )
+    return _COMICS_BLACKLIST
+
+
+def is_comic_not_manga(title: str, publisher: str) -> tuple[bool, str]:
+    """Detecta si un item es claramente un cómic (no manga).
+
+    Returns:
+        (is_comic, reason)
+    """
+    _load_comics_blacklist()
+    # Bypass: si el title menciona "manga" como substring (case-insensitive),
+    # asumimos que ES manga aunque hable de un franchise occidental. Esto
+    # cubre crossovers legítimos tipo:
+    #   - "Batman: Il Batmanga di Jiro Kuwata" (manga japonés sobre Batman)
+    #   - "Marvel Mangaverse" (manga oficial de Marvel)
+    #   - "Star Wars Manga" (adaptación manga de SW)
+    # En esos casos, la palabra "manga"/"mangaverse"/"batmanga" gana sobre
+    # la franchise rule.
+    if title and re.search(r"manga", title, re.IGNORECASE):
+        return False, ""
+    if publisher and publisher.strip() in _COMICS_PUBLISHERS:
+        return True, f"comic_publisher:{publisher.strip()}"
+    if title and _COMICS_FRANCHISE_PATTERN and _COMICS_FRANCHISE_PATTERN.search(title):
+        m = _COMICS_FRANCHISE_PATTERN.search(title)
+        return True, f"comic_franchise:{m.group(0)}"
+    if title and _COMICS_FORMAT_PATTERN and _COMICS_FORMAT_PATTERN.search(title):
+        m = _COMICS_FORMAT_PATTERN.search(title)
+        return True, f"comic_format:{m.group(0)}"
+    return False, ""
+
+
+# --- Detector de NOVELA (no manga, no cómic) -------------------------------
+#
+# Las búsquedas en retailers (Fnac, Casa del Libro, Amazon) traen muchas
+# NOVELAS bestseller con "edición coleccionista" (Rebecca Yarros, Sarah J.
+# Maas, Booktok hits). Las novelas NO son manga ni light novel — son
+# literatura adulta empaquetada como item coleccionable. Hay que filtrarlas.
+#
+# Cuidado: la palabra "novela" SÍ aparece legítimamente en "novela ligera" /
+# "light novel" (manga-related). Sólo rechazamos cuando es novela "pura".
+
+# URLs que sugieren sección NO-manga del retailer.
+_NOVEL_URL_PATTERNS = re.compile(
+    r"/literatura/|/literatura-juvenil/|/literatura-infantil/"
+    r"|/novela-romantica/|/novela-fantastica/|/novela-historica/|/novela-juvenil/"
+    r"|/ficcion/|/no-ficcion/|/best-?sellers?/"
+    r"|/jovenes-adultos/|/young-adult/"
+    r"|/ensayo/|/poesia/|/biograf",
+    re.IGNORECASE,
+)
+
+# Palabras en title/desc que indican NOVELA si NO van acompañadas de manga.
+_NOVEL_INDICATOR_PATTERNS = re.compile(
+    r"\bnovela\s+(?:rom[áa]ntica|fant[áa]stica|hist[óo]rica|juvenil|gr[áa]fica|negra|negra)\b"
+    r"|\bsaga\s+(?:literaria|romántica|romantica|fant[áa]stica)\b"
+    r"|\b(?:bestseller|best-?seller)\b"
+    r"|\bbooktok\b"
+    r"|\b(?:novel|novela)\s+series\b",
+    re.IGNORECASE,
+)
+
+# Whitelist override: si el title/desc menciona estos, NO es novela pura.
+_NOVEL_BYPASS_PATTERNS = re.compile(
+    r"\bmanga\b"
+    r"|\blight\s+novel\b|\bnovela\s+ligera\b|\bnovela\s+gr[áa]fica\b"
+    r"|\branobe\b|\bラノベ|\bライトノベル"
+    r"|\bcomic\b|\bcómic\b|\bfumetto\b",
+    re.IGNORECASE,
+)
+
+
+def is_pure_novel(title: str, description: str = "", url: str = "") -> tuple[bool, str]:
+    """Detecta si un item es novela pura (no manga ni cómic).
+
+    Casos típicos: novelas bestseller con "edición coleccionista" que se
+    cuelan vía búsquedas tipo `site:fnac.es "edición coleccionista"`.
+
+    Returns:
+        (is_novel, reason)
+    """
+    blob = f"{title}\n{description}"
+    # Bypass: si menciona manga/light novel/cómic, NO es novela pura.
+    if _NOVEL_BYPASS_PATTERNS.search(blob):
+        return False, ""
+    # URL en sección literaria/novela
+    if url and _NOVEL_URL_PATTERNS.search(url):
+        m = _NOVEL_URL_PATTERNS.search(url)
+        return True, f"novel_url:{m.group(0)}"
+    # Indicadores explícitos en title/desc
+    if _NOVEL_INDICATOR_PATTERNS.search(blob):
+        m = _NOVEL_INDICATOR_PATTERNS.search(blob)
+        return True, f"novel_indicator:{m.group(0)[:30]}"
+    return False, ""
+
+
 def is_likely_manga(
     title: str,
     description: str = "",
     tags: list[str] | None = None,
     source_purity: str = "manga_only",
+    publisher: str = "",
+    url: str = "",
 ) -> tuple[bool, str]:
     """Heurística para decidir si un candidato es un manga (o libro relacionado:
     artbook, novela ligera, edición coleccionista con manga) versus un producto
@@ -1887,11 +2238,40 @@ def is_likely_manga(
         return True, "default:empty"
 
     # 0a) Tag taxonómico de la fuente (Manga-Sanctuary categoriza con "type:...").
+    # Comparación case-insensitive — Manga-Sanctuary etiqueta `type:oav` en
+    # minúsculas mientras nuestro blacklist usa mixed-case (`type:OAV`).
     if tags:
+        prefix_lc = tuple(p.lower() for p in _NON_MANGA_TAG_PREFIXES)
         for tag in tags:
-            for prefix in _NON_MANGA_TAG_PREFIXES:
-                if tag == prefix or tag.startswith(prefix + " "):
+            tag_lc = tag.lower()
+            for prefix in prefix_lc:
+                if tag_lc == prefix or tag_lc.startswith(prefix + " "):
                     return False, f"non_manga_tag:{tag}"
+
+    # 0a-bis) Comics blacklist — se aplica SIEMPRE (no solo en mixed).
+    # El blacklist tiene franquicias inequívocamente NO-manga (Spider-Man,
+    # Batman, Sin City, Asterix, etc.) que NO existen en catálogos manga
+    # legítimos. Aplicarlo en manga_only también atrapa basura que cuela
+    # por searches (ej. Star Comics tiene purity=manga_only pero su search
+    # ?q=variant trae Sin City).
+    # NOTA: NO incluyas en blacklist nombres ambiguos que también puedan
+    # aparecer en manga (Disney → Twisted Wonderland, Conan → Detective Conan).
+    is_comic, reason = is_comic_not_manga(title, publisher)
+    if is_comic:
+        return False, reason
+
+    # 0a-ter) Detector de novelas puras (no manga). Bestseller con "edición
+    # coleccionista" se cuelan vía searches retailer (Fnac/Casa del Libro).
+    is_novel, novel_reason = is_pure_novel(title, description, url=url)
+    if is_novel:
+        return False, novel_reason
+
+    # 0a-quater) URLs de blogs/posts editoriales — NUNCA son productos.
+    # ListadoManga /blog/ son anuncios/noticias; los redactan con prosa libre
+    # que escaparía a los patrones de _NON_MANGA_HARD.
+    if url and _BLOG_URL_PATTERNS.search(url):
+        m = _BLOG_URL_PATTERNS.search(url)
+        return False, f"blog_url:{m.group(0)[:40]}"
 
     blob = title
     if description:
@@ -1937,13 +2317,21 @@ def is_likely_manga(
 
 
 def derive_product_type(title: str, description: str, signal_types: list[str]) -> str:
-    """Devuelve el tipo de producto detectado (manga / artbook / boxset / etc.)."""
+    """Devuelve el tipo de producto detectado (manga / artbook / magazine / boxset / etc.)."""
     if not (title or description):
         return ""
     text = normalize_text(f"{title} {description}")
+    # Magazine de serie (One Piece Magazine, Captain Tsubasa Magazine…).
+    # Las revistas-paraguas (Shōnen Jump, Young Jump, etc.) las descarta luego
+    # is_collectible_edition() vía _UMBRELLA_JP_MAGAZINE_PATTERN.
+    if re.search(r"\bMagazine\b", title or ""):
+        return "magazine"
+    # Word-boundary match (igual que detect_signals). Antes hacíamos substring
+    # match, lo que causaba que "Manga Artbooks" en descripción etiquetara
+    # tomos regulares como product_type=artbook (Rin-ne, Bleach, etc.).
     for ptype, words in PRODUCT_TYPE_KEYWORDS:
         for w in words:
-            if normalize_text(w) in text:
+            if _phrase_pattern(normalize_text(w)).search(text):
                 return ptype
     # Fallback por signal_types (señales del scoring)
     if signal_types:
@@ -1954,6 +2342,243 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
         if "box_set" in signal_types:
             return "boxset"
     return "manga" if (title or description) else ""
+
+
+# --- Filtro "es edición coleccionable" -------------------------------------
+#
+# Después de pasar `is_likely_manga` (item es un manga válido o libro relacionado),
+# este segundo gate decide si es EDICIÓN ESPECIAL / COLECCIONABLE / VARIANTE /
+# CON EXTRAS DE PRIMERA EDICIÓN / ARTBOOK / FANBOOK / GUIDEBOOK / MAGAZINE-DE-SERIE.
+#
+# El producto NO es un catálogo general de manga — sólo lo coleccionable.
+# Por eso "Naruto 12 (regular)" se rechaza, pero "Naruto 12 con marcapáginas
+# exclusivo primera edición" se acepta (signal_type=bonus).
+
+# Signal types que prueban "es una edición especial / coleccionable".
+COLLECTIBLE_EDITION_SIGNAL_TYPES = frozenset({
+    "limited", "special_edition", "collector", "deluxe", "premium_format",
+    "box_set", "variant_cover", "retailer_exclusive", "made_to_order",
+    "bundle", "pack", "new_art", "oversized", "omnibus", "hardcover",
+    "lore_edition",  # set por score_candidate cuando título dispara X-Edition regex
+})
+
+# Signal types de "extras de primera edición" sobre un tomo regular
+# (marcapáginas, postales, póster, acrílico, sobrecubierta reversible, etc.).
+# Suficientes para incluir el item: el usuario los quiere ver.
+FIRST_EDITION_EXTRAS_SIGNAL_TYPES = frozenset({
+    "bonus", "finish",
+})
+
+# Product types intrínsecamente coleccionables o "manga-related".
+COLLECTIBLE_PRODUCT_TYPES = frozenset({
+    "artbook", "fanbook", "guidebook", "magazine", "boxset",
+})
+
+# Regex generalista "<Word> Edition / Edizione / Édition / Edición".
+# Captura lore-words específicas a cada manga sin necesidad de diccionario:
+# "Beherit Edition", "Tarot Edition", "Tribute Edition", "Master Edition",
+# "Celebration Edition", "Final Edition", "Metal Edition", "Anniversary
+# Edition", etc.
+#
+# Excluye palabras genéricas que no implican edición especial ("First Edition",
+# "New Edition", "Print Edition", "Spanish Edition", "Digital Edition", etc.).
+_GENERIC_X_EDITION_PATTERN = re.compile(
+    r"\b(?!(?:The|This|That|First|Second|Third|Fourth|Fifth|Next|Last|"
+    r"Latest|New|Old|Same|Other|Another|Each|Every|Any|All|Some|Whole|"
+    r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
+    r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final)\b)"
+    r"([A-Za-z][\w\-]{2,})\s+"
+    r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
+    re.IGNORECASE,
+)
+
+# "Shape de número de volumen manga" — distingue "One Piece 100" de
+# "Top 10 Limited Editions". Acepta:
+#   - vol/tome/tomo/band/volume + N (con o sin punto)
+#   - n°/Nº/N°/N. + N
+#   - #N
+#   - número al final del title (típico de listings retail: "Berserk 41")
+#   - número japonés con marcador de volumen (12巻)
+#   - rangos tipo "1-12", "Vol 1 a 5"
+_MANGA_VOLUME_SHAPE = re.compile(
+    r"\b(?:vol|tome|tomo|band|volume|volumen)\s*\.?\s*\d{1,3}\b"  # vol N (1-3 dígitos)
+    r"|\b[Nn][º°o\.]\s*\d{1,3}\b"                                  # n°N
+    r"|#\d{1,3}\b"                                                 # #N
+    r"|\s\d{1,3}\s*(?:\([^)]+\))?\s*$"                             # número al final
+                                                                   # NOTA: 1-3 dígitos para
+                                                                   # excluir años (2024, 1999).
+                                                                   # Manga rarely > 999 volúmenes.
+    r"|\d{1,3}\s*巻"                                               # 12巻
+    r"|\b\d{1,3}\s*[-–]\s*\d{1,3}\b",                              # 1-12 rango
+    re.IGNORECASE,
+)
+
+
+# Revistas-paraguas japonesas (antologías multi-serie): fuera de scope.
+# Las revistas de UNA serie ("One Piece Magazine", "Captain Tsubasa Magazine")
+# no matchean esto y pasan por product_type='magazine'.
+#
+# Sólo nombres inequívocos (compuestos o muy específicos). Nombres ambiguos
+# que también pueden aparecer como palabra en series (Kiss → Kamisama Kiss;
+# Margaret, Morning, LaLa) NO se incluyen — preferimos perder pocos
+# umbrella-magazines a rechazar mangas reales.
+_UMBRELLA_JP_MAGAZINE_PATTERN = re.compile(
+    r"\b(?:Weekly\s+|Monthly\s+)?(?:Sh[ōo]nen|Young|Big|Bessatsu)\s+"
+    r"(?:Jump|Magazine|Sunday|Comic|Spirits|Original|Superior)\b"
+    r"|\b(?:Comic\s+Beam|Comic\s+Zenon|Comic\s+Bunch|Comic\s+Birz|"
+    r"Megami\s+Magazine|Newtype|Animage)\b"
+    r"|週刊少年(?:ジャンプ|マガジン|サンデー|チャンピオン)"
+    r"|月刊(?:少年|ヤング|アフタヌーン|モーニング)",
+    re.IGNORECASE,
+)
+
+
+_PRODUCT_URL_SHAPE = re.compile(
+    # Patrones de URL canónica de catálogo manga/cómic. Una URL con shape
+    # de producto cuenta como prueba de que es un item real.
+    r"/products?/|/manga/|/fumetto/|/livre/|/livres/|/libro/|/libros/"
+    r"|/produit[s]?/|/producto[s]?/|/articulo[s]?/"
+    r"|-vol-?\d+|-tome-?\d+|-tomo-?\d+|-band-?\d+"
+    r"|-(?:collector|deluxe|limited|special|variant|edition|hardcover"
+    r"|boxset|cofanetto|coffret|kanzenban|omnibus|integral|prestige)-"
+    r"|-p\d+\.html|/p/\d+",
+    re.IGNORECASE,
+)
+
+# URLs de blog/news que invalidan el match de _PRODUCT_URL_SHAPE.
+# Una URL como `/blog/top-10-limited-editions` matchea "limited-editions" pero
+# es claramente contenido editorial, no un producto.
+_BLOG_URL_PATTERN = re.compile(
+    r"/blog[s]?/|/news/|/noticias?/|/actu[a-z]*/|/articles?/|/post[s]?/"
+    r"|/category/|/categoria/|/tag/|/tags/|/author[s]?/"
+    r"|\.(?:atom|rss|xml)$",
+    re.IGNORECASE,
+)
+
+
+def is_collectible_edition(
+    title: str,
+    description: str,
+    signal_types: list[str] | None,
+    product_type: str,
+    tags: list[str] | None = None,
+    isbn: str = "",
+    url: str = "",
+) -> tuple[bool, str]:
+    """Decide si un item (que ya pasó `is_likely_manga`) es coleccionable.
+
+    El producto del proyecto son SOLO ediciones especiales / variantes /
+    coleccionistas / con extras de primera edición / artbooks / magazines
+    de serie. Un tomo regular sin nada especial NO es coleccionable.
+
+    Reglas (cualquier match → True):
+      0. Revista-paraguas JP (Shōnen Jump, Young Jump…) → False de entrada.
+      1. signal_types incluye al menos uno de COLLECTIBLE_EDITION_SIGNAL_TYPES
+         (limited, collector, deluxe, variant_cover, retailer_exclusive,
+         box_set, bundle, etc.).
+      2. signal_types incluye FIRST_EDITION_EXTRAS (bonus / finish) — un tomo
+         "regular" con marcapáginas exclusivo / sobrecubierta reversible /
+         póster / sprayed edges sigue siendo coleccionable.
+      3. product_type ∈ COLLECTIBLE_PRODUCT_TYPES (artbook, fanbook,
+         guidebook, magazine, boxset).
+      4. Título matchea `<Word> Edition/Edizione/Édition/Edición` con
+         palabra-lore (Beherit, Tarot, Tribute, Master, Celebration, etc.).
+
+    Returns:
+        (is_collectible, reason)
+    """
+    if not title:
+        return False, "no_title"
+
+    # 0a) Título demasiado corto/genérico para ser un nombre de manga real.
+    # Casos como "Pre venta", "Sin stock", "Disponible" — basura de selectores.
+    stripped = title.strip()
+    if len(stripped) < 4:
+        return False, "title_too_short"
+
+    # 0a-bis) Títulos junk reconocibles: descuentos ("-10%"), categorías
+    # genéricas ("Manga", "Comics"), placeholders. Estos vienen de selectores
+    # mal apuntados (badges Magento, headers de categoría WordPress).
+    if re.fullmatch(r"-?\d+%?", stripped):                       # "-10%", "10%", "-5"
+        return False, "title_junk_discount"
+    if stripped.lower() in {"manga", "comic", "comics", "fumetto",
+                            "novedades", "novedad", "nouveauté",
+                            "edizione", "edition", "edizioni"}:
+        return False, "title_junk_generic"
+
+    # 0b) Revista-paraguas → fuera.
+    if _UMBRELLA_JP_MAGAZINE_PATTERN.search(title):
+        return False, "umbrella_magazine"
+
+    # Union: signal_types pasados (de title+desc del candidate) ∪ los recomputados
+    # desde el title solo. Esto cubre dos casos:
+    #   - title="Naruto 100 Edición Coleccionista" → title-signals capta collector
+    #   - title="One Piece 100" desc="glénat collector étui" → passed sigs capta collector
+    # Ambos son legítimos.
+    _, _, title_signal_types = detect_signals(title)
+    title_sig_set = set(title_signal_types)
+    sig_set = set(signal_types or []) | title_sig_set
+
+    # "Es un producto físico real" — al menos una prueba de shape:
+    #   (a) la señal de edición está en el TÍTULO (no solo en desc), O
+    #   (b) el title tiene shape de NÚMERO DE VOLUMEN manga (no cualquier
+    #       número — eso pasaría "Top 10 Limited Editions"), O
+    #   (c) el item tiene ISBN catalogado (libro físico identificado).
+    has_volume_shape = bool(_MANGA_VOLUME_SHAPE.search(title))
+    has_isbn = bool((isbn or "").strip())
+    # URL canónica de producto (Manga-Sanctuary, retailers, etc.) también
+    # cuenta como prueba: la URL frecuentemente lleva el slug específico de
+    # la edición ("manga-hell-s-paradise-vol-1-collector-fnac") aunque el
+    # title solo diga el nombre de la serie. Pero invalidamos si la URL es
+    # claramente de blog/news (`/blog/top-10-limited-editions`).
+    _url = url or ""
+    has_product_url = (
+        bool(_PRODUCT_URL_SHAPE.search(_url))
+        and not _BLOG_URL_PATTERN.search(_url)
+    )
+
+    # 1) Signal types de edición especial — exigiendo prueba de producto.
+    matched_special = sig_set & COLLECTIBLE_EDITION_SIGNAL_TYPES
+    if matched_special:
+        title_special = title_sig_set & COLLECTIBLE_EDITION_SIGNAL_TYPES
+        if title_special or has_volume_shape or has_isbn or has_product_url:
+            return True, f"signal:{','.join(sorted(matched_special))}"
+        # Signal sólo en desc Y no hay shape de producto → sospechoso (blog
+        # post/listicle de "Top 10 limited editions"). No rescatar por esta
+        # vía; seguimos evaluando reglas 2-4 por si encajan.
+
+    # 2) Extras de primera edición (bonus/finish): requiere que el título
+    # tenga un NÚMERO (volumen). Esto distingue:
+    #   - "Naruto 12 con marcapáginas exclusivo" → tiene "12" → KEEP
+    #   - "Fandango your tickets, posters, trailers" → no tiene número → REJECT
+    # Los news/social posts rara vez incluyen un número aislado al estilo
+    # de un volumen de manga.
+    matched_extras = sig_set & FIRST_EDITION_EXTRAS_SIGNAL_TYPES
+    if matched_extras and re.search(r"\b\d+\b", title):
+        return True, f"extras:{','.join(sorted(matched_extras))}"
+
+    # 3) Product type intrínsecamente coleccionable.
+    # artbook/fanbook/guidebook/magazine son inherently coleccionables.
+    # boxset requiere defensa extra: como signal box_set puede venir de "boxset"
+    # en una descripción narrativa ("Top 10 ... boxset"), exigimos prueba de
+    # producto (boxset-word en title, volume shape o ISBN).
+    if product_type in COLLECTIBLE_PRODUCT_TYPES:
+        if product_type != "boxset":
+            return True, f"product_type:{product_type}"
+        # boxset → exigir prueba de producto
+        has_boxset_word = bool(re.search(
+            r"\b(?:box\s*set|boxset|box-set|cofanetto|coffret|cofre|slipcase|estuche)\b",
+            title, re.IGNORECASE,
+        ))
+        if has_boxset_word or has_volume_shape or has_isbn or has_product_url:
+            return True, f"product_type:{product_type}"
+
+    # 4) Regex generalista <Word> Edition / Edizione / etc.
+    m = _GENERIC_X_EDITION_PATTERN.search(title)
+    if m:
+        return True, f"x_edition:{m.group(1).lower()}"
+
+    return False, "regular_tomo"
 
 
 def _expand_search_template(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2955,6 +3580,8 @@ def extract_generic_html(
         is_manga, _reason = is_likely_manga(
             candidate.title, candidate.description,
             tags=candidate.tags, source_purity=source.purity,
+            publisher=candidate.publisher or source.publisher,
+            url=candidate.url,
         )
         if not is_manga:
             if info is not None:
@@ -3016,7 +3643,10 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
         if score <= 0:
             continue
         # Filtro non-manga: descarta figuras/estatuas/Funkos/DVDs/etc.
-        is_manga, _reason = is_likely_manga(title, summary, source_purity=source.purity)
+        is_manga, _reason = is_likely_manga(
+            title, summary, source_purity=source.purity,
+            publisher=source.publisher, url=link,
+        )
         if not is_manga:
             continue
         candidate = candidate_from_source(source, title, link, summary, published_at=published_at)
@@ -3037,30 +3667,171 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
     return candidates
 
 
+_BLUESKY_PROFILE_RE = re.compile(r"bsky\.app/profile/([A-Za-z0-9._:-]+)")
+
+
+def bluesky_handle_from_url(url: str) -> str:
+    """Extrae 'foo.bsky.social' de 'https://bsky.app/profile/foo.bsky.social'."""
+    if not url:
+        return ""
+    m = _BLUESKY_PROFILE_RE.search(url)
+    return m.group(1) if m else ""
+
+
+def bluesky_api_url(handle: str, limit: int = 30) -> str:
+    """URL pública XRPC para obtener el feed de un actor (sin auth)."""
+    return (
+        "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"
+        f"?actor={quote_plus(handle)}&limit={limit}&filter=posts_no_replies"
+    )
+
+
+def extract_bluesky_posts(
+    source: Source, json_text: str, max_items: int, max_age_days: int = 0,
+) -> list[Candidate]:
+    """Convierte JSON del XRPC author feed de Bluesky en Candidates.
+
+    Cada post → 1 Candidate. Si el post tiene un embed external (link card
+    apuntando a una tienda), se usa el title del link como title del item
+    y la URL del link como URL canónica. Si no, el texto del post va como
+    title y la URL es el post de Bluesky en sí (radar de news).
+    """
+    try:
+        data = json.loads(json_text)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    feed = data.get("feed") or []
+    if not isinstance(feed, list):
+        return []
+    cutoff: dt.datetime | None = None
+    if max_age_days > 0:
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=max_age_days)
+    candidates: list[Candidate] = []
+    for entry in feed[:max_items]:
+        post = entry.get("post") or {}
+        rec = post.get("record") or {}
+        text = clean_text(rec.get("text", "") or "")
+        if not text:
+            continue
+        created = (rec.get("createdAt") or "").strip()
+        if cutoff and created:
+            parsed = _parse_feed_date(created)
+            if parsed is not None and parsed < cutoff:
+                continue
+        author = post.get("author") or {}
+        handle = author.get("handle", "")
+        # Construir URL pública del post: /profile/<handle>/post/<rkey>.
+        uri = post.get("uri", "") or ""
+        m = re.search(r"app\.bsky\.feed\.post/([a-zA-Z0-9]+)$", uri)
+        rkey = m.group(1) if m else ""
+        post_url = f"https://bsky.app/profile/{handle}/post/{rkey}" if rkey and handle else (uri or source.url)
+        # Embed: external link → preferir su title/uri (suele ser link a producto).
+        embed = rec.get("embed") or post.get("embed") or {}
+        external = None
+        if isinstance(embed, dict):
+            if isinstance(embed.get("external"), dict):
+                external = embed["external"]
+            # Anidado bajo $type "app.bsky.embed.external"
+            elif embed.get("$type", "").endswith(".external") and isinstance(embed.get("external"), dict):
+                external = embed["external"]
+        if external:
+            ext_uri = clean_text(external.get("uri", ""))
+            ext_title = clean_text(external.get("title", ""))
+            ext_desc = clean_text(external.get("description", ""))
+            title = ext_title or text[:150]
+            description = "\n".join(filter(None, [text, ext_desc]))
+            link = ext_uri or post_url
+        else:
+            # Sólo post de texto. Texto va como title (truncado) y description completa.
+            title = text[:150]
+            description = text
+            link = post_url
+        # Imagen: thumb del primer embed.images si existe.
+        image_url = ""
+        if isinstance(embed, dict):
+            imgs = embed.get("images") or []
+            if isinstance(imgs, list) and imgs:
+                first = imgs[0]
+                if isinstance(first, dict):
+                    image_url = first.get("thumb", "") or first.get("fullsize", "")
+        cand = candidate_from_source(source, title, link, description, published_at=created)
+        if image_url:
+            cand.image_url = image_url
+        candidates.append(cand)
+    return candidates
+
+
 def score_candidate(candidate: Candidate) -> Candidate:
-    # Si la source es una búsqueda dirigida (tag 'search:<keyword>'), inyectamos
-    # ese keyword como señal "fantasma" en el texto a evaluar. La editorial ya
-    # filtró su catálogo por ese keyword, así que cualquier card devuelta puede
-    # razonablemente considerarse coleccionista — aunque el snippet visible no
-    # lo diga textualmente.
+    # Las señales (signal_types) describen al ITEM. Sólo se computan sobre
+    # title + description — campos que pertenecen al item.
+    #
+    # NO incluimos source/publisher/tags/search_keywords aquí porque
+    # contaminan signal_types. Por ejemplo:
+    #   - source "IT - Panini Edizioni da Collezione e Cofanetti" tiene
+    #     "cofanetti" → todos sus items heredarían signal box_set.
+    #   - tag "search:boxset" inyectado → todos los resultados heredarían
+    #     signal box_set aunque no lo sean.
+    #   - tag "edition:coffret collector" de Manga-Sanctuary también
+    #     contaminaba.
+    # Las descripciones (cuando existen y son del item) SÍ son legítimas:
+    # un retailer puede poner "Coffret collector" en la descripción.
+    item_text = "\n".join([candidate.title, candidate.description])
+    score, signals, signal_types = detect_signals(item_text)
+
+    # Boost por regex X-Edition (Tarot/Beherit/Celebration/Tribute/Master/etc).
+    # Esto evita el problema "Berserk Tarot Edition" — pasa is_likely_manga +
+    # gate, pero detect_signals devuelve 0 (las palabras lore no están en
+    # KEYWORD_RULES) y el score queda < min_score, descartando el item.
+    m = _GENERIC_X_EDITION_PATTERN.search(candidate.title or "")
+    if m:
+        lore_word = m.group(0)
+        if lore_word not in signals:
+            signals = list(signals) + [lore_word]
+        if "lore_edition" not in signal_types:
+            signal_types = list(signal_types) + ["lore_edition"]
+        score += 35
+
+    # Boost de score (NO signals) por search-keyword: la editorial ya filtró
+    # su catálogo por ese keyword, así que cualquier card devuelta merece
+    # un empujón de score — pero no entra al signal_types del item.
     search_keywords: list[str] = [
         tag.split(":", 1)[1].strip()
         for tag in (candidate.tags or [])
         if tag.startswith("search:")
     ]
+    if search_keywords and score == 0:
+        # Si no encontramos NINGUNA señal en title+desc pero la editorial nos
+        # devolvió este item bajo un search keyword coleccionista, le damos
+        # un score base bajo (no decisivo). El gate is_collectible_edition
+        # NO se rescata por esto — sólo por señales reales del item.
+        score = 10
 
-    combined = "\n".join(
-        [
-            candidate.title,
-            candidate.description,
-            candidate.publisher,
-            candidate.source,
-            " ".join(candidate.tags),
-            # Inyección de keywords de búsqueda dirigida:
-            " ".join(search_keywords),
-        ]
-    )
-    score, signals, signal_types = detect_signals(combined)
+    # Boost por URL canónica de edición especial. Una URL Manga-Sanctuary tipo
+    # "manga-X-vol-N-collector-Y" o un slug retailer con "-collector-/-deluxe-/
+    # -limited-/etc." es evidencia fuerte de coleccionable. Esto sube items
+    # legítimos como "One Piece 100" (title genérico + URL '-collector-tui-')
+    # por encima del slider default. No aplica si la URL es de blog/news.
+    if score > 0 and candidate.url:
+        _url = candidate.url
+        if not _BLOG_URL_PATTERN.search(_url) and _PRODUCT_URL_SHAPE.search(_url):
+            # Pattern más estricto: solo URLs que mencionen edición coleccionable
+            # explícitamente (no /products/ genérico — sólo si lleva la palabra-edición).
+            if re.search(
+                r"-(?:collector|deluxe|limited|special|variant|edition|"
+                r"hardcover|boxset|cofanetto|coffret|kanzenban|omnibus|"
+                r"integral|prestige|exclusive|exclusiv\w*|esclusiv\w*)-",
+                _url, re.IGNORECASE,
+            ):
+                score += 10
+
+    # Boost adicional: ISBN catalogado + signal de edición = item validado
+    # (libro físico identificado, no blog post). +5.
+    if (
+        score > 0
+        and (candidate.isbn or "").strip()
+        and set(signal_types) & COLLECTIBLE_EDITION_SIGNAL_TYPES
+    ):
+        score += 5
 
     # Bonus suave por clase de fuente. Las fuentes oficiales/retailer suelen ser más accionables.
     if score > 0:
@@ -3128,6 +3899,35 @@ def process_state(
     include_seen: bool,
 ) -> tuple[list[Candidate], dict[str, Any]]:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    # Gate "es edición coleccionable": el producto del proyecto son SOLO
+    # ediciones especiales/variantes/coleccionistas/con extras/artbooks.
+    # Aplicado aquí (punto único) para que cubra todos los pipelines: HTML,
+    # RSS, wiki bootstrap, sitemap mining.
+    pre_filter_count = len(candidates)
+    filtered: list[Candidate] = []
+    collectible_rejected = 0
+    for candidate in candidates:
+        is_coll, _reason = is_collectible_edition(
+            candidate.title,
+            candidate.description,
+            candidate.signal_types,
+            candidate.product_type,
+            tags=candidate.tags,
+            isbn=candidate.isbn,
+            url=candidate.url,
+        )
+        if is_coll:
+            filtered.append(candidate)
+        else:
+            collectible_rejected += 1
+    if collectible_rejected:
+        print(
+            f"[GATE] {collectible_rejected}/{pre_filter_count} candidatos "
+            f"descartados por no ser edición coleccionable"
+        )
+    candidates = filtered
+
     deduped: dict[str, Candidate] = {}
 
     # Primer pase: dedup por URL normalizada (mismo producto, mismo retailer).
@@ -3745,6 +4545,10 @@ def _run_wiki_bootstrap(
 
     if args.bootstrap_wiki == "listadomanga":
         from wikis.listadomanga import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "listadomanga-blog":
+        from wikis.listadomanga_blog import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "whakoom":
+        from wikis.whakoom import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "manga-sanctuary":
         from wikis.manga_sanctuary import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "otaku-calendar":
@@ -3868,6 +4672,8 @@ def _run_sitemap_mining(
             is_manga, _reason = is_likely_manga(
                 cand.title, cand.description,
                 tags=cand.tags, source_purity=source.purity,
+                publisher=cand.publisher or source.publisher,
+                url=cand.url,
             )
             if not is_manga:
                 continue
@@ -4015,8 +4821,8 @@ def run(args: argparse.Namespace) -> int:
                 continue
 
             # Determinar max_pages efectivo para esta fuente.
-            if source.kind in {"rss", "feed", "atom"}:
-                effective_max_pages = 1  # RSS no se pagina
+            if source.kind in {"rss", "feed", "atom", "bluesky"}:
+                effective_max_pages = 1  # RSS/Bluesky no pagina (1 fetch = N posts)
             elif source.max_pages > 0:
                 effective_max_pages = source.max_pages
             else:
@@ -4049,11 +4855,25 @@ def run(args: argparse.Namespace) -> int:
                 visited_urls.add(current_url)
                 pages_visited = page_num
 
-                # Fetch (HTTP normal o Playwright según kind).
+                # Fetch (HTTP normal, Playwright, o Bluesky API según kind).
                 if source.kind == "js":
                     text, fetch_meta = fetch_with_playwright(
                         url=current_url,
                         timeout_ms=args.read_timeout * 1000,
+                    )
+                elif source.kind == "bluesky":
+                    handle = bluesky_handle_from_url(current_url)
+                    if not handle:
+                        message = f"URL de Bluesky sin handle: {current_url}"
+                        print(f"[ERROR] {source.name}: {message}")
+                        errors.append(message)
+                        record_problem(source.name, "bluesky-handle", message)
+                        break
+                    api_url = bluesky_api_url(handle, limit=args.max_items_per_source)
+                    text, fetch_meta = fetch_with_metadata(
+                        session=session,
+                        url=api_url,
+                        timeout=(args.connect_timeout, args.read_timeout),
                     )
                 else:
                     text, fetch_meta = fetch_with_metadata(
@@ -4079,6 +4899,19 @@ def run(args: argparse.Namespace) -> int:
                         info["candidates_after_signals"] = len(page_candidates)
                     all_candidates_source.extend(page_candidates)
                     break  # RSS no pagina
+
+                if source.kind == "bluesky":
+                    page_candidates = extract_bluesky_posts(
+                        source,
+                        text,
+                        max_items=args.max_items_per_source,
+                        max_age_days=args.max_age_days,
+                    )
+                    if diagnostic.enabled and info is not None and page_num == 1:
+                        info["extraction_method"] = "bluesky"
+                        info["candidates_after_signals"] = len(page_candidates)
+                    all_candidates_source.extend(page_candidates)
+                    break  # Bluesky API trae N posts en 1 fetch
 
                 pre_soup = BeautifulSoup(text, "html.parser")
                 for stripped in pre_soup(["script", "style", "noscript", "svg"]):
@@ -4369,8 +5202,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "manga-sanctuary", "otaku-calendar", "manga-mexico"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (España), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial).",
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial).",
     )
     parser.add_argument(
         "--wiki-from",

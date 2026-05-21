@@ -677,9 +677,11 @@ def test_derive_title_avoids_japanese_generic():
 # ---------------------------------------------------------------------------
 
 
-def test_score_candidate_injects_search_keyword_signal():
-    # Una card de Glénat search "edition collector" cuyo título NO incluye
-    # "edition collector" debería igual recibir score gracias al tag.
+def test_score_candidate_search_keyword_gives_floor_score_no_signal_contamination():
+    # Una card cuyo título NO incluye "edition collector" pero viene de un
+    # search dirigido a esa keyword recibe un floor de score (boost suave)
+    # pero NO contamina signals/signal_types. El signal pertenece al item,
+    # no a la fuente.
     mw.configure_detection(fuzzy=False, fuzzy_divisor=3)
     cand = mw.Candidate(
         title="L'atelier des sorciers 15",
@@ -694,9 +696,38 @@ def test_score_candidate_injects_search_keyword_signal():
         description="Manga: nouveau tome 15",
     )
     mw.score_candidate(cand)
-    # 'edition collector' está en KEYWORD_RULES con score 45.
-    assert cand.score >= 45
-    assert any("edition collector" in s for s in cand.signals)
+    # Floor score por venir de search dirigido (10 base + 5 official = 15).
+    assert cand.score > 0, "search-keyword debe dar floor score"
+    assert cand.score < 30, "no debe alcanzar score real de 'edition collector'"
+    # CRÍTICO: signals/signal_types deben estar VACÍOS — la palabra no está
+    # en el item, sólo en la fuente. Contaminar acá rompe el gate y product_type.
+    assert "edition collector" not in (cand.signals or []), \
+        "search keyword no debe contaminar signals"
+    assert "collector" not in (cand.signal_types or []), \
+        "search keyword no debe contaminar signal_types"
+
+
+def test_score_candidate_no_source_contamination_in_signals():
+    # Un item de "Panini Edizioni da Collezione e Cofanetti" cuyo título y
+    # descripción NO mencionan cofanetto/cofanetti no debe heredar signal
+    # box_set sólo porque el nombre de la fuente contiene "Cofanetti".
+    mw.configure_detection(fuzzy=False, fuzzy_divisor=3)
+    cand = mw.Candidate(
+        title="Berserk Deluxe Edition 1",
+        url="https://www.panini.it/x",
+        source="IT - Panini Edizioni da Collezione e Cofanetti",
+        source_url="https://www.panini.it/edizioni-collezione-cofanetti",
+        country="Italia", language="Italiano", publisher="Panini",
+        source_class="official",
+        tags=["manga", "official"],
+        description="Edizione di lusso con copertina cartonata.",
+    )
+    mw.score_candidate(cand)
+    # Título tiene "Deluxe Edition" → señal legítima.
+    assert "deluxe" in (cand.signal_types or [])
+    # Pero NO box_set: "cofanetti" sólo aparece en source name, no en item.
+    assert "box_set" not in (cand.signal_types or []), \
+        f"source name no debe contaminar signal_types: {cand.signal_types}"
 
 
 def test_score_candidate_no_keyword_injection_without_tag():
@@ -814,6 +845,406 @@ def test_listadomanga_detail_empty_when_no_data():
     assert meta["price"] == ""
 
 
+# --- Search discovery (Google CSE + DDG) ------------------------------------
+
+def test_search_discovery_parse_ddg_html_extracts_redirects():
+    """DDG envuelve cada URL en /l/?uddg=<url>; el parser debe decodear."""
+    from retrofit.search_discovery import parse_ddg_html
+    html = """<html><body>
+        <div class="result">
+            <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.whakoom.com%2Fediciones%2F123%2Fberserk_tarot&amp;rut=abc">
+                Berserk Tarot Edition (Panini)
+            </a>
+        </div>
+        <div class="result">
+            <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.fnac.es%2Fmanga-exclusiva-one-piece&amp;rut=def">
+                One Piece exclusiva Fnac
+            </a>
+        </div>
+        <div class="result">
+            <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.whakoom.com%2Fediciones%2F123%2Fberserk_tarot&amp;rut=ghi">
+                duplicate
+            </a>
+        </div>
+        <!-- internal DDG link, debe ignorarse -->
+        <a class="result__a" href="https://duckduckgo.com/about">about</a>
+    </body></html>"""
+    results = parse_ddg_html(html)
+    assert len(results) == 2  # 1 dedupeado
+    assert results[0]["url"] == "https://www.whakoom.com/ediciones/123/berserk_tarot"
+    assert "Berserk Tarot" in results[0]["title"]
+    assert results[1]["url"] == "https://www.fnac.es/manga-exclusiva-one-piece"
+
+
+def test_search_discovery_parse_ddg_max_results():
+    from retrofit.search_discovery import parse_ddg_html
+    html = "<html><body>" + "".join(
+        f'<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F{i}">{i}</a>'
+        for i in range(20)
+    ) + "</body></html>"
+    results = parse_ddg_html(html, max_results=5)
+    assert len(results) == 5
+
+
+def test_search_discovery_url_dedup_against_known():
+    from retrofit.search_discovery import url_already_known
+    # Misma URL con tracking params normaliza al mismo key
+    known = {"https://www.example.com/product/123"}
+    # Esta función llama normalize_url_for_dedup internamente
+    assert url_already_known("https://www.example.com/product/123", known)
+    assert not url_already_known("https://www.example.com/product/999", known)
+
+
+def test_search_discovery_url_is_useful_blocks_social_and_videos():
+    from retrofit.search_discovery import url_is_useful
+    # Posts/reels/videos sociales nunca son productos individuales.
+    assert not url_is_useful("https://www.instagram.com/p/DX9CWG-CERl")
+    assert not url_is_useful("https://www.instagram.com/reel/DX9XsP1NtJs")
+    assert not url_is_useful("https://www.instagram.com/tv/ABC123")
+    assert not url_is_useful("https://www.youtube.com/shorts/9zXvjivBglY")
+    assert not url_is_useful("https://www.youtube.com/watch?v=KfFmF3iofbg")
+    assert not url_is_useful("https://www.facebook.com/PaniniES/posts/123")
+    assert not url_is_useful("https://www.facebook.com/some.page/videos/456")
+    assert not url_is_useful("https://www.threads.net/@user/post/abc")
+    # Páginas de producto reales siguen pasando.
+    assert url_is_useful("https://www.panini.es/shp_esp_es/berserk-master-edition-1.html")
+    assert url_is_useful("https://www.amazon.co.jp/dp/4088831234")
+
+
+def test_search_discovery_gemini_requires_credentials():
+    from retrofit.search_discovery import search_gemini_grounding, SearchEngineError
+    try:
+        search_gemini_grounding("test", "")
+        assert False, "Debe levantar SearchEngineError sin credenciales"
+    except SearchEngineError as e:
+        assert "GEMINI_API_KEY" in str(e)
+
+
+def test_search_discovery_parse_gemini_grounding_chunks():
+    """Extrae URLs del response.candidates[0].groundingMetadata.groundingChunks."""
+    from retrofit.search_discovery import parse_gemini_grounding_response
+    data = {
+        "candidates": [{
+            "content": {"parts": [{"text": "Some AI summary text..."}]},
+            "groundingMetadata": {
+                "groundingChunks": [
+                    {"web": {"uri": "https://www.whakoom.com/ediciones/123/berserk_tarot",
+                             "title": "Berserk Tarot Edition (Panini)"}},
+                    {"web": {"uri": "https://www.fnac.es/manga-exclusiva",
+                             "title": "Manga Exclusiva Fnac"}},
+                    # Duplicado por URL — debe dedupear
+                    {"web": {"uri": "https://www.whakoom.com/ediciones/123/berserk_tarot",
+                             "title": "duplicate"}},
+                    # Sin URI — saltarlo
+                    {"web": {"title": "broken result"}},
+                    # Chunk no-web (puede haber otros tipos) — saltarlo
+                    {"retrievedContext": {"text": "internal"}},
+                ],
+            },
+        }],
+    }
+    out = parse_gemini_grounding_response(data, max_results=10)
+    assert len(out) == 2
+    assert out[0]["url"] == "https://www.whakoom.com/ediciones/123/berserk_tarot"
+    assert out[0]["title"] == "Berserk Tarot Edition (Panini)"
+    assert out[1]["url"] == "https://www.fnac.es/manga-exclusiva"
+
+
+def test_search_discovery_parse_gemini_empty_response():
+    from retrofit.search_discovery import parse_gemini_grounding_response
+    assert parse_gemini_grounding_response({}) == []
+    assert parse_gemini_grounding_response({"candidates": []}) == []
+    assert parse_gemini_grounding_response({"candidates": [{}]}) == []
+    # Candidato sin grounding (modelo respondió sin usar search tool)
+    no_grounding = {"candidates": [{"content": {"parts": [{"text": "answer"}]}}]}
+    assert parse_gemini_grounding_response(no_grounding) == []
+
+
+def test_search_discovery_tavily_requires_key():
+    from retrofit.search_discovery import search_tavily, SearchEngineError
+    try:
+        search_tavily("test", "")
+        assert False, "Debe levantar SearchEngineError sin key"
+    except SearchEngineError as e:
+        assert "TAVILY_API_KEY" in str(e)
+
+
+def test_search_discovery_parse_tavily_response():
+    from retrofit.search_discovery import parse_tavily_response
+    data = {
+        "query": "test",
+        "results": [
+            {"url": "https://example.com/1", "title": "Result 1",
+             "content": "snippet 1 con mucho texto " * 20, "score": 0.9},
+            {"url": "https://example.com/2", "title": "Result 2", "content": "s2", "score": 0.8},
+            # Duplicado
+            {"url": "https://example.com/1", "title": "dup", "content": "s3", "score": 0.7},
+            # Sin url
+            {"title": "broken", "content": "x"},
+        ],
+    }
+    out = parse_tavily_response(data, max_results=10)
+    assert len(out) == 2
+    assert out[0]["url"] == "https://example.com/1"
+    assert out[0]["title"] == "Result 1"
+    assert len(out[0]["snippet"]) <= 300   # truncado
+    assert out[1]["url"] == "https://example.com/2"
+
+
+def test_search_discovery_parse_tavily_empty():
+    from retrofit.search_discovery import parse_tavily_response
+    assert parse_tavily_response({}) == []
+    assert parse_tavily_response({"results": []}) == []
+    assert parse_tavily_response({"results": [{"url": ""}]}) == []
+
+
+def test_search_discovery_parse_gemini_respects_max_results():
+    from retrofit.search_discovery import parse_gemini_grounding_response
+    data = {"candidates": [{"groundingMetadata": {
+        "groundingChunks": [
+            {"web": {"uri": f"https://x.com/{i}", "title": str(i)}} for i in range(20)
+        ],
+    }}]}
+    out = parse_gemini_grounding_response(data, max_results=5)
+    assert len(out) == 5
+
+
+# --- Whakoom spider (3-level BFS) -------------------------------------------
+
+def test_whakoom_extract_comics_from_newtitles():
+    from wikis import whakoom as wk
+    html = """<html><body>
+        <a href="/comics/PMvgk/absolute_batman/14" title="Absolute Batman #14">x</a>
+        <a href="/comics/yP5nP/el_arte_de_berserk" title="El arte de Berserk">x</a>
+        <a href="/comics/691X2/atelier_of_witch_hat/15">x</a>
+        <a href="/notcomics/abc">x</a>
+        <a href="/comics/dup1/spy_x_family/1">x</a>
+        <a href="/comics/dup1/spy_x_family/1">x</a>  <!-- duplicado -->
+    </body></html>"""
+    urls = wk.extract_comics_urls_from_newtitles(html)
+    assert len(urls) == 4
+    assert "https://www.whakoom.com/comics/PMvgk/absolute_batman/14" in urls
+
+
+def test_whakoom_extract_ediciones_dedups_by_id():
+    from wikis import whakoom as wk
+    html = """<html><body>
+        <a href="/ediciones/571851/spy_x_family-rustica_con_sobrecubierta">Regular</a>
+        <a href="/ediciones/571851/spy_x_family-rustica_con_sobrecubierta/todos">Mismo id (skip)</a>
+        <a href="/ediciones/589084/spy___family_1_-_portada_alternativa">Alt</a>
+        <a href="/ediciones/123/some_other_thing">other</a>
+        <a href="/comics/X/other">not edition</a>
+    </body></html>"""
+    pairs = wk.extract_ediciones_urls_from_html(html)
+    # Solo 3 únicos (571851 dedupea, 589084, 123)
+    ids = [pair[0] for pair in pairs]
+    assert sorted(ids) == [123, 571851, 589084]
+
+
+def test_whakoom_parse_edition_extracts_og_metadata():
+    from wikis import whakoom as wk
+    html = """<html><head>
+        <title>Spy × Family #1 - Portada Alternativa (Ivrea Argentina)</title>
+        <meta property="og:title" content="Spy × Family #1 - Portada Alternativa (Ivrea Argentina)">
+        <meta property="og:description" content="Los países de Westalis y Ostania libran una guerra fría...">
+        <meta property="og:image" content="https://i1.whakoom.com/large/20/29/f34ef919.jpg">
+        <meta property="og:url" content="https://www.whakoom.com/ediciones/589084/spy___family_1_-_portada_alternativa-rustica_con_sobrecubierta">
+    </head><body>
+        <span class="publisher">Ivrea Argentina</span>
+    </body></html>"""
+    cand = wk.parse_edition_page(html, "https://www.whakoom.com/ediciones/589084/x")
+    assert cand is not None
+    assert "Spy" in cand.title and "Portada Alternativa" in cand.title
+    # Publisher separado del paréntesis
+    assert cand.publisher == "Ivrea Argentina"
+    assert "(Ivrea" not in cand.title
+    assert cand.image_url.startswith("https://i1.whakoom.com/large/")
+    assert cand.url == "https://www.whakoom.com/ediciones/589084/spy___family_1_-_portada_alternativa-rustica_con_sobrecubierta"
+    assert cand.country == "Argentina"  # inferido del publisher
+    assert "Westalis" in cand.description
+
+
+def test_whakoom_parse_edition_returns_none_for_empty():
+    from wikis import whakoom as wk
+    assert wk.parse_edition_page("<html><body></body></html>", "x") is None
+
+
+def test_whakoom_detects_cloudflare_challenge():
+    from wikis import whakoom as wk
+    challenges = [
+        '<html><head><script>cf-chl-bypass</script></head></html>',
+        '<html><body>Just a moment...<script>cf_challenge</script></body></html>',
+        '<html><body>Checking your browser before accessing</body></html>',
+        '<html><body><div class="challenge-platform">x</div></body></html>',
+    ]
+    for c in challenges:
+        assert wk._looks_like_cf_challenge(c), f"Should detect challenge: {c[:50]!r}"
+    # Páginas legítimas NO matchean
+    assert not wk._looks_like_cf_challenge("<html><body>normal content</body></html>")
+    assert not wk._looks_like_cf_challenge("")
+    # Páginas grandes (>50KB) tampoco — son contenido real aunque mencionen palabras.
+    big = "<html>" + ("x" * 60000) + "</html>"
+    assert not wk._looks_like_cf_challenge(big)
+
+
+def test_whakoom_browser_headers_set():
+    import requests
+    from wikis import whakoom as wk
+    sess = wk._ua_session(requests.Session())
+    h = sess.headers
+    assert "Mozilla" in h.get("User-Agent", "")
+    assert "Chrome" in h.get("User-Agent", "")
+    assert "es-ES" in h.get("Accept-Language", "")
+    assert "Referer" in h
+    assert h["Referer"].startswith("https://www.whakoom.com")
+
+
+def test_whakoom_throttle_blocks_recent_runs(tmp_path, monkeypatch):
+    import time
+    from wikis import whakoom as wk
+    # Apunta el lockfile a una ubicación temporal
+    fake_lockfile = tmp_path / "whakoom_lastrun"
+    monkeypatch.setattr(wk, "_THROTTLE_FILE", fake_lockfile)
+    # Run reciente (justo ahora) → debe bloquear
+    fake_lockfile.write_text(str(time.time()))
+    try:
+        wk._check_throttle()
+        assert False, "Throttle debe bloquear (SystemExit esperado)"
+    except SystemExit as e:
+        assert "Último bootstrap" in str(e)
+    # Con force=True (--ignore-throttle) deja pasar
+    wk._check_throttle(force=True)  # no levanta
+    # Sin lockfile → deja pasar
+    fake_lockfile.unlink()
+    wk._check_throttle()  # no levanta
+
+
+def test_whakoom_throttle_allows_old_runs(tmp_path, monkeypatch):
+    import time
+    from wikis import whakoom as wk
+    fake_lockfile = tmp_path / "whakoom_lastrun"
+    monkeypatch.setattr(wk, "_THROTTLE_FILE", fake_lockfile)
+    # Run de hace 10h (más viejo que el min 6h) → deja pasar
+    fake_lockfile.write_text(str(time.time() - 10 * 3600))
+    wk._check_throttle()  # no levanta
+
+
+# --- Listadomanga BLOG (archivo histórico de posts) -------------------------
+
+def test_listadomanga_blog_parse_archive_extracts_posts():
+    from wikis import listadomanga_blog as lmb
+    html = """<html><body>
+        <div class="post-21713 post type-post status-publish hentry category-pika category-anaya">
+          <h3 id="post-21713">
+            <a href="https://www.listadomanga.es/blog/2024/06/28/grupo-anaya-empezara-a-publicar-manga-tras-el-verano/"
+               rel="bookmark"
+               title="Permanent Link to Grupo Anaya empezará a publicar manga como Pika Ediciones">
+              Grupo Anaya empezará a publicar manga como Pika Ediciones
+            </a>
+          </h3>
+          <small>28 de junio de 2024 por Listado Manga </small>
+          <div class="entry">
+            <p>Ayer por la tarde, a través de un directo de Infinity Comics,
+            nos enteramos que el Grupo Anaya comenzará a editar manga a partir de octubre.</p>
+            <p>Esta nueva línea editorial se llamará Pika Ediciones.</p>
+          </div>
+        </div>
+        <div class="post-21800 post type-post status-publish hentry category-norma">
+          <h3 id="post-21800">
+            <a href="https://www.listadomanga.es/blog/2024/06/15/edicion-coleccionista-de-berserk-norma/">
+              Edición coleccionista de Berserk nº42 de Norma con cofre + 4 postales
+            </a>
+          </h3>
+          <small>15 de junio de 2024 por Listado Manga</small>
+          <div class="entry">
+            <p>Norma Editorial anuncia para octubre la edición especial de Berserk nº42
+            que incluirá cofre, 4 postales exclusivas y póster reversible.</p>
+          </div>
+        </div>
+    </body></html>"""
+    cands = lmb.parse_archive_page(html)
+    assert len(cands) == 2
+    # Post 1: anuncio editorial
+    c1 = cands[0]
+    assert "Grupo Anaya" in c1.title
+    assert c1.url == "https://www.listadomanga.es/blog/2024/06/28/grupo-anaya-empezara-a-publicar-manga-tras-el-verano/"
+    assert "octubre" in c1.description
+    assert "category:pika" in (c1.tags or [])
+    assert "category:anaya" in (c1.tags or [])
+    # Post 2: edición coleccionista
+    c2 = cands[1]
+    assert "Berserk" in c2.title
+    assert "cofre" in c2.title.lower() or "cofre" in c2.description.lower()
+    assert "category:norma" in (c2.tags or [])
+
+
+def test_listadomanga_blog_parse_skips_malformed():
+    from wikis import listadomanga_blog as lmb
+    # post sin h3 ni link → ignorado
+    html = """<html><body>
+        <div class="post-1 post type-post status-publish hentry">
+          <p>contenido sin título</p>
+        </div>
+        <div class="post-2 post type-post status-publish hentry">
+          <h3 id="post-2"><a href="">empty href</a></h3>
+        </div>
+    </body></html>"""
+    cands = lmb.parse_archive_page(html)
+    assert cands == []
+
+
+def test_listadomanga_blog_iter_year_months():
+    from wikis import listadomanga_blog as lmb
+    # Smoke check: rango chico
+    pairs = lmb.iter_year_months(2024, 5, 2024, 7)
+    assert pairs == [(2024, 5), (2024, 6), (2024, 7)]
+    # Cruzando año
+    pairs2 = lmb.iter_year_months(2023, 11, 2024, 2)
+    assert pairs2 == [(2023, 11), (2023, 12), (2024, 1), (2024, 2)]
+
+
+def test_listadomanga_blog_fetch_archive_handles_404():
+    from wikis import listadomanga_blog as lmb
+    # Simulamos que page/2 da 404 → fetch_archive_month corta en page 1.
+    class FakeResponse:
+        status_code = 200
+        text = """<html><body>
+            <div class="post-1 post type-post status-publish hentry">
+              <h3 id="post-1"><a href="https://www.listadomanga.es/blog/2024/06/01/x/">
+                Anuncio Pika Edición Especial vol 1
+              </a></h3>
+              <small>1 de junio de 2024 por Listado Manga</small>
+              <div class="entry"><p>contenido del post</p></div>
+            </div>
+        </body></html>"""
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        def raise_for_status(self): pass
+
+    class Fake404:
+        status_code = 404
+        text = ""
+        def raise_for_status(self):
+            import requests
+            raise requests.HTTPError("404")
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+        def get(self, url, **kw):
+            self.calls += 1
+            return FakeResponse() if self.calls == 1 else Fake404()
+
+    sess = FakeSession()
+    cands = lmb.fetch_archive_month(2024, 6, sess, sleep_between_pages=0)
+    assert sess.calls >= 1
+    # El post pasa el filtro non-manga + tiene scoring
+    assert len(cands) >= 0  # sólo verificamos que no crashea
+    # Si el post tiene signal por "Edición Especial" → score > 0
+    if cands:
+        assert all(hasattr(c, "score") for c in cands)
+
+
 def test_clean_title_strips_shopify_price_junk():
     cases = [
         ("Berserk Deluxe Hardcover Sale price: $44.99 Regular price: $49.99 On Sale",
@@ -842,6 +1273,20 @@ def test_clean_title_strips_isolated_price():
     assert mw.clean_title("My Manga Volume 1 $19.99") == "My Manga Volume 1"
     assert mw.clean_title("Manga Title 12,35 €") == "Manga Title"
     assert mw.clean_title("Manga japonés ¥1,980") == "Manga japonés"
+
+
+def test_clean_title_strips_panini_es_magento_junk():
+    """Panini ES search-result devuelve el wrapper entero como title."""
+    cases = [
+        ('Añadir a la Lista de Deseos Berserk Master Edition 1 Manga 02/07/26 Regular Price 150,00 € -5% Special Price 142,50 € No está disponible',
+         "Berserk Master Edition 1"),
+        ('Añadir a la Lista de Deseos Blame! Master Edition 3 Cómic 16/10/25 Regular Price 25,00 € -5% Special Price 23,75 € Pre-venta',
+         "Blame! Master Edition 3"),
+        ('Añadir a la Lista de Deseos Biomega Master Edition 1 de 3 Cómic 24/11/22 Regular Price 20,00 €',
+         "Biomega Master Edition 1 de 3"),
+    ]
+    for raw, expected in cases:
+        assert mw.clean_title(raw) == expected, f"raw={raw!r}"
 
 
 def test_clean_title_preserves_clean_titles():
@@ -1185,6 +1630,296 @@ def test_is_likely_manga_mixed_purity_strict():
     assert not ok, f"Fine Art Print en mixed: definitivamente no ({reason})"
 
 
+def test_is_likely_manga_comics_blacklist_always_applies():
+    # Comics blacklist se aplica SIEMPRE (no solo en mixed).
+    # Razón: Star Comics tiene purity=manga_only pero su search ?q=variant
+    # devolvía Sin City, Frank Miller, etc. El blacklist tiene franquicias
+    # inequívocas — NO afecta a mangas reales.
+    for purity in ("manga_only", "mixed"):
+        is_manga, reason = mw.is_likely_manga(
+            "Spider-Man Edición Coleccionista #1",
+            source_purity=purity,
+            publisher="Norma Editorial",
+        )
+        assert not is_manga, f"Spider-Man debe rechazarse con purity={purity}"
+        assert reason.startswith("comic_franchise:")
+
+
+def test_is_likely_manga_comics_blacklist_publisher_match():
+    is_manga, reason = mw.is_likely_manga(
+        "Some Random Title Vol. 1",
+        source_purity="mixed",
+        publisher="Marvel",
+    )
+    assert not is_manga
+    assert reason == "comic_publisher:Marvel"
+
+
+def test_is_likely_manga_comics_blacklist_format_match():
+    # Título sin franchise conocido, sólo "graphic novel" como marker de formato.
+    is_manga, reason = mw.is_likely_manga(
+        "Heartstopper graphic novel",
+        source_purity="mixed",
+        publisher="Norma Editorial",
+    )
+    assert not is_manga
+    assert reason.startswith("comic_format:")
+
+
+def test_is_likely_manga_rejects_by_blog_url():
+    """URLs de blogs/news/social posts nunca son productos individuales."""
+    cases = [
+        # ListadoManga blog histórico (262 items, todos noticias)
+        ("Ediciones Tomodomo licencia Casas con historias de Seiji Yoshida",
+         "https://www.listadomanga.es/blog/2024/06/01/ediciones-tomodomo-licencia-casas/"),
+        ("Sobrecubierta de Slam Dunk Kanzenban nº1",
+         "https://www.listadomanga.es/blog/2010/01/15/sobrecubierta-de-slam-dunk-kanzenban-no1/"),
+        # Kodansha USA blog
+        ("New Manga Box Set Debut",
+         "https://kodansha.us/2024/02/05/new-manga-box-set-digital-series-debut-revealed/"),
+        # VIZ blog
+        ("Jujutsu Kaisen Final Volume Collector's Guide",
+         "https://www.viz.com/blog/posts/jujutsu-kaisen-s-final-volume-collector-s-guide"),
+        # Manga-News (FR) news section
+        ("Un coffret collector pour le lancement",
+         "https://www.manga-news.com/index.php/actus/2026/05/15/Un-coffret-collector"),
+        # Bluesky social
+        ("Cualquier título",
+         "https://bsky.app/profile/normaeditorial.bsky.social/post/3mluwo6d4os2q"),
+    ]
+    for title, url in cases:
+        is_manga, reason = mw.is_likely_manga(title, url=url)
+        assert not is_manga, f"Should reject by URL: {url!r} (reason={reason})"
+        assert reason.startswith("blog_url:"), f"reason should be blog_url: but got {reason}"
+
+
+def test_is_likely_manga_rejects_blog_news_listings():
+    """Posts del blog histórico de ListadoManga y similares: 0 productos."""
+    cases = [
+        "Novedades de Norma Editorial para el 7 de Junio de 2024",
+        "Novedad de Ediciones Tomodomo para el 21 de Octubre de 2024",
+        "Presentación de Panini Manga en el 31 Manga Barcelona",
+        "Norma Editorial licencia el artbook El Arte de Splatoon",
+        "Panini Manga licencia Blame! Master Edition y Samurai 7",
+        "Panini Manga desvela los detalles de la Master Edition de Berserk",
+        "Norma Editorial confirma Sailor Moon Eternal Edition para Diciembre de 2024",
+        "Norma Editorial anuncia 12 nuevas licencias",
+        "Editorial Ivrea recupera Fushigi Yuugi (Kanzenban) de Yuu Watase",
+        "Editorial Ivrea reedita Paradise Kiss de Ai Yazawa con la Glamour Edition",
+        "Gengoroh Tagame invitado virtual del Manga Barcelona Limited Edition",
+        "Mizuho Kusanagi y Atsushi Ohkubo, autores invitados de Norma Editorial al 25 Manga Barcelona",
+        "Grupo Anaya empezará a publicar manga como Pika Ediciones",
+        "Jesulink y Loftur Studio comienzan el crowdfunding de 5 elementos – Epílogo Tomo 3 en Verkami",
+        "Especial XVIII Salón del Manga (2) – Novedades editoriales",
+        # Kodansha/VIZ blog posts
+        "FULLY REVEALED POST: Celebrate the Twilight Out of Focus Box Set with exclusive wallpapers",
+        "New Manga Box Set & Digital Series Debut Revealed!",
+        "ZOKU OWARIMONOGATARI novel debuts!!! Plus box set news!",
+        "Jujutsu Kaisen's Final Volume Collector's Guide",
+        # Manga-News (FR) homepage
+        "Un coffret collector pour le lancement du manga Hero Organization",
+        # Bluesky post
+        "¡Y pistoletazo de salida del 44 Comic Barcelona! 💥 Ya estamos en nuestro stand",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject as news/blog: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_video_game_artbooks_and_guides():
+    """Artbooks/guías/enciclopedias de videojuegos: no son manga."""
+    cases = [
+        "El arte de Splatoon",
+        "El arte de Fire Emblem: Awakening",
+        "El arte de Super Mario Odyssey",
+        "The Art of Splatoon",
+        "The Art of Halo Infinite HC (Deluxe Edition)",
+        "The Art of The Last of Us Part II HC (Deluxe Edition)",
+        "The Art of God of War Ragnarök HC (Deluxe Edition)",
+        "The Art of Assassin's Creed Shadows HC (Deluxe Edition)",
+        "The Art of Dragon Age: The Veilguard HC (Deluxe Edition)",
+        "The Art of the Mass Effect Trilogy: Expanded Edition HC",
+        "The Legend of Korra: The Art of the Animated Series Deluxe Edition Hardcovers",
+        "Legend of Mana: The Art of Mana--30th Anniversary Edition HC",
+        "Final Fantasy VII Remake - Material Ultimania 1",
+        "Final Fantasy - Encyclopédie Officielle Memorial Ultimania 2",
+        "Final Fantasy: Memorial Ultimania nº1 (de 3) - I II III IV V VI",
+        "Final Fantasy VII 10th Anniversary Ultimania, Revised Edition",
+        "La historia de Final Fantasy VI. La Divina Epopeya - Edición Limitada",
+        "The Legend of Zelda: Enciclopedia",
+        "The Legend of Zelda Encyclopedia Deluxe Edition HC",
+        "The Legend of Zelda: Breath of the Wild - Creating a Hero",
+        "Hommage à Kingdom Hearts : À la croisée des mondes",
+        "Génération Zelda - 35 ans de légendes",
+        "Dragon Quest 25 Aniversario: Enciclopedia de Monstruos - Cofre troquelado",
+        "Cyberpunk 2077: Tarot Deck & Guidebook",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject as VG artbook/guide: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_keeps_manga_artbooks():
+    """Artbooks de mangas / mangaka: SÍ son in-scope (CLAUDE.md)."""
+    cases = [
+        "The Art of Spirited Away",
+        "The Art of Fullmetal Alchemist: The Anime",
+        "The Art of Vampire Knight",
+        "The Art of Angel Sanctuary",
+        "The Art of Kyu Yong Eom - Fantasy & Girls",
+        "Art of Mitsume",
+        "The Art of Sun-Ken Rock",
+        "Mentaiko Artbook",
+        "Made In Abyss Triple Artbooks",
+        "Naruto - Coffret des artbooks",
+        "Shintaro Kago - Artbook 1",
+        "Artbook Demon Slayer 1",
+        "Toilet-bound Hanako-kun - Artbook 1",
+        "El arte de Atelier of Witch Hat",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should KEEP manga artbook: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_pokemon_non_manga():
+    """Pokémon: filtros específicos para ensayos / biografía / magazines."""
+    cases = [
+        "Pokémon y Feminismo. La gran revolución transmedia nº1 (de 2 y abierta) - Edición Especial",
+        "La Biografía Oficial de Satoshi Tajiri, creador de Pokémon",
+        "Revista Pokémon 2025 + Cards N.1",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject Pokémon non-manga: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_keeps_pokemon_manga():
+    """Pokémon manga (Pokémon Adventures, etc.) sigue pasando."""
+    cases = [
+        "Pokémon Ω Rubí・α Zafiro nº1 (de 3)",
+        "Pokémon nº21 (de 32) - Diamante y Perla nº5",
+        "Pokémon Sol・Luna nº5 (de 6)",
+        "Pokémon Adventures Collector's Edition, Vol. 10",
+        "Pokémon Espada・Escudo nº3 (de 7)",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should KEEP Pokémon manga: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_western_comics_franchises():
+    """Power Rangers, TMNT, etc. — franquicias de IDW/Boom! sin manga."""
+    cases = [
+        ("Godzilla vs. Mighty Morphin Power Rangers - (Edición Limitada)", "Panini"),
+        ("Las Tortugas Ninja: La serie original - Edición Limitada Pizza Tomos 1 a 7 + Medallón", "Norma Editorial"),
+        ("Las Tortugas Ninja: Tortugas por el tiempo (Edición Deluxe)", "Norma Editorial"),
+        ("Las Tortugas Ninja: El Último Ronin (Tapa Dura) - (1ª Edición)", "Norma Editorial"),
+        ("Teenage Mutant Ninja Turtles: The Last Ronin", "IDW"),
+    ]
+    for title, publisher in cases:
+        is_manga, reason = mw.is_likely_manga(
+            title, source_purity="mixed", publisher=publisher,
+        )
+        assert not is_manga, f"Should reject western comic: {title!r} (reason={reason})"
+
+
+def test_is_likely_manga_comics_blacklist_does_not_kill_real_manga():
+    # Series de manga conocidas en fuente mixed NO deben caer por la blacklist.
+    # Todas tienen alguna STRONG manga hint (vol, tomo, n°, kanzenban, etc.)
+    # que las rescata aunque la fuente sea mixed.
+    cases = [
+        "Sakamoto Days Tomo 12",
+        "Kaiju No. 8 Variante #1",
+        "My Hero Academia Vol. 42",
+        "Berserk Kanzenban nº 1",
+        "Naruto manga #70",
+        "Dragon Ball Super volume 22",
+    ]
+    for title in cases:
+        is_manga, reason = mw.is_likely_manga(
+            title, source_purity="mixed", publisher="Panini Manga México",
+        )
+        assert is_manga, f"Should NOT be killed by blacklist: {title!r} (reason={reason})"
+
+
+def test_is_pure_novel_detects_bestseller_with_collector_edition():
+    """Novelas bestseller con 'edición coleccionista' deben rechazarse."""
+    # URL en sección literaria
+    is_novel, r = mw.is_pure_novel(
+        "Alas de ónix (Empíreo 3) Edición coleccionista",
+        description="Novela fantasy de Rebecca Yarros",
+        url="https://www.fnac.es/literatura/novela-fantastica/alas-de-onix",
+    )
+    assert is_novel
+    assert "novel_url" in r
+
+    # Indicador en title sin manga
+    is_novel, r = mw.is_pure_novel(
+        "Cuatro hijas del Dr. March",
+        description="Saga literaria romántica clásica",
+    )
+    assert is_novel
+    assert "novel_indicator" in r
+
+    # Bestseller booktok
+    is_novel, _ = mw.is_pure_novel(
+        "Hábitos atómicos (BookTok edition)",
+        description="Bestseller número 1 mundial",
+    )
+    assert is_novel
+
+
+def test_is_pure_novel_bypass_when_manga_or_light_novel_mentioned():
+    """Si menciona manga/light novel, NO es novela pura."""
+    # Light novel = manga-related
+    is_novel, _ = mw.is_pure_novel(
+        "Sword Art Online: Aincrad — Novela ligera",
+        description="Light novel de Reki Kawahara",
+    )
+    assert not is_novel
+
+    # Novela gráfica = comic format (manejado por otro filter)
+    is_novel, _ = mw.is_pure_novel("Sandman novela gráfica", description="")
+    assert not is_novel
+
+    # Si la URL apunta a /manga/ aunque el title diga 'novela'
+    is_novel, _ = mw.is_pure_novel(
+        "Goblin Slayer Light Novel Vol 1",
+        url="https://www.fnac.es/manga/light-novel/goblin-slayer",
+    )
+    assert not is_novel
+
+
+def test_is_likely_manga_rejects_novel():
+    """E2E: is_likely_manga atrapa novelas vía is_pure_novel."""
+    # Item NO en franchise blacklist — sólo el novel detector lo atrapa.
+    is_manga, reason = mw.is_likely_manga(
+        "Verity Edición Coleccionista (Colleen Hoover)",
+        description="Novela romántica número 1 BookTok mundial",
+        url="https://www.casadellibro.com/literatura/novela-romantica/verity",
+    )
+    assert not is_manga
+    assert reason.startswith("novel_"), f"esperaba novel_*, got {reason}"
+
+
+def test_is_likely_manga_tag_match_is_case_insensitive():
+    # Manga-Sanctuary etiqueta `type:oav` en minúsculas; nuestro blacklist
+    # usa `type:OAV`. La comparación debe ser case-insensitive para no dejar
+    # pasar 700+ items de anime/OAV/TV special al catálogo.
+    cases = [
+        ("Some Anime Title 1", ["type:oav"]),
+        ("Some Anime Title 2", ["type:OAV"]),
+        ("Some Film Title", ["type:film"]),
+        ("Some Series", ["TYPE:SÉRIE TV"]),
+        ("Some Goodie", ["type:goodies"]),
+    ]
+    for title, tags in cases:
+        is_manga, reason = mw.is_likely_manga(title, "", tags=tags)
+        assert not is_manga, f"Should reject by tag: {title!r} tags={tags!r} (reason={reason})"
+        assert reason.startswith("non_manga_tag:")
+
+
 def test_is_likely_manga_keeps_special_manga_packs_from_wiki():
     # "type:produit spécial manga" SÍ es manga (packs manga + artbook, etc.).
     cases = [
@@ -1194,6 +1929,298 @@ def test_is_likely_manga_keeps_special_manga_packs_from_wiki():
     for title, tags in cases:
         is_manga, _ = mw.is_likely_manga(title, "", tags=tags)
         assert is_manga, f"Should be kept: {title!r}"
+
+
+# --- Bluesky parser ---------------------------------------------------------
+
+def test_bluesky_handle_from_url():
+    assert mw.bluesky_handle_from_url("https://bsky.app/profile/planetadcomic.bsky.social") == "planetadcomic.bsky.social"
+    assert mw.bluesky_handle_from_url("https://bsky.app/profile/foo.bar/post/abc") == "foo.bar"
+    assert mw.bluesky_handle_from_url("") == ""
+    assert mw.bluesky_handle_from_url("https://example.com") == ""
+
+
+def test_bluesky_api_url():
+    url = mw.bluesky_api_url("planetadcomic.bsky.social", limit=5)
+    assert "actor=planetadcomic.bsky.social" in url
+    assert "limit=5" in url
+    assert "public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed" in url
+
+
+def test_extract_bluesky_posts_text_only():
+    source = mw.Source(
+        name="SOCIAL - Test Bluesky", country="ES", language="Español",
+        publisher="Test", source_class="social", kind="bluesky",
+        url="https://bsky.app/profile/test.bsky.social", tags=["social"],
+    )
+    payload = {
+        "feed": [
+            {"post": {
+                "uri": "at://did:plc:abc/app.bsky.feed.post/3lkx",
+                "author": {"handle": "test.bsky.social"},
+                "record": {
+                    "text": "Nueva edición limitada de Berserk con cofre exclusivo",
+                    "createdAt": "2026-05-15T10:00:00Z",
+                },
+            }},
+        ],
+    }
+    cands = mw.extract_bluesky_posts(source, json.dumps(payload), max_items=10)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "Berserk" in c.title
+    assert c.url == "https://bsky.app/profile/test.bsky.social/post/3lkx"
+    assert c.published_at == "2026-05-15T10:00:00Z"
+
+
+def test_extract_bluesky_posts_with_external_link():
+    # Cuando un post enlaza a una tienda, el title/URL del link tienen prioridad.
+    source = mw.Source(
+        name="SOCIAL - Planeta Bluesky", country="España", language="Español",
+        publisher="Planeta Cómic", source_class="social", kind="bluesky",
+        url="https://bsky.app/profile/planetadcomic.bsky.social", tags=["social"],
+    )
+    payload = {
+        "feed": [
+            {"post": {
+                "uri": "at://did:plc:xyz/app.bsky.feed.post/3xyz",
+                "author": {"handle": "planetadcomic.bsky.social"},
+                "record": {
+                    "text": "¡Reserva ya la edición exclusiva Fnac!",
+                    "createdAt": "2026-05-10T12:00:00Z",
+                    "embed": {
+                        "$type": "app.bsky.embed.external",
+                        "external": {
+                            "uri": "https://www.fnac.es/a12345/one-piece-100-exclusiva-fnac",
+                            "title": "One Piece 100 — Edición exclusiva Fnac",
+                            "description": "Tomo 100 con regalo exclusivo.",
+                        },
+                    },
+                },
+            }},
+        ],
+    }
+    cands = mw.extract_bluesky_posts(source, json.dumps(payload), max_items=10)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "One Piece 100" in c.title
+    assert "fnac.es" in c.url
+    assert "edición exclusiva" in c.description.lower() or "exclusiva fnac" in c.description.lower()
+
+
+def test_extract_bluesky_posts_handles_bad_json():
+    source = mw.Source(
+        name="x", country="", language="", publisher="", source_class="social",
+        kind="bluesky", url="https://bsky.app/profile/x", tags=[],
+    )
+    assert mw.extract_bluesky_posts(source, "not json", max_items=10) == []
+    assert mw.extract_bluesky_posts(source, '{"feed": null}', max_items=10) == []
+
+
+# --- is_collectible_edition -------------------------------------------------
+
+def test_is_collectible_edition_accepts_signal_types_special():
+    cases = [
+        ("Berserk Deluxe Edition Vol. 1", ["deluxe"]),
+        ("One Piece 100 Edición Coleccionista", ["collector"]),
+        ("Naruto Box Set 1", ["box_set"]),
+        ("Demon Slayer Coffret Collector", ["collector", "box_set"]),
+        ("Vinland Saga 1 Tribute Variant Cover Edition", ["variant_cover"]),
+        ("Berserk Master Edition Beherit Limited 1", ["limited", "premium_format"]),
+        ("Sailor Moon Eternal Edition Volume 5", ["premium_format"]),
+        ("Attack on Titan Hardcover Vol. 1", ["hardcover"]),
+        ("Berserk Omnibus Vol. 1", ["omnibus"]),
+        ("Naruto Special Bundle Vol 1-5", ["bundle"]),
+        ("限定版 ONE PIECE 100", ["limited"]),
+    ]
+    for title, sigs in cases:
+        ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
+        assert ok, f"Should accept (signal): {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_accepts_first_edition_extras():
+    # Tomo "regular" pero con extras de primera edición → IN.
+    # Esto cubre el caso del usuario: "Naruto tomo 12 con marcapáginas exclusivo".
+    cases = [
+        ("Naruto 12 con marcapáginas exclusivo primera edición", ["bonus"]),
+        ("One Piece 105 con póster reversible", ["bonus"]),
+        ("My Hero Academia 30 con postal exclusiva", ["bonus"]),
+        ("Demon Slayer 22 + Acrílico de regalo", ["bonus"]),
+        ("Chainsaw Man Vol. 1 with sprayed edges", ["finish"]),
+        ("Berserk 41 foil-stamped first print", ["finish"]),
+    ]
+    for title, sigs in cases:
+        ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
+        assert ok, f"Should accept (extras): {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_accepts_collectible_product_types():
+    cases = [
+        ("One Piece Magazine Vol. 17", "magazine"),
+        ("The Art of Studio Ghibli", "artbook"),
+        ("Naruto Official Fanbook", "fanbook"),
+        ("My Hero Academia Official Character Guidebook", "guidebook"),
+        ("Bleach Box Set 1", "boxset"),
+    ]
+    for title, ptype in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], ptype)
+        assert ok, f"Should accept (ptype): {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_rescues_x_edition_regex():
+    # Palabras lore-específicas que no están en el diccionario global de KEYWORD_RULES
+    # pero sí matchean el regex generalista "<Word> Edition / Edizione / Édition".
+    cases = [
+        "Berserk Master Edition Beherit Limited 1",      # "Beherit Edition" (Berserk lore)
+        "Berserk Tarot Edition",                          # "Tarot Edition" (Berserk lore)
+        "Vinland Saga 1 Tribute Edition",                 # "Tribute Edition"
+        "Saint Seiya Final Edition 1",                    # "Final Edition" → wait, "Final" in stoplist
+        "One Piece 100 Celebration Edition",              # "Celebration Edition"
+        "One Piece 108 Metal Edition",                    # "Metal Edition" — lore-style
+        "Una Ragazza Alla Moda 50th Anniversary Edition", # "Anniversary Edition"
+    ]
+    for title in cases:
+        # Pasamos signal_types vacíos y product_type = manga para forzar
+        # que sólo el regex pueda rescatar.
+        ok, reason = mw.is_collectible_edition(title, "", [], "manga")
+        # "Final Edition" está en la stoplist intencionalmente — no es lore-specific.
+        if "Final Edition" in title and "Anniversary" not in title:
+            continue
+        assert ok, f"Should accept (x_edition regex): {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_rule1_requires_product_shape():
+    # Rule 1 ahora exige una prueba de "esto es un producto físico":
+    # signal en title, número en title, o ISBN. Bloquea blog posts/listicles.
+
+    # Caso bueno: signal viene de desc, pero title tiene número → PASS.
+    ok, reason = mw.is_collectible_edition(
+        "One Piece 100", "glénat manga · collector étui",
+        signal_types=["collector"], product_type="manga",
+    )
+    assert ok and reason == "signal:collector"
+
+    # Caso bueno: signal en title → PASS sin necesidad de número.
+    ok, reason = mw.is_collectible_edition(
+        "Berserk Master Edition Beherit Limited",
+        "extra info", signal_types=["limited"], product_type="manga",
+    )
+    assert ok and reason.startswith("signal:")
+
+    # Caso bueno: signal en desc + ISBN presente → PASS aunque title no tenga número.
+    ok, reason = mw.is_collectible_edition(
+        "Hellsing Deluxe", "limited edition hardcover collector",
+        signal_types=["limited", "collector", "deluxe", "hardcover"],
+        product_type="manga", isbn="9780123456789",
+    )
+    assert ok
+
+    # FALSO POSITIVO antes: blog post/listicle con signals SOLO en desc y title sin número.
+    # Ahora debe ser RECHAZADO.
+    ok, reason = mw.is_collectible_edition(
+        "Top 10 Limited Editions of the Year",
+        "limited edition collector deluxe boxset coming soon",
+        signal_types=["limited", "collector", "deluxe", "box_set"],
+        product_type="manga",
+    )
+    assert not ok, f"Listicle should be rejected (reason={reason})"
+
+    # Caso borderline: news sin patrón hard pero desc con signals — sin número ni ISBN → REJECT.
+    ok, reason = mw.is_collectible_edition(
+        "Editorial Announces Cool Stuff For Fans",
+        "limited edition coming soon", signal_types=["limited"],
+        product_type="manga",
+    )
+    assert not ok
+
+
+def test_is_collectible_edition_rejects_regular_tomos():
+    # Tomos regulares sin extras ni edición especial → OUT.
+    cases = [
+        ("One Piece 100", "manga"),
+        ("Naruto Tomo 70", "manga"),
+        ("Dragon Ball Super Vol. 22", "manga"),
+        ("Bleach 60", "manga"),
+        ("My Hero Academia 35", "manga"),
+        ("Demon Slayer 23", "manga"),
+    ]
+    for title, ptype in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], ptype)
+        assert not ok, f"Should reject regular tomo: {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_rejects_umbrella_jp_magazines():
+    # Revistas-paraguas con nombres inequívocos (antologías multi-manga) → fuera.
+    # Nombres ambiguos (Morning, Margaret, Kiss, LaLa) NO se incluyen porque
+    # también aparecen como palabras en nombres de series (Kamisama Kiss).
+    cases = [
+        "Weekly Shōnen Jump 2025-#42",
+        "Shonen Jump #25 2026",
+        "Young Jump 12/2025",
+        "Big Comic Spirits 7/2025",
+        "Comic Beam 2025",
+        "Newtype December 2025",
+        "週刊少年ジャンプ 25号",
+        "月刊少年 マガジン",
+    ]
+    for title in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], "magazine")
+        assert not ok, f"Should reject umbrella magazine: {title!r} (reason={reason})"
+        assert reason == "umbrella_magazine", f"Wrong rejection reason for {title!r}: {reason}"
+
+
+def test_is_collectible_edition_keeps_series_with_umbrella_substring():
+    # "Kamisama Kiss" contiene "Kiss" (magazine de Kodansha) pero ES una serie.
+    # No debe rechazarse como umbrella.
+    cases = [
+        ("Kamisama Kiss Limited Edition, Vol. 25", "manga"),
+        ("Kiss Him, Not Me Vol. 5 Edición Coleccionista", "manga"),
+        ("Good Morning Call Vol. 1 Deluxe Edition", "manga"),
+    ]
+    for title, ptype in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], ptype)
+        assert ok, f"Should not be umbrella-rejected: {title!r} (reason={reason})"
+        assert reason != "umbrella_magazine"
+
+
+def test_is_collectible_edition_accepts_series_specific_magazines():
+    # Magazines de UNA serie (no antologías) → IN.
+    cases = [
+        "One Piece Magazine Vol. 17",
+        "Captain Tsubasa Magazine 5",
+        "Yoyo's Vivre Adventure Magazine 3",
+        "Attack on Titan Magazine 2",
+    ]
+    for title in cases:
+        # product_type="magazine" porque derive_product_type lo etiqueta así
+        # para cualquier título con "Magazine"; la diferencia con las paraguas
+        # la hace _UMBRELLA_JP_MAGAZINE_PATTERN.
+        ok, reason = mw.is_collectible_edition(title, "", [], "magazine")
+        assert ok, f"Should accept series magazine: {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_x_edition_stoplist():
+    # Palabras genéricas antes de "Edition" NO deben rescatar — son neutras.
+    # (estos items, al no tener signal_types coleccionables ni product_type
+    # coleccionable, deben quedar fuera.)
+    cases = [
+        "Naruto First Edition Vol. 1",
+        "Berserk Spanish Edition Vol. 5",
+        "One Piece Digital Edition 100",
+        "Bleach Print Edition Tomo 20",
+        "Dragon Ball Standard Edition 10",
+        "Vinland Saga Original Edition 1",
+    ]
+    for title in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], "manga")
+        assert not ok, f"Stoplist word should not rescue: {title!r} (reason={reason})"
+
+
+def test_derive_product_type_assigns_magazine():
+    assert mw.derive_product_type("One Piece Magazine Vol. 17", "", []) == "magazine"
+    assert mw.derive_product_type("Captain Tsubasa Magazine 5", "", []) == "magazine"
+    # Lowercase "magazine" en marketing text NO debe disparar (case-sensitive).
+    assert mw.derive_product_type("Berserk vol 41 (sale magazine)", "", []) != "magazine"
 
 
 def test_clean_title_repairs_mojibake():

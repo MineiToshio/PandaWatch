@@ -163,8 +163,9 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://www.listadomanga.es/calendario.php"
-    enabled: true
+    enabled: false   # autodetect falla (anchors con imagen sin texto); usar --bootstrap-wiki listadomanga
     tags: ["calendar", "manga", "spain"]
+    notes: "Reemplazado por wiki parser: python scripts/manga_watch.py --bootstrap-wiki listadomanga"
 
   - name: "ES - Listado Manga Novedades"
     country: "España"
@@ -173,8 +174,9 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://www.listadomanga.es/novedades.php"
-    enabled: true
+    enabled: false   # autodetect falla; el wiki parser cubre /calendario.php que es equivalente
     tags: ["calendar", "manga", "spain"]
+    notes: "Reemplazado por wiki parser: python scripts/manga_watch.py --bootstrap-wiki listadomanga"
 
   - name: "ES - Ramen Para Dos Manga"
     country: "España"
@@ -204,8 +206,9 @@ sources:
     source_class: "trusted_media"
     kind: "js"
     url: "https://misiontokyo.com/tag/novedades-manga"
-    enabled: true
+    enabled: false   # sitio caído (connection timeout 30s+); reactivar si vuelve
     tags: ["news", "manga", "spain"]
+    notes: "Deshabilitado 2026-05-21: connection timeout. Reactivar si el sitio vuelve."
 
   - name: "ES - Misión Tokyo lanzamientos"
     country: "España"
@@ -214,8 +217,9 @@ sources:
     source_class: "trusted_media"
     kind: "js"
     url: "https://misiontokyo.com/tag/lanzamientos"
-    enabled: true
+    enabled: false   # sitio caído (connection timeout 30s+); reactivar si vuelve
     tags: ["news", "releases", "manga"]
+    notes: "Deshabilitado 2026-05-21: connection timeout. Reactivar si el sitio vuelve."
 
   - name: "ES - Crunchyroll Noticias"
     country: "España / LatAm"
@@ -238,6 +242,10 @@ sources:
     kind: "html"
     url: "https://www.planetadelibros.com/editorial/planeta-comic/54"
     enabled: true
+    # purity: mixed — Planeta Cómic publica manga, cómic occidental
+    # (Madman, etc.) y literatura clásica (La guerra de los mundos
+    # integral). Requerimos STRONG hint para descartar lo no-manga.
+    purity: "mixed"
     tags: ["manga", "official"]
 
   - name: "ES - Norma Editorial Manga"
@@ -411,7 +419,7 @@ sources:
     kind: "html"
     url: "https://www.darkhorsedirect.com/collections/comics"
     enabled: true
-    tags: ["manga", "hardcover", "official", "store"]
+    tags: ["manga", "hardcover", "official", "store", "dark-horse"]
     # Catálogo mixto: comics + manga + figuras + estatuas + prints +
     # bookends. Solo aceptamos ítems con STRONG manga hint (no rescatamos
     # por "Collector's Edition" sola).
@@ -501,11 +509,163 @@ sources:
     language: "Inglés"
     publisher: "Manga Mogura"
     source_class: "social"
-    kind: "js"
+    kind: "bluesky"
     url: "https://bsky.app/profile/mangamogura.bsky.social"
     enabled: true
     tags: ["social", "news", "manga", "japan"]
-    notes: "Más scrapeable que X/Twitter en muchos entornos, pero puede cargar con JS. Usarlo como radar, no como fuente final."
+    notes: "Radar de news. Usa kind:bluesky → API pública XRPC sin auth."
+
+  - name: "SOCIAL - Planeta Cómic Bluesky"
+    country: "España"
+    language: "Español"
+    publisher: "Planeta Cómic"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/planetadcomic.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "spain", "publisher", "new-source"]
+    notes: |
+      Bluesky oficial de Planeta. Anuncian exclusivas retailer (OP100 Fnac,
+      pre-ventas Casa del Libro, etc.). kind:bluesky usa la API pública
+      XRPC sin auth (sin Playwright). Embed external resuelve URLs de
+      producto cuando el post enlaza a una tienda.
+
+  - name: "SOCIAL - Norma Editorial Bluesky"
+    country: "España"
+    language: "Español"
+    publisher: "Norma Editorial"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/normaeditorial.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "spain", "publisher", "new-source"]
+    notes: "Bluesky oficial de Norma Editorial. Anuncios de coleccionistas y exclusivas."
+
+  - name: "SOCIAL - Norma Editorial Manga Bluesky"
+    country: "España"
+    language: "Español / Catalán"
+    publisher: "Norma Editorial"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/normaedmanga.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "spain", "publisher"]
+    notes: "Línea manga separada de Norma. Publica también en catalán."
+
+  - name: "SOCIAL - Milky Way Ediciones Bluesky"
+    country: "España"
+    language: "Español"
+    publisher: "Milky Way Ediciones"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/mwediciones.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "spain", "publisher"]
+
+  - name: "SOCIAL - Arechi Manga Bluesky"
+    country: "España"
+    language: "Español"
+    publisher: "Arechi Manga"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/arechimanga.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "spain", "publisher"]
+
+  - name: "SOCIAL - Ki-oon Bluesky"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Ki-oon"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/ki-ooneditions.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "france", "publisher"]
+
+  - name: "SOCIAL - Pika Édition Bluesky"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Pika Édition"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/pika-edition.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "france", "publisher"]
+
+  - name: "SOCIAL - Glénat Manga Bluesky"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Glénat Manga"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/glenatmanga.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "france", "publisher"]
+    notes: "Cuenta línea manga (la general glenat.bsky.social está muerta desde dic-2024)."
+
+  - name: "SOCIAL - Kurokawa Bluesky"
+    country: "Francia"
+    language: "Francés"
+    publisher: "Kurokawa"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/editionskurokawa.bsky.social"
+    enabled: true
+    tags: ["social", "news", "manga", "france", "publisher"]
+
+  - name: "SOCIAL - Kodansha USA Bluesky"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Kodansha USA"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/kodansha.us"
+    enabled: true
+    tags: ["social", "news", "manga", "us", "publisher"]
+    notes: "Handle de dominio (no .bsky.social)."
+
+  - name: "SOCIAL - Seven Seas Bluesky"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Seven Seas Entertainment"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/sevenseasentertainment.com"
+    enabled: true
+    tags: ["social", "news", "manga", "us", "publisher"]
+
+  - name: "SOCIAL - Dark Horse Bluesky"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Dark Horse Comics"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/darkhorse.com"
+    enabled: true
+    tags: ["social", "news", "manga", "us", "publisher", "dark-horse"]
+    notes: "Publica manga regularmente (Berserk, Trigun, etc.)."
+
+  - name: "SOCIAL - Yen Press Bluesky"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "Yen Press"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/yenpress.com"
+    enabled: true
+    tags: ["social", "news", "manga", "us", "publisher"]
+    notes: "Handle yenpress.com — NO yenpress.bsky.social (vacía)."
+
+  - name: "SOCIAL - VIZ Media Bluesky"
+    country: "Estados Unidos"
+    language: "Inglés"
+    publisher: "VIZ Media"
+    source_class: "social"
+    kind: "bluesky"
+    url: "https://bsky.app/profile/viz.com"
+    enabled: true
+    tags: ["social", "news", "manga", "us", "publisher"]
+    notes: "Handle viz.com — NO vizmedia.bsky.social (stale desde nov-2024)."
 
   - name: "SOCIAL - Manga Mogura RE X"
     country: "Japón / Global"
@@ -1012,6 +1172,11 @@ sources:
     tags: ["manga", "official", "store"]
     purity: "mixed"  # catálogo trae trading cards FIFA/WC, Hot Wheels, Lady Bug, etc.
     search_template: "https://tiendapanini.com.mx/catalogsearch/result/?q={query}"
+    selectors:
+      item_selector: "li.product-item"
+      title_selector: "a.product-item-link"
+    # Keywords validadas manualmente contra el buscador real. Eliminadas:
+    # master edition, ultimate edition (catálogo MX no las indexa hoy).
     keywords:
       - "edicion limitada"
       - "edicion especial"
@@ -1021,8 +1186,14 @@ sources:
       - "kanzenban"
       - "tapa dura"
       - "variante"
+      - "portada variante"
       - "gran formato"
       - "boxset"
+      - "tarot"
+      - "celebration"
+      - "anniversary"
+      - "tribute"
+      - "aniversario"
 
   - name: "ES - Panini España (search)"
     country: "España"
@@ -1034,6 +1205,11 @@ sources:
     tags: ["manga", "official", "store"]
     purity: "mixed"  # catálogo trae cromos LIGA ESTE, Eurocopa, corbatas, etc.
     search_template: "https://www.panini.es/shp_esp_es/catalogsearch/result/?q={query}"
+    selectors:
+      item_selector: "li.product-item"
+      title_selector: "a.product-item-link"
+    # Keywords validadas manualmente. Eliminadas: gran formato, perfect edition,
+    # beherit (sólo aparece en descripción, no en title → buscador no la indexa).
     keywords:
       - "edicion limitada"
       - "edicion especial"
@@ -1043,7 +1219,14 @@ sources:
       - "kanzenban"
       - "tapa dura"
       - "variante"
-      - "gran formato"
+      - "portada variante"
+      - "master edition"        # rescata Berserk Master Edition (Beherit cae aquí)
+      - "ultimate edition"
+      - "tarot"
+      - "celebration"
+      - "anniversary"
+      - "tribute"
+      - "aniversario"
 
   - name: "ES - Norma (search)"
     country: "España"
@@ -1161,7 +1344,7 @@ sources:
     source_class: "retailer"
     kind: "html"
     enabled: true
-    tags: ["manga", "retailer", "exclusive"]
+    tags: ["manga", "retailer", "exclusive", "dark-horse"]
     purity: "mixed"  # catálogo mixto (comics + manga + figuras + prints)
     search_template: "https://www.darkhorsedirect.com/search?q={query}"
     keywords:
@@ -1200,13 +1383,29 @@ sources:
     enabled: true
     tags: ["manga", "official"]
     search_template: "https://www.starcomics.com/ricerca-fumetti?q={query}"
+    selectors:
+      item_selector: "div.fumetto-card"
+      # .card-body captura "<SERIE> n. <N>\n<EDIZIONE>\n<DATE>" — necesario porque
+      # h4.card-title solo trae el nombre de serie, no la sub-edizione (Celebration,
+      # Variant Cover, etc.) que vive en un span hermano.
+      title_selector: ".card-body"
+    # Keywords probadas manualmente. Eliminadas las que devuelven 0 resultados
+    # en starcomics.com/ricerca-fumetti: edizione limitata/speciale, esclusiva,
+    # metal edition, prima tiratura, final edition (verificar caso por caso si
+    # se quieren re-añadir tras nuevos lanzamientos).
     keywords:
-      - "edizione limitata"
-      - "edizione speciale"
       - "deluxe"
       - "cofanetto"
       - "variant"
-      - "esclusiva"
+      - "variant cover"
+      - "variant cover edition"
+      - "celebration edition"        # OP/Vinland/Detective Conan/Kaiju/MHA Celebration
+      - "anniversary edition"
+      - "tribute variant"
+      - "tribute cover"
+      - "tiratura limitata"
+      - "collector"
+      - "anime comics pack"          # Star Comics packs
 
   # ===================================================================
   # Búsquedas dirigidas para Japón (keywords en japonés)
@@ -1268,9 +1467,106 @@ sources:
     enabled: true
     tags: ["manga", "official"]
     search_template: "https://www.edizionibd.it/catalogsearch/result/?q={query}"
+    selectors:
+      item_selector: "li.product-item"
+      title_selector: "a.product-item-link"
     keywords:
       - "edizione limitata"
       - "edizione speciale"
       - "deluxe"
       - "cofanetto"
       - "variant"
+
+  # ===================================================================
+  # Fuentes radar (anuncios de exclusivas vía RSS / cross-posts)
+  # ===================================================================
+
+  - name: "ES - Listado Manga Blog RSS"
+    country: "España"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "rss"
+    url: "https://www.listadomanga.es/blog/feed/"
+    enabled: true
+    tags: ["manga", "news", "spain", "rss", "new-source"]
+    notes: |
+      DIFERENCIAL (delta de últimas noticias). Feed WordPress horario con
+      los ~10 posts más recientes. Cross-postea anuncios FB/Threads de
+      Planeta, Milky Way, Ivrea, Norma, Hidra, Pika. Captura "Edición
+      exclusiva Fnac", "Edición Grimorio", marcapáginas/postales/cofres
+      de primera edición. Complemento crítico al calendario.
+
+      Para el HISTÓRICO completo del blog (desde 2009-11), usar:
+        python scripts/manga_watch.py --bootstrap-wiki listadomanga-blog \
+            --wiki-from 2009-11 --wiki-to 2026-05
+      (one-shot, ~30-60 min). Recorre los archivos `/blog/YYYY/MM/page/N/`
+      mes por mes — recupera items históricos que el RSS ya no expone.
+
+  # ===================================================================
+  # Italia — coleccionistas / variant
+  # ===================================================================
+
+  - name: "ES - Fnac España exclusivos"
+    country: "España"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "retailer"
+    kind: "js"
+    url: "https://www.fnac.es/n91427/Libros-con-regalo-exclusivo"
+    enabled: false   # 403 desde Python/Playwright vanilla; necesita stealth + proxies
+    tags: ["manga", "retailer", "spain", "exclusive", "new-source"]
+    notes: |
+      Categoría real de Fnac España con productos exclusivos (incl. manga
+      con regalo: OP100 Fnac, etc.). DESACTIVADA porque Fnac bloquea
+      User-Agents conocidos (HTTP 403 confirmado).
+
+      Para activar habría que añadir Playwright stealth + proxies
+      residenciales (~15-25h estimadas, mantenimiento alto).
+
+      Mientras, el blog RSS de Listadomanga cross-postea los anuncios FB
+      de Fnac/Planeta en T+1-3 días, lo que cubre ~80% del caso de uso.
+
+  - name: "ES/LatAm - Whakoom Novedades"
+    country: "España / LatAm"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://www.whakoom.com/newtitles"
+    enabled: true
+    tags: ["manga", "news", "novedades", "spain", "argentina", "mexico", "new-source"]
+    purity: "mixed"   # mezcla manga + cómic occidental + BD; blacklist filtra Marvel/DC/etc.
+    selectors:
+      item_selector: "a[href^='/comics/']"
+      # No definimos title_selector: el extractor genérico usa el texto +
+      # title-attribute del propio item_selector cuando es un <a>.
+    max_pages: 1   # paginación ?page=N se ignora; sólo las ~415 novedades recientes
+    notes: |
+      Whakoom no expone búsqueda pública (requiere login), pero /newtitles
+      sí: ~415 últimas novedades editoriales públicas con title + imagen +
+      URL canónica al volumen. Mezcla manga + cómic occidental + BD —
+      confiamos en is_likely_manga + comics_blacklist (Marvel/DC/Asterix/etc).
+
+      Para profundizar en variantes: cada /comics/{X} lista sus
+      /ediciones/N específicas. Para discovery por autor:
+      /autores/{id}/{slug}. Ambos accesibles sin login.
+
+  - name: "IT - Manga Dreams"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Manga Dreams"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://mangadreams.it/collections/all"
+    enabled: true
+    tags: ["manga", "retailer", "italy", "variant", "new-source"]
+    selectors:
+      item_selector: ".card-wrapper.product-card-wrapper"
+      title_selector: "a[href*='/products/']"
+    max_pages: 10
+    notes: |
+      Shopify estándar. Catálogo concentra ediciones especiales italianas:
+      Variant Metal, prima tiratura, edizione francese con gadget evento,
+      OP/Vinland/MHA/Berserk variant covers. URL típica:
+      /products/one-piece-108-variant-metal-limitata-alla-prima-tiratura.

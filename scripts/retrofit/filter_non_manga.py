@@ -102,7 +102,9 @@ def main() -> int:
         tags = item.get("tags", []) or []
         purity = _purity_for(item.get("source", ""), purity_map)
         is_manga, reason = is_likely_manga(
-            title, description, tags=tags, source_purity=purity
+            title, description, tags=tags, source_purity=purity,
+            publisher=item.get("publisher", ""),
+            url=item.get("url", ""),
         )
         if is_manga:
             kept_lines.append(line)
