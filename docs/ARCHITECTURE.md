@@ -375,7 +375,8 @@ Row schema (the fields written by `candidate_to_json`):
   "score":         0-300,
   "signals":       ["human readable, e.g. 'limited edition'", ...],
   "signal_types":  ["limited", "deluxe", "box_set", ...],
-  "title":         "cleaned title",
+  "title":         "display canonical (international, standardized)",
+  "title_original":"original scraped title (cleaned, pre-standardization)",
   "url":           "absolute URL",
   "source":        "source name from sources.yml",
   "source_url":    "source listing page",
@@ -394,12 +395,114 @@ Row schema (the fields written by `candidate_to_json`):
   "author":        "extracted author or empty",
   "stock_type":    "regular | limited | exclusive | preorder | ...",
   "isbn":          "ISBN-13 if extracted",
-  "cluster_key":   "isbn:X | fuzzy:lang|series|vol|variants|publisher | url:X"
+  "cluster_key":   "isbn:X | fuzzy:lang|series|vol|variants|publisher | url:X",
+
+  // --- Series/edition schema (added 2026-05-22, see CLAUDE.md gotcha #21) ---
+  "series_key":    "canonical work id (e.g. 'demon-slayer', 'one-piece')",
+  "series_display":"display name of the work (e.g. 'Demon Slayer')",
+  "edition_key":   "{series}-{publisher}-{edition_slug}, e.g. 'berserk-darkhorse-deluxe'",
+  "edition_display":"display name e.g. 'Deluxe Edition (Dark Horse)'",
+  "volume":        "string '1' | '100' | '1-3' for sets | '' for one-shots",
+  "standardized_at":"ISO-8601 UTC, set ONLY by /standardize-catalog skill",
 }
 ```
 
 After `wayback_recover.py`, recovered rows also carry:
 `recovered_from_wayback: true`, `wayback_snapshot_url`, `wayback_timestamp`.
+
+#### Two-pass standardization (gotcha #21)
+
+The schema fields `series_key`, `edition_key`, `volume`, `title_standardized`
+get populated in **two passes**:
+
+1. **Pass 1 — scraper rough assignment** (`candidate_to_json` →
+   `derive_series_metadata`): regex-based heuristic over title +
+   publisher + signal_types. Uses `_extract_volume`,
+   `_normalize_series_name`, `_variant_tier`, `_publisher_slug`.
+   Defensive: returns empty dict for obviously-garbage cases
+   (series_key < 3 chars, all digits, trailing-number pattern).
+   **Does NOT set `standardized_at`** — items remain marked "pending".
+
+2. **Pass 2 — `/standardize-catalog` skill** (manual, parallel
+   subagents): processes items WITHOUT `standardized_at`. Subagents
+   re-derive everything from scratch via LLM, fix scraper errors,
+   apply `canonical_series_key()` for multilingual consolidation,
+   move non-manga to `data/non_manga_blacklist.jsonl`, dedup by
+   `(series_key, edition_key, volume)`, mark with `standardized_at`.
+
+`title_original` is preserved by both passes: pass 1 writes it equal
+to the cleaned scraped title; pass 2 backs up `title` to `title_original`
+(if empty) before overwriting `title` with the standardized form.
+
+### unmapped_series.jsonl
+
+Append-only log written by `series_aliases.log_unmapped_series()` (called
+from `candidate_to_json`) every time a candidate produces a `series_key`
+that is NOT a canonical entry in `data/series_aliases.yml`. The
+`/enrich-series-aliases` skill consumes this queue.
+
+Schema (one record per line):
+```jsonc
+{
+  "series_key":     "non-canonical key (e.g. 'apothicaire')",
+  "series_display": "display name as detected",
+  "sample_title":   "title from the first item that triggered the log",
+  "sample_url":     "url from the first item",
+  "source":         "scrape source",
+  "detected_at":    "ISO-8601 UTC"
+}
+```
+
+Dedup-by-key within a single scrape run (in-memory set
+`_UNMAPPED_LOGGED_THIS_RUN`). Across runs, duplicates accumulate —
+the `/enrich-series-aliases` skill aggregates by `series_key` when
+processing.
+
+### non_manga_blacklist.jsonl
+
+Items that the `/standardize-catalog` skill identified as NOT manga
+get moved here (instead of staying in items.jsonl). Append-only. The
+skill is idempotent: checks existing URLs before appending.
+
+Schema:
+```jsonc
+{
+  "url":         "the original URL",
+  "title":       "original title at time of removal",
+  "source":      "scrape source",
+  "publisher":   "publisher name",
+  "reason":      "human-readable: 'Western indie comic', 'light_novel', ...",
+  "reviewed_at": "ISO-8601 UTC of skill run"
+}
+```
+
+Mangavariant items are NEVER moved to blacklist (owner policy: all
+Mangavariant entries are valid manga regardless of detected signals).
+
+### series_aliases.yml
+
+YAML mapping canonical series_keys to their display name + all known
+aliases (multilingual). Source of truth for `canonical_series_key()`.
+
+```yaml
+demon-slayer:
+  display: Demon Slayer
+  aliases:
+    - kimetsu no yaiba
+    - 鬼滅の刃
+    - guardianes de la noche
+    - demon slayer: kimetsu no yaiba
+```
+
+- Lookup is **exact-match-only** on `series_key` and `series_display`
+  normalized (lowercase, no diacritics, slug form). NO substring match
+  on titles — avoids false positives like "Monster Musume → Monster".
+- The aliases list contains: canonical display, all known
+  romanizations, native JP characters, FR/ES/IT publisher-specific
+  titles.
+- Initially populated via Anilist API (~106 entries). Maintained
+  incrementally via `/enrich-series-aliases` skill processing the
+  unmapped queue.
 
 ### state.json
 
@@ -581,7 +684,7 @@ Wikis are sources that need custom parsing logic, not just generic
 `extract_listing_candidates`. They live in `scripts/wikis/` and are
 invoked via `--bootstrap-wiki <name>`.
 
-All six have the same public API:
+All seven have the same public API:
 
 ```python
 def parse_calendar_page(html_text, source_url) -> list[Candidate]:
@@ -635,6 +738,24 @@ right module based on the CLI arg.
   | Periodicidad | Precio actual: N MXN</li>`. Generates synthetic URL
   with `?manga=publisher-slug` query so URL-based dedup doesn't collapse
   the whole catalog into one row.
+- **mangavariant.py** (Global — base curada de variants, 13 países).
+  URL: `https://mangavariant.com/variant/<manga-slug>/<variant-slug>/`.
+  No usa rango año/mes (no hay calendario): lee los 3 Yoast sitemaps
+  (`variant-sitemap.xml`, `variant-sitemap2.xml`, `variant-sitemap3.xml`)
+  para enumerar todas las URLs (~2700) y procesa cada detail en paralelo
+  (`ThreadPoolExecutor(workers=4)`). Estructura del detail page: bloque
+  `<div class="variant_info_block">` con campos `<div class="vInfo">
+  <strong>Label:</strong><ul><li>value</li></ul></div>` para Published
+  by / Country / Manga / Where / Release / Tags + un `<a class=
+  "v_rarity_icon" href="/variant?rarity=<tier>">`. El **título visible**
+  es solo la edición (p.ej. "Vol.34 - Crunchyroll variant"); la serie va
+  en el tag Manga y el parser concatena `f"{serie} — {edicion}"` para
+  que el dashboard y `cluster_key` funcionen. Country slug → nombre /
+  idioma vía `COUNTRY_MAP` (incluye 5 países nuevos para el corpus:
+  Alemania, Taiwán, Tailandia, Reino Unido, Vietnam). NO pasa por
+  `is_likely_manga` / `is_collectible_edition` — la fuente es 100%
+  curada de variants por diseño. URLs son referencia, no de tienda
+  (ver "URL como referencia" en CLAUDE.md).
 - **whakoom.py** (ES/LatAm — Cloudflare-throttled spider, opt-in).
   3-level BFS: `/newtitles` → `/comics/{shortcode}` →
   `/ediciones/{id}` (which exposes sibling variants — alt covers,
@@ -931,3 +1052,72 @@ Run: `.venv/bin/python -m pytest tests/test_extraction.py -q`.
 | Web filter/search/page navigation | <50 ms | client-side |
 
 If a number above doubles after a change, something regressed.
+
+## Curation skills (LLM-driven, manual)
+
+Two project-level skills under `.claude/skills/`. They live in the repo
+(versioned with git) and are invoked manually by the owner via
+`/<skill-name>` from Claude Code. Both are designed to be incremental
+and idempotent — safe to re-run.
+
+### `/standardize-catalog`
+
+**File**: `.claude/skills/standardize-catalog.md`
+
+**Purpose**: pass 2 of the schema standardization (see `items.jsonl`
+section above). Processes items WITHOUT `standardized_at`. Delegates
+to parallel subagents (`general-purpose`) in batches of ~150-200,
+each one returning per-item: `is_manga`, `series_key`,
+`series_display`, `edition_key`, `edition_display`, `volume`,
+`title_standardized`.
+
+Workflow:
+1. Audit pending count (filter `items.jsonl` by missing `standardized_at`).
+2. Partition into chunks of 150, written to `/tmp/manga-standardize-run/`.
+3. Spawn 7 subagents per wave (parallel). Each one reads its chunk and
+   writes a result file.
+4. Merge results back into items.jsonl. Apply `canonical_series_key()`
+   from `data/series_aliases.yml`. Dedup by `(series_key, edition_key,
+   volume)`. Move `is_manga=false` items to
+   `data/non_manga_blacklist.jsonl`.
+5. Set `standardized_at` on each processed item.
+6. Cleanup `/tmp/manga-standardize-run/`.
+
+Incremental by default. `--force-all` snippet (embedded in the skill)
+clears `standardized_at` from all items to force a full re-run when
+standardization rules change substantively.
+
+### `/enrich-series-aliases`
+
+**File**: `.claude/skills/enrich-series-aliases.md`
+
+**Purpose**: process the `data/unmapped_series.jsonl` queue, deciding
+for each new `series_key` whether it's an alias of an existing
+canonical (merge into existing entry) or a new series (create entry).
+Queries Anilist GraphQL API for international titles + synonyms when
+needed.
+
+Workflow:
+1. Run `scripts/audit/unmapped_series.py` to aggregate the queue +
+   fuzzy-match candidates against canonicals.
+2. For each unmapped series (sorted by item count desc):
+   - **Action A**: merge as alias of existing canonical (high
+     confidence fuzzy match, ≥0.8).
+   - **Action B**: query Anilist, create new canonical entry.
+   - **Action C**: skip (low confidence + low item count → wait for
+     more data).
+3. Edit `data/series_aliases.yml` in place.
+4. Run the embedded backfill snippet to consolidate items.jsonl.
+5. Truncate `data/unmapped_series.jsonl` (next scrape repopulates).
+
+### Recommended post-scrape workflow
+
+```
+1. manga_watch.py runs (scrape) → new items with rough series_key, no standardized_at
+2. /standardize-catalog          → subagents verify/correct/timestamp
+3. /enrich-series-aliases        → consolidate any new multilingual series
+4. build_web.py                  → refresh dashboard
+```
+
+Both skills can be triggered via `/loop`/`/schedule` in the future for
+fully-automated curation cadence.

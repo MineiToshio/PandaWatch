@@ -96,6 +96,48 @@ _COMICS_HREF_RE = re.compile(r"^/comics/[A-Za-z0-9]+/")
 _EDICIONES_HREF_RE = re.compile(r"^/ediciones/(\d+)/")
 _PUBLISHER_PAREN_RE = re.compile(r"\s*\(([^)]+)\)\s*$")
 
+# Detecta una URL absoluta o relativa a /ediciones/N/slug en cualquier subdominio
+# Whakoom (whakoom.com, en.whakoom.com, www.whakoom.com, etc.).
+_EDITION_ABS_URL_RE = re.compile(
+    r"^https?://(?:[a-z]+\.)?whakoom\.com/ediciones/(\d+)/",
+    re.IGNORECASE,
+)
+# Lo mismo para /comics/<shortcode>/<slug>/<vol>.
+_COMIC_ABS_URL_RE = re.compile(
+    r"^https?://(?:[a-z]+\.)?whakoom\.com/comics/([A-Za-z0-9]+)/",
+    re.IGNORECASE,
+)
+
+
+def is_whakoom_edition_url(url: str) -> bool:
+    """¿Es una URL a una página /ediciones/ de Whakoom?
+
+    Detecta tanto www.whakoom.com como subdominios localizados
+    (en.whakoom.com, it.whakoom.com, etc.).
+    """
+    if not url:
+        return False
+    return bool(_EDITION_ABS_URL_RE.match(url))
+
+
+def is_whakoom_comic_url(url: str) -> bool:
+    """¿Es una URL a un tomo individual /comics/.../<vol> de Whakoom?"""
+    if not url:
+        return False
+    return bool(_COMIC_ABS_URL_RE.match(url))
+
+
+def edition_todos_url(edition_url: str) -> str:
+    """Devuelve la URL de la pestaña 'Comics' de una edición (`.../todos`).
+
+    Whakoom muestra solo los primeros ~11 tomos en la página principal;
+    la lista completa está en `<edition_url>/todos`.
+    """
+    base = edition_url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    if base.endswith("/todos"):
+        return edition_url
+    return f"{base}/todos"
+
 
 def _virtual_source() -> Source:
     return Source(
@@ -130,7 +172,11 @@ def _ua_session(session: requests.Session) -> requests.Session:
             "image/avif,image/webp,*/*;q=0.8"
         ),
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
+        # OJO: NO incluimos "br" (Brotli) — requests no lo decodifica nativo
+        # y devolveríamos bytes binarios como text. Cloudflare/Whakoom usa
+        # Brotli por defecto cuando se le pide, así que evitarlo en el header
+        # nos garantiza HTML decodificado. Sin esto, response.text es basura.
+        "Accept-Encoding": "gzip, deflate",
         "Referer": BASE_URL + "/",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
@@ -142,12 +188,18 @@ def _ua_session(session: requests.Session) -> requests.Session:
 # Detección de page Cloudflare challenge (no es 200 OK útil — es página
 # de "verify human"). Si detectamos esto, la IP está banneada o en
 # challenge mode. Mejor abortar limpiamente que insistir.
+#
+# ⚠️ NO usar "challenge-platform" como marker: aparece en CUALQUIER página
+# protegida por Cloudflare como parte del JSD bot-detection script
+# (/cdn-cgi/challenge-platform/scripts/jsd/main.js). El path real de un
+# challenge UI es /cdn-cgi/challenge-platform/h/g/... (con /h/, no /scripts/).
+# Lo mismo con "cf_challenge": demasiado genérico.
 _CLOUDFLARE_CHALLENGE_MARKERS = (
-    "cf-chl-bypass",
-    "Just a moment...",
-    "Checking your browser",
-    "cf_challenge",
-    "challenge-platform",
+    "cf-chl-bypass",                          # form metadata del challenge
+    "Just a moment...",                       # title de la página de espera
+    "Checking your browser",                  # texto del verify
+    "__cf_chl_rt_tk",                         # token de challenge
+    "/cdn-cgi/challenge-platform/h/",         # UI path del challenge (no /scripts/)
 )
 
 
@@ -289,6 +341,414 @@ def parse_edition_page(html_text: str, edition_url: str) -> Candidate | None:
     return cand
 
 
+_VOLUME_LI_SELECTOR = "li[id^='comic'] a[href^='/comics/']"
+# Captura "#12", "12" o "#A" (algunos one-shots no tienen número).
+_ISSUE_NUMBER_RE = re.compile(r"^#?\s*([0-9A-Za-z]+)")
+
+# Whakoom oculta el `/comics/<shortcode>` canónico de páginas /ediciones/
+# detrás de `/login?ReturnUrl=...`. Para one-shots (ediciones de un solo
+# tomo) ese es el ÚNICO lugar donde aparece la URL del comic.
+_LOGIN_RETURN_COMIC_RE = re.compile(
+    r"/login\?ReturnUrl=(/comics/[A-Za-z0-9]+/[a-zA-Z0-9_-]+(?:/\d+)?)",
+)
+
+
+def _extract_oneshot_comic_url(html_text: str) -> str:
+    """Si /ediciones/ es un one-shot, devuelve la URL canónica /comics/.
+
+    Whakoom no expone `/comics/...` directamente en una página /ediciones/
+    cuando es de un solo tomo: el link siempre está envuelto en un
+    `/login?ReturnUrl=...`. Sacamos el ReturnUrl y reconstruimos la URL
+    absoluta.
+
+    Devuelve "" si no se puede extraer.
+    """
+    m = _LOGIN_RETURN_COMIC_RE.search(html_text)
+    if not m:
+        return ""
+    return f"{BASE_URL}{m.group(1)}"
+
+
+def parse_volume_links(html_text: str) -> list[dict]:
+    """Extrae los tomos individuales listados en una página /ediciones/ o /todos.
+
+    Devuelve una lista de dicts con `{url, title, issue, image_url}` donde:
+    - `url`: URL absoluta al tomo /comics/<shortcode>/<slug>/<N>.
+    - `title`: título textual del tomo (ej. "Berserk Deluxe Edition #1").
+    - `issue`: número de tomo extraído del span .issue-number (ej. "1").
+    - `image_url`: cover del tomo (puede ser thumbnail "small/").
+
+    Dedupea por URL: si la misma URL aparece varias veces, conserva la
+    primera. No filtra duplicados por shortcode entre páginas distintas
+    — eso lo resuelve el caller mergeando por URL.
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+    out: list[dict] = []
+    seen_urls: set[str] = set()
+    for a in soup.select(_VOLUME_LI_SELECTOR):
+        href = (a.get("href") or "").strip()
+        if not href.startswith("/comics/"):
+            continue
+        url = f"{BASE_URL}{href}"
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        title = clean_text(a.get("title") or "")
+        if not title:
+            # Fallback: <strong>Series</strong> <span class="issue-number">#N</span>
+            strong = a.find("strong")
+            issue_el = a.select_one(".issue-number")
+            parts = []
+            if strong:
+                parts.append(clean_text(strong.get_text(" ", strip=True)))
+            if issue_el:
+                parts.append(clean_text(issue_el.get_text(" ", strip=True)))
+            title = " ".join(p for p in parts if p)
+        issue = ""
+        issue_el = a.select_one(".issue-number")
+        if issue_el:
+            m = _ISSUE_NUMBER_RE.match(clean_text(issue_el.get_text(" ", strip=True)))
+            if m:
+                issue = m.group(1)
+        image_url = ""
+        img = a.find("img")
+        if img:
+            image_url = (img.get("src") or "").strip()
+        out.append({
+            "url": url,
+            "title": title,
+            "issue": issue,
+            "image_url": image_url,
+        })
+    return out
+
+
+# Mapping del id de bandera de Whakoom (visible en `lang/N.png`) a
+# (lenguaje, país) cuando podemos inferirlo. Es heurístico — el `.title`
+# adyacente al `.value.flag` es la verdad textual; este map es fallback
+# si solo tenemos el flag.
+_WHAKOOM_FLAG_LANG_HINT: dict[str, str] = {
+    # IDs estables observados; ampliar conforme veamos más ediciones.
+    "1": "Español",
+    "9": "Inglés",
+    "16": "Italiano",
+}
+
+
+_LANG_TITLE_TO_LANGUAGE: list[tuple[str, str]] = [
+    # (substring case-insensitive en .title, language canónico)
+    ("english", "Inglés"),
+    ("spanish", "Español"),
+    ("español", "Español"),
+    ("italian", "Italiano"),
+    ("italiano", "Italiano"),
+    ("french", "Francés"),
+    ("français", "Francés"),
+    ("portuguese", "Portugués"),
+    ("português", "Portugués"),
+    ("japanese", "Japonés"),
+    ("german", "Alemán"),
+]
+
+
+def _detect_language_from_edition_html(soup: BeautifulSoup) -> tuple[str, str]:
+    """Devuelve `(language, country)` inferidos de la página de edición.
+
+    Estrategia:
+    1. Texto del `.title` adyacente al `.value.flag` (ej.
+       "English (United States)" → ("Inglés", "Estados Unidos")).
+    2. Fallback al `lang/N.png` del flag.
+    3. ("", "") si nada matchea.
+    """
+    # Buscar el `<li>` que contiene el flag dentro de `ul.info-summary`.
+    for li in soup.select("ul.info-summary > li"):
+        flag = li.select_one(".value.flag")
+        if not flag:
+            continue
+        title_el = li.select_one(".title")
+        title_text = clean_text(title_el.get_text(" ", strip=True)) if title_el else ""
+        language = ""
+        country = ""
+        title_lc = title_text.lower()
+        for needle, lang in _LANG_TITLE_TO_LANGUAGE:
+            if needle in title_lc:
+                language = lang
+                break
+        # Country aparece entre paréntesis: "English (United States)"
+        country_match = re.search(r"\(([^)]+)\)\s*$", title_text)
+        if country_match:
+            raw = country_match.group(1).strip()
+            country = {
+                "United States": "Estados Unidos",
+                "United Kingdom": "Reino Unido",
+                "Spain": "España",
+                "Argentina": "Argentina",
+                "Mexico": "México",
+                "México": "México",
+                "Italy": "Italia",
+                "France": "Francia",
+                "Germany": "Alemania",
+                "Japan": "Japón",
+                "Brazil": "Brasil",
+                "Portugal": "Portugal",
+            }.get(raw, raw)
+        # Fallback al flag.png si el texto no nos dio idioma.
+        if not language:
+            m = re.search(r"/lang/(\d+)\.png", flag.get("style", ""))
+            if m:
+                language = _WHAKOOM_FLAG_LANG_HINT.get(m.group(1), "")
+        return language, country
+    return "", ""
+
+
+def _extract_authors(soup: BeautifulSoup) -> str:
+    """Devuelve autores como string `"A, B"` desde `h3.autores + p`."""
+    h3 = soup.select_one("h3.autores")
+    if not h3:
+        return ""
+    p = h3.find_next("p")
+    if not p:
+        return ""
+    names = []
+    for a in p.find_all("a"):
+        n = clean_text(a.get_text(" ", strip=True))
+        if n and n not in names:
+            names.append(n)
+    if not names:
+        # Fallback: texto crudo limpio (cortando "(Script, Drawing, ...)" finales)
+        raw = clean_text(p.get_text(" ", strip=True))
+        raw = re.sub(r"\s*\([^)]*\)\s*$", "", raw)
+        return raw
+    return ", ".join(names)
+
+
+def parse_edition_metadata(html_text: str) -> dict:
+    """Extrae metadata edición-nivel (publisher, autor, idioma, tipo…).
+
+    Estos campos se HEREDAN por cada tomo expandido. La URL canónica de
+    la edición se usa solo como `source_url` para el grupo; cada tomo
+    tiene su propia `/comics/...` URL.
+
+    Devuelve `{title, publisher, edition_type, language, country, author,
+    image_url, description}`. Campos vacíos cuando no se pueden extraer.
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+
+    def og(prop: str) -> str:
+        el = soup.find("meta", property=prop)
+        return clean_text(el.get("content", "")) if el else ""
+
+    title = ""
+    h1 = soup.find("h1")
+    if h1:
+        title = clean_text(h1.get_text(" ", strip=True))
+    if not title:
+        title = og("og:title")
+
+    publisher = ""
+    pub_el = soup.select_one("p.publisher a, p.publisher")
+    if pub_el:
+        publisher = clean_text(pub_el.get_text(" ", strip=True))
+
+    edition_type = ""
+    et_el = soup.select_one("p.edition-type")
+    if et_el:
+        edition_type = clean_text(et_el.get_text(" ", strip=True))
+
+    language, country = _detect_language_from_edition_html(soup)
+
+    author = _extract_authors(soup)
+
+    description = og("og:description")
+
+    image_url = og("og:image")
+
+    return {
+        "title": title,
+        "publisher": publisher,
+        "edition_type": edition_type,
+        "language": language,
+        "country": country,
+        "author": author,
+        "description": description,
+        "image_url": image_url,
+    }
+
+
+def _merge_volume_dicts(*volume_lists: list[dict]) -> list[dict]:
+    """Mergea N listas de volume dicts (de páginas distintas) por URL.
+
+    Si la misma URL aparece en varias listas, prefiere la primera versión
+    no-vacía de cada campo (title, issue, image_url).
+    """
+    merged: dict[str, dict] = {}
+    for vol_list in volume_lists:
+        for vol in vol_list:
+            url = vol.get("url", "")
+            if not url:
+                continue
+            if url not in merged:
+                merged[url] = dict(vol)
+                continue
+            existing = merged[url]
+            for key in ("title", "issue", "image_url"):
+                if not existing.get(key) and vol.get(key):
+                    existing[key] = vol[key]
+    return list(merged.values())
+
+
+def expand_whakoom_edition(
+    edition_url: str,
+    session: requests.Session,
+    timeout: tuple[int, int] = (10, 30),
+    sleep_seconds: float = 1.5,
+    fetch_todos: bool = True,
+    edition_html: str | None = None,
+    todos_html: str | None = None,
+) -> list[Candidate]:
+    """Expande una página /ediciones/ en N Candidates, uno por tomo.
+
+    Lee la página principal (metadata + ~11 primeros tomos) y opcionalmente
+    `/todos` (listado completo). Cada tomo hereda publisher/autor/idioma/
+    país/tipo de edición + descripción de la edición padre, y aporta:
+    URL `/comics/...`, título "<serie> #N" y cover individual.
+
+    Levanta `WhakoomBlocked` si Cloudflare devuelve challenge en cualquiera
+    de las requests — el caller debe abortar el batch (la IP está en
+    cuarentena, no tiene sentido seguir presionando).
+
+    Parametros `edition_html` / `todos_html` permiten pasar HTML pre-fetched
+    para tests sin sesión HTTP real.
+    """
+    # Carga HTML edición principal
+    if edition_html is None:
+        edition_html = fetch_url(edition_url, session, timeout=timeout)
+        if not edition_html:
+            return []
+    meta = parse_edition_metadata(edition_html)
+    main_volumes = parse_volume_links(edition_html)
+
+    # Carga /todos para completar tomos que no entran en la página principal.
+    todos_volumes: list[dict] = []
+    if fetch_todos:
+        if todos_html is None:
+            t_url = edition_todos_url(edition_url)
+            if t_url != edition_url:
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+                todos_html = fetch_url(t_url, session, timeout=timeout)
+        if todos_html:
+            todos_volumes = parse_volume_links(todos_html)
+
+    volumes = _merge_volume_dicts(main_volumes, todos_volumes)
+
+    # Fallback one-shot: si la edición no lista tomos (ej. "Cofre Aniversario",
+    # "Edición Especial Limitada"), buscamos la URL /comics/ enmascarada en
+    # `/login?ReturnUrl=...` y producimos UN único Candidate con la metadata
+    # edición-nivel. Así no perdemos el item y respetamos la regla "el
+    # catálogo solo guarda /comics/".
+    if not volumes:
+        oneshot_url = _extract_oneshot_comic_url(edition_html)
+        if not oneshot_url:
+            return []
+        volumes = [{
+            "url": oneshot_url,
+            "title": meta.get("title", ""),
+            "issue": "",
+            "image_url": meta.get("image_url", ""),
+        }]
+
+    source = _virtual_source()
+    candidates: list[Candidate] = []
+    edition_series = meta.get("title", "")
+    for vol in volumes:
+        # Título por defecto: el del <a title="..."> ("Serie #N").
+        # Si no vino, lo armamos a partir de la edición + issue.
+        vol_title = vol.get("title", "")
+        if not vol_title:
+            issue = vol.get("issue", "")
+            if edition_series and issue:
+                vol_title = f"{edition_series} #{issue}"
+            elif edition_series:
+                vol_title = edition_series
+            else:
+                continue  # sin título, no podemos crear candidato útil
+        # Descripción: la de la edición (todos los tomos comparten plot).
+        cand = candidate_from_source(
+            source, vol_title, vol["url"], meta.get("description", ""),
+        )
+        # Heredar metadata edición-nivel.
+        if meta.get("publisher"):
+            cand.publisher = meta["publisher"]
+        if meta.get("language"):
+            cand.language = meta["language"]
+        if meta.get("country"):
+            cand.country = meta["country"]
+        if meta.get("author"):
+            cand.author = meta["author"]
+        # Cover: preferir el del tomo individual; fallback a la portada general.
+        cand.image_url = vol.get("image_url", "") or meta.get("image_url", "")
+        candidates.append(cand)
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Publisher pages — listan /ediciones/ del editor, no productos directos
+# ---------------------------------------------------------------------------
+
+_PUBLISHER_PATH_RE = re.compile(
+    r"^https?://(?:[a-z]+\.)?whakoom\.com/publisher/\d+/",
+    re.IGNORECASE,
+)
+
+
+def is_whakoom_publisher_url(url: str) -> bool:
+    """¿Es una URL `/publisher/<id>/<slug>` de Whakoom?
+
+    Estas páginas listan todas las /ediciones/ de un editor — son
+    índices puros, NO productos.
+    """
+    if not url:
+        return False
+    return bool(_PUBLISHER_PATH_RE.match(url))
+
+
+def expand_whakoom_publisher_url(
+    publisher_url: str,
+    session: requests.Session,
+    timeout: tuple[int, int] = (10, 30),
+    sleep_seconds: float = 1.5,
+    publisher_html: str | None = None,
+) -> list[Candidate]:
+    """Expande una página /publisher/ extrayendo sus /ediciones/ + tomos.
+
+    Estrategia: fetch publisher page → extraer todas las URLs
+    `/ediciones/<id>/...` linkeadas → para cada una, llamar a
+    `expand_whakoom_edition` (que a su vez devuelve N tomos).
+
+    Levanta `WhakoomBlocked` si Cloudflare bloquea en cualquier punto.
+    """
+    if publisher_html is None:
+        publisher_html = fetch_url(publisher_url, session, timeout=timeout)
+        if not publisher_html:
+            return []
+    pairs = extract_ediciones_urls_from_html(publisher_html)
+    if not pairs:
+        return []
+    all_cands: list[Candidate] = []
+    for n, (_ed_id, ed_url) in enumerate(pairs):
+        if n > 0 and sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        try:
+            cands = expand_whakoom_edition(
+                ed_url, session, timeout=timeout, sleep_seconds=sleep_seconds,
+            )
+        except WhakoomBlocked:
+            raise
+        all_cands.extend(cands)
+    return all_cands
+
+
 class WhakoomBlocked(Exception):
     """Cloudflare challenge detectado — IP está banneada o en cuarentena.
 
@@ -425,24 +885,32 @@ def _bootstrap_inner(
             time.sleep(sleep_seconds)
     print(f"[WHAKOOM] /comics/* → {len(seen_ediciones)} ediciones únicas")
 
-    # Nivel 3: cada /ediciones/N → Candidate + descubrir variantes hermanas
-    # max_editions acota el TOTAL del BFS (queue + expansión). Si Fase 2 ya
-    # superó el límite, igualmente procesamos al menos los descubiertos en Fase 2.
+    # Nivel 3: cada /ediciones/N → N Candidates (uno por tomo) + descubrir
+    # variantes hermanas. Una /ediciones/ no es un item: es una colección
+    # (ej. "Berserk Deluxe Edition" tiene 14 tomos), así que la expandimos
+    # vía expand_whakoom_edition() y guardamos un candidate por cada
+    # /comics/<X>/<slug>/<vol>. Esto evita registrar series enteras como
+    # un solo registro en items.jsonl.
     edition_cap = max(max_editions, len(seen_ediciones))
-    print(f"[WHAKOOM] Fase 3: fetch + parse {len(ediciones_queue)} ediciones (cap={edition_cap})")
+    print(f"[WHAKOOM] Fase 3: fetch + expand {len(ediciones_queue)} ediciones (cap={edition_cap})")
     candidates: list[Candidate] = []
     queue_idx = 0
     while queue_idx < len(ediciones_queue) and len(seen_ediciones) <= edition_cap:
         ed_url = ediciones_queue[queue_idx]
         queue_idx += 1
+        # Fetch página principal solo una vez para descubrir hermanas + expandir.
         text = fetch_url(ed_url, session, timeout=timeout)
         if not text:
             continue
 
-        # Parse edition → candidate
-        cand = parse_edition_page(text, ed_url)
-        if cand is not None:
-            # Filtro upstream non-manga aquí mismo para no scorear basura
+        # Expandir edición en N candidates (uno por tomo). fetch_todos=True
+        # implica una segunda HTTP request para /todos cuando la edición
+        # supera los ~11 tomos de la página principal.
+        expanded = expand_whakoom_edition(
+            ed_url, session, timeout=timeout, sleep_seconds=sleep_seconds,
+            edition_html=text,  # ya lo tenemos descargado
+        )
+        for cand in expanded:
             is_m, _ = is_likely_manga(
                 cand.title, cand.description,
                 source_purity="mixed", publisher=cand.publisher,
@@ -450,7 +918,8 @@ def _bootstrap_inner(
             if is_m:
                 candidates.append(score_candidate(cand))
 
-        # Descubrir variantes hermanas (BFS shallow)
+        # Descubrir variantes hermanas (BFS shallow) — desde el HTML principal,
+        # no necesitamos refetchearlo.
         for ed_id, sib_url in extract_ediciones_urls_from_html(text):
             if ed_id not in seen_ediciones:
                 seen_ediciones.add(ed_id)

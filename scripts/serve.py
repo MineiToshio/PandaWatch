@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""serve.py — HTTP server local para el browser de Manga Watch.
+"""serve.py — HTTP server PÚBLICO para el browser de Manga Watch.
 
-Sirve desde la raíz del proyecto y redirige `/` → `/web/` para que
-http://localhost:8000 abra el browser directamente, sin necesidad de
-escribir `/web/`. Los paths `/data/...`, `/web/...`, `/reports/...`
-siguen siendo accesibles como recursos normales.
+Sirve el catálogo desde la raíz del proyecto y expone únicamente:
+- `GET /`          → 302 a `/web/`
+- archivos estáticos en `/web/`, `/data/`, `/reports/`
+- `POST /api/feedback` → append a data/feedback.jsonl
+
+Este server NO ejecuta scripts — para eso está `scripts/admin_serve.py`,
+que bindea solo a 127.0.0.1 y se mantiene fuera del deploy.
 
 Uso:
-    python scripts/serve.py             # puerto 8000 (default)
+    python scripts/serve.py             # puerto 8000 (default), 0.0.0.0
     python scripts/serve.py --port 9000
 """
 
@@ -90,7 +93,7 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
 
-    print(f"==> Manga Watch Browser")
+    print(f"==> Manga Watch Browser (público)")
     print(f"    Raíz:    {root}")
     print(f"    Server:  http://localhost:{args.port}/")
     print(f"    (redirige a /web/ — los datos están en /data/items.jsonl)")

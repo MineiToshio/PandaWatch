@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
@@ -239,6 +240,69 @@ def test_fuzzy_token_boundary_avoids_substring_collision():
     # "especialista" NO debe matchear "especial" — debe respetar word boundary.
     score, _, _ = _detect("entrevista al especialista en cómics", fuzzy=True)
     assert score == 0
+
+
+def test_variant_alone_detected_as_variant_cover_signal():
+    """`Variant` suelto (sin "cover") es signal_type variant_cover.
+
+    Items reales del catálogo Mangadreams (variants europeas) usan
+    "Variant Metal alla prima tiratura", "Variant Limited Francese",
+    "Variant Esclusiva Momie", etc. — sin la palabra "cover" — porque en
+    retail manga IT/FR/EN/ES "Variant" solo ya implica cover variante.
+    Sin esta regla, 13/43 productos quedaban fuera de is_collectible_edition.
+    """
+    cases = [
+        "One Piece 108 Variant Metal alla prima tiratura",
+        "Chainsaw Man 16 Variant Metal limitata alla prima tiratura",
+        "Demon Slayer 23 Variant Limited Francese",
+        "Blue Lock 1 Variant BD 48h",
+        "Hunter X Hunter 37 Variant",
+        "Kaiju no.8 vol 5 Variant Francese",
+        "Togen Anki Variant limitata a 999 copie",
+        "Akane-Banashi 11 Variant Momie Limitata a 1000 copie",
+        "Platinum End Variant Limited Francese",
+        "Perfect World Variant BD 48h",
+        "Chainsaw Man Variant 18 + Variant 16 Metal Bundle",
+        "Variant Alfa BD L'estate in cui Hikaru è Morto",
+        "Kaiju no.8 volume 1 Variant Limited edizione tedesca",
+    ]
+    for title in cases:
+        score, _, types = _detect(title, fuzzy=False)
+        assert "variant_cover" in types, (
+            f"Should detect variant_cover in {title!r} (types={types})"
+        )
+        assert score >= 30, f"Score too low for {title!r}: {score}"
+
+
+def test_variant_alone_does_not_match_substrings():
+    """`variant` con word-boundary NO matchea covariant/invariant/variante.
+
+    "Variante" (italiano/español, una vocal extra) debe ignorarse para no
+    contaminar items donde "variante" aparece en otro contexto."""
+    non_cases = [
+        "Analisi covariante delle particelle",
+        "Sistema invariante topologico",
+        "Edición variante posible",  # "variante" tiene vocal final extra
+        "covariant analysis manga news",
+    ]
+    for title in non_cases:
+        score, _, types = _detect(title, fuzzy=False)
+        assert "variant_cover" not in types, (
+            f"Should NOT detect variant_cover in {title!r} (types={types})"
+        )
+
+
+def test_variant_alone_with_signal_passes_collectible_gate():
+    """Integración: title con "Variant" solo → variant_cover → gate accept."""
+    cases = [
+        ("One Piece 108 Variant Metal alla prima tiratura", "manga_only"),
+        ("Demon Slayer 23 Variant Limited Francese", "manga_only"),
+        ("Hunter X Hunter 37 Variant", "manga_only"),
+    ]
+    for title, purity in cases:
+        score, _, types = _detect(title, fuzzy=False)
+        ok, reason = mw.is_collectible_edition(title, "", types, purity)
+        assert ok, f"Should accept via variant_cover: {title!r} (reason={reason})"
 
 
 # ---------------------------------------------------------------------------
@@ -1069,19 +1133,570 @@ def test_whakoom_parse_edition_returns_none_for_empty():
     assert wk.parse_edition_page("<html><body></body></html>", "x") is None
 
 
+# --- Whakoom edition expansion (Sprint 4.x) ---------------------------------
+#
+# Una URL /ediciones/<id>/<slug> NO es un tomo: es una colección entera.
+# Hay que expandirla en N candidates (uno por /comics/<X>/<slug>/<vol>)
+# antes de registrar. Ver gotcha en CLAUDE.md.
+
+_WHAKOOM_FIXTURES = Path(__file__).parent / "fixtures" / "whakoom"
+
+
+def test_whakoom_is_edition_url_detects_subdomain_variants():
+    from wikis import whakoom as wk
+    # Subdominios localizados (en./it./www.) y www.
+    assert wk.is_whakoom_edition_url(
+        "https://www.whakoom.com/ediciones/511364/berserk_deluxe_edition-hardcover"
+    )
+    assert wk.is_whakoom_edition_url(
+        "https://en.whakoom.com/ediciones/511364/berserk_deluxe_edition-hardcover"
+    )
+    assert wk.is_whakoom_edition_url(
+        "http://it.whakoom.com/ediciones/635402/berserk_deluxe_edition-cartonato"
+    )
+    # /comics/ NO debe matchear como edición
+    assert not wk.is_whakoom_edition_url(
+        "https://www.whakoom.com/comics/jx2IT/berserk_deluxe_edition/1"
+    )
+    # URLs no-Whakoom
+    assert not wk.is_whakoom_edition_url("https://example.com/ediciones/123/foo")
+    assert not wk.is_whakoom_edition_url("")
+
+
+def test_whakoom_is_comic_url():
+    from wikis import whakoom as wk
+    assert wk.is_whakoom_comic_url(
+        "https://www.whakoom.com/comics/jx2IT/berserk_deluxe_edition/1"
+    )
+    assert wk.is_whakoom_comic_url(
+        "https://en.whakoom.com/comics/jx2IT/berserk_deluxe_edition/1"
+    )
+    assert not wk.is_whakoom_comic_url(
+        "https://www.whakoom.com/ediciones/511364/berserk_deluxe_edition-hardcover"
+    )
+
+
+def test_whakoom_edition_todos_url_appends_suffix():
+    from wikis import whakoom as wk
+    url = "https://en.whakoom.com/ediciones/511364/berserk_deluxe_edition-hardcover"
+    assert wk.edition_todos_url(url) == url + "/todos"
+    # Idempotente: si ya termina en /todos, no duplica
+    assert wk.edition_todos_url(url + "/todos") == url + "/todos"
+    # Quita trailing slash + query antes de pegar /todos
+    assert (
+        wk.edition_todos_url(url + "/?foo=bar")
+        == url + "/todos"
+    )
+
+
+def _berserk_main_html() -> str:
+    return (_WHAKOOM_FIXTURES / "berserk_deluxe_edition.html").read_text(encoding="utf-8")
+
+
+def _berserk_todos_html() -> str:
+    return (_WHAKOOM_FIXTURES / "berserk_deluxe_edition_todos.html").read_text(encoding="utf-8")
+
+
+def test_whakoom_parse_volume_links_main_page_returns_11():
+    """La página principal /ediciones/ muestra solo los primeros 11 tomos."""
+    from wikis import whakoom as wk
+    vols = wk.parse_volume_links(_berserk_main_html())
+    assert len(vols) == 11
+    first = vols[0]
+    assert first["url"] == "https://www.whakoom.com/comics/jx2IT/berserk_deluxe_edition/1"
+    assert first["title"] == "Berserk Deluxe Edition #1"
+    assert first["issue"] == "1"
+    assert first["image_url"].startswith("https://i1.whakoom.com/small/")
+    # Verificamos que el último de la página principal es el #11
+    assert vols[-1]["issue"] == "11"
+
+
+def test_whakoom_parse_volume_links_todos_returns_14():
+    """La página /todos contiene la lista completa de tomos."""
+    from wikis import whakoom as wk
+    vols = wk.parse_volume_links(_berserk_todos_html())
+    assert len(vols) == 14
+    issues = [v["issue"] for v in vols]
+    assert issues == [str(i) for i in range(1, 15)]
+
+
+def test_whakoom_parse_edition_metadata_berserk():
+    from wikis import whakoom as wk
+    meta = wk.parse_edition_metadata(_berserk_main_html())
+    assert meta["title"] == "Berserk Deluxe Edition"
+    assert meta["publisher"] == "Dark Horse"
+    assert meta["edition_type"] == "Hardcover"
+    assert meta["language"] == "Inglés"
+    assert meta["country"] == "Estados Unidos"
+    assert "Kentaro Miura" in meta["author"]
+    assert meta["image_url"].startswith("https://i1.whakoom.com/large/")
+    assert "Berserk" in meta["description"]
+
+
+def test_whakoom_merge_volume_dicts_dedups_and_fills_gaps():
+    """Mergeo de listas: misma URL aparece en main + todos, no duplica."""
+    from wikis import whakoom as wk
+    main = [
+        {"url": "https://x/1", "title": "A #1", "issue": "1", "image_url": ""},
+        {"url": "https://x/2", "title": "A #2", "issue": "2", "image_url": "img2"},
+    ]
+    todos = [
+        {"url": "https://x/1", "title": "", "issue": "1", "image_url": "img1"},
+        {"url": "https://x/3", "title": "A #3", "issue": "3", "image_url": "img3"},
+    ]
+    merged = wk._merge_volume_dicts(main, todos)
+    assert len(merged) == 3
+    by_url = {v["url"]: v for v in merged}
+    # /1 estaba en main (sin image_url) → todos lo llenó.
+    assert by_url["https://x/1"]["title"] == "A #1"
+    assert by_url["https://x/1"]["image_url"] == "img1"
+    # /2 solo en main, intacto.
+    assert by_url["https://x/2"]["image_url"] == "img2"
+    # /3 solo en todos.
+    assert by_url["https://x/3"]["issue"] == "3"
+
+
+def test_whakoom_expand_edition_with_prefetched_html_yields_14_candidates():
+    """Test end-to-end de expansión sin red: pasamos los dos HTMLs pre-fetched."""
+    from wikis import whakoom as wk
+    cands = wk.expand_whakoom_edition(
+        "https://en.whakoom.com/ediciones/511364/berserk_deluxe_edition-hardcover",
+        session=None,  # no se usa porque pasamos HTMLs pre-cargados
+        edition_html=_berserk_main_html(),
+        todos_html=_berserk_todos_html(),
+        fetch_todos=True,
+    )
+    assert len(cands) == 14
+    # Todos los candidates apuntan a /comics/, no a /ediciones/
+    for c in cands:
+        assert "/comics/" in c.url
+        assert "/ediciones/" not in c.url
+    # Metadata edición-nivel heredada
+    first = cands[0]
+    assert first.publisher == "Dark Horse"
+    assert first.language == "Inglés"
+    assert first.country == "Estados Unidos"
+    assert "Kentaro Miura" in first.author
+    # Título por tomo
+    titles = [c.title for c in cands]
+    assert "Berserk Deluxe Edition #1" in titles
+    assert "Berserk Deluxe Edition #14" in titles
+    # Cover individual del tomo, no la general de la edición
+    assert all(c.image_url.startswith("https://i1.whakoom.com/") for c in cands)
+    # Diferentes covers entre tomos (al menos el #1 y el #2 difieren)
+    urls_by_issue = {c.url.split("/")[-1]: c.image_url for c in cands}
+    assert urls_by_issue["1"] != urls_by_issue["2"]
+
+
+def test_whakoom_expand_edition_returns_empty_when_no_volumes():
+    """Edición sin tomos NI fallback one-shot → 0 candidates."""
+    from wikis import whakoom as wk
+    empty_html = """<html><head>
+        <meta property="og:title" content="Empty Edition">
+    </head><body><h1>Empty Edition</h1></body></html>"""
+    cands = wk.expand_whakoom_edition(
+        "https://www.whakoom.com/ediciones/99/empty",
+        session=None,
+        edition_html=empty_html,
+        todos_html="",
+        fetch_todos=False,
+    )
+    assert cands == []
+
+
+def test_whakoom_expand_oneshot_via_login_returnurl():
+    """One-shot: /ediciones/ sin <li id=comic> → fallback a /login?ReturnUrl=/comics/."""
+    from wikis import whakoom as wk
+    oneshot_html = """<html><head>
+        <meta property="og:title" content="Edición Especial Limitada">
+        <meta property="og:image" content="https://i1.whakoom.com/large/xx.jpg">
+        <meta property="og:description" content="Edición coleccionista numerada.">
+    </head><body>
+        <h1>Edición Especial Limitada</h1>
+        <p class="publisher"><a href="/publisher/1/norma">Norma Editorial</a></p>
+        <p class="actions">
+            <a href="/login?ReturnUrl=/comics/abc123/edicion_especial_limitada"
+               class="bt">Log in to add</a>
+        </p>
+        <ul class="info-summary">
+            <li><span class="value flag" style="background-image:url(https://i1.whakoom.com/lang/1.png)"></span>
+                <span class="title">Spanish (Spain)</span></li>
+        </ul>
+    </body></html>"""
+    cands = wk.expand_whakoom_edition(
+        "https://www.whakoom.com/ediciones/77/edicion_especial_limitada",
+        session=None,
+        edition_html=oneshot_html,
+        todos_html="",
+        fetch_todos=False,
+    )
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.url == "https://www.whakoom.com/comics/abc123/edicion_especial_limitada"
+    assert c.title == "Edición Especial Limitada"
+    assert c.publisher == "Norma Editorial"
+    assert c.language == "Español"
+    assert c.country == "España"
+    assert c.image_url == "https://i1.whakoom.com/large/xx.jpg"
+
+
+def test_whakoom_extract_oneshot_comic_url_handles_no_match():
+    from wikis import whakoom as wk
+    assert wk._extract_oneshot_comic_url("<html>nothing</html>") == ""
+    # /login sin ReturnUrl=/comics — no debe matchear
+    assert wk._extract_oneshot_comic_url(
+        '<a href="/login?ReturnUrl=/profile">x</a>'
+    ) == ""
+
+
+# --- Shopify variants expansion (Sprint 4.x) --------------------------------
+#
+# Algunos sitios Shopify (Dark Horse Direct, etc.) modelan una serie de
+# tomos como UN producto con N variants ("Volume 1 / 2 / 3"). Igual que
+# Whakoom /ediciones/, hay que expandir a N items.
+
+_SHOPIFY_FIXTURES = Path(__file__).parent / "fixtures" / "shopify"
+
+
+def _dh_hellsing_html() -> str:
+    return (_SHOPIFY_FIXTURES / "dh_hellsing_deluxe.html").read_text(encoding="utf-8")
+
+
+def test_shopify_extract_variants_from_json():
+    from shopify_variants import extract_shopify_variants
+    vs = extract_shopify_variants(_dh_hellsing_html())
+    assert len(vs) == 3
+    titles = [v["title"] for v in vs]
+    assert titles == ["Volume 1", "Volume 2", "Volume 3"]
+    ids = [v["id"] for v in vs]
+    assert len(set(ids)) == 3
+    assert all(v["sku"].startswith("3002-") for v in vs)
+
+
+def test_shopify_is_volume_variants_detects_keywords():
+    from shopify_variants import is_volume_variants
+    assert is_volume_variants([
+        {"title": "Volume 1"}, {"title": "Volume 2"}, {"title": "Volume 3"},
+    ])
+    assert is_volume_variants([{"title": "Tome 1"}, {"title": "Tome 2"}])
+    assert is_volume_variants([{"title": "Tomo 1"}, {"title": "Tomo 2"}])
+    assert is_volume_variants([{"title": "#1"}, {"title": "#2"}])
+    assert is_volume_variants([{"title": "第1巻"}, {"title": "第2巻"}])
+    # Variants no-volumen → False
+    assert not is_volume_variants([
+        {"title": "Red"}, {"title": "Blue"}, {"title": "Green"},
+    ])
+    assert not is_volume_variants([{"title": "S"}, {"title": "M"}, {"title": "L"}])
+    assert not is_volume_variants([{"title": "Default Title"}])
+    assert not is_volume_variants([{"title": "Volume 1"}])
+    assert not is_volume_variants([])
+
+
+def test_shopify_build_variant_url_preserves_path():
+    from shopify_variants import build_variant_url
+    assert (
+        build_variant_url("https://x.com/products/foo", "12345")
+        == "https://x.com/products/foo?variant=12345"
+    )
+    # URL con tracking de Shopify (_pos/_sid/_ss): lo descarta
+    url = "https://www.darkhorsedirect.com/products/foo?_pos=1&_sid=abc&_ss=r"
+    assert (
+        build_variant_url(url, "99")
+        == "https://www.darkhorsedirect.com/products/foo?variant=99"
+    )
+    # URL con variant existente: lo reemplaza
+    assert (
+        build_variant_url("https://x.com/products/foo?variant=111", "222")
+        == "https://x.com/products/foo?variant=222"
+    )
+
+
+def test_shopify_format_variant_price_handles_cents():
+    from shopify_variants import format_variant_price
+    assert format_variant_price(4499) == "$44.99"
+    assert format_variant_price("4499") == "$44.99"
+    assert format_variant_price("29.99") == "$29.99"
+    assert format_variant_price(29.99) == "$29.99"
+    assert format_variant_price(None) == ""
+    assert format_variant_price("") == ""
+
+
+def test_shopify_extract_variants_returns_empty_for_non_shopify():
+    from shopify_variants import extract_shopify_variants
+    assert extract_shopify_variants("") == []
+    assert extract_shopify_variants("<html><body>plain</body></html>") == []
+
+
+# --- Whakoom publisher URL expansion ----------------------------------------
+
+# --- series_aliases (multilingual canonical series resolver, gotcha #20) ---
+
+def test_canonical_series_key_remaps_known_aliases():
+    """Aliases YAML consolida traducciones a series_key canónico."""
+    from series_aliases import canonical_series_key
+    # Demon Slayer en todas sus formas
+    cases = [
+        # (title, current_sk, current_sd) → (expected_sk, expected_sd_contains)
+        ('Kimetsu no Yaiba Vol 5', 'kimetsu-no-yaiba', 'Kimetsu no Yaiba'),
+        ('鬼滅の刃 特装版', '鬼滅の刃', '鬼滅の刃'),
+        ("L'Attaque des Titans 1", "l-attaque-des-titans", "L'Attaque des Titans"),
+        ('Les Carnets de l\'Apothicaire 5', 'apothicaire', "Les Carnets de l'Apothicaire"),
+        ('Frieren: Beyond Journey\'s End 1', 'frieren-beyond-journey-s-end', "Frieren: Beyond Journey's End"),
+        ("L'Atelier des Sorciers 12", 'atelier-des-sorciers', "L'Atelier des Sorciers"),
+    ]
+    for title, sk, sd in cases:
+        new_sk, new_sd = canonical_series_key(title, sk, sd)
+        assert new_sk != sk, f"Should remap {sk!r} for title {title!r}"
+        # Sanity: el new_sd debe ser human-readable
+        assert new_sd, f"Expected non-empty display for {sk!r}"
+
+
+def test_canonical_series_key_preserves_canonical():
+    """Si el series_key ya es canónico, devuelve sin tocar."""
+    from series_aliases import canonical_series_key
+    for sk in ('demon-slayer', 'attack-on-titan', 'one-piece', 'naruto', 'berserk'):
+        new_sk, _ = canonical_series_key('any title', sk, 'Any Display')
+        assert new_sk == sk
+
+
+def test_canonical_series_key_no_false_positives_for_unrelated_series():
+    """`Monster Musume` no debe consolidarse en `Monster` (Urasawa) por sub-string."""
+    from series_aliases import canonical_series_key
+    # Monster Musume es una serie distinta — NO debe ser remapeada a "monster".
+    new_sk, _ = canonical_series_key(
+        'Monster Musume — Vol.5 - variant',
+        'monster-musume',
+        'Monster Musume',
+    )
+    assert new_sk == 'monster-musume', f"Got {new_sk}"
+    # Naruto Gaiden tampoco debe colapsarse en Naruto
+    new_sk, _ = canonical_series_key(
+        'Naruto Gaiden Vol 1', 'naruto-gaiden', 'Naruto Gaiden',
+    )
+    assert new_sk == 'naruto-gaiden'
+
+
+# --- derive_series_metadata: heurística del scraper -----------------------
+
+def test_derive_series_metadata_happy_path():
+    """El heurístico detecta serie + edición + volumen para títulos comunes."""
+    c = mw.Candidate(
+        title="Berserk Deluxe Edition Vol. 1",
+        url="x", source="X", source_url="x", country="", language="",
+        publisher="Dark Horse Comics", source_class="", tags=[],
+        description="", signal_types=["deluxe", "hardcover"],
+    )
+    md = mw.derive_series_metadata(c)
+    assert md["series_key"] == "berserk"
+    assert md["volume"] == "1"
+    assert md["edition_key"] == "berserk-darkhorse-deluxe"
+    assert "Deluxe" in md["edition_display"]
+
+
+def test_derive_series_metadata_returns_empty_for_ambiguous():
+    """Casos donde el heurístico falla obvio → devuelve dict vacío."""
+    # Caso JP sin marker de volumen
+    c = mw.Candidate(
+        title="鬼滅の刃 23 特装版", url="x", source="X", source_url="x",
+        country="", language="", publisher="Shueisha", source_class="",
+        tags=[], description="", signal_types=["limited"],
+    )
+    md = mw.derive_series_metadata(c)
+    assert md == {} or not md.get("series_key")
+
+    # Caso "Series N" sin marker
+    c = mw.Candidate(
+        title="Atomic Robo 5", url="x", source="X", source_url="x",
+        country="", language="", publisher="IDW", source_class="",
+        tags=[], description="", signal_types=[],
+    )
+    md = mw.derive_series_metadata(c)
+    assert md == {} or not md.get("series_key")
+
+
+def test_publisher_slug_normalizes_variants():
+    """Variantes de un mismo publisher mapean al mismo slug."""
+    assert mw._publisher_slug("Dark Horse Comics") == "darkhorse"
+    assert mw._publisher_slug("Glénat Manga") == "glenat"
+    assert mw._publisher_slug("Glenat") == "glenat"
+    assert mw._publisher_slug("Panini Manga") == "panini"
+    assert mw._publisher_slug("Planet Manga BR") == "panini"
+    assert mw._publisher_slug("Ivrea Argentina") == "ivrea-ar"
+    assert mw._publisher_slug("Ivrea") == "ivrea"
+    assert mw._publisher_slug("Crunchyroll Kaze") == "kaze"
+    assert mw._publisher_slug("Kazé Manga") == "kaze"
+    assert mw._publisher_slug("") == "unknown"
+    assert mw._publisher_slug("Obscure Publisher") == "unknown"
+
+
+def test_candidate_to_json_preserves_title_original():
+    """`candidate_to_json` SIEMPRE escribe `title_original` con el title
+    scrapeado (cleaned). El skill `/standardize-catalog` después puede
+    sobrescribir `title` con el standardized pero preserva `title_original`.
+    """
+    c = mw.Candidate(
+        title="鬼滅の刃 23 特装版",
+        url="x", source="JP - Rakuten", source_url="y",
+        country="Japón", language="Japonés", publisher="Shueisha",
+        source_class="retailer", tags=[], description="",
+        signal_types=["limited"],
+    )
+    row = mw.candidate_to_json(c)
+    assert row["title_original"] == "鬼滅の刃 23 特装版"
+    # title también lleva el original cuando el scraper no estandariza
+    assert row["title"] == "鬼滅の刃 23 特装版"
+
+
+def test_candidate_to_json_assigns_rough_metadata():
+    """`candidate_to_json` debe poblar series_key heurísticamente cuando
+    el Candidate no los tiene seteados. `standardized_at` queda vacío
+    (el skill /standardize-catalog lo setea después).
+    """
+    c = mw.Candidate(
+        title="One Piece Vol. 100 Edición Coleccionista",
+        url="x", source="ES - Planeta", source_url="y",
+        country="España", language="Español",
+        publisher="Planeta Cómic", source_class="retailer",
+        tags=[], description="",
+        signal_types=["collector", "limited"],
+    )
+    row = mw.candidate_to_json(c)
+    assert row.get("series_key") == "one-piece"
+    assert row.get("volume") == "100"
+    assert row.get("edition_key", "").startswith("one-piece-planeta-")
+    assert not row.get("standardized_at")
+
+
+def test_canonical_series_key_returns_input_when_no_match():
+    """Si la serie no está en aliases.yml, devuelve el input sin tocar."""
+    from series_aliases import canonical_series_key
+    new_sk, new_sd = canonical_series_key(
+        'Random Obscure Manga Vol 1',
+        'random-obscure-manga',
+        'Random Obscure Manga',
+    )
+    assert new_sk == 'random-obscure-manga'
+    assert new_sd == 'Random Obscure Manga'
+
+
+def test_is_canonical_key():
+    """is_canonical_key devuelve True solo para keys del YAML."""
+    from series_aliases import is_canonical_key
+    assert is_canonical_key('berserk') is True
+    assert is_canonical_key('demon-slayer') is True
+    assert is_canonical_key('one-piece') is True
+    # Series NO canónicas
+    assert is_canonical_key('atelier-of-witch-hat') is False  # es alias, no canonical
+    assert is_canonical_key('random-new-series') is False
+    assert is_canonical_key('') is False
+
+
+def test_log_unmapped_series_appends_only_non_canonical(tmp_path, monkeypatch):
+    """log_unmapped_series escribe solo series NO canónicas, dedupea por run."""
+    import series_aliases as sa
+    fake_log = tmp_path / 'unmapped.jsonl'
+    monkeypatch.setattr(sa, '_UNMAPPED_FILE', fake_log)
+    sa.reset_unmapped_run_state()
+
+    # 1) Series canónica → NO se loguea
+    sa.log_unmapped_series('berserk', 'Berserk', 'Berserk Deluxe 1', 'http://x/1', 'src')
+    assert not fake_log.exists() or fake_log.read_text() == ''
+
+    # 2) Series NO canónica → SÍ se loguea (1 línea)
+    sa.log_unmapped_series('new-series', 'New Series', 'New Series Vol 1', 'http://x/2', 'src')
+    assert fake_log.exists()
+    lines = fake_log.read_text().strip().splitlines()
+    assert len(lines) == 1
+    import json as _json
+    record = _json.loads(lines[0])
+    assert record['series_key'] == 'new-series'
+    assert record['sample_title'] == 'New Series Vol 1'
+
+    # 3) Dedup: misma series_key, segunda llamada NO appendea
+    sa.log_unmapped_series('new-series', 'New Series', 'New Series Vol 2', 'http://x/3', 'src')
+    lines = fake_log.read_text().strip().splitlines()
+    assert len(lines) == 1  # sigue siendo 1
+
+    # 4) Series_key vacío → NO se loguea
+    sa.log_unmapped_series('', '', '', '', '')
+    lines = fake_log.read_text().strip().splitlines()
+    assert len(lines) == 1
+
+    # 5) Reset → segunda corrida puede re-loguear
+    sa.reset_unmapped_run_state()
+    sa.log_unmapped_series('new-series', 'New Series', 'New Series Vol 4', 'http://x/4', 'src')
+    lines = fake_log.read_text().strip().splitlines()
+    assert len(lines) == 2  # ahora hay 2 líneas, segunda del segundo run
+
+
+def test_whakoom_is_publisher_url():
+    from wikis import whakoom as wk
+    assert wk.is_whakoom_publisher_url(
+        "https://www.whakoom.com/publisher/41878/edicion_limitada"
+    )
+    assert wk.is_whakoom_publisher_url(
+        "https://en.whakoom.com/publisher/12345/dark_horse"
+    )
+    assert not wk.is_whakoom_publisher_url(
+        "https://www.whakoom.com/ediciones/123/x"
+    )
+    assert not wk.is_whakoom_publisher_url("https://example.com/publisher/1/x")
+    assert not wk.is_whakoom_publisher_url("")
+
+
+def test_whakoom_expand_publisher_extracts_ediciones_then_calls_edition_expander():
+    """Pasamos publisher_html pre-fetched + monkeypatch a expand_whakoom_edition
+    para no hacer HTTP real ni fetching de cada edición."""
+    from wikis import whakoom as wk
+    publisher_html = """<html><body>
+        <h1>Edición Limitada</h1>
+        <a href="/ediciones/100/foo-bar">Foo</a>
+        <a href="/ediciones/100/foo-bar/todos">dup id 100</a>
+        <a href="/ediciones/200/baz">Baz</a>
+        <a href="/comics/abc/foo/1">not edition</a>
+    </body></html>"""
+    called_with: list[str] = []
+    orig = wk.expand_whakoom_edition
+    def fake_expand(ed_url, session, **kw):
+        called_with.append(ed_url)
+        return []
+    wk.expand_whakoom_edition = fake_expand
+    try:
+        wk.expand_whakoom_publisher_url(
+            "https://www.whakoom.com/publisher/41878/x",
+            session=None, sleep_seconds=0,
+            publisher_html=publisher_html,
+        )
+    finally:
+        wk.expand_whakoom_edition = orig
+    # Dedupea id 100 (aparece 2 veces) + visita id 200 — total 2 llamadas.
+    assert len(called_with) == 2
+    assert any("/ediciones/100/" in u for u in called_with)
+    assert any("/ediciones/200/" in u for u in called_with)
+
+
 def test_whakoom_detects_cloudflare_challenge():
     from wikis import whakoom as wk
     challenges = [
-        '<html><head><script>cf-chl-bypass</script></head></html>',
-        '<html><body>Just a moment...<script>cf_challenge</script></body></html>',
+        '<html><head><meta name="cf-chl-bypass" content="x"></head></html>',
+        '<html><body>Just a moment...<noscript>verify</noscript></body></html>',
         '<html><body>Checking your browser before accessing</body></html>',
-        '<html><body><div class="challenge-platform">x</div></body></html>',
+        '<html><body><script>window.__cf_chl_rt_tk="abc"</script></body></html>',
+        '<html><body><script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script></body></html>',
     ]
     for c in challenges:
         assert wk._looks_like_cf_challenge(c), f"Should detect challenge: {c[:50]!r}"
     # Páginas legítimas NO matchean
     assert not wk._looks_like_cf_challenge("<html><body>normal content</body></html>")
     assert not wk._looks_like_cf_challenge("")
+    # Páginas reales protegidas por CF cargan el JSD bot-detection script
+    # desde /cdn-cgi/challenge-platform/scripts/jsd/main.js — NO es un challenge.
+    # Antes este caso era un falso positivo que rompía todas las requests.
+    legit_with_jsd = (
+        '<html><body>real content<script src="/cdn-cgi/'
+        'challenge-platform/scripts/jsd/main.js"></script></body></html>'
+    )
+    assert not wk._looks_like_cf_challenge(legit_with_jsd)
     # Páginas grandes (>50KB) tampoco — son contenido real aunque mencionen palabras.
     big = "<html>" + ("x" * 60000) + "</html>"
     assert not wk._looks_like_cf_challenge(big)
@@ -2029,13 +2644,88 @@ def test_is_collectible_edition_accepts_signal_types_special():
         ("Berserk Master Edition Beherit Limited 1", ["limited", "premium_format"]),
         ("Sailor Moon Eternal Edition Volume 5", ["premium_format"]),
         ("Attack on Titan Hardcover Vol. 1", ["hardcover"]),
-        ("Berserk Omnibus Vol. 1", ["omnibus"]),
+        # Omnibus solo NO califica; con un qualifier premium SÍ.
+        # (Berserk Omnibus solito quedó rechazado en el siguiente test.)
+        ("Berserk Omnibus Deluxe Hardcover Vol. 1", ["omnibus", "deluxe", "hardcover"]),
+        ("Lone Wolf & Cub Omnibus – Cofanetto 3", ["omnibus", "box_set"]),
         ("Naruto Special Bundle Vol 1-5", ["bundle"]),
         ("限定版 ONE PIECE 100", ["limited"]),
     ]
     for title, sigs in cases:
         ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
         assert ok, f"Should accept (signal): {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_rejects_plain_omnibus():
+    """User decidió (2026-05-22): omnibus / N-in-1 sin qualifier premium = NO.
+
+    Es básicamente un tomo más grueso, no una edición coleccionable.
+    """
+    plain_omnibus_cases = [
+        ("Berserk Omnibus Vol. 1", ["omnibus"]),
+        ("Bestiarius Omnibus", ["omnibus"]),
+        ("One Piece (Omnibus Edition), Vol. 36", ["omnibus"]),
+        ("Akatsuki no Yona (3 en 1)", ["omnibus"]),
+        ("Haikyuu!! 3 en 1", ["omnibus"]),
+        ("Eyeshield 21 (Edición 3 en 1) nº1 (de 13)", ["omnibus"]),
+        ("Bleach 3 en 1 #14", ["omnibus"]),
+        ("CUATRO FANTÁSTICOS DE BYRNE (MARVEL OMNIBUS)", ["omnibus"]),
+    ]
+    for title, sigs in plain_omnibus_cases:
+        ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
+        assert not ok, f"Should REJECT plain omnibus: {title!r} (reason={reason})"
+
+
+def test_is_collectible_edition_accepts_omnibus_with_premium_qualifier():
+    """Omnibus + (hardcover|deluxe|limited|variant_cover|box_set|extras) = SÍ.
+
+    `is_collectible_edition` exige "evidencia de producto físico" — un
+    volumen en el title, ISBN, o URL canónica. Estos casos usan título
+    con volumen para satisfacer esa guarda.
+    """
+    cases = [
+        ("Lone Wolf & Cub Omnibus Vol. 3 – Cofanetto", ["omnibus", "box_set"]),
+        ("Marvel Now! Deluxe. Secret Wars: Integral Vol 1", ["omnibus", "deluxe"]),
+        ("Utena Edición Integral Vol. 1 - Cofre de 2 tomos", ["hardcover", "omnibus", "box_set"]),
+        ("17 Años (Edición Integral) Vol 1 - (1ª Edición Limitada)", ["limited", "omnibus"]),
+        ("Berserk Omnibus Variant Cover Vol. 1", ["omnibus", "variant_cover"]),
+        ("Tokko (Edición Integral) Vol. 1 - (Portada Alternativa)", ["omnibus", "variant_cover"]),
+    ]
+    for title, sigs in cases:
+        ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
+        assert ok, f"Should accept omnibus+premium: {title!r} (reason={reason})"
+
+    # Casos como "Look Back (Integral) (Castellano)" funcionan en
+    # producción gracias al product_type=artbook (que es intrinsecamente
+    # coleccionable) o por la URL canónica del producto. Verificamos
+    # ambas vías:
+    ok, _ = mw.is_collectible_edition(
+        "Look Back (Integral) (Castellano)", "", ["hardcover", "omnibus"],
+        "artbook",  # product_type artbook salva
+    )
+    assert ok
+    ok, _ = mw.is_collectible_edition(
+        "Goodbye Eri (Integral) (Castellano)", "", ["hardcover", "omnibus"],
+        "manga",
+        url="https://www.norma.com/producto/goodbye-eri-integral-edition-vol-1",
+    )
+    assert ok
+
+
+def test_omnibus_edition_does_not_trigger_lore_edition_x_edition_regex():
+    """`_GENERIC_X_EDITION_PATTERN` excluye 'Omnibus' tras gotcha #18.
+
+    Antes "Omnibus Edition" disparaba lore_edition (que está en
+    COLLECTIBLE_EDITION_SIGNAL_TYPES), permitiéndole entrar al catálogo
+    por puerta trasera. Ahora 'Omnibus Edition' no matchea y solo "Tarot
+    Edition", "Beherit Edition", "Gold Edition", etc. siguen activos.
+    """
+    # No debe matchear "Omnibus":
+    assert mw._GENERIC_X_EDITION_PATTERN.search("One Piece (Omnibus Edition), Vol. 36") is None
+    # SIGUE matcheando ediciones lore reales:
+    assert mw._GENERIC_X_EDITION_PATTERN.search("Naruto Gold Edition N.30") is not None
+    assert mw._GENERIC_X_EDITION_PATTERN.search("Berserk Tarot Edition") is not None
+    assert mw._GENERIC_X_EDITION_PATTERN.search("Witcher Library Edition Hardcover") is not None
 
 
 def test_is_collectible_edition_accepts_first_edition_extras():
@@ -2751,26 +3441,26 @@ def test_cluster_key_two_isbns_distinct():
 def test_cluster_key_fuzzy_merges_same_series_volume_variant():
     """Dos items sin ISBN del mismo idioma + serie + vol + variant → mismo key."""
     a = {"title": "ONE PIECE n. 100 CELEBRATION EDITION", "language": "Italiano",
-         "publisher": "Star Comics", "signal_types": ["celebration"], "url": "http://a"}
+         "publisher": "Star Comics", "signal_types": ["lore_edition"], "url": "http://a"}
     b = {"title": "One Piece Celebration Edition Vol. 100", "language": "Italiano",
-         "publisher": "Star Comics", "signal_types": ["celebration"], "url": "http://b"}
+         "publisher": "Star Comics", "signal_types": ["lore_edition"], "url": "http://b"}
     assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
 
 
 def test_cluster_key_different_languages_dont_merge():
     a = {"title": "One Piece vol. 100", "language": "Italiano", "publisher": "Star",
-         "signal_types": ["celebration"], "url": "http://a"}
+         "signal_types": ["lore_edition"], "url": "http://a"}
     b = {"title": "One Piece tomo 100", "language": "Español", "publisher": "Planeta",
-         "signal_types": ["celebration"], "url": "http://b"}
+         "signal_types": ["lore_edition"], "url": "http://b"}
     assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
 
 
 def test_cluster_key_different_variants_dont_merge():
-    """OP100 normal y OP100 Celebration son productos distintos."""
+    """OP100 normal y OP100 Celebration son productos distintos (distinto tier)."""
     a = {"title": "One Piece vol. 100", "language": "Italiano",
          "publisher": "Star", "signal_types": [], "url": "http://a"}
     b = {"title": "One Piece vol. 100 Celebration", "language": "Italiano",
-         "publisher": "Star", "signal_types": ["celebration"], "url": "http://b"}
+         "publisher": "Star", "signal_types": ["lore_edition"], "url": "http://b"}
     assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
 
 
@@ -2817,6 +3507,98 @@ def test_cluster_key_japanese_preserves_kanji():
     assert "ワンピース" in mw.derive_cluster_key(a)
 
 
+# ---------------------------------------------------------------------------
+# _variant_tier + cluster_key tolerance to signal_type variance across sources.
+#
+# Distintas fuentes producen signal_types ligeramente distintos para el mismo
+# producto físico. derive_cluster_key colapsa esa varianza eligiendo solo el
+# tier MÁS ESPECÍFICO de cada item (artbook > box_set > lore_edition >
+# variant_cover > deluxe > limited > special > ""). Items del mismo tier
+# mergean. Origen real del problema: One Piece Vol.98 Celebration Edition
+# aparecía DOS veces (Star Comics + Mangavariant) porque sus signal_types
+# divergían ([collector, lore_edition] vs [bonus, special_edition, collector,
+# lore_edition]) — ambos quedan ahora en tier='lore_edition'.
+# ---------------------------------------------------------------------------
+
+
+def test_variant_tier_picks_most_specific():
+    assert mw._variant_tier([]) == ""
+    assert mw._variant_tier(["collector"]) == "special"
+    assert mw._variant_tier(["bonus"]) == "special"
+    # lore_edition rankea por encima de special — ediciones temáticas
+    # ("Celebration", "Anniversary") son release-name específico.
+    assert mw._variant_tier(["collector", "lore_edition"]) == "lore_edition"
+    assert mw._variant_tier(["bonus", "special_edition", "collector",
+                              "lore_edition"]) == "lore_edition"
+    # deluxe rankea por encima de limited
+    assert mw._variant_tier(["limited", "deluxe"]) == "deluxe"
+    # box_set domina a deluxe/limited (es producto-class distinto)
+    assert mw._variant_tier(["limited", "box_set", "deluxe"]) == "box_set"
+    # variant_cover domina a deluxe (cover variants ≠ formato deluxe)
+    assert mw._variant_tier(["deluxe", "variant_cover"]) == "variant_cover"
+    # signal_type no mapeado → "" (tomo regular)
+    assert mw._variant_tier(["something_unknown"]) == ""
+
+
+def test_cluster_key_one_piece_98_celebration_merges_across_sources():
+    """Caso real reportado por el owner: One Piece Vol.98 Celebration
+    Edition aparecía DOS veces (Star Comics search + Mangavariant) por
+    divergencia de signal_types. Con el tier-based cluster_key deben mergear."""
+    star_comics = {
+        "title": "ONE PIECE n. 98 CELEBRATION EDITION",
+        "url": "https://www.starcomics.com/fumetto/one-piece-98-celebration-edition",
+        "language": "Italiano",
+        "publisher": "Star Comics",
+        "signal_types": ["collector", "lore_edition"],
+        "isbn": "",
+    }
+    mangavariant = {
+        "title": "One Piece — Vol.98 - Celebration edition",
+        "url": "https://mangavariant.com/variant/one-piece/vol-98-celebration-edition/",
+        "language": "Italiano",
+        "publisher": "Star Comics",
+        "signal_types": ["bonus", "special_edition", "collector", "lore_edition"],
+        "isbn": "",
+    }
+    sc_key = mw.derive_cluster_key(star_comics)
+    mv_key = mw.derive_cluster_key(mangavariant)
+    assert sc_key == mv_key, (
+        f"Expected same cluster_key:\n  star_comics: {sc_key}\n  mangavariant: {mv_key}"
+    )
+    assert sc_key.startswith("fuzzy:italiano|one piece|98|lore_edition|star comics"), sc_key
+
+
+def test_cluster_key_tolerates_extra_lower_priority_signals():
+    """Item A con [lore_edition] y B con [lore_edition, bonus, collector] del
+    mismo producto deben mergear (todos colapsan a tier='lore_edition')."""
+    a = {"title": "Naruto n. 12 anniversary", "language": "Italiano",
+         "publisher": "Panini", "signal_types": ["lore_edition"], "url": "http://a"}
+    b = {"title": "Naruto Vol. 12 Anniversary Edition", "language": "Italiano",
+         "publisher": "Panini",
+         "signal_types": ["lore_edition", "bonus", "collector"],
+         "url": "http://b"}
+    assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+
+
+def test_cluster_key_deluxe_does_not_merge_with_lore_edition():
+    """Pero distintos tiers SIGUEN sin mergear: deluxe vs lore_edition son
+    productos conceptualmente distintos del mismo volumen."""
+    a = {"title": "One Piece Vol. 100 Deluxe", "language": "Español",
+         "publisher": "Planeta", "signal_types": ["deluxe"], "url": "http://a"}
+    b = {"title": "One Piece Vol. 100 Celebration", "language": "Español",
+         "publisher": "Planeta", "signal_types": ["lore_edition"], "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_normalize_series_strips_trailing_punctuation():
+    """Bug previo: 'One Piece — Vol.98 - Celebration edition' dejaba
+    'one piece .' (punto residual) porque _SERIES_STRIP_RE removía 'vol'
+    sin tocar el '.' que seguía, y la pasada de punctuation→space no
+    incluía el '.'."""
+    title = "One Piece — Vol.98 - Celebration edition"
+    assert mw._normalize_series_name(title, "98") == "one piece"
+
+
 def test_cluster_key_strips_brackets_to_avoid_noise():
     """Contenido entre corchetes (típico ruido de retailer JP) no afecta key."""
     a = {"title": "Naruto Vol. 5 Deluxe (BeBoy Comics Deluxe)", "language": "Japonés",
@@ -2824,6 +3606,140 @@ def test_cluster_key_strips_brackets_to_avoid_noise():
     b = {"title": "Naruto Vol. 5 Deluxe", "language": "Japonés",
          "publisher": "集英社", "signal_types": ["deluxe"], "url": "http://b"}
     assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+
+
+# ---------------------------------------------------------------------------
+# Mangavariant wiki parser (scripts/wikis/mangavariant.py).
+#
+# La detail page expone los campos en un bloque <div class="variant_info_block">.
+# El título del item se construye combinando la serie (tag Manga del bloque)
+# con el og:title (que solo trae el nombre de la edición). NO pasa por
+# is_likely_manga / is_collectible_edition: mangavariant es 100% curado.
+# ---------------------------------------------------------------------------
+
+_MV_FIXTURES = Path(__file__).parent / "fixtures" / "mangavariant"
+
+
+def _mv_html(name: str) -> str:
+    return (_MV_FIXTURES / name).read_text(encoding="utf-8")
+
+
+def test_mangavariant_parse_one_piece_natsucomi():
+    """Variant sin volumen explícito (anniversary edition). País JP, Shueisha."""
+    from wikis import mangavariant as mv
+    cand = mv.parse_variant_detail(
+        _mv_html("one_piece_natsucomi.html"),
+        "https://mangavariant.com/variant/one-piece/10th-anniversary-natsucomi-variant/",
+    )
+    assert cand is not None
+    assert cand.title == "One Piece — 10th anniversary - Natsucomi variant"
+    assert cand.country == "Japón"
+    assert cand.language == "Japonés"
+    assert cand.publisher == "Shueisha"
+    assert cand.release_date == "2007"
+    assert cand.image_url.endswith(".jpg")
+    assert "Comiket" in cand.description or "Natsucomi" in cand.description
+    # Tags discriminantes
+    assert "country:jp" in cand.tags
+    assert "rarity:uncommon" in cand.tags
+    assert "where:comiket" in cand.tags
+    assert "mv-series:one-piece" in cand.tags
+    assert "mv-tag:pvc" in cand.tags
+
+
+def test_mangavariant_parse_aot_crunchyroll():
+    """Variant con volumen explícito. País IT, Planet Manga."""
+    from wikis import mangavariant as mv
+    cand = mv.parse_variant_detail(
+        _mv_html("aot_vol34_crunchyroll.html"),
+        "https://mangavariant.com/variant/attack-on-titan/vol-34-crunchyroll-variant/",
+    )
+    assert cand is not None
+    assert cand.title == "Attack on Titan — Vol.34 - Crunchyroll variant"
+    assert cand.country == "Italia"
+    assert cand.language == "Italiano"
+    assert cand.publisher == "Planet Manga"
+    assert cand.release_date == "2024"
+    assert "country:it" in cand.tags
+    assert "rarity:common" in cand.tags
+    # Sin "Where" en esta variant → no debe agregarse where:* tag
+    assert not any(t.startswith("where:") for t in cand.tags)
+    # El volumen embebido en el title habilita cluster_key fuzzy aguas abajo
+    assert mw._extract_volume(cand.title) == "34"
+
+
+def test_mangavariant_parse_steelbox_collection():
+    """Variant tipo bundle/steelbox: signal_types debe captar 'limited'."""
+    from wikis import mangavariant as mv
+    cand = mv.parse_variant_detail(
+        _mv_html("assassination_steelbox.html"),
+        "https://mangavariant.com/variant/assassination-classroom/vol-1-steelbox-collection/",
+    )
+    assert cand is not None
+    assert "Steelbox" in cand.title
+    assert cand.country == "Italia"
+    # Steelbox + limited edition → debería disparar al menos limited o variant_cover
+    assert any(s in cand.signal_types for s in ("limited", "variant_cover", "box_set"))
+    assert "where:steelbox-collection" in cand.tags
+
+
+def test_mangavariant_parse_rejects_non_variant_html():
+    """HTML cualquiera (sin variant_info_block) debe devolver None."""
+    from wikis import mangavariant as mv
+    assert mv.parse_variant_detail("", "https://x/") is None
+    assert mv.parse_variant_detail("<html><body>nada</body></html>", "https://x/") is None
+    # HTML largo pero sin variant_info_block
+    big = "<html>" + ("<p>foo</p>" * 500) + "</html>"
+    assert mv.parse_variant_detail(big, "https://x/") is None
+
+
+def test_mangavariant_strips_og_title_site_suffix():
+    """El sufijo ' - mangavariant.com' del og:title se quita."""
+    from wikis import mangavariant as mv
+    assert mv._strip_og_suffix("Foo bar - mangavariant.com") == "Foo bar"
+    assert mv._strip_og_suffix("Foo - mangavariant.com  ") == "Foo"
+    assert mv._strip_og_suffix("Foo") == "Foo"
+    assert mv._strip_og_suffix("") == ""
+
+
+def test_mangavariant_country_map_covers_known_slugs():
+    """Los 13 country slugs de Yoast deben tener mapping (nombre_es, idioma_es)."""
+    from wikis import mangavariant as mv
+    expected = {"ar", "br", "fr", "de", "it", "jp", "mexico", "es",
+                "tw", "th", "uk", "us", "vn"}
+    assert expected.issubset(set(mv.COUNTRY_MAP.keys()))
+    # Sanity: el slug 'mexico' (no 'mx') mapea a México/Español.
+    assert mv.COUNTRY_MAP["mexico"] == ("México", "Español")
+
+
+def test_mangavariant_fetch_variant_urls_filters_index_pages():
+    """fetch_variant_urls debe quedarse solo con URLs /variant/<manga>/<edicion>/,
+    descartando /variant/ (index), /about/, etc."""
+    from wikis import mangavariant as mv
+    import requests as _rq
+
+    class _FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.status_code = 200
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeSession:
+        def get(self, url, timeout):  # noqa: ARG002
+            return _FakeResponse(_mv_html("sitemap_sample.xml"))
+
+    urls = mv.fetch_variant_urls(_FakeSession(), sitemaps=("dummy",))
+    # 3 variants reales en la fixture; /variant/ y /about/ quedan fuera.
+    assert len(urls) == 3
+    assert all("/variant/" in u and not u.endswith("/variant/") for u in urls)
+
+
+def test_mangavariant_iter_year_months_returns_single_batch():
+    """No usa calendario: el rango se ignora y devuelve un único batch
+    para que el dispatcher cuente '1 mes' en el resumen."""
+    from wikis import mangavariant as mv
+    assert mv.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
 
 
 def test_extract_volume_patterns():

@@ -17,6 +17,10 @@ Si vas a trabajar en el código (humano o asistente IA), empezá por:
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — Pipeline completo,
   componentes, storage, filtros, performance baselines. Profundidad
   técnica.
+- **[`docs/CONTROL-PANEL.md`](docs/CONTROL-PANEL.md)** — Panel web local
+  para correr scripts sin acordarte de flags. Cómo se usa, cómo se
+  extiende vía `scripts/script_registry.py`, API, modelo de seguridad,
+  qué llevarse/dejar en deploy.
 - **[`docs/SOURCES.md`](docs/SOURCES.md)** — Cómo agregar/mantener
   sources y wikis, cuándo usar `purity: "mixed"`, recetas paso a paso.
 
@@ -37,6 +41,28 @@ pip install -r requirements.txt
 ```
 
 ## Uso
+
+### Atajo: Panel de Control web
+
+Si no querés acordarte de flags, hay una interfaz web local:
+
+```bash
+./scripts/run_local.sh
+```
+
+Lanza dos servers en paralelo:
+
+- **Catálogo público** — http://localhost:8000/ (lo que un día se despliega)
+- **Panel de Control (LOCAL)** — http://localhost:8001/ (bindea solo
+  127.0.0.1, nunca se despliega)
+
+Desde el panel elegís un script ("Scraper principal", "Filtrar lo que
+NO es manga", "Backfill metadata", "Auditoría de fuentes"…), aplicás
+una receta pre-armada o ajustás flags con toggles, ▶ Ejecutar, y mirás
+los logs en vivo. Ver **[`docs/CONTROL-PANEL.md`](docs/CONTROL-PANEL.md)**
+para detalles, API y cómo agregar tus propios scripts al panel.
+
+Si preferís la línea de comandos, todo lo que sigue funciona igual.
 
 ### Scrapeo
 

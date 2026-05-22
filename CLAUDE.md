@@ -12,63 +12,93 @@ the same turn.** This is not optional. The owner (sergiomineiro) has
 flagged repeatedly that docs were getting out of sync — do not let that
 happen again.
 
-**What counts as "meaningful"** (i.e. requires a doc update):
-- New scraper feature, new pipeline stage, new CLI flag, new endpoint
-  in `serve.py`.
-- Change to filters (`is_likely_manga`, `clean_title`, scoring) that
-  shifts behavior or adds a new rule family.
-- New source added/removed, or a source's `purity` / `kind` /
-  `selectors` changed in a non-trivial way.
-- New wiki parser under `scripts/wikis/`.
-- Schema change to `items.jsonl`, `state.json`, `feedback.jsonl`, or
-  any new data file.
-- New retrofit script under `scripts/retrofit/`.
-- New gotcha discovered (parser quirk, mojibake variant, source drift).
-- Anything that changes the corpus numbers in the "Current corpus
-  state" table by >2 percentage points.
-- New environment variable, new dependency, new external service.
+### MANDATORY pre-flight checklist (run this BEFORE saying "done")
 
-**What does NOT need a doc update:**
-- Bug fixes that restore documented behavior.
+Before declaring ANY task complete, walk through this checklist out loud
+(in your response or thinking):
+
+1. **Schema?** Did `items.jsonl`, `state.json`, `feedback.jsonl`,
+   `unmapped_series.jsonl`, `non_manga_blacklist.jsonl`, or a new YAML/JSON
+   file change shape? → Update CLAUDE.md schema docs + ARCHITECTURE.md
+   data-flow section.
+2. **Sources?** Did `sources.yml` gain/lose entries, or a source's
+   `purity`/`kind`/`selectors`/`enabled` change? → Update CLAUDE.md
+   counters (corpus state table, sources count) + docs/SOURCES.md.
+3. **Filters / signals / scoring?** Changes to `is_likely_manga`,
+   `is_collectible_edition`, `is_comic_not_manga`, `is_pure_novel`,
+   `detect_signals`, `COLLECTIBLE_EDITION_SIGNAL_TYPES`,
+   `_GENERIC_X_EDITION_PATTERN`? → Update CLAUDE.md design decisions +
+   gotcha if relevant.
+4. **New module under `scripts/`?** Wiki parser, retrofit, audit,
+   skill helper? → Add to CLAUDE.md "File map" + appropriate doc
+   (scripts/retrofit/README.md for retrofits, docs/SOURCES.md for wikis,
+   etc.).
+5. **New skill under `.claude/skills/`?** → Add entry to file map +
+   `.claude/skills/README.md` (skills index).
+6. **New gotcha?** Mojibake variant, parser quirk, anti-bot bypass,
+   filter false-positive, dedup edge case? → Append to "known gotchas"
+   section + bump the count in heading.
+7. **Corpus numbers changed >2pp?** → Re-run the stats snippet and
+   update the "Current corpus state" table.
+8. **New CLI flag, env var, dependency, external service?** → CLAUDE.md
+   + `.env.example` if applicable + the doc that owns it.
+9. **Did a multi-turn task accumulate? Bump "Last updated"** with a
+   one-paragraph summary of what changed across the turns — even if
+   each turn updated docs incrementally. The summary helps future
+   readers understand the WHY.
+
+**What counts as "meaningful"** (any one of these triggers the checklist):
+- New scraper feature, pipeline stage, CLI flag, endpoint in serve.py.
+- Change to filters / scoring that shifts behavior.
+- Source added/removed/reconfigured.
+- New wiki/retrofit/audit script, new skill, new pipeline helper.
+- Schema change to any data file in `data/`.
+- New gotcha discovered.
+- Corpus numbers shift >2 percentage points.
+- New env var, new dependency, new external service (Anilist, Wikidata, etc.).
+
+**What does NOT need docs** (only these — be strict):
+- Bug fixes that restore documented behavior (the doc was already right).
 - Test additions for already-documented rules.
-- Pure refactors with no behavioral change.
+- Pure refactors with zero behavioral change (test suite must prove it).
 - Typo fixes.
 
-**Where to write it** (pick the right file — don't dump everything in
-CLAUDE.md):
+**Where each kind of change goes**:
 
 | Change type | File to update |
 |---|---|
-| Design intent, conventions, gotchas, corpus state | `CLAUDE.md` (this file) |
-| Pipeline internals, data flow, module responsibilities | `docs/ARCHITECTURE.md` |
-| How to add/maintain a source, selector recipes | `docs/SOURCES.md` |
+| Design intent, conventions, gotchas, corpus state, schema reference | `CLAUDE.md` (this file) |
+| Pipeline internals, data flow, module responsibilities, ASCII diagrams | `docs/ARCHITECTURE.md` |
+| How to add/maintain a source, selector recipes, source-specific quirks | `docs/SOURCES.md` |
+| Retrofit utility behavior (one-shot scripts under `scripts/retrofit/`) | `scripts/retrofit/README.md` |
+| Skills (`.claude/skills/*.md`) — what they do, when to invoke | `.claude/skills/README.md` |
 | New env var, new dependency | `.env.example` + the file above that fits |
-| Retrofit utility behavior | `scripts/retrofit/README.md` |
 | Product scope / vision change | `docs/PRD.md` or `docs/PRD-catalog.md` |
+| Control Panel features | `docs/CONTROL-PANEL.md` |
 
-**How to apply it during a task:**
-1. Before declaring a task done, ask: "did I change behavior, schema,
-   sources, or discover a gotcha?" If yes → update docs in the same
-   commit, not a follow-up.
-2. If the "Current corpus state" table is now wrong, update the
-   numbers (run a quick script over `items.jsonl` to get fresh values).
-3. If you added a new source or wiki parser, add it to the relevant
-   list in CLAUDE.md (mixed-purity sources, wiki parsers list, etc.).
-4. If you added a gotcha, append it to the "known gotchas" section and
-   renumber if needed.
-5. Bump the "Last updated" line at the bottom of CLAUDE.md when you
-   edit it.
+**Anti-patterns** (these violate the policy):
+
+- ❌ "Lo documento después en otro commit". No — same turn, same commit.
+- ❌ "Solo agregué un retrofit chiquito". Same rule — `scripts/retrofit/README.md`
+  needs the entry.
+- ❌ Updating only the "Last updated" line without filling in details.
+- ❌ Bumping gotcha count but forgetting to update the heading.
+- ❌ Adding a new field to items.jsonl without documenting it in CLAUDE.md
+  + ARCHITECTURE.md.
+- ❌ Creating a new file (skill, doc, script) without referencing it from
+  the file map in CLAUDE.md.
 
 **If the user pushes back that docs are stale, that's a regression on
 this policy — treat it as a bug to fix immediately, not a feature
-request.**
+request.** Apologize briefly, fix the docs in the same turn, and run
+the pre-flight checklist for the past changes that slipped through.
 
 ## What this project is
 
 **PandaWatch** (repo: `MineiToshio/PandaWatch`, also known internally as
-`manga-watch`) is a **personal tracker** that scrapes ~106 enabled sources
-(of 120 defined in `sources.yml`) across 9 countries and 5 languages
-(ES, EN, FR, IT, JP) looking for
+`manga-watch`) is a **personal tracker** that scrapes ~118 enabled sources
+(of 134 defined in `sources.yml`) across 10 countries and 6 languages
+(ES, EN, FR, IT, JP, PT-BR) looking for
 **physical manga special editions**: limited editions, deluxe hardcovers,
 box sets, slipcase editions, artbooks, kanzenban, light novels with
 bonuses, etc.
@@ -207,6 +237,12 @@ scripts/
     manga_mexico.py                  (MX — alphabetic catalog per editorial)
     whakoom.py                       (ES/LatAm — Cloudflare-throttled
                                        3-level spider, opt-in only)
+    mangavariant.py                  (Global — base curada de variants
+                                       en 13 países, ~2700 entries.
+                                       URLs son páginas-referencia, sin
+                                       precio. Yoast sitemap → detail
+                                       parser. Ver "URL como referencia"
+                                       más abajo.)
   retrofit/                          — utilities to apply changes to
                                        historic data.
     README.md
@@ -229,6 +265,22 @@ scripts/
                                        rebuild metadata from snapshots.
                                        Distinguishes 404/410 (real death)
                                        from 403/429 (anti-bot blocks).
+    expand_whakoom_ediciones.py      — convierte filas con URL
+                                       /ediciones/<id>/<slug> en N filas
+                                       /comics/<X>/<slug>/<vol> (una por
+                                       tomo). Whakoom usa /ediciones/ como
+                                       índice de la colección; el catálogo
+                                       es por tomo. Soporta one-shots vía
+                                       /login?ReturnUrl=/comics/... fallback.
+                                       Ver gotcha #14.
+    expand_index_pages.py            — limpia páginas-índice guardadas como
+                                       productos: Whakoom /publisher/
+                                       (expande a /ediciones/ → tomos),
+                                       Shopify multi-tomo variants (Dark
+                                       Horse Direct usa <select> Volume 1/2/3
+                                       para una serie entera), /blogs/news/
+                                       (elimina), /collections/X sin /products/
+                                       (elimina). Ver gotchas #14, #16, #17.
   audit/
     source_health.py                 — parses N recent overnight logs
                                        and classifies sources as
@@ -236,6 +288,29 @@ scripts/
                                        selector_dead / low_yield /
                                        declining / healthy / unseen.
                                        Markdown or JSON output.
+    unmapped_series.py               — lista series_keys de items.jsonl
+                                       que NO están en series_aliases.yml,
+                                       agrupadas + fuzzy-matched contra
+                                       canonicals existentes. Lo consume
+                                       el skill enrich-series-aliases.
+  series_aliases.py                  — `canonical_series_key()` resolver
+                                       + `log_unmapped_series()` (escribe
+                                       a data/unmapped_series.jsonl
+                                       cuando una nueva series_key no
+                                       está en aliases.yml). Ver gotcha #20.
+.claude/skills/
+  enrich-series-aliases.md           — Skill manual: procesa unmapped
+                                       series del queue, consulta Anilist,
+                                       agrega entries a series_aliases.yml,
+                                       corre backfill. Ver gotcha #20.
+  standardize-catalog.md             — Skill manual incremental: para items
+                                       sin `standardized_at`, delega
+                                       subagentes en paralelo (chunks ~150)
+                                       que asignan series_key/edition_key,
+                                       estandarizan título, mueven non-manga
+                                       a blacklist, deduplican. Solo procesa
+                                       items nuevos — los antiguos llevan
+                                       timestamp y se saltean. Ver gotcha #21.
 web/
   index.html                         — Alpine.js dashboard (PÚBLICO,
                                        deployable). Consume data/items.jsonl
@@ -262,24 +337,34 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | 2706 |
-| Items after cluster_key grouping (dashboard cards) | 2576 (89 multi-source groups, 130 cards consolidated) |
-| Sources in YAML | 120 |
-| Sources enabled | 106 / 120 |
-| Sources flagged `purity: mixed` | 13 |
+| Total unique items (line in items.jsonl) | 4426 (post mangadreams variants-europeas, 2026-05-22) |
+| Items aportados por Mangavariant bootstrap | 2625 (de 2679 URLs en sitemap, 54 reasignados) |
+| Items movidos a `data/non_manga_blacklist.jsonl` | 94 (cómics occidentales, light novels, posters, figuras, etc.) |
+| Items deduplicados por (series_key, edition_key, volume) | 684 (+6 al consolidar Mangadreams variants europeas con Kurokawa/Pika Collector existentes) |
+| Distinct `series_key` (filtro por obra) | 1431 (post-alias) |
+| Distinct `edition_key` (filtro por edición+editorial) | 2914 |
+| `data/series_aliases.yml` entries | 106 canonical works (Anilist + manual) |
+| Sources in YAML | 137 |
+| Sources enabled | 121 / 137 |
+| Sources flagged `purity: mixed` | 17 |
 | Bluesky sources (`kind: bluesky`) | 15 |
-| Countries represented | 9 (FR, JP, ES, IT, US, MX, AR, …) |
-| Image coverage | 99.4% |
-| Release date coverage | 74.5% |
-| ISBN coverage | 61.5% (the rest cluster via fuzzy key when possible) |
-| Price coverage | 81.0% |
-| Author coverage | 62.9% |
+| Countries represented | 15 (Japón, Francia, Italia, España, Estados Unidos, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global). |
+| Image coverage | 100.0% |
+| `series_key` coverage | 100.0% (todos los items tienen serie canónica) |
+| `edition_key` coverage | 100.0% |
+| `volume` coverage | 78.9% (vacío para artbooks, cover-only, one-shots) |
+| Release date coverage | 86.3% |
+| ISBN coverage | 30.5% |
+| Price coverage | 39.9% |
+| Author coverage | 30.3% |
 | `cluster_key` populated | 100% (precomputed by candidate_to_json) |
 
-The drop in ISBN/author coverage vs older numbers is **expected and
-healthy**: the collectible filter (`is_collectible_edition`) trimmed
-~10% of the corpus (mostly regular tomos with ISBN+author), shifting
-the ratio toward special editions which are JP-heavy and metadata-sparse.
+Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
+esperado de añadir 2679 filas curadas que por diseño no tienen esos
+campos (la fuente cataloga "qué variant existe", no "dónde comprarlo
+con qué ISBN"). Ver "URL como referencia" más arriba. El enrichment
+script futuro va a poblar precios/ISBN para filas mangavariant que
+matcheen un retailer real.
 
 These numbers help future agents sanity-check their changes — a
 retrofit that suddenly drops image coverage from 99% to 60% means
@@ -339,12 +424,17 @@ Sources currently marked mixed (`purity: mixed`):
 - MX - Panini Manga México, MX - Panini México (search) variants
 - ES - Panini España (search) variants
 - ES - Norma (search)
+- ES - ECC Manga (publica manga + DC superhéroes)
+- ES - Planeta Cómic
 - US - Anime News Network News RSS
 - US - ComicBook.com Anime
 - US - Kodansha USA News
 - JP - Rakuten Books (search) variants
+- BR - Panini Brasil (search) (álbumes Copa, figurinhas)
+- BR - Pipoca & Nanquim (manga + BD europea)
+- BR - Devir Brasil (RPG + literatura + manga minoritario)
 
-### 4. Multi-source grouping by `cluster_key` (ISBN OR fuzzy fallback)
+### 4. Multi-source grouping by `cluster_key` (ISBN OR fuzzy fallback) — tier-based variant discriminant
 
 `items.jsonl` keeps one line per unique URL. **Multi-source aggregation
 is done at presentation by `cluster_key`**, computed once per row by
@@ -355,14 +445,45 @@ in `web/index.html`.
 
 Three cluster-key shapes, in priority order:
 1. **`isbn:<X>`** — authoritative, ISBN is unique per edition/market.
-2. **`fuzzy:<lang>|<series>|<vol>|<variant_sig>|<publisher>`** — for
+2. **`fuzzy:<lang>|<series>|<vol>|<variant_tier>|<publisher>`** — for
    items without ISBN. All five components must be present and
    meaningful (series ≥ 3 chars, language non-empty, volume detected);
-   otherwise the row falls through to standalone.
+   otherwise the row falls through to standalone. `variant_tier` is
+   the **most specific** entry from `_VARIANT_TIER_RULES` matching the
+   item's signal_types, NOT the full set. See "variant tier" below.
 3. **`url:<url>`** — standalone, never groups with anything else.
    Triggered when a fuzzy match would be unsafe (no volume, short
    series name, no language). Better to show one card per source than
    to merge unrelated products.
+
+**Variant tier (replaces the old comma-joined `variant_sig`):**
+
+Distintas fuentes detectan signal_types ligeramente distintos para el
+**mismo producto físico** porque sus descripciones son distintas (un
+retailer dice "Edición coleccionista" → ["collector"]; mangavariant
+agrega "Tags: bonus, special_edition" → ["bonus", "special_edition",
+"collector", "lore_edition"]). Si usáramos el set completo como
+discriminante, nunca mergearían. Por eso `_variant_tier(signal_types)`
+elige el **primer tier que matchee** en este orden (de más específico a
+menos):
+
+```
+artbook  > omnibus  > box_set      > kanzenban      >
+lore_edition (X-Anniversary, Celebration…)  >
+variant_cover (cover variants / retailer-exclusives)  >
+deluxe (deluxe/hardcover/oversized)  > limited  >
+special (special_edition/collector/bonus/finish)  >  "" (tomo regular)
+```
+
+Two items in the SAME tier merge. Two items in different tiers don't
+(OP100 Deluxe ≠ OP100 Celebration, aunque ambos tengan ~vol 100~).
+
+Caso real que motivó este diseño: **One Piece Vol.98 Celebration
+Edition** aparecía dos veces en el dashboard porque Star Comics search
+detectaba `[collector, lore_edition]` mientras Mangavariant detectaba
+`[bonus, special_edition, collector, lore_edition]`. Ambos colapsan a
+`tier=lore_edition` → mergean en una sola card. Tests en
+`tests/test_extraction.py::test_cluster_key_one_piece_98_celebration_merges_across_sources`.
 
 When two items share a cluster_key:
 - The higher-scored item is the canonical.
@@ -593,7 +714,36 @@ Ver **`docs/CONTROL-PANEL.md`** para la API completa, el modelo de
 seguridad (bind 127.0.0.1, no shell, allowlist), qué incluir/excluir
 del deploy, y troubleshooting.
 
-## The 13 known gotchas
+## URL como referencia (no de tienda) — política
+
+**PandaWatch acepta items cuya `url` NO lleva a una tienda.** Wikis,
+bases comunitarias y directorios son fuentes de primera clase: la meta
+del proyecto es **descubrir qué variantes / ediciones especiales
+existen en el mundo**, no solo "dónde están a la venta hoy".
+
+Ejemplos concretos:
+- `Global - Mangavariant` (`https://mangavariant.com/variant/<manga>/<edicion>/`)
+  es página de referencia: tiene serie, país, publisher, año, rarity,
+  tags, cover image — **pero no precio ni botón de compra**.
+- ListadoManga (`/zonas/preventa/...`) y el blog histórico son
+  anuncios editoriales, no listings de tienda.
+- Manga-Sanctuary (`/planning_sortie/...`) es catálogo comunitario FR.
+- Whakoom (`/comics/<X>/<slug>/<vol>`) es catálogo de coleccionistas.
+
+**Reglas que se derivan de esto:**
+- **No filtrar** items por falta de `price` / `stock_type`. Una card
+  sin precio es válida — el dashboard la muestra igual.
+- **No eliminar** wikis/bases referencia para "limpiar" el corpus.
+  Cuando un item de referencia matchea cluster_key con uno de retailer,
+  se consolidan; el de referencia suele quedar como card canónica y los
+  retailers aparecen como "dónde comprar".
+- **Enrichment**, si llega, es una pasada **separada** que toma items
+  de referencia y busca su URL de tienda (no filtro upstream que los
+  descarte).
+- Documentado y guardado en memoria persistente (`feedback_url_as_reference.md`)
+  porque el owner lo flageó varias veces.
+
+## The 22 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -674,6 +824,296 @@ del deploy, y troubleshooting.
     queueing those to Wayback would burn API quota for nothing.
     Don't relax this filter without seeing the real status
     distribution first (`--check` mode).
+
+14. **Whakoom `/ediciones/` no es un tomo, es una colección.**
+    `https://whakoom.com/ediciones/<id>/<slug>` indexa la edición entera
+    (p.ej. "Berserk Deluxe Edition" = 14 tomos). El catálogo es por tomo,
+    así que NUNCA hay que guardar una `/ediciones/` URL como item.
+    Siempre se expande vía `wikis.whakoom.expand_whakoom_edition()` →
+    N candidates, uno por cada `/comics/<shortcode>/<slug>/<vol>`. Casos:
+    - **Multi-vol**: la página principal lista los primeros ~11 tomos en
+      `<li id="comic*">`; el resto vive en `<edition_url>/todos` (una
+      request HTTP extra). El helper carga ambas y mergea por URL.
+    - **One-shot (1 tomo)**: la `/comics/` URL solo aparece dentro de
+      `/login?ReturnUrl=/comics/<X>/<slug>`. Hay fallback que la extrae.
+    Tres puntos de ingesta protegidos: `search_discovery.py` (intercepta
+    URLs `/ediciones/` Y `/publisher/` antes de guardarlas), `wikis/whakoom.py`
+    (Fase 3 del spider expande cada edición), `Whakoom Novedades` (la fuente
+    regular ya emite `/comics/` por su selector `a[href^='/comics/']`,
+    no necesita interceptación). Retrofit: `expand_whakoom_ediciones.py`
+    para limpiar `/ediciones/` legacy + `expand_index_pages.py` cubre
+    también `/publisher/`.
+
+    También se aplica a **Whakoom `/publisher/<id>/<slug>`**: es la página
+    del editor que lista sus `/ediciones/`. `expand_whakoom_publisher_url`
+    extrae las ediciones del HTML y llama a `expand_whakoom_edition` por
+    cada una — dos niveles de expansión.
+
+15. **Whakoom requiere `Accept-Encoding: gzip, deflate` SIN `br`.**
+    El servidor sirve Brotli cuando se lo pide. `requests` no decodifica
+    Brotli nativamente (sin la lib `brotli` instalada) y entonces
+    `response.text` es bytes binarios — el parser ve "0 tomos", "0
+    metadata", silenciosamente. Hubo un bug por esto: el spider devolvía
+    HTML basura sin error. El UA-session de `wikis/whakoom.py` EXCLUYE
+    `br` del Accept-Encoding por esto. Si alguien lo re-agrega, agregar
+    también `brotli` a `requirements.txt`.
+
+    **Falso positivo previo en CF challenge detector**: el marker
+    `challenge-platform` matcheaba el script JSD legítimo
+    (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`) que Cloudflare
+    inyecta en TODAS las páginas que protege. Los markers reales de
+    challenge son específicos: `cf-chl-bypass`, `__cf_chl_rt_tk`, o el
+    path `/cdn-cgi/challenge-platform/h/` (UI del challenge, no
+    `/scripts/`). Si volvés a tocar `_CLOUDFLARE_CHALLENGE_MARKERS`,
+    asegurate de que un fixture válido de Whakoom NO matchee.
+
+16. **Shopify variants multi-tomo: 1 producto = N SKUs.** Sitios Shopify
+    como Dark Horse Direct modelan series ("Berserk Deluxe Hardcover
+    Volumes") como UN solo `og:type=product` con un `<select>` que
+    expone N variants (Volume 1 / 2 / 3 / ...). Cada variant tiene su
+    propio `variant_id`, `sku`, `price` y deep-link vía `?variant=<id>`.
+    Estructuralmente es lo mismo que Whakoom `/ediciones/`: el catálogo
+    es por tomo, así que estos productos hay que expandirlos.
+    Helpers en `scripts/shopify_variants.py`:
+    - `extract_shopify_variants(html)` — saca los variants del JSON
+      embebido (patrón `"variants":[...]`) o del `<select data-variant-id>`.
+    - `is_volume_variants(variants)` — heurística que requiere al menos
+      un variant con keyword de volumen ("Volume N", "Tome N", "#N",
+      "第N巻", etc.) para evitar expandir productos con variants de color
+      o talle. Single-variant ("Default Title") también devuelve False.
+    - `build_variant_url(parent, id)` — construye `?variant=<id>` y
+      limpia tracking de Shopify (`_pos`, `_sid`, `_ss`).
+    Retrofit `expand_index_pages.py` aplica esta lógica a Dark Horse
+    Direct + cualquier futuro Shopify multi-tomo. **Importante**: la
+    detección se restringe a dominios donde sabemos que esto pasa (hoy
+    solo `darkhorsedirect.com`). Otros Shopify (mangadreams.it,
+    milkyway, etc.) no usan variants para volúmenes y NO se chequean.
+
+17. **`url_is_useful` (search_discovery) bloquea índices conocidos.**
+    El blacklist en `search_discovery.py` rechaza URLs que NUNCA son
+    productos: `/lists/`, `/profile/`, `/blogs/news/`, `/collections/X`
+    (sin `/products/Y`), `whakoom.com/(autores|tag)/`, social media
+    posts, YouTube, Reddit, etc. Si Gemini/Tavily devuelven una de
+    estas, las descartamos antes de gastar HTTP en detail-fetch.
+    Whakoom `/publisher/` queda FUERA del blacklist porque sí se
+    expande (a sus /ediciones/ → tomos). Si agregás un patrón nuevo
+    al blacklist, verificá que no esté en el set de URLs que el
+    overnight pipeline necesita procesar.
+
+18. **Omnibus / "X en X" / "X-in-X" NO califican solos como coleccionables.**
+    Decisión del owner (2026-05-22): "ediciones ómnibus o 2 en 1 o 3 en 1
+    a menos que sean hardcover o ediciones premium, con portada alternativa
+    o con algún extra — sino son prácticamente ediciones normales con más
+    páginas". Por eso:
+    - `omnibus` se quitó de `COLLECTIBLE_EDITION_SIGNAL_TYPES`. Como
+      otros qualifiers premium (hardcover, deluxe, limited, variant_cover,
+      box_set, bundle, etc.) SÍ están en el set, un omnibus premium
+      sigue pasando vía ellos. Solo el omnibus "pelado" se rechaza.
+    - `_GENERIC_X_EDITION_PATTERN` excluye específicamente "Omnibus" para
+      que "Omnibus Edition" NO dispare `lore_edition` por puerta trasera.
+      "Tarot Edition", "Gold Edition", etc. siguen activos.
+    Casos rechazados (ejemplos del corpus): "Bestiarius Omnibus", "One Piece
+    (3 En 1) N.1", "Akatsuki no Yona (3 en 1)", "ALL YOU NEED IS KILL
+    INTEGRAL", "EL CASTILLO DE LOS ANIMALES. INTEGRAL 2".
+    Casos aceptados (premium qualifier): "Lone Wolf & Cub Omnibus –
+    Cofanetto 3" (box_set), "Berserk Tarot Edition" (lore_edition desde
+    "Tarot"), "Utena Edición Integral - Cofre de 2 tomos"
+    (hardcover+box_set), "17 Años (Edición Integral) - (1ª Edición Limitada)"
+    (limited). 91 items omnibus-only fueron limpiados retroactivamente
+    el 2026-05-22.
+
+19. **Rakuten Books usa `?l-id=search-c-item-img-NN` como tracking de slot.**
+    Cada listing en Rakuten genera un `l-id` distinto para la MISMA URL de
+    producto (`/rb/<id>/`). Si scrapeás 5 búsquedas distintas que devuelven
+    la misma SKU, terminan 5 filas duplicadas en items.jsonl porque la URL
+    completa cambia. `l-id` y `l_id` están agregados a `TRACKING_PARAMS` en
+    `normalize_url_for_dedup` (manga_watch.py) — el upsert por URL ya los
+    colapsa. 182 clones eliminados retroactivamente el 2026-05-22. Si añadís
+    un tracking param nuevo encontrado en otra fuente, agregalo a ese
+    frozenset para que el upsert lo ignore.
+
+20. **Una obra tiene N nombres según mercado/idioma.** Por ejemplo Demon
+    Slayer = Kimetsu no Yaiba (JP romaji) = 鬼滅の刃 (JP native) =
+    Guardianes de la Noche (ES México). Para que el filtro por obra
+    funcione, todos esos series_keys deben colapsar al canónico
+    (`demon-slayer`). La fuente de verdad es **`data/series_aliases.yml`**:
+
+    ```yaml
+    demon-slayer:
+      display: Demon Slayer
+      aliases:
+        - kimetsu no yaiba
+        - 鬼滅の刃
+        - guardianes de la noche
+    ```
+
+    La resolución la hace `scripts/series_aliases.py::canonical_series_key()`,
+    integrada en `candidate_to_json` para que CADA item nuevo del scraper
+    pase por el normalizador automáticamente. Reglas de matching:
+    - **Match exacto only**: compara `current_series_key` y `current_display`
+      (normalizados: lowercase, sin diacríticos, slug) contra el índice
+      del YAML. NO hace substring-match en el title — eso generaba
+      false-positives tipo "Monster Musume → Monster (Urasawa)".
+    - **Sin match → input intacto**: si la serie no está en el YAML,
+      devuelve el series_key actual sin tocar. Mantenimiento incremental:
+      cuando aparece una variante nueva, se agrega al YAML.
+
+    El YAML inicial (~108 series, 2026-05-22) se armó con:
+    - Anilist API GraphQL (`https://graphql.anilist.co`) — devuelve
+      `title.english`, `title.romaji`, `title.native`, `synonyms[]`
+      multilingües por cada serie buscada.
+    - Override manuales para casos donde Anilist tira false matches
+      (ej. Anilist devuelve "Knights of the Zodiac" como english de Saint
+      Seiya → override manual a "Saint Seiya" canónico).
+    - Fragmentaciones detectadas en el corpus existente (apothicaire/
+      apothecary-diaries, atelier-des-sorciers/witch-hat-atelier, etc.).
+
+    **Mantenimiento via queue + skill** (2026-05-23):
+    - Cuando un scrape encuentra un item con `series_key` NO listado en
+      `series_aliases.yml`, el hook en `candidate_to_json` lo appendea
+      a `data/unmapped_series.jsonl` (append-only, dedupe por key
+      dentro del mismo run vía `_UNMAPPED_LOGGED_THIS_RUN`).
+    - El usuario invoca el skill `enrich-series-aliases` cuando quiere
+      curar el backlog. El skill vive en
+      `.claude/skills/enrich-series-aliases.md` y orquesta:
+      1. `scripts/audit/unmapped_series.py` → tabla agrupada por
+         series_key con fuzzy-match contra canonicals existentes.
+      2. Para cada candidata: decidir alias-de-existente / new-canonical /
+         skip. Consultar Anilist API si necesita traducciones.
+      3. Editar `data/series_aliases.yml`.
+      4. Backfill sobre `items.jsonl` aplicando las nuevas reglas
+         (Python snippet incluido en el skill).
+      5. Truncar `unmapped_series.jsonl` y reportar.
+    - Futuro: el skill podría engancharse a un cron (vía `/schedule`)
+      para correr semanal. Por ahora es manual.
+
+    Cuando agregues una serie nueva al YAML manualmente:
+    1. Buscar en Anilist por título conocido para obtener titles+synonyms.
+    2. Curar aliases — quitar transliteraciones a alfabetos no-target
+       (cyrillic, arabic, hebrew, hangul, thai) y synonyms ambiguos
+       (palabras genéricas como "Monster", "Real", "Blue Period" si ya
+       designan otras series).
+    3. Después de editar el YAML, correr el backfill manual sobre
+       items.jsonl si querés consolidar legacy rows (no hay retrofit
+       formal — un Python snippet usando `canonical_series_key()`
+       basta).
+
+    220 items remapped en la corrida inicial. Sin retrofit script,
+    porque el hook en `candidate_to_json` ya cubre el caso del scraper
+    futuro.
+
+21. **Flujo de doble pasada: scraper hace asignación cruda, skill la corrige.**
+
+    - **Pasada 1 (scraper, automática)**: `manga_watch.py::candidate_to_json`
+      llama `derive_series_metadata()` que aplica un heurístico rápido
+      basado en regex sobre el title + publisher + signal_types.
+      Devuelve series_key/edition_key/volume/title_standardized.
+      Pasa por `canonical_series_key()` (aliases.yml) para consolidar
+      traducciones. **Items quedan SIN `standardized_at`** — esa marca
+      la setea solo el skill.
+
+      Casos donde el heurístico devuelve EMPTY (mejor que wrong):
+      * series_key < 3 caracteres tras slug.
+      * series_key todo dígitos (probable volumen mal capturado).
+      * series_key termina con `-N` y volumen no detectado
+        (ej. "atomic-robo-5", "berserk-41" sin marker "vol/tome/巻").
+
+      En esos casos el item se guarda sin series_key/edition_key. El
+      skill lo procesa después con LLM para asignar correctamente.
+
+    - **Pasada 2 (skill `/standardize-catalog`, manual incremental)**:
+      Lee items sin `standardized_at`, delega chunks de ~150 a subagentes
+      LLM en paralelo, RE-DERIVA todo desde cero (no confía en lo que
+      el scraper puso), aplica canonical_series_key, mueve no-manga a
+      blacklist, dedupea, marca con `standardized_at`. El skill VERIFICA
+      y corrige la asignación rough del scraper.
+
+    `standardized_at` (ISO timestamp UTC) indica cuándo pasó el item
+    por la pasada 2. Sirve como flag de "this item has been LLM-verified".
+
+    - **Items sin `standardized_at`** son los que el skill procesa: lo
+      típico es items recién scrapeados que llegaron a items.jsonl
+      directamente desde manga_watch.py sin pasar por la pasada de
+      curación.
+    - **Items con `standardized_at`** se saltean. No se re-procesan
+      (ahorro de costo de LLM/subagentes).
+    - **`--force-all` re-procesa todo**: el skill incluye un snippet
+      para limpiar `standardized_at` de todos los items y forzar un
+      re-run completo (cuando cambias las reglas de estandarización
+      sustancialmente, ej. nuevo set de edition_slugs).
+
+    El pipeline NO setea `standardized_at` por sí mismo — solo el skill
+    lo escribe al final del merge. Items nuevos del scraper aparecen
+    SIN el flag, listo para que el skill los procese en la próxima
+    invocación.
+
+    Reglas operativas:
+    1. Después de cada `manga_watch.py` scrape grande, correr
+       `/standardize-catalog`. Procesa solo lo nuevo.
+    2. Luego correr `/enrich-series-aliases` si aparecieron series_keys
+       nuevas que no están en `series_aliases.yml` (el skill anterior
+       las loguea en `data/unmapped_series.jsonl`).
+    3. Los dos skills se complementan: `standardize-catalog` asigna los
+       campos schema-level; `enrich-series-aliases` consolida nombres
+       multilingües.
+
+22. **`title` es international canonical, `title_original` preserva el scrape.**
+
+    Cada item lleva DOS campos de título:
+
+    - **`title`** — display canonical estandarizado al formato
+      `{Series} {Edition} {Volume}` en inglés/internacional. Es lo que
+      se ve en las cards del dashboard. Ejemplo: `"Demon Slayer Limited 23"`.
+    - **`title_original`** — el título tal como vino de la fuente, después
+      de `clean_title()` (mojibake fixed, junk removido) pero ANTES de
+      la estandarización. Preserva el lenguaje y estilo del scrape.
+      Ejemplos: `"鬼滅の刃 23 特装版"` (Rakuten JP),
+      `"Guardianes de la Noche Vol 23"` (Panini México), `"Les Carnets
+      de l'Apothicaire Coffret 5"` (Ki-oon FR).
+
+    **Por qué los DOS:**
+
+    - **UX**: audiencia ES/EN ve el canonical internacional, scanneable y
+      consistente. Si un mismo manga aparece desde 5 fuentes en 5 idiomas,
+      la card NO es esquizofrénica — un solo display.
+    - **Búsqueda**: el dashboard indexa AMBOS campos en `filtered()`. Tipear
+      "Demon Slayer" / "鬼滅の刃" / "Guardianes de la Noche" /
+      "Kimetsu no Yaiba" encuentra el mismo item. Cero pérdida de
+      flexibilidad.
+    - **Audit/exportación**: si alguna vez querés data al estilo MyAnimeList
+      con multilingüe completo, ya tenés el original.
+
+    **Cuándo se popula cada uno:**
+
+    - **`title_original`** se setea EN EL SCRAPER (`candidate_to_json`)
+      copiando `candidate.title` (que ya pasó por `clean_title`). Siempre
+      se escribe — items nuevos garantizan tener el original.
+    - **`title`** lo escribe la pasada 1 del scraper igual a `title_original`.
+      Después la pasada 2 (skill `/standardize-catalog`) lo sobrescribe con
+      `title_standardized` ("Demon Slayer Limited 23"). El skill detecta
+      si `title_original` ya está set; si no, hace backup antes de
+      sobrescribir.
+
+    **Frontend** (`web/index.html`):
+
+    - Card: solo muestra `title` (clean, scaneable).
+    - Modal: muestra `title` prominente arriba. Si `title_original`
+      difiere, muestra una segunda línea en gris itálico con el prefijo
+      `原題:` (etiqueta JP de "título original").
+    - Search: el `filtered()` indexa `title + title_original +
+      series_display`. Una sola búsqueda matchea cualquier idioma.
+
+    **Dedup**:
+
+    - **Pipeline dedup** sigue siendo por `(series_key, edition_key, volume)`
+      — keys canónicas, no por texto. Más robusto que comparar títulos.
+    - **Search del usuario** SÍ matchea por título text-based contra ambos
+      campos. Eso es UX, no dedup — la decisión de "esto es duplicado"
+      se hace por keys.
+
+    Items históricos backfilled tienen `title_original = title` (perdimos
+    el original porque el skill previo sobrescribió antes de existir este
+    campo). Items futuros del scraper tienen el original real preservado.
 
 ## When the user reports "this item shouldn't be here"
 
@@ -780,15 +1220,283 @@ These came up in conversation but were explicitly deferred:
   the existing parallel implementation and would touch every fetch
   helper. Only revisit if we hit ~500+ sources or need per-request
   cancellation semantics.
+- **Enrichment pass para items de referencia.** Items que llegaron
+  de Mangavariant / wikis tienen serie + volumen + publisher + país
+  pero no precio ni URL de tienda. La idea (acordada con el owner
+  2026-05-22) es un script aparte (e.g. `scripts/retrofit/enrich_references.py`)
+  que para cada item de referencia haga una búsqueda dirigida (Tavily /
+  Gemini grounding / search en retailers por publisher) y agregue las
+  URLs de tienda encontradas al array `sources[]` del cluster. NO es
+  un filtro upstream — los items de referencia siguen siendo válidos
+  aunque no encuentren retailer. Diferido hasta haber probado el corpus
+  con los datos de Mangavariant cargados.
 
 ---
 
-Last updated: 2026-05-21 — sweep update after Sprints 1 / 2.4 / 2.5
+Last updated: 2026-05-22 (noche, mangadreams variants europeas) —
+Nueva fuente `IT - Manga Dreams (variants europeas)` apuntando a
+`mangadreams.it/collections/edizioni-europee-manga-variant-limited`
+(sub-colección Shopify dedicada a variants/limited europeas: Momie,
+Alfa BD, Comptoir du Rêve, Canal BD, Fnac, ediciones tedescas y
+españolas). 43 productos detectados en 3 páginas, 29 pasaron
+`is_collectible_edition`, 23 ingresaron netos a items.jsonl, 6 se
+consolidaron contra Kurokawa/Pika Collector existentes (Spy×Family
+Collector 8, AoT Collector 34, etc.) vía dedup por
+(series_key, edition_key, volume). Skill `/standardize-catalog`
+corrió inline (<30 items, no requiere subagentes) asignando keys
+canónicos por mercado (kurokawa/kazé/pika/ki-oon/glénat para FR,
+star para IT, carlsen para DE, norma para ES). Corpus: 4409 → 4426
+(+17 netos). Sources YAML 136 → 137; enabled 120 → 121.
+14 productos quedaron fuera por falsos negativos en
+`is_collectible_edition` (ej. "One Piece 108 Variant Metal alla prima
+tiratura" debería pasar — variant cover + first-print) — separate
+follow-up para tunear el detector si el owner quiere.
+
+Last updated previo: 2026-05-22 — pasada documental panorámica + refuerzo de
+política (ver sección al inicio de este archivo). Documentación
+sincronizada con todo el trabajo de Sprint 4.z + 5.a:
+- **Reforzada la política de docs** con checklist pre-flight obligatorio
+  y lista de anti-patterns. Si la política se viola, fixarlo es una
+  prioridad inmediata.
+- **`docs/ARCHITECTURE.md`** ampliado con:
+  - Schema completo de `items.jsonl` (campos nuevos series_key,
+    edition_key, volume, standardized_at, title_original).
+  - Schemas de `unmapped_series.jsonl`, `non_manga_blacklist.jsonl`,
+    `series_aliases.yml`.
+  - Sección nueva "Two-pass standardization" (gotcha #21).
+  - Sección nueva "Curation skills" al final, describiendo
+    `/standardize-catalog` y `/enrich-series-aliases`.
+- **`docs/SOURCES.md`** ampliado con:
+  - Whakoom URL types (`/comics/` vs `/ediciones/` vs `/publisher/`).
+  - Whakoom Brotli/CF detection gotchas.
+  - Shopify variants multi-tomo (Dark Horse pattern).
+  - "Source de referencia" pattern (Mangavariant) con sus reglas
+    (Mangavariant SIEMPRE manga, no filtrar por falta de price/isbn).
+- **`scripts/retrofit/README.md`** reescrito con:
+  - Cuadro completo de retrofits (incluye `filter_collectible`,
+    `expand_whakoom_ediciones`, `expand_index_pages`).
+  - Sección "Retrofits vs Skills" para decidir qué herramienta usar.
+- **`.claude/skills/README.md`** nuevo: índice de los 2 skills
+  project-level + recipe para agregar skills nuevos.
+
+Sin cambios de código en esta pasada — solo docs. Tests 272/272 verde.
+
+Last updated previo: 2026-05-24 — preservación de título original (`title_original`):
+- Nuevo campo `title_original` en cada item. Pipeline (`candidate_to_json`)
+  lo escribe siempre con el title scrapeado (cleaned-but-not-standardized).
+- Skill `/standardize-catalog` actualizado: cuando sobrescribe `title`
+  con el standardized form, hace backup a `title_original` si no estaba.
+- Frontend: modal muestra `title` prominente + `title_original` en gris
+  con prefijo `原題:` solo cuando difiere. Search ahora indexa AMBOS +
+  `series_display` → tipear JP/ES/EN/FR/IT encuentra el mismo item.
+- Dedup pipeline-level sigue siendo por `(series_key, edition_key, volume)`,
+  no por texto. Decisión consciente: keys canónicas más robustas.
+- Backfill aplicado: 4409 items históricos con `title_original = title`
+  (perdimos el original; nuevos scrapes lo preservan correcto).
+- Tests: 272 passing (+1 del title_original).
+- Ver gotcha #22.
+
+Last updated previo: 2026-05-23 (noche) — heurístico del scraper (doble pasada):
+- Nueva función `derive_series_metadata(candidate)` en manga_watch.py
+  que asigna series_key/edition_key/volume desde regex sobre title +
+  publisher + signal_types. Llamada automáticamente desde
+  `candidate_to_json` para items que no traen esos campos.
+- Tabla `_PUBLISHER_SLUG_MAP` con ~35 publishers conocidos
+  (Dark Horse, Glénat, Panini, Norma, Planeta, Kodansha, Shueisha,
+  Kadokawa, Star Comics, etc.) → slug canónico.
+- Guards defensivos: heurístico devuelve EMPTY cuando el resultado es
+  obvio garbage (series_key < 3 chars, todo dígitos, termina con -N
+  sin volumen). El skill /standardize-catalog procesa esos casos.
+- El heurístico tampoco setea `standardized_at` — solo el skill lo
+  hace. Items del scraper aparecen sin el flag, listos para verificación
+  con LLM.
+- Tests: 271 passing (+4 del heurístico).
+- Ver gotcha #21 actualizada con el flujo doble pasada.
+
+Last updated previo: 2026-05-23 (tarde) — skill incremental de estandarización:
+- Nuevo campo `standardized_at` (ISO timestamp UTC) en cada item.
+  Backfill seteó 4409 items existentes con timestamp = "2026-05-22"
+  (la fecha en que pasaron por la primera estandarización masiva).
+- Nuevo skill `.claude/skills/standardize-catalog.md`. Procesa SOLO
+  items SIN `standardized_at` (los recién scrapeados). Delega a
+  subagentes paralelos en chunks de 150, asigna series_key/edition_key/
+  title estandarizado, mueve non-manga a blacklist, deduplica, aplica
+  canonical_series_key, marca con `standardized_at`. Incremental por
+  diseño — no cuesta re-procesar items ya curados.
+- Doble skill complementario: `/standardize-catalog` corre primero
+  (schema fields), `/enrich-series-aliases` corre después (consolida
+  nombres multilingües). Workflow normal post-scrape: ambos en
+  secuencia.
+- `--force-all` snippet (en el skill) limpia los timestamps cuando se
+  quiere re-procesar todo el corpus (ej. al cambiar reglas).
+- Ver gotcha #21.
+
+Last updated previo: 2026-05-23 — queue de unmapped series + skill de enrichment:
+- Pipeline hook: `candidate_to_json` ahora llama
+  `log_unmapped_series()` para appendear a `data/unmapped_series.jsonl`
+  cada vez que un item llega con un `series_key` que NO está en
+  `series_aliases.yml`. Dedupea por key dentro del mismo run.
+- Audit: `scripts/audit/unmapped_series.py` agrupa el log + scan de
+  items.jsonl, con fuzzy-match (difflib) contra canonicals existentes
+  para sugerir merges obvios (ej. `umamusume-cinderella-gray` 🟢 0.98
+  contra `uma-musume-cinderella-gray`).
+- Skill: `.claude/skills/enrich-series-aliases.md`. Invocación manual
+  cuando el usuario quiera curar el backlog. Orquesta audit → decide
+  alias-de-X / new-canonical / skip por candidate → consulta Anilist
+  cuando hace falta → edita YAML → corre backfill → reporta.
+- Futuro: el skill puede engancharse a un cron via `/schedule`.
+- Tests: 267 passing (+2 del logger).
+
+Last updated previo: 2026-05-22 (tarde, multilingual series alias resolver):
+- Nueva fuente de verdad `data/series_aliases.yml` con 106 series canónicas
+  + traducciones JP/EN/ES/FR/IT/PT-BR. Inicial generado via Anilist API
+  (`graphql.anilist.co` — `title.english/romaji/native + synonyms[]`) +
+  overrides manuales (Saint Seiya, Detective Conan, Tensura, Blue Period
+  y otros casos donde Anilist tira false matches).
+- Nuevo `scripts/series_aliases.py::canonical_series_key()` con matching
+  ESTRICTO (solo exact-match en `series_key` y `series_display`
+  normalizados, NO substring en title — evita false positives tipo
+  "Monster Musume → Monster (Urasawa)").
+- Hook en `candidate_to_json` (manga_watch.py): items futuros del
+  scraper se normalizan automáticamente.
+- Backfill aplicado: 220 items remapped (Demon Slayer absorbiendo
+  "kimetsu-no-yaiba" + JP nativo + "Guardianes de la Noche"; Attack on
+  Titan absorbiendo "L'Attaque des Titans" + "L'Attacco dei Giganti" +
+  "Ataque a los Titanes"; Apothecary Diaries absorbiendo "Les Carnets de
+  l'Apothicaire"; Witch Hat Atelier absorbiendo "Atelier of Witch Hat" +
+  "L'Atelier des Sorciers"; etc.).
+- Corpus: 4420 → 4409 (Δ -11 dedups tras consolidación). series_keys
+  distintos: 1456 → 1431. Ver gotcha #20.
+- Tests: 265/265 passing (+4 tests del resolver).
+
+Last updated previo: 2026-05-22 (mediodía, standardization de nombres + agrupación
+por obra+edición — manual via subagentes, sin retrofit script):
+- Schema nuevo agregado a items.jsonl: `series_key` (id canónico de la obra,
+  ej. "berserk", "one-piece"), `series_display`, `edition_key` (id de
+  edición+publisher, ej. "berserk-darkhorse-deluxe"), `edition_display`,
+  `volume`. Permite filtrar por obra y por edición en el dashboard.
+- Títulos estandarizados al formato `{Series} {Edition Suffix} {Volume}`
+  ej. "Berserk Deluxe 1", "One Piece Celebration 100".
+- 5192 items procesados en 26 chunks de ~200 via subagentes paralelos.
+  Reconciliación posterior: 86 series_keys remapeados a versión canónica
+  (ej. "hells-paradise" prevaleciendo sobre "hell-s-paradise"/"hells-paradise-jigokuraku";
+  "boruto" sobre "boruto-naruto-next-generations"; "demon-slayer" sobre
+  "kimetsu-no-yaiba"; etc.). 370 items remapped.
+- 94 items movidos a nuevo `data/non_manga_blacklist.jsonl`: cómics
+  occidentales (Marvel/DC/IDW/Image), light novels, posters, figuras,
+  DVDs/Blu-rays, videojuegos. Mangavariant SIEMPRE marcado is_manga=true
+  (regla del usuario: "todo lo que venga de mangavariant tomalo como
+  válido siempre").
+- Dedup por (series_key, edition_key, volume): 678 duplicados eliminados.
+  Conserva el más completo (priorizando ISBN > image > price > author).
+- 37 items Rakuten con título "Unknown X" reparados via descripción JP
+  (un mini-subagente extrajo serie/edición/volumen del título japonés).
+- Corpus final: **5192 → 4420 items** (Δ -772 = -94 non-manga -678 dups).
+  1456 series_keys distintos, 2915 edition_keys distintos.
+  Coverage: 100% series_key, 100% edition_key, 100% image, 78.9% volume.
+- Próximo paso natural: agregar UI de filtro por obra/edición en el
+  dashboard usando series_key/edition_key como agrupadores.
+
+Last updated previo: 2026-05-22 (madrugada, manual review):
+- 9 índices residuales eliminados (Dark Horse Direct Volumes/Hardcovers que
+  re-aparecieron tras el scrape + Mangavariant "Loveless — Vol.1~12 - Limited
+  editions" que era un rango de tomos).
+- 182 clones Rakuten l-id deduplicados + fix preventivo en TRACKING_PARAMS
+  (`l-id`, `l_id`). Ver gotcha #19.
+- 589 títulos Manga-Sanctuary enriquecidos: títulos pelados como "Demon slayer
+  1" ahora muestran su qualifier ("Demon slayer 1 (Coffret Collector 2025)").
+  Resolvió 184 de 229 grupos duplicados; los 41 restantes son ediciones
+  legítimas con ISBN distinto (reimpresiones Panini, etc.) en distintos
+  formatos.
+- 7 items sin imagen completados a mano vía web (3 ListadoManga + 4 Fnac).
+  4 ISBNs nuevos extraídos: 9788411616218 (Cofre 5º Aniversario Planeta
+  Manga Ana C. Sánchez), 9788498474503 (Rg Veda 2 Ed. Coleccionista),
+  9788467928150 (Fruits Basket 1 Ed. Coleccionista), 9788467929287 (Fruits
+  Basket 3 Ed. Coleccionista). Image coverage 99.9% → 100.0%.
+- 4 títulos Fnac limpiados del "-5% en libros" / "- Fnac" trailing junk.
+- Corpus: 5383 → 5192 (Δ -191).
+
+Last updated previo: 2026-05-22 (noche, post-omnibus-cleanup) — Decisión del owner:
+omnibus / "X en X" / "X-in-X" NO califican como coleccionables solos. Solo
+se aceptan si vienen con qualifier premium (hardcover, deluxe, limited,
+variant_cover, box_set, bundle, extras). Cambios:
+- `omnibus` removido de `COLLECTIBLE_EDITION_SIGNAL_TYPES` (manga_watch.py).
+- `"Omnibus"` agregado a la exclusión de `_GENERIC_X_EDITION_PATTERN` (evita
+  que "Omnibus Edition" dispare `lore_edition` falsamente).
+- 91 items omnibus-only limpiados retroactivamente de items.jsonl
+  (5474 → 5383). NO se aplicó filter_collectible completo (habría
+  removido ~739 items Mangavariant válidos por otra razón — issue
+  separado en radar).
+- Tests: 261 passing (+8). Ver gotcha #18.
+
+Last updated previo: 2026-05-22 (noche, post-mangavariant) — Sprint 4.y.1:
+cluster_key tier-based. Cuando se ingestó Mangavariant, el caso "One
+Piece Vol.98 Celebration Edition" aparecía dos veces (Star Comics +
+Mangavariant) porque sus signal_types divergían y `variant_sig` (set
+completo) era demasiado discriminante. Reemplazado por
+`_variant_tier()` que elige el tier **más específico** del item
+(`artbook > omnibus > box_set > kanzenban > lore_edition >
+variant_cover > deluxe > limited > special > ""`). Bug colateral:
+`_normalize_series_name` dejaba un `.` residual en títulos tipo
+"One Piece — Vol.98 - ..." → fix con trim de edges. Tests: +5
+(variant_tier hierarchy, OP98 cross-source merge, tolerance a extra
+low-priority signals, deluxe≠lore, series trim). Retrofit aplicado a
+5474 items.jsonl: 2398 keys refrescadas, 137 cards consolidadas (5474
+→ 5337 cards en dashboard). 258/258 verde. Documentado en design
+decision #4 ("variant tier").
+
+Last updated previo: 2026-05-22 (noche) — Sprint 4.z: limpieza de páginas-índice.
+Auditoría descubrió 13 items que eran índices/catálogos guardados como
+productos: 1 Whakoom `/publisher/`, 7 Shopify variants multi-tomo en
+Dark Horse Direct, 3 blog/news posts, 1 colección funside.it. Nuevos
+módulos: `scripts/shopify_variants.py` (parser genérico de variants
+con detección heurística por keyword de volumen) y
+`scripts/wikis/whakoom.py::expand_whakoom_publisher_url`. Nuevo retrofit
+`scripts/retrofit/expand_index_pages.py` que maneja los 4 casos
+(eliminar / expandir). Nueva fuente `IT - Funside Variant` en sources.yml
+(reemplaza el item-índice eliminado). `search_discovery.py` ahora
+intercepta `/publisher/` (expand) + `/blogs/news/` + `/collections/X`
+(blacklist). +32 filas netas en items.jsonl (45 tomos nuevos − 13
+índices eliminados). Ver gotchas #14 (extendida), #16 (Shopify variants),
+#17 (url_is_useful blacklist).
+
+Last updated previo: 2026-05-22 (tarde) — Sprint 4.y: integración Mangavariant.
+Nueva fuente global `Global - Mangavariant` (sources.yml, incremental con
+max_pages=1) + wiki parser `scripts/wikis/mangavariant.py` (sitemap-driven
+bulk importer, ~2700 entries de 13 países). Cubre el caso central del
+proyecto: descubrir variants/ediciones especiales con serie + año +
+publisher + país + cover, aunque sin precio ni URL de tienda. **Nueva
+sección "URL como referencia (no de tienda)"** en CLAUDE.md que
+formaliza el principio: las URLs no-shop son válidas, el enrichment de
+precios es una pasada aparte (próximo sprint). 8 tests nuevos, 246/246
+verde. Países nuevos que ahora aparecen en items.jsonl: Alemania,
+Taiwán, Tailandia, Reino Unido, Vietnam.
+
+Last updated previo: 2026-05-22 — Sprint 4.x: Whakoom `/ediciones/` expansion.
+Items con URL `/ediciones/<id>/<slug>` se expanden a N filas `/comics/...`
+(una por tomo) en los tres puntos de ingesta (spider, search discovery,
+retrofit). One-shots se resuelven vía `/login?ReturnUrl=/comics/...`.
+Bug fixes laterales: Whakoom session ya no anuncia Brotli (no soportado
+por `requests` sin lib extra → respuestas eran bytes binarios silenciosos)
+y se tightenearon los markers de CF challenge (`challenge-platform`
+matcheaba el script JSD legítimo, generando falsos positivos). +40 filas
+en items.jsonl tras el retrofit (17 `/ediciones/` reemplazadas por 57
+tomos `/comics/`, descontando 14 duplicados cross-subdominio
+en./www.whakoom.com). Ver gotchas #14 y #15.
+
+Last updated previo: 2026-05-21 — sweep update after Sprints 1 / 2.4 / 2.5
 / 2.6 / 3.8: collectible/novel/comics filters, multi-engine search,
 overnight pipeline + source-health audit, Wayback recovery, scrape
 parallelization, cluster_key grouping. **+ Panel de Control web local
 (admin/, scripts/admin_serve.py, scripts/script_registry.py,
 scripts/run_local.sh) — server admin separado del público, bind a
-127.0.0.1, no deployable. Ver `docs/CONTROL-PANEL.md`.** If you find
-this file stale relative to the code, update it (per the Documentation
-policy at the top of this file).
+127.0.0.1, no deployable. Ver `docs/CONTROL-PANEL.md`.** **+ Expansión
+de fuentes a Brasil (Panini BR Planet Manga, Editora JBC, NewPOP,
+Pipoca & Nanquim, Devir + Panini BR search) y nuevas fuentes con
+variantes/alternativas en MX (MangaLine México) y ES (ECC Manga
+[deshabilitado: Cloudflare], MangaLine España). +1 país (Brasil),
++6º idioma (PT-BR), +11 fuentes (120→131, 106→115 habilitadas — ECC
+y NewPOP Catálogo quedaron disabled). Tres nuevas mixed: ECC,
+Pipoca & Nanquim, Devir.** If you find this file stale relative to
+the code, update it (per the Documentation policy at the top of this
+file).

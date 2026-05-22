@@ -153,6 +153,205 @@ sources:
     tags: ["manga", "special", "official"]
     purity: "mixed"  # trae CONMEBOL Libertadores, Hot Wheels, Dragon Ball Cards, etc.
 
+  - name: "MX - MangaLine México Tienda"
+    country: "México"
+    language: "Español"
+    publisher: "MangaLine México"
+    source_class: "official"
+    kind: "html"
+    url: "https://mangaline.com.mx/tienda/"
+    enabled: true
+    tags: ["manga", "official", "store", "variant", "new-source"]
+    selectors:
+      item_selector: "li.product:not(.product-category)"
+      title_selector: "h3.product-title"
+    max_pages: 10
+    notes: |
+      WooCommerce con tema custom; títulos en h3.product-title (NO el
+      h2.woocommerce-loop-product__title estándar). li.product también
+      matchea cards de "líneas temáticas" (DARK LINE, EPIC LINE…) que
+      son category-cards — filtradas con :not(.product-category).
+      Catálogo concentrado en sobrecubiertas alternativas y exclusivas
+      (Devilman #1-3, Q on the Seaside, Tokko, Silent Möbius, Nadesico,
+      Grey, Dark Angel). manga_only.
+
+  # -------------------------
+  # Brasil
+  # -------------------------
+  - name: "BR - Panini Brasil Planet Manga"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Panini Brasil"
+    source_class: "official"
+    kind: "html"
+    url: "https://panini.com.br/planet-manga"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    selectors:
+      item_selector: "li.product-item"
+      title_selector: "a.product-item-link"
+    max_pages: 10
+    notes: "Magento. Catálogo manga curado bajo /planet-manga (One Piece, Demon Slayer, JJK, Naruto, Dragon Ball)."
+
+  - name: "BR - Editora JBC Checklist"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Editora JBC"
+    source_class: "official"
+    kind: "html"
+    url: "https://editorajbc.com.br/checklist/atual/"
+    enabled: true
+    tags: ["manga", "official", "calendar", "new-source"]
+    selectors:
+      item_selector: "div.card.item-mangas"
+      title_selector: "strong"
+    notes: |
+      Checklist mensual de JBC (lanzamientos físicos, digitales,
+      reimpresiones). WordPress; URLs producto:
+      /mangas/colecao/<serie>/vol/<vol>/. Cards en
+      div.card.item-mangas (~184 items/mes). Título en <strong>
+      directo del anchor (a.post-selo-catalog-volume contiene
+      span "mais detalhes" que contaminaría si usamos el anchor).
+
+  - name: "BR - Editora JBC Títulos"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Editora JBC"
+    source_class: "official"
+    kind: "html"
+    url: "https://editorajbc.com.br/titulos/"
+    enabled: true
+    tags: ["manga", "official", "new-source"]
+    selectors:
+      item_selector: "div.card.item-mangas"
+      title_selector: "strong"
+    max_pages: 5
+    notes: "Catálogo completo JBC (~565 títulos). Cards en div.card.item-mangas, título en <strong>."
+
+  - name: "BR - NewPOP Catálogo"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "NewPOP Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.newpop.com.br/catalogo/"
+    enabled: false
+    tags: ["manga", "official"]
+    notes: |
+      DESHABILITADO: auto-detección no encuentra cards (0 candidatos
+      en dry-run). El listado parece JS-rendered o usa contenedor
+      no estándar. Cobertura real viene de BR - NewPOP Lançamentos
+      (lojanewpop.com.br/pre-venda). Re-activar con selectores
+      explícitos cuando inspeccionemos el HTML.
+
+  - name: "BR - NewPOP Lançamentos"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "NewPOP Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.lojanewpop.com.br/pre-venda"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    selectors:
+      item_selector: "li[class*='categoria-id-']"
+      title_selector: "a[title]"
+    notes: |
+      Loja Integrada. Pre-venta de NewPOP — útil para detectar
+      ediciones especiales (Cutie Honey edición diferenciada, etc.).
+      Cada producto en li.categoria-id-<NNN>; título limpio en a[title].
+
+  - name: "BR - NewPOP Mangas"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "NewPOP Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.lojanewpop.com.br/mangas"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    selectors:
+      item_selector: "li[class*='categoria-id-']"
+      title_selector: "a[title]"
+    max_pages: 5
+    notes: |
+      Loja Integrada — catálogo completo manga NewPOP (~111
+      títulos visibles en página 1: Cavaleiros do Zodíaco,
+      Ashita no Joe, Coelacanth, Gon, Hellbound, etc.).
+
+  - name: "BR - NewPOP One-shots"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "NewPOP Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.lojanewpop.com.br/one-shots"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    selectors:
+      item_selector: "li[class*='categoria-id-']"
+      title_selector: "a[title]"
+    max_pages: 3
+    notes: |
+      One-shots de NewPOP — ediciones únicas, suelen tener
+      formato especial (cofanetto, libro de arte, integral).
+
+  - name: "BR - NewPOP Pacotes"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "NewPOP Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.lojanewpop.com.br/pacotes"
+    enabled: true
+    tags: ["manga", "boxset", "official", "store", "new-source"]
+    selectors:
+      item_selector: "li[class*='categoria-id-']"
+      title_selector: "a[title]"
+    max_pages: 3
+    notes: |
+      Packs / boxsets NewPOP — coleções completas con descuento
+      y ocasionalmente ediciones limitadas con extras.
+
+  - name: "BR - Pipoca & Nanquim"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Pipoca & Nanquim"
+    source_class: "official"
+    kind: "html"
+    url: "https://pipocaenanquim.com.br/"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    purity: "mixed"  # publica manga (Junji Ito, Tezuka, Shigurui, City Hunter) Y BD/comics (Thorgal, Asterix-like)
+    selectors:
+      item_selector: "li.product-item, .item.product"
+      title_selector: "a.product-item-link, a[href$='.html']"
+    max_pages: 5
+    notes: |
+      Magento (Mageshop). Mezcla manga premium (Junji Ito,
+      omnibus Tezuka, City Hunter Omnibus) con BD europea
+      (Thorgal). Comics blacklist filtra Thorgal; purity:mixed
+      exige STRONG hint para el resto.
+
+  - name: "BR - Devir Brasil"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Devir Editora"
+    source_class: "official"
+    kind: "html"
+    url: "https://lojaeditora.devir.com.br/literatura"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    purity: "mixed"  # OpenCart con catálogo mayoritariamente RPG + literatura; manga es minoritario
+    selectors:
+      item_selector: ".product-thumb, .product-layout"
+      title_selector: ".caption a, .name a, h4 a"
+    max_pages: 5
+    notes: |
+      OpenCart. Devir publica algunos manga (Bokurano, The
+      Ancient Magus Bride) en una catálogo dominado por RPG
+      y literatura — purity:mixed.
+
   # -------------------------
   # España - fuentes transversales y medios
   # -------------------------
@@ -335,6 +534,48 @@ sources:
     tags: ["manga", "official"]
     selectors:
       item_selector: "div.ae-bg-gallery-type-default.e-con.e-con-boxed"
+
+  - name: "ES - ECC Manga"
+    country: "España"
+    language: "Español"
+    publisher: "ECC Ediciones"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.ecccomics.com/comics/manga-1351.html"
+    enabled: false
+    tags: ["manga", "official", "store"]
+    purity: "mixed"  # ECC publica manga + DC superhéroes + cómic occidental
+    selectors:
+      title_selector: "a[href*='/comic/']"
+    max_pages: 5
+    notes: |
+      DESHABILITADO: ecccomics.com está detrás de Cloudflare con
+      challenge JS. Acceso curl/requests devuelve 5xx ó 404 — la
+      URL /comics/manga-1351.html que devolvió WebFetch desde caché
+      en realidad no existe live. Requiere kind:js (Playwright) o
+      flujo Wayback. ECC publicó Wotakoi #11 con portada alternativa
+      y ediciones coleccionista — reactivar cuando tengamos fetch
+      JS-aware o cuando confirmemos URL pública del catálogo manga.
+
+  - name: "ES - MangaLine España"
+    country: "España"
+    language: "Español"
+    publisher: "MangaLine España"
+    source_class: "official"
+    kind: "html"
+    url: "https://mangaline.es/shop/"
+    enabled: true
+    tags: ["manga", "official", "store", "variant", "new-source"]
+    selectors:
+      item_selector: "li.product:not(.product-category)"
+      title_selector: "h3.product-title"
+    max_pages: 10
+    notes: |
+      WooCommerce con tema custom (mismo theme que MangaLine MX);
+      títulos en h3.product-title, no el estándar h2. Productos
+      en /product/<slug>/. Preventas y ediciones integrales
+      con extras (Grey, Silent Möbius, Dark Angel, UFO Robot
+      Grendizer preventa Goldorak). manga_only.
 
   # -------------------------
   # Estados Unidos / Inglés - oficiales y medios
@@ -1195,6 +1436,37 @@ sources:
       - "tribute"
       - "aniversario"
 
+  - name: "BR - Panini Brasil (search)"
+    country: "Brasil"
+    language: "Portugués"
+    publisher: "Panini Brasil"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official", "store", "new-source"]
+    purity: "mixed"  # catálogo Panini BR trae también álbumes Copa, figurinhas, cromos
+    search_template: "https://panini.com.br/catalogsearch/result/?q={query}"
+    selectors:
+      item_selector: "li.product-item"
+      title_selector: "a.product-item-link"
+    keywords:
+      - "edicao especial"
+      - "edicao limitada"
+      - "edicao definitiva"
+      - "edicao colecionador"
+      - "boxset"
+      - "box"
+      - "kit"               # Panini BR usa "Kit <serie>" para packs (Berserk, Vinland Saga, JJK)
+      - "deluxe"
+      - "capa dura"
+      - "encadernado"
+      - "variante"
+      - "capa variante"
+      - "kanzenban"
+      - "tarot"
+      - "anniversary"
+      - "tribute"
+
   - name: "ES - Panini España (search)"
     country: "España"
     language: "Español"
@@ -1552,6 +1824,62 @@ sources:
       /ediciones/N específicas. Para discovery por autor:
       /autores/{id}/{slug}. Ambos accesibles sin login.
 
+  - name: "Global - Mangavariant"
+    country: "Global"
+    language: "Inglés"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "html"
+    url: "https://mangavariant.com/variant/"
+    enabled: true
+    tags: ["manga", "variant", "reference", "wiki", "global", "new-source"]
+    purity: "manga_only"   # base 100% curada de variants/ediciones especiales
+    selectors:
+      # Cada variant aparece como un <a> con href a /variant/<manga>/<edicion>/
+      # dentro del listing. El extractor genérico saca title del alt/text.
+      item_selector: "a[href*='/variant/']"
+    max_pages: 1   # solo la primera página para detección incremental;
+                   # el bulk import histórico se hace una vez con
+                   # `--bootstrap-wiki mangavariant`.
+    notes: |
+      Base de datos global comunitaria de variants/ediciones especiales
+      de manga (13 países, ~2700 entries). NO es retailer: las URLs son
+      páginas-referencia ("este variant existe"), sin precio ni botón de
+      compra. Cubre el caso central de PandaWatch: descubrir qué variantes
+      especiales existen en el mundo.
+
+      Ingestión:
+        • Bulk inicial (una vez): `--bootstrap-wiki mangavariant` lee los
+          3 variant-sitemaps (~2700 URLs) y carga todo.
+        • Incremental (cada overnight): este source con max_pages: 1
+          recoge novedades publicadas en la home /variant/.
+
+      Ver scripts/wikis/mangavariant.py y el "URL como referencia" en
+      CLAUDE.md.
+
+  - name: "IT - Funside Variant"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Funside"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://funside.it/collections/a-caccia-di-variant"
+    enabled: true
+    tags: ["manga", "retailer", "italy", "variant", "new-source"]
+    selectors:
+      item_selector: ".product-card"
+      title_selector: "a[href*='/products/']"
+    max_pages: 5
+    notes: |
+      Shopify italiano enfocado en variant covers de manga ("a caccia di
+      variant"). Descubierto vía search_discovery; previamente teníamos
+      su /collections/ como un único item (índice). Ahora lo escrapeamos
+      directo. Catálogo ~49 productos con títulos tipo:
+      - "A Tutto Gas vol 2 Variant"
+      - "Ai Tempi di Bocchan Perfect Edition vol 3 Variant"
+      - "Vita da Slime - A Spasso per Tempest Vol 5 Variant"
+      Slugs siempre terminan en `-variant`.
+
   - name: "IT - Manga Dreams"
     country: "Italia"
     language: "Italiano"
@@ -1570,3 +1898,24 @@ sources:
       Variant Metal, prima tiratura, edizione francese con gadget evento,
       OP/Vinland/MHA/Berserk variant covers. URL típica:
       /products/one-piece-108-variant-metal-limitata-alla-prima-tiratura.
+
+  - name: "IT - Manga Dreams (variants europeas)"
+    country: "Italia"
+    language: "Italiano"
+    publisher: "Manga Dreams"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://mangadreams.it/collections/edizioni-europee-manga-variant-limited"
+    enabled: true
+    tags: ["manga", "retailer", "italy", "variant", "new-source"]
+    selectors:
+      item_selector: ".card-wrapper.product-card-wrapper"
+      title_selector: "a[href*='/products/']"
+    max_pages: 3
+    notes: |
+      Sub-colección de mangadreams.it dedicada a variants/limited
+      europeas importadas: ediciones francesas (Momie, Alfa BD,
+      Comptoir du Rêve, Canal BD), alemanas, españolas. ~43 productos
+      en 3 páginas. `/collections/all` no llegaba a todos (paginación
+      Shopify) — por eso esta colección apunta como fuente directa.
+      Mismo Shopify, mismos selectors, slug bajo /products/.

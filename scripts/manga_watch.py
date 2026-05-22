@@ -145,6 +145,15 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "special bundle", "score": 30, "type": "bundle"},
     {"phrase": "variant cover", "score": 40, "type": "variant_cover"},
     {"phrase": "exclusive cover", "score": 40, "type": "variant_cover"},
+    # "variant" suelto (loanword usado en EN/IT/FR/ES retail manga): en
+    # contexto manga, "Variant" sin "Cover" casi siempre significa variant
+    # cover (ej. "One Piece 108 Variant Metal", "Demon Slayer 23 Variant
+    # Limited Francese", "Hunter X Hunter 37 Variant"). Score moderado (30)
+    # para no dominar el ranking; suficiente para que pase
+    # is_collectible_edition vía COLLECTIBLE_EDITION_SIGNAL_TYPES.
+    # Word-boundary evita falsos positivos sobre "covariant" / "invariant" /
+    # "variante" (italiano "variante" lleva una vocal extra al final).
+    {"phrase": "variant", "score": 30, "type": "variant_cover"},
     {"phrase": "retailer exclusive", "score": 40, "type": "retailer_exclusive"},
     {"phrase": "kinokuniya exclusive", "score": 45, "type": "retailer_exclusive"},
     {"phrase": "barnes & noble exclusive", "score": 45, "type": "retailer_exclusive"},
@@ -362,6 +371,10 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     # Lista de Deseos" (botón wishlist) cuando el selector toma el wrapper
     # completo. Strippear el prefijo entero.
     re.compile(r"^A[ñn]adir\s+a\s+la\s+Lista\s+de\s+Deseos\s+", re.IGNORECASE),
+    # Pipoca & Nanquim (BR Magento) — botón "Lista de desejos" prefijo equivalente
+    # al de Panini ES. También cubre "Adicionar à Lista" genérico de Magento BR.
+    re.compile(r"^Lista\s+de\s+desejos\s+", re.IGNORECASE),
+    re.compile(r"^Adicionar\s+(?:à|a)\s+lista(?:\s+de\s+desejos)?\s+", re.IGNORECASE),
 )
 
 # Retailers cuyo "(X Exclusive)" en el sufijo es metadata redundante.
@@ -598,6 +611,10 @@ TRACKING_PARAMS: frozenset[str] = frozenset({
     "ref", "source", "affiliate", "aff", "tag",
     # Magento / Panini
     "___store", "___from_store",
+    # Rakuten — `l-id=search-c-item-img-NN` identifica el slot del listing
+    # de búsqueda, no el producto. Sin este params, 5 búsquedas distintas
+    # generaban 5 items duplicados del mismo /rb/<id>/ (bug detectado 2026-05-22).
+    "l-id", "l_id",
 })
 
 
@@ -2358,10 +2375,17 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
 # exclusivo primera edición" se acepta (signal_type=bonus).
 
 # Signal types que prueban "es una edición especial / coleccionable".
+#
+# ⚠️ `omnibus` NO está acá: el usuario decidió (2026-05-22) que "omnibus" /
+# "X en X" / "X-in-X" por sí solo NO califica — es básicamente un tomo más
+# grueso. Solo se acepta cuando viene CON un qualifier premium adicional
+# (hardcover, deluxe, limited, variant_cover, box_set, etc.). Como esos
+# qualifiers SÍ están en este set, un omnibus premium pasa por ellos.
+# Ver gotcha #18 en CLAUDE.md.
 COLLECTIBLE_EDITION_SIGNAL_TYPES = frozenset({
     "limited", "special_edition", "collector", "deluxe", "premium_format",
     "box_set", "variant_cover", "retailer_exclusive", "made_to_order",
-    "bundle", "pack", "new_art", "oversized", "omnibus", "hardcover",
+    "bundle", "pack", "new_art", "oversized", "hardcover",
     "lore_edition",  # set por score_candidate cuando título dispara X-Edition regex
 })
 
@@ -2385,11 +2409,17 @@ COLLECTIBLE_PRODUCT_TYPES = frozenset({
 #
 # Excluye palabras genéricas que no implican edición especial ("First Edition",
 # "New Edition", "Print Edition", "Spanish Edition", "Digital Edition", etc.).
+# "Omnibus" se EXCLUYE específicamente porque no es una marca de edición
+# coleccionable: "Omnibus Edition" = paperback con varios chapters reunidos,
+# básicamente un tomo más grueso. La regla del usuario (gotcha #18): omnibus
+# solo cuenta como coleccionable si viene con otro qualifier premium
+# (hardcover/deluxe/limited/variant/box/extras). Ver `is_collectible_edition`.
 _GENERIC_X_EDITION_PATTERN = re.compile(
     r"\b(?!(?:The|This|That|First|Second|Third|Fourth|Fifth|Next|Last|"
     r"Latest|New|Old|Same|Other|Another|Each|Every|Any|All|Some|Whole|"
     r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
-    r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final)\b)"
+    r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final|"
+    r"Omnibus)\b)"
     r"([A-Za-z][\w\-]{2,})\s+"
     r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
     re.IGNORECASE,
@@ -2542,11 +2572,57 @@ def _normalize_series_name(title: str, volume: str) -> str:
     # Quitar el número de volumen específico si lo conocemos
     if volume:
         text = re.sub(rf"(?<!\d){re.escape(volume)}(?!\d)", " ", text)
-    # Quitar puntuación común que sobra
-    text = re.sub(r"[:\-–—_,;|]+", " ", text)
+    # Quitar puntuación común que sobra (incluye `.` y `/` porque títulos como
+    # "One Piece — Vol.98 - Celebration edition" dejan un `.` residual tras
+    # remover "vol" y el número del volumen — sin esto, "one piece ." y
+    # "one piece" no mergean).
+    text = re.sub(r"[:\-–—_,;|./\\]+", " ", text)
     # Collapse y lowercase
     text = re.sub(r"\s+", " ", text).strip().lower()
+    # Defensa adicional: limpieza de puntuación de bordes (preserva kanji/kana
+    # en medio porque str.strip(chars) solo opera en los extremos).
+    text = text.strip(" -–—.,:;|/\\")
     return text
+
+
+# Jerarquía de "tier" de variante para cluster_key. La idea: distintas fuentes
+# detectan signal_types ligeramente distintos para el mismo producto
+# (ej. Star Comics ve [collector, lore_edition] mientras Mangavariant ve
+# [bonus, special_edition, collector, lore_edition] para la MISMA One Piece
+# Vol.98 Celebration Edition). Si usamos el set completo como discriminante,
+# nunca mergean. En cambio mapeamos cada item al tier MÁS ESPECÍFICO al que
+# pertenece (primer match de esta lista) y usamos solo ese tier.
+#
+# Orden: producto-class > formato estructural > release específicamente nombrado
+# > formato premium > variant > limited > generic-special.
+_VARIANT_TIER_RULES: list[tuple[str, frozenset[str]]] = [
+    ("artbook",       frozenset({"artbook", "fanbook", "guidebook"})),
+    ("omnibus",       frozenset({"omnibus"})),
+    ("box_set",       frozenset({"box_set", "bundle", "pack"})),
+    ("kanzenban",     frozenset({"premium_format"})),
+    ("lore_edition",  frozenset({"lore_edition"})),  # X-Anniversary, Celebration…
+    ("variant_cover", frozenset({"variant_cover", "new_art",
+                                  "retailer_exclusive", "made_to_order"})),
+    ("deluxe",        frozenset({"deluxe", "hardcover", "oversized"})),
+    ("limited",       frozenset({"limited"})),
+    ("special",       frozenset({"special_edition", "collector",
+                                  "bonus", "finish"})),
+]
+
+
+def _variant_tier(signal_types: list[str] | None) -> str:
+    """Mapea un set de signal_types al tier MÁS ESPECÍFICO que matchee.
+
+    Devuelve "" si no matchea ninguno (tomo regular). El tier reemplaza el
+    set completo en cluster_key — dos items del mismo tier mergean.
+    """
+    if not signal_types:
+        return ""
+    sig_set = {str(s).lower() for s in signal_types if s}
+    for tier_name, members in _VARIANT_TIER_RULES:
+        if sig_set & members:
+            return tier_name
+    return ""
 
 
 def derive_cluster_key(item: dict[str, Any]) -> str:
@@ -2557,15 +2633,21 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
        edición/mercado, así que items con mismo ISBN son el mismo objeto).
     2. Si NO hay ISBN pero podemos derivar `(language, series, volume)` con
        una serie de >= 3 caracteres → clave fuzzy combinando esos +
-       variant_sig (de signal_types) + publisher. Items con misma clave
-       fuzzy son tratados como el mismo producto.
+       variant_tier (un tier único derivado de signal_types) + publisher.
+       Items con misma clave fuzzy son tratados como el mismo producto.
     3. Cualquier otro caso (sin ISBN y series demasiado corta o sin volumen)
        → "url:<url>". Esto garantiza standalone — no se agrupa con nada más,
        evitando falsos positivos.
 
-    `variant_sig` y `publisher` son discriminantes para EVITAR juntar
-    "OP100 normal" con "OP100 Celebration" (distintos signal_types) o ediciones
-    de publishers distintos. Idioma es discriminante para no mezclar mercados.
+    `variant_tier` y `publisher` son discriminantes para EVITAR juntar
+    "OP100 normal" con "OP100 Celebration" (distinto tier) o ediciones de
+    publishers distintos. Idioma es discriminante para no mezclar mercados.
+
+    Antes este campo era `variant_sig = ",".join(sorted(signal_types))`. El
+    problema: dos fuentes con descripciones distintas detectan signal_types
+    ligeramente distintos del MISMO producto, y el set completo no mergea.
+    `_variant_tier` colapsa esa varianza eligiendo solo el tier más
+    específico — más tolerante, sigue diferenciando tomo-regular vs especial.
     """
     isbn = (item.get("isbn") or "").strip()
     if isbn:
@@ -2574,20 +2656,19 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     language = (item.get("language") or "").strip().lower()
     publisher = (item.get("publisher") or "").strip().lower()
     signal_types = item.get("signal_types") or []
-    variant_sig = ",".join(sorted({str(s).lower() for s in signal_types if s}))
+    variant_tier = _variant_tier(signal_types)
     volume = _extract_volume(title)
     series = _normalize_series_name(title, volume)
     url = (item.get("url") or "").strip()
 
     # Guardas anti-falso-positivo: series, language y volume son
     # requeridos para considerar dos items "el mismo producto" sin ISBN.
-    # variant_sig solo no alcanza — sin volumen distintos tomos mergean mal.
     if (not series or len(series) < 3
             or not language
             or not volume):
         return f"url:{url}"
 
-    return f"fuzzy:{language}|{series}|{volume}|{variant_sig}|{publisher}"
+    return f"fuzzy:{language}|{series}|{volume}|{variant_tier}|{publisher}"
 
 
 def is_collectible_edition(
@@ -4038,10 +4119,22 @@ def process_state(
     # ediciones especiales/variantes/coleccionistas/con extras/artbooks.
     # Aplicado aquí (punto único) para que cubra todos los pipelines: HTML,
     # RSS, wiki bootstrap, sitemap mining.
+    #
+    # BYPASS para fuentes 100% curadas: bases comunitarias como Mangavariant
+    # catalogan SOLO variants por diseño — el gate por keywords ("variant",
+    # "limited", "deluxe"…) descarta ~30% de items legítimos cuyo title solo
+    # dice "Vol.1 - Cover A" o "First print". Marcamos esas filas con el tag
+    # 'variant-catalog' en el parser y las dejamos pasar sin filtrar. Ver
+    # "URL como referencia" en CLAUDE.md.
     pre_filter_count = len(candidates)
     filtered: list[Candidate] = []
     collectible_rejected = 0
+    collectible_bypassed = 0
     for candidate in candidates:
+        if "variant-catalog" in (candidate.tags or []):
+            filtered.append(candidate)
+            collectible_bypassed += 1
+            continue
         is_coll, _reason = is_collectible_edition(
             candidate.title,
             candidate.description,
@@ -4059,6 +4152,11 @@ def process_state(
         print(
             f"[GATE] {collectible_rejected}/{pre_filter_count} candidatos "
             f"descartados por no ser edición coleccionable"
+        )
+    if collectible_bypassed:
+        print(
+            f"[GATE] {collectible_bypassed} candidatos pasaron con bypass "
+            f"(tag variant-catalog — fuente curada)"
         )
     candidates = filtered
 
@@ -4134,6 +4232,195 @@ def process_state(
     return reportable, state
 
 
+# Publisher → slug mapping. Mismo set que usa el skill standardize-catalog.
+# Si agregás publishers nuevos, sincronizar con el skill prompt.
+_PUBLISHER_SLUG_MAP: dict[str, str] = {
+    # Sintaxis: lowercase substring → slug. Match por substring case-insensitive.
+    "dark horse": "darkhorse",
+    "glénat": "glenat",
+    "glenat": "glenat",
+    "viz": "viz",
+    "panini": "panini",
+    "planet manga": "panini",
+    "norma": "norma",
+    "planeta": "planeta",
+    "ivrea argentina": "ivrea-ar",
+    "ivrea ar": "ivrea-ar",
+    "ivrea": "ivrea",
+    "kana": "kana",
+    "pika": "pika",
+    "crunchyroll": "kaze",
+    "kazé": "kaze",
+    "kaze": "kaze",
+    "ki-oon": "kioon",
+    "ki oon": "kioon",
+    "star comics": "star",
+    "kodansha usa": "kodansha-us",
+    "kodansha": "kodansha",
+    "shueisha": "shueisha",
+    "square enix": "squareenix",
+    "kadokawa": "kadokawa",
+    "meian": "meian",
+    "ecc": "ecc",
+    "arechi": "arechi",
+    "delcourt": "delcourt",
+    "tonkam": "delcourt",
+    "tokyopop": "tokyopop",
+    "jbc": "jbc",
+    "devir": "devir",
+    "newpop": "newpop",
+    "pipoca": "pipoca-nanquim",
+    "kamite": "kamite",
+    "mangaline": "mangaline",
+    "manga line": "mangaline",
+    "manga dreams": "mangadreams",
+    "funside": "funside",
+    "milky way": "milkyway",
+    "milkyway": "milkyway",
+    "doki-doki": "dokidoki",
+    "doki doki": "dokidoki",
+    "nobi nobi": "nobinobi",
+    "tomodomo": "tomodomo",
+    "fandogamia": "fandogamia",
+    "rakuten": "rakuten",
+    "kurokawa": "kurokawa",
+    "akita": "akita",
+    "hakusensha": "hakusensha",
+    "gentosha": "gentosha",
+    "mag garden": "maggarden",
+}
+
+
+def _publisher_slug(publisher: str) -> str:
+    """Devuelve el slug canónico del publisher, o 'unknown'.
+
+    Match por substring lowercase. El primer pattern del map que matchee gana
+    (orden de inserción importa: poner los más específicos arriba).
+    """
+    if not publisher:
+        return "unknown"
+    pub_lc = publisher.lower()
+    for key, slug in _PUBLISHER_SLUG_MAP.items():
+        if key in pub_lc:
+            return slug
+    return "unknown"
+
+
+def _slugify_kebab(s: str) -> str:
+    """Slugifica a kebab-case: lowercase, sin diacríticos, sin punctuation."""
+    if not s:
+        return ""
+    import unicodedata as _ud
+    s = _ud.normalize("NFKD", s.lower())
+    s = "".join(c for c in s if not _ud.combining(c))
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    return s.strip("-")
+
+
+def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
+    """Asigna heurísticamente `series_key`, `edition_key`, etc. desde el title.
+
+    Esto es la PRIMERA pasada cruda del scraper. Imperfecta a propósito —
+    el skill `/standardize-catalog` (subagentes con LLM) la verifica y
+    corrige después. NO setea `standardized_at`, así el skill sabe que
+    todavía debe procesar este item.
+
+    Reusa los helpers existentes (`_extract_volume`, `_normalize_series_name`,
+    `_variant_tier`) que ya manejan vol/tome/巻, mojibake, etc.
+
+    Devuelve `{series_key, series_display, edition_key, edition_display,
+    volume, title_standardized}` con strings vacíos cuando no se puede
+    derivar (better empty than wrong).
+    """
+    title = candidate.title or ""
+    if not title:
+        return {}
+
+    # 1) Volume — reusa el helper canónico
+    volume = _extract_volume(title)
+
+    # 2) Series name — strip de keywords + slug
+    raw_series = _normalize_series_name(title, volume)
+    series_key = _slugify_kebab(raw_series)
+    if not series_key or len(series_key) < 3:
+        # Demasiado corto (probable garbage) — mejor empty, el skill lo asigna.
+        return {}
+    # Guards defensivos contra casos donde el heurístico falla obvio:
+    # - series_key todo dígitos → es probablemente un volumen mal-extraído (ej.
+    #   "鬼滅の刃 23 特装版" deja "23" porque _extract_volume no captura
+    #   números sueltos sin marker "vol/tome/巻").
+    if series_key.isdigit():
+        return {}
+    # - series_key termina con número (probable volumen pegado al nombre por
+    #   falta de marker "vol/tome/巻"). Ej: "atomic-robo-5", "berserk-41".
+    # Excepción: títulos legítimos que TERMINAN en número como "20th Century
+    # Boys" → sería "20th-century-boys" (no termina en dígito). Y "Akira" →
+    # no termina en dígito. Y "Saint Seiya: Episode G" → no.
+    # Falsos positivos son raros — y si pasan, el skill los corrige.
+    if re.search(r"-\d{1,3}$", series_key) and not volume:
+        return {}
+    # Cap en ~35 chars para evitar series_keys absurdas (truncar limpiamente
+    # en un guión, no a media palabra).
+    if len(series_key) > 35:
+        truncated = series_key[:35]
+        last_dash = truncated.rfind("-")
+        if last_dash > 10:
+            series_key = truncated[:last_dash]
+        else:
+            series_key = truncated
+    series_display = raw_series.title() if raw_series else series_key
+
+    # 3) Publisher slug
+    pub_slug = _publisher_slug(candidate.publisher or "")
+
+    # 4) Edition slug from signal_types (reusa _variant_tier)
+    tier = _variant_tier(candidate.signal_types or [])
+    edition_slug_map = {
+        "artbook": "artbook",
+        "omnibus": "omnibus",
+        "box_set": "boxset",
+        "kanzenban": "kanzenban",
+        "lore_edition": "lore",
+        "variant_cover": "variant",
+        "deluxe": "deluxe",
+        "limited": "limited",
+        "special": "special",
+    }
+    edition_slug = edition_slug_map.get(tier, "regular")
+
+    edition_key = f"{series_key}-{pub_slug}-{edition_slug}"
+    edition_name_map = {
+        "deluxe": "Deluxe",
+        "kanzenban": "Kanzenban",
+        "boxset": "Box Set",
+        "variant": "Variant",
+        "limited": "Limited",
+        "lore": "Special Edition",
+        "artbook": "Artbook",
+        "omnibus": "Omnibus",
+        "special": "Special",
+        "regular": "Regular",
+    }
+    edition_name = edition_name_map.get(edition_slug, "Regular")
+    publisher_display = candidate.publisher or ""
+    edition_display = (
+        f"{edition_name} ({publisher_display})" if publisher_display else edition_name
+    )
+
+    # 5) title_standardized
+    parts = [series_display.strip(), edition_name if edition_slug != "regular" else "", volume]
+    title_standardized = " ".join(p for p in parts if p).strip()
+
+    return {
+        "series_key": series_key,
+        "series_display": series_display,
+        "edition_key": edition_key,
+        "edition_display": edition_display,
+        "volume": volume,
+        "title_standardized": title_standardized,
+    }
+
+
 def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     row = {
         "detected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -4142,6 +4429,12 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "signals": candidate.signals,
         "signal_types": candidate.signal_types,
         "title": candidate.title,
+        # title_original preserva el título scrapeado tal como vino de la
+        # fuente (con clean_title aplicado: mojibake fixed, junk removido).
+        # NO se sobrescribe cuando el skill /standardize-catalog estandariza
+        # `title` a la forma international ("Demon Slayer Limited 23") — el
+        # original "鬼滅の刃 23 特装版" queda preservado acá. Ver gotcha #22.
+        "title_original": candidate.title,
         "url": candidate.url,
         "source": candidate.source,
         "source_url": candidate.source_url,
@@ -4162,6 +4455,75 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "isbn": candidate.isbn,
     }
     row["cluster_key"] = derive_cluster_key(row)
+    # Hook: si el Candidate ya tiene series_key/edition_key (set por una pasada
+    # de estandarización manual o por un scraper futuro), aplicar
+    # canonical_series_key() para normalizar a la forma del aliases.yml.
+    # Pipeline integration de gotcha #20 (series aliases multilingües).
+    try:
+        from series_aliases import (
+            canonical_series_key,
+            is_canonical_key,
+            log_unmapped_series,
+        )
+    except ImportError:
+        canonical_series_key = None  # YAML no disponible o falta dep
+        is_canonical_key = None
+        log_unmapped_series = None
+    # Paso A: si el Candidate no tiene series_key/edition_key, derivar
+    # heurísticamente desde el title (función rápida, regex-based). El skill
+    # `/standardize-catalog` luego corrige los casos raros.
+    sk = getattr(candidate, "series_key", "") or ""
+    sd = getattr(candidate, "series_display", "") or ""
+    ek = getattr(candidate, "edition_key", "") or ""
+    ed = getattr(candidate, "edition_display", "") or ""
+    vol = getattr(candidate, "volume", "") or ""
+    title_std = ""
+
+    if not (sk and ek):
+        derived = derive_series_metadata(candidate)
+        if derived:
+            sk = sk or derived.get("series_key", "")
+            sd = sd or derived.get("series_display", "")
+            ek = ek or derived.get("edition_key", "")
+            ed = ed or derived.get("edition_display", "")
+            vol = vol or derived.get("volume", "")
+            title_std = derived.get("title_standardized", "")
+
+    # Paso B: pasar el series_key/display por el aliases.yml resolver. Esto
+    # consolida traducciones multilingües (Demon Slayer = Kimetsu no Yaiba =
+    # 鬼滅の刃 = Guardianes de la Noche) a la canonical key.
+    if canonical_series_key is not None and (sk or sd):
+        new_sk, new_sd = canonical_series_key(candidate.title, sk, sd)
+        if ek.startswith(sk + "-") and new_sk != sk:
+            ek = new_sk + ek[len(sk):]
+        sk, sd = new_sk, new_sd
+
+    # Paso C: escribir al row final
+    if sk:
+        row["series_key"] = sk
+    if sd:
+        row["series_display"] = sd
+    if ek:
+        row["edition_key"] = ek
+    if ed:
+        row["edition_display"] = ed
+    if vol:
+        row["volume"] = vol
+    # No re-escribimos el title si ya viene seteado; el `title_standardized`
+    # de la heurística queda como reference pero no overridea el title scrapeado.
+    # El skill /standardize-catalog es el que reescribe título al merge.
+
+    # Paso D: si el series_key NO está en aliases.yml, loguearlo al unmapped
+    # queue para que el skill enrich-series-aliases lo procese.
+    if log_unmapped_series is not None and sk and is_canonical_key is not None:
+        if not is_canonical_key(sk):
+            log_unmapped_series(
+                series_key=sk,
+                series_display=sd,
+                title=candidate.title,
+                url=candidate.url,
+                source=candidate.source,
+            )
     return row
 
 
@@ -4722,6 +5084,8 @@ def _run_wiki_bootstrap(
         from wikis.otaku_calendar import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "manga-mexico":
         from wikis.manga_mexico import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "mangavariant":
+        from wikis.mangavariant import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -5480,8 +5844,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial).",
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap).",
     )
     parser.add_argument(
         "--wiki-from",

@@ -60,11 +60,8 @@
       </p>
       <p class="text-sm text-gray-500" x-show="loading">Cargando datos…</p>
     </div>
-    <div class="text-right text-sm text-gray-500 flex items-center gap-4">
-      <a href="/control" class="text-pink-600 hover:text-pink-800 underline font-medium">
-        ⚙️ Panel de control
-      </a>
-      <span><span x-text="filtered.length"></span> resultados visibles</span>
+    <div class="text-right text-sm text-gray-500">
+      <span x-text="filtered.length"></span> resultados visibles
     </div>
   </div>
 </header>
@@ -343,6 +340,15 @@
                 <span x-show="copiedTitle">✓ Copiado</span>
               </button>
             </div>
+            <!-- Título original (tal como vino del scrape) cuando difiere del display.
+                 Útil para JP/ES/FR sources donde el display es el canonical EN
+                 ("Demon Slayer Limited 23") pero el original es "鬼滅の刃 23 特装版". -->
+            <template x-if="selectedItem.title_original && selectedItem.title_original !== selectedItem.title">
+              <p class="text-sm text-gray-500 italic mt-0.5" :title="'Título original de la fuente'">
+                <span class="text-gray-400 text-xs not-italic mr-1">原題:</span>
+                <span x-text="selectedItem.title_original"></span>
+              </p>
+            </template>
             <p class="text-sm text-gray-500 mt-1">
               <template x-if="!selectedItem.sources || selectedItem.sources.length <= 1">
                 <span><span x-text="selectedItem.source"></span> · <span x-text="selectedItem.status" class="capitalize"></span></span>
@@ -725,7 +731,18 @@ function mangaApp() {
       const f = this.filters;
       const q = f.search.trim().toLowerCase();
       return this.items.filter(i => {
-        if (q && !(i.title || "").toLowerCase().includes(q)) return false;
+        if (q) {
+          // Buscar en title (display canonical/standardized) + title_original
+          // (preservado del scrape: JP/ES/FR/IT) + series_display (alias canonical
+          // de la obra). Así "Demon Slayer", "鬼滅の刃", "Guardianes de la Noche"
+          // y "Kimetsu no Yaiba" encuentran el mismo manga.
+          const haystack = [
+            i.title || "",
+            i.title_original || "",
+            i.series_display || "",
+          ].join(" ").toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
         if (f.country && i.country !== f.country) return false;
         if (f.publisher && i.publisher !== f.publisher) return false;
         if (f.language && i.language !== f.language) return false;

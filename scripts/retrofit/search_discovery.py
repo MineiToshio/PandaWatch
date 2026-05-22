@@ -69,6 +69,13 @@ try:
         detect_signals,
         make_session,
     )
+    from scripts.wikis.whakoom import (  # type: ignore[import-not-found]
+        WhakoomBlocked,
+        expand_whakoom_edition,
+        expand_whakoom_publisher_url,
+        is_whakoom_edition_url,
+        is_whakoom_publisher_url,
+    )
 except ImportError:
     from manga_watch import (  # type: ignore[no-redef]
         Candidate,
@@ -82,6 +89,13 @@ except ImportError:
         derive_product_type,
         detect_signals,
         make_session,
+    )
+    from wikis.whakoom import (  # type: ignore[no-redef]
+        WhakoomBlocked,
+        expand_whakoom_edition,
+        expand_whakoom_publisher_url,
+        is_whakoom_edition_url,
+        is_whakoom_publisher_url,
     )
 
 
@@ -471,6 +485,12 @@ _URL_BLACKLIST_PATTERNS = re.compile(
     r"|x\.com/[^/]+/status/"
     r"|/comments/"            # generic comment threads
     r"|/blog/.+/page/"        # blog pagination index (not the post)
+    # --- Páginas-índice descubiertas en auditoría (gotcha #14):
+    # OJO: NO bloqueamos whakoom.com/publisher/ aquí — esas se expanden
+    # en el loop de process_query (ver expand_whakoom_publisher_url).
+    r"|whakoom\.com/(?:autores|tag)/"  # índices Whakoom (autores/tags)
+    r"|/blogs/news/"           # Shopify blogs/news (anuncios editoriales)
+    r"|/collections/[^/?#]+/?$"  # /collections/X sin /products/Y
     , re.IGNORECASE,
 )
 
@@ -593,6 +613,7 @@ def process_query(
 
     kept: list[Candidate] = []
     skipped_blacklist = 0
+    skipped_whakoom_blocked = False
     for r in results:
         url = r.get("url", "")
         if not url:
@@ -602,28 +623,61 @@ def process_query(
             continue
         if url_already_known(url, known_urls):
             continue
-        cand = candidate_from_search_result(
-            url, r.get("title", ""), r.get("snippet", ""),
-            q_text, engine_used, session, timeout,
-        )
-        if cand is None:
-            continue
-        is_m, _ = is_likely_manga(
-            cand.title, cand.description, tags=cand.tags,
-            source_purity="mixed", publisher=cand.publisher,
-            url=cand.url,
-        )
-        if not is_m:
-            continue
-        score_candidate(cand)
-        is_c, _ = is_collectible_edition(
-            cand.title, cand.description, cand.signal_types, cand.product_type,
-            tags=cand.tags, isbn=cand.isbn, url=cand.url,
-        )
-        if not is_c:
-            continue
-        kept.append(cand)
-        known_urls.add(url)
+
+        # Whakoom /ediciones/<id>/<slug> es un índice (toda la edición),
+        # no un tomo individual. Hay que expandirla en N candidates
+        # (uno por /comics/<X>/<slug>/<vol>) antes de evaluar filtros.
+        # Whakoom /publisher/<id>/<slug> es la página del editor: expone
+        # las /ediciones/ del editor, así que se expande dos niveles
+        # (publisher → ediciones → tomos). Ver gotcha #14 en CLAUDE.md.
+        if is_whakoom_edition_url(url) or is_whakoom_publisher_url(url):
+            if skipped_whakoom_blocked:
+                continue  # ya fallamos antes en este batch, no insistir
+            try:
+                if is_whakoom_publisher_url(url):
+                    expanded = expand_whakoom_publisher_url(
+                        url, session, timeout=timeout, sleep_seconds=1.5,
+                    )
+                else:
+                    expanded = expand_whakoom_edition(
+                        url, session, timeout=timeout, sleep_seconds=1.5,
+                    )
+            except WhakoomBlocked:
+                print(f"    [whakoom] Cloudflare challenge en {url[:60]} — "
+                      f"saltando resto de URLs whakoom en esta query")
+                skipped_whakoom_blocked = True
+                continue
+            cands_to_process = expanded
+            # Marcar la URL padre como conocida también, para no re-procesarla
+            known_urls.add(url)
+        else:
+            cand = candidate_from_search_result(
+                url, r.get("title", ""), r.get("snippet", ""),
+                q_text, engine_used, session, timeout,
+            )
+            cands_to_process = [cand] if cand is not None else []
+
+        for cand in cands_to_process:
+            if cand is None:
+                continue
+            if url_already_known(cand.url, known_urls):
+                continue
+            is_m, _ = is_likely_manga(
+                cand.title, cand.description, tags=cand.tags,
+                source_purity="mixed", publisher=cand.publisher,
+                url=cand.url,
+            )
+            if not is_m:
+                continue
+            score_candidate(cand)
+            is_c, _ = is_collectible_edition(
+                cand.title, cand.description, cand.signal_types, cand.product_type,
+                tags=cand.tags, isbn=cand.isbn, url=cand.url,
+            )
+            if not is_c:
+                continue
+            kept.append(cand)
+            known_urls.add(cand.url)
         # Sleep entre detail-fetches dentro de la misma query
         time.sleep(0.3)
 

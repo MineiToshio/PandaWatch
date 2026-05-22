@@ -4,6 +4,70 @@ Todos los cambios notables a `manga-watch` se documentan aquí.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/) de forma laxa.
 
+## [Unreleased] — Panel de Control web local
+
+### Added
+
+- **`admin/index.html`** + **`scripts/admin_serve.py`** + **`scripts/script_registry.py`**
+  + **`scripts/run_local.sh`**: panel web local para ejecutar cualquier
+  script del repo sin acordarse de flags. Cards por categoría
+  (Día a día / Mantenimiento / Auditoría), recetas pre-armadas (presets),
+  toggles + selects + inputs por flag con descripción en castellano para
+  alguien que no programa, preview del comando equivalente, logs en vivo
+  vía Server-Sent Events, historial de jobs y botón de stop. Soporta 11
+  scripts hoy (scrape, bootstrap_wiki, search_discovery, build_web,
+  filter_non_manga, filter_collectible, clean_titles, rescore,
+  backfill_metadata, wayback_recover, source_health).
+- **Arquitectura de dos servers** para aislar el panel del catálogo
+  público:
+  - `scripts/serve.py` (PÚBLICO) bindea `0.0.0.0:8000`, sirve `web/` +
+    `data/` + `POST /api/feedback`. Es lo que se despliega.
+  - `scripts/admin_serve.py` (ADMIN, LOCAL) bindea `127.0.0.1:8001`,
+    sirve `admin/` + `/api/scripts` + `/api/run` + `/api/jobs/*/stream`
+    (SSE) + `/api/jobs/*/stop`. **No se despliega.**
+- **`scripts/script_registry.py`**: fuente única de verdad para el panel.
+  Cada entrada describe un script con `id/category/icon/name/tagline/
+  what/when/command/presets/flags`. Cada flag con `type` (bool/int/float/
+  str/csv/choice), `default`, `help` en español, y `advanced` para
+  esconder cosas detrás de un `<details>` en la UI. `admin_serve.py` valida
+  cada request contra este registry (allowlist de script_id + allowlist
+  de flags por script + cast de tipos).
+- **`scripts/run_local.sh`**: lanza catálogo + panel en paralelo. Variables
+  opcionales: `PUBLIC_PORT`, `ADMIN_PORT`, `ADMIN_BIND`.
+- **`docs/CONTROL-PANEL.md`**: documentación dedicada del panel — UI,
+  cómo extenderlo, API HTTP, modelo de seguridad, qué incluir/dejar en
+  deploy, troubleshooting.
+
+### Por qué dos servers
+
+El catálogo está pensado para deploy público. El panel ejecuta
+`subprocess.Popen` de scripts arbitrarios — exponerlo sería RCE
+trivial. Separarlo en otro proceso, otro puerto, otro bind y otro
+directorio convierte un "olvidé deshabilitar algo" en "es físicamente
+imposible que termine en prod".
+
+Bind `127.0.0.1` significa que ni siquiera otros equipos en la misma
+Wi-Fi alcanzan el panel — solo procesos locales. La allowlist por
+construcción (registry) + ausencia de `shell=True` evita ejecutar nada
+fuera de los scripts conocidos aunque alguien meta `;rm -rf /` en un
+input.
+
+### Uso
+
+```bash
+./scripts/run_local.sh
+# Catálogo: http://localhost:8000/
+# Panel:    http://localhost:8001/
+```
+
+### Docs actualizadas
+
+- `README.md` — sección "Atajo: Panel de Control web" + link a la doc.
+- `CLAUDE.md` — file map + convención "When you add un script nuevo"
+  (tocar el registry) + diagrama del pipeline.
+- `docs/ARCHITECTURE.md` — sección "Web layer" reescrita con la
+  separación pública/admin.
+
 ## [Unreleased] — Bootstrap one-shot script
 
 ### Added

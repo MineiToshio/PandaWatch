@@ -62,8 +62,10 @@ Optional:
    Common patterns:
    - **Shopify**: `li.grid__item` or `.product-card`, links to `/products/<handle>`.
    - **Tiendanube**: `[data-product-id]`, links to `/productos/<handle>`.
-   - **Magento**: `li.product-item` or `.product`, links containing `/p/`.
-   - **WooCommerce**: `li.product`, links to `/product/<handle>`.
+   - **Magento**: `li.product-item` or `.product`, links containing `/p/` o `.html` (Pipoca & Nanquim, Panini BR usan rewrites planos sin `/p/`).
+   - **WooCommerce**: `li.product`, links to `/product/<handle>` (o `/producto/` con locale ES).
+   - **Loja Integrada (Brasil)**: ecommerce muy común en editoriales BR pequeñas (NewPOP), URLs planas `/<slug>-<id>`. Auto-detección suele bastar.
+   - **OpenCart**: `.product-thumb` o `.product-layout`, URLs amigables o `?route=product/product&product_id=X`.
 
 2. **Add to sources.yml** with selectors:
    ```yaml
@@ -92,6 +94,19 @@ Optional:
 
 5. **Remove the `"new-source"` tag** once you're confident it's stable
    (or keep it for selective re-runs).
+
+### Tip: si `/collections/all` no captura todo, agregá la sub-colección
+
+Algunos Shopify (ej. mangadreams.it) tienen `/collections/all` paginado
+pero la paginación se queda corta o el sitio no expone todos los
+productos ahí — sub-colecciones temáticas pueden tener items que
+`/collections/all` no surfacea. Si auditás un sitio y ves productos en
+`/collections/<x>` que no llegan vía la fuente "all", agregalo como
+fuente hermana con el mismo selector. Ejemplo: `IT - Manga Dreams
+(variants europeas)` apunta a `/collections/edizioni-europee-manga-variant-limited`
+porque la fuente `/collections/all` solo capturaba ~6 de los 43
+productos de esa sub-colección. Dedup automático por `(series_key,
+edition_key, volume)` evita duplicar lo que sí se solapa.
 
 ## Recipe: add a Bluesky publisher source
 
@@ -307,6 +322,32 @@ When to use which:
 Mismo patrón aplica a otras wikis con archivo histórico — añadir su
 parser en `scripts/wikis/<name>.py` siguiendo `listadomanga_blog.py`.
 
+### Sitemap-driven bootstrap (Mangavariant pattern)
+
+Cuando la wiki no tiene calendario mensual pero sí publica sitemaps XML
+limpios, el patrón es distinto al de listadomanga.py:
+
+1. Enumerá las URLs desde el(los) `<wiki>-sitemap*.xml` (Yoast / WP típico).
+2. Procesá cada detail page en paralelo (`ThreadPoolExecutor`).
+3. `iter_year_months()` devuelve `[(yf, mf)]` (un único batch) solo para
+   que el dispatcher cuente "1 mes" en el resumen.
+4. El rango `--wiki-from` / `--wiki-to` se acepta por compat con
+   `_run_wiki_bootstrap` pero **se ignora** — la base de datos no está
+   particionada por fecha.
+
+Ejemplo concreto: `scripts/wikis/mangavariant.py` baja `variant-sitemap.xml`,
+`variant-sitemap2.xml`, `variant-sitemap3.xml`, filtra a URLs con shape
+`/variant/<manga>/<edicion>/`, y procesa los ~2700 detail pages con 4
+workers. Una corrida = todo el catálogo. La fuente queda registrada
+también en `sources.yml` con `max_pages: 1` para captar novedades en cada
+overnight sin re-bajar el sitemap.
+
+Cuándo aplicar este patrón:
+- La fuente tiene sitemap XML público en `robots.txt` (sanctioned crawl).
+- El catálogo es enumerable (no paginado infinito ni search-only).
+- Las detail pages contienen toda la metadata necesaria (no hace falta
+  un segundo crawl).
+
 ## Recipe: Whakoom spider
 
 Whakoom (whakoom.com) tiene **descubrimiento limitado sin login** pero
@@ -354,6 +395,116 @@ El módulo tiene 4 capas de protección:
 - Verificá abriendo `whakoom.com` en un navegador desde tu red.
 - Esperá **1-2h** para que se libere.
 - Si urgente, cambia de red (datos móviles) o usá una VPN distinta.
+
+### Whakoom URL semantics — `/ediciones/` vs `/comics/` vs `/publisher/`
+
+Whakoom modela su catálogo en tres tipos de URL, y solo UNA representa
+un tomo individual. Confundirlos genera items basura.
+
+| URL pattern | Qué representa | Cómo procesar |
+|---|---|---|
+| `/comics/<shortcode>/<slug>/<vol>` | UN tomo individual (Berserk Deluxe #1) | Guardar tal cual |
+| `/ediciones/<id>/<slug>` | Una EDICIÓN completa (Berserk Deluxe = 14 tomos) | Expandir a N items, uno por tomo |
+| `/publisher/<id>/<slug>` | Página del editor (lista sus /ediciones/) | Expandir a /ediciones/ → tomos (2 niveles) |
+
+Las funciones de expansión están en `scripts/wikis/whakoom.py`:
+- `expand_whakoom_edition(url)` → N candidates (uno por /comics/ vol).
+  Maneja **multi-vol** (lee `/todos` para volúmenes 12+) y **one-shot**
+  (extrae el comic_url enmascarado en `/login?ReturnUrl=`).
+- `expand_whakoom_publisher_url(url)` → llama `extract_ediciones_urls`
+  + `expand_whakoom_edition` por cada edición.
+
+Tres puntos de ingesta están protegidos contra `/ediciones/` y
+`/publisher/` accidentales:
+1. **`search_discovery.py`**: intercepta ambas y las expande antes de
+   guardarlas.
+2. **`wikis/whakoom.py` spider Fase 3**: cada `/ediciones/` descubierto
+   se expande inmediatamente.
+3. **Fuente regular `Whakoom Novedades`** en sources.yml: su
+   `item_selector: "a[href^='/comics/']"` ya emite solo URLs de tomo —
+   sin riesgo.
+
+Para limpiar legacy en items.jsonl:
+```bash
+.venv/bin/python scripts/retrofit/expand_whakoom_ediciones.py --dry-run
+.venv/bin/python scripts/retrofit/expand_whakoom_ediciones.py        # apply
+```
+
+### Whakoom requiere `Accept-Encoding: gzip, deflate` SIN `br`
+
+Whakoom sirve Brotli si lo aceptás, y `requests` no decodifica Brotli
+nativamente (sin la lib `brotli` instalada) — el body llega como bytes
+binarios. El `_ua_session()` de `wikis/whakoom.py` **excluye `br`
+explícitamente**. Si volvés a agregarlo, también agregá `brotli` a
+`requirements.txt`.
+
+Detección de Cloudflare challenge: usar markers específicos
+(`cf-chl-bypass`, `__cf_chl_rt_tk`, path `/cdn-cgi/challenge-platform/h/`).
+NO usar `challenge-platform` solo — matchea el JSD bot-detection script
+que CF inyecta en TODAS las páginas protegidas, generando falsos
+positivos en respuestas legítimas.
+
+## Recipe: Shopify variants multi-tomo
+
+Algunos sitios Shopify (Dark Horse Direct es el caso conocido) modelan
+una serie completa como UN solo producto Shopify con un `<select>` de
+variants — "Volume 1 / Volume 2 / Volume 3 / ...". Cada variant tiene
+su propio `variant_id`, `sku`, `price` y deep-link via `?variant=<id>`.
+
+Estructuralmente equivalente a Whakoom `/ediciones/`: el catálogo es
+por tomo, así que estos productos hay que **expandirlos** en N items.
+
+Parser: `scripts/shopify_variants.py`:
+- `extract_shopify_variants(html)`: extrae variants desde JSON embebido
+  o `<select data-variant-id>`.
+- `is_volume_variants(variants)`: heurística — requiere al menos un
+  variant con keyword de volumen ("Volume N", "Tome N", "#N", "第N巻",
+  etc.). Single-variant ("Default Title") devuelve False.
+- `build_variant_url(parent, id)`: construye `?variant=<id>` y limpia
+  tracking de Shopify (`_pos`, `_sid`, `_ss`).
+
+Retrofit: `scripts/retrofit/expand_index_pages.py` aplica la lógica
+a Dark Horse Direct + cualquier futuro Shopify multi-tomo. La detección
+se restringe a dominios conocidos (hoy solo `darkhorsedirect.com`) —
+otros Shopify (mangadreams.it, milkyway, funside.it) no usan variants
+para volúmenes y NO se chequean.
+
+## Recipe: source de referencia (Mangavariant pattern)
+
+**Mangavariant** (`mangavariant.com`) es una **base de datos curada**
+de manga variants en 13 países. Aporta ~2700 items (~50% del corpus
+actual) con metadata muy rica (serie, país, publisher, año, rarity,
+tags, cover) **pero SIN precio ni URL de tienda** — son URLs de
+referencia, no listings de retailer.
+
+Este tipo de fuente define una categoría aparte: **"sources de
+referencia"**. Reglas que se derivan:
+
+1. **Mangavariant SIEMPRE pasa `is_manga=true`**. Política del owner:
+   "todo lo que venga de mangavariant tomalo como válido siempre".
+   El skill `/standardize-catalog` respeta esta regla — nunca mueve
+   items Mangavariant a la blacklist.
+2. **NO filtrar por falta de price / stock_type**. Una card sin precio
+   es válida; el dashboard la muestra igual.
+3. **NO eliminar wikis/bases de referencia "para limpiar" el corpus**.
+   Son fuentes de primera clase.
+4. **Cuando un item de referencia matchea cluster_key con uno de
+   retailer**, se consolidan automáticamente; el de referencia suele
+   quedar como card canónica y los retailers aparecen como "dónde
+   comprar".
+5. **Enrichment**, si se implementa en el futuro, es una pasada
+   separada (`scripts/retrofit/enrich_references.py` — diferido).
+   NO un filtro upstream que descarte items de referencia.
+
+Patrón técnico (`scripts/wikis/mangavariant.py`):
+- Sitemap Yoast → URLs de variants → detail parser por cada URL.
+- Es un bootstrap único (~2700 requests, ~15-30 min). No corre en cada
+  scrape regular — la source en sources.yml tiene `max_pages: 1` para
+  el delta diario.
+
+Otros candidates futuros para "source de referencia":
+- Wikis de fandom (MyAnimeList, AniList, BakaUpdates).
+- Catálogos editoriales sin e-commerce (editorial homepages).
 
 ## Recipe: search discovery (Gemini API + DuckDuckGo)
 

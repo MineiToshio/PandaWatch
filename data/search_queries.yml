@@ -32,10 +32,12 @@ queries:
     engines: [gemini, tavily]
   - q: 'whakoom manga "edición limitada" OR "edición numerada"'
     engines: [gemini, tavily]
-  # Variantes en otros idiomas (italiano + francés) — sólo si quedan cuota
+  # Variantes en otros idiomas (italiano + francés + portugués) — sólo si quedan cuota
   - q: 'whakoom manga "couverture variante" OR "variante de cover"'
     engines: [gemini, tavily]
   - q: 'whakoom manga "variant esclusiva" OR "edizione variant"'
+    engines: [gemini, tavily]
+  - q: 'whakoom manga "capa variante" OR "capa alternativa" OR "edição especial"'
     engines: [gemini, tavily]
 
   # ===================================================================
@@ -72,6 +74,10 @@ queries:
   - q: 'site:amazon.es manga "edición coleccionista" OR "edición limitada" OR "edición especial"'
     engines: [tavily, gemini]
   - q: 'site:amazon.com.mx manga "edición especial" OR "edición coleccionista"'
+    engines: [tavily, gemini]
+  - q: 'site:amazon.com.br manga "edição especial" OR "edição limitada" OR "boxset"'
+    engines: [tavily, gemini]
+  - q: 'site:panini.com.br manga "variante" OR "edição especial" OR "edição limitada"'
     engines: [tavily, gemini]
 
   # ===================================================================
