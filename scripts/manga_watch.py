@@ -2949,13 +2949,39 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
                 existing[key] = item  # last-wins si hubiera duplicados en el archivo
 
     # 2. Upsert con las rows nuevas (last-wins por URL).
+    #
+    # Excepción: si el row existente tiene `standardized_at`, preservamos los
+    # campos seteados por el skill `/standardize-catalog` (title canónico,
+    # series_key/edition_key, volume, etc.). Los campos scrapeados (price,
+    # image_url, isbn, author, stock_type, signal_types, score, detected_at)
+    # SÍ se refrescan con la row nueva. Sin esta merge, un re-scrape borra
+    # toda la estandarización LLM-verified — efecto descubierto el
+    # 2026-05-22 cuando se re-scrapeó mangadreams variants-europeas.
+    _CURATED_FIELDS = (
+        "standardized_at",
+        "title",
+        "title_original",
+        "series_key",
+        "series_display",
+        "edition_key",
+        "edition_display",
+        "volume",
+    )
     for row in rows:
         url = row.get("url", "")
         if not url:
             no_url_rows.append(row)
             continue
         key = normalize_url_for_dedup(url)
-        existing[key] = row
+        old = existing.get(key)
+        if old and old.get("standardized_at"):
+            merged = dict(row)
+            for field in _CURATED_FIELDS:
+                if old.get(field) not in (None, ""):
+                    merged[field] = old[field]
+            existing[key] = merged
+        else:
+            existing[key] = row
 
     # 3. Reescribir atómicamente. Conservamos el orden: primero todos los que
     #    tienen URL (ordenados por detected_at para estabilidad), luego los

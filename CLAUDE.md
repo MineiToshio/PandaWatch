@@ -337,12 +337,12 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | 4426 (post mangadreams variants-europeas, 2026-05-22) |
+| Total unique items (line in items.jsonl) | 4436 (post variant signal + mangadreams variants-europeas, 2026-05-22) |
 | Items aportados por Mangavariant bootstrap | 2625 (de 2679 URLs en sitemap, 54 reasignados) |
 | Items movidos a `data/non_manga_blacklist.jsonl` | 94 (cómics occidentales, light novels, posters, figuras, etc.) |
-| Items deduplicados por (series_key, edition_key, volume) | 684 (+6 al consolidar Mangadreams variants europeas con Kurokawa/Pika Collector existentes) |
-| Distinct `series_key` (filtro por obra) | 1431 (post-alias) |
-| Distinct `edition_key` (filtro por edición+editorial) | 2914 |
+| Items deduplicados por (series_key, edition_key, volume) | 690 (+6 más al re-merger 38 items mangadreams contra Kurokawa/Pika/Star Comics existentes) |
+| Distinct `series_key` (filtro por obra) | 1428 |
+| Distinct `edition_key` (filtro por edición+editorial) | 2918 |
 | `data/series_aliases.yml` entries | 106 canonical works (Anilist + manual) |
 | Sources in YAML | 137 |
 | Sources enabled | 121 / 137 |
@@ -743,7 +743,7 @@ Ejemplos concretos:
 - Documentado y guardado en memoria persistente (`feedback_url_as_reference.md`)
   porque el owner lo flageó varias veces.
 
-## The 22 known gotchas
+## The 23 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -1115,6 +1115,33 @@ Ejemplos concretos:
     el original porque el skill previo sobrescribió antes de existir este
     campo). Items futuros del scraper tienen el original real preservado.
 
+23. **`append_jsonl` preserva los campos seteados por `/standardize-catalog`
+    al re-scrapear.**
+
+    El upsert por URL (`append_jsonl` en `manga_watch.py`) por defecto
+    reemplazaba la fila completa, BORRANDO `standardized_at` + título
+    canónico + `series_key`/`edition_key`/`volume` cada vez que el
+    scraper veía la URL otra vez. Resultado: un `--include-seen` sobre
+    una fuente ya ingerida revertía todo el trabajo del skill.
+
+    El fix (2026-05-22): cuando la fila existente tiene `standardized_at`,
+    `append_jsonl` hace MERGE en vez de replace — preserva los campos
+    curados por el skill y refresca solo los scrapeados (price, image_url,
+    isbn, author, signal_types, score, detected_at, stock_type). Lista
+    completa de campos preservados en la constante `_CURATED_FIELDS`
+    dentro de la función.
+
+    **Implicación**: si cambiás reglas de estandarización
+    (`_PUBLISHER_SLUG_MAP`, edition_slugs, lógica de `derive_series_metadata`,
+    etc.) y querés que los items existentes se re-procesen, NO basta con
+    re-scrapear — hay que correr el snippet `--force-all` del skill que
+    limpia `standardized_at` de todo el corpus. Ver el final de
+    `.claude/skills/standardize-catalog.md`.
+
+    Tests: `test_append_jsonl_preserves_curated_fields_on_standardized_items`
+    + `test_append_jsonl_does_not_preserve_when_no_standardized_at` cubren
+    ambos paths.
+
 ## When the user reports "this item shouldn't be here"
 
 1. Look up the item in `data/items.jsonl` to see its actual source,
@@ -1233,7 +1260,34 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
-Last updated: 2026-05-22 (noche, mangadreams variants europeas) —
+Last updated: 2026-05-22 (noche, variant signal + preservación de campos
+curados) — Dos cambios encadenados:
+
+1. **Signal `"variant"` solo (sin "cover")** agregado a `KEYWORD_RULES`
+   con score 30 / type `variant_cover`. En retail manga IT/FR/EN/ES la
+   palabra "Variant" suelta casi siempre denota una variant cover
+   (ej. "One Piece 108 Variant Metal alla prima tiratura", "Demon Slayer
+   23 Variant Limited Francese", "Hunter X Hunter 37 Variant"). Sin esta
+   regla, 13/43 productos de la colección variants-europeas de Manga
+   Dreams quedaban fuera del gate `is_collectible_edition`. Word-boundary
+   evita "covariant", "invariant" y "variante" (italiano/español, vocal
+   final extra). 3 tests nuevos cubren detección + integración con el
+   gate + non-matches.
+
+2. **`append_jsonl` ahora preserva campos curados** cuando re-scrapeás
+   un item ya estandarizado (gotcha #23 nueva). Antes, un
+   `--include-seen` sobre una fuente ya ingerida sobrescribía
+   `standardized_at`, `title` canónico, `series_key`/`edition_key`,
+   `volume`, `title_original` con los valores rough del scraper. Ahora
+   el upsert merge-ea: campos LLM-verified se mantienen; price, image,
+   isbn, author, stock_type, signal_types, score, detected_at refrescan.
+   Lista en `_CURATED_FIELDS`. 2 tests nuevos.
+
+Corpus: 4426 → 4436 items (+10 netos = 13 nuevos por signal variant - 3
+deduplicados contra Star Comics existentes). Mangadreams.it: 78 → 91
+items. Distinct edition_keys 2914 → 2918. Tests 272 → 277.
+
+Last updated previo: 2026-05-22 (noche, mangadreams variants europeas) —
 Nueva fuente `IT - Manga Dreams (variants europeas)` apuntando a
 `mangadreams.it/collections/edizioni-europee-manga-variant-limited`
 (sub-colección Shopify dedicada a variants/limited europeas: Momie,

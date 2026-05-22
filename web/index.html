@@ -33,34 +33,104 @@
   .score-low  { background: #f3f4f6; color: #4b5563; }
   /* Limited badge */
   .badge-limited { background: linear-gradient(90deg, #f97316, #fb7185); color: white; }
-  /* Modal */
-  .modal-overlay { background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
   /* Smooth scrollbar */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 5px; }
   ::-webkit-scrollbar-thumb:hover { background: #bbb; }
   /* Filters sticky */
   .sidebar { position: sticky; top: 16px; }
+
+  /* Stacked card — pila visual para ediciones con N>1 tomos.
+     Tres hojas paralelas (sin rotación) detrás del card real, con
+     fondo blanco y borde gris muy suave. La pila se percibe gracias
+     a la sombra proyectada de cada hoja y al offset diagonal
+     constante. El foco visual sigue en la portada del manga; el
+     stack apenas susurra "esto es una colección". */
+  .stack-wrap { position: relative; padding-right: 18px; padding-bottom: 18px; }
+  .stack-wrap .stack-leaf {
+    content: "";
+    position: absolute;
+    left: 0; right: 18px; top: 0; bottom: 18px;
+    border-radius: 0.5rem;
+    z-index: 0;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    pointer-events: none;
+  }
+  /* Tres hojas en gris cálido progresivamente más oscuro+desplazado.
+     Bordes más visibles y sombra real para que la pila se lea como
+     un objeto físico desde la distancia. */
+  .stack-wrap .stack-leaf-1 {
+    background: #f8f6f1;
+    border: 1px solid #d8d4c8;
+    transform: translate(6px, 6px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.07);
+  }
+  .stack-wrap .stack-leaf-2 {
+    background: #f1ede4;
+    border: 1px solid #c8c3b3;
+    transform: translate(12px, 12px);
+    box-shadow: 0 3px 6px rgba(0,0,0,0.09);
+  }
+  .stack-wrap .stack-leaf-3 {
+    background: #e9e3d3;
+    border: 1px solid #b9b29c;
+    transform: translate(18px, 18px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.11);
+  }
+  .stack-wrap > .card {
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  .stack-wrap:hover .stack-leaf-1 { transform: translate(7px, 7px); }
+  .stack-wrap:hover .stack-leaf-2 { transform: translate(14px, 14px); }
+  .stack-wrap:hover .stack-leaf-3 { transform: translate(21px, 21px); }
+  .stack-wrap:hover > .card { box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12); }
+
+  /* Edition badge "N tomos" — en pink accent para reforzar que es
+     una colección, no un tomo individual. */
+  .edition-count-badge {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 2px 6px rgba(214, 51, 132, 0.35);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+
+  /* Breadcrumb */
+  .breadcrumb a:hover { color: var(--accent); }
+
+  [x-cloak] { display: none !important; }
 </style>
 </head>
-<body x-data="mangaApp()" x-init="loadItems(); _loadPageFromUrl()" class="min-h-screen">
+<body x-data="mangaApp()" x-init="init()" class="min-h-screen">
 
 <!-- HEADER -->
 <header class="bg-white border-b border-gray-200 sticky top-0 z-30">
   <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-bold accent">Manga Watch</h1>
+      <h1 class="text-2xl font-bold accent cursor-pointer" @click="goHome()">Manga Watch</h1>
       <p class="text-sm text-gray-500" x-show="!loading">
-        <span x-text="stats.total"></span> items ·
-        <span x-text="stats.countries"></span> países ·
-        <span x-text="stats.publishers"></span> editoriales
-        <template x-if="stats.lastDetected">
-          · última detección: <span x-text="stats.lastDetected"></span>
+        <template x-if="view === 'catalog'">
+          <span>
+            <span x-text="stats.editions"></span> ediciones ·
+            <span x-text="stats.total"></span> tomos ·
+            <span x-text="stats.countries"></span> países ·
+            <span x-text="stats.publishers"></span> editoriales
+          </span>
+        </template>
+        <template x-if="view === 'edition' && currentEdition">
+          <span>
+            Edición · <span x-text="currentEdition.display"></span>
+          </span>
+        </template>
+        <template x-if="view === 'volume' && selectedItem">
+          <span>Detalle de tomo</span>
         </template>
       </p>
       <p class="text-sm text-gray-500" x-show="loading">Cargando datos…</p>
     </div>
-    <div class="text-right text-sm text-gray-500">
+    <div class="text-right text-sm text-gray-500" x-show="!loading && view !== 'volume'">
       <span x-text="filtered.length"></span> resultados visibles
     </div>
   </div>
@@ -90,8 +160,40 @@
   </div>
 </template>
 
-<!-- MAIN LAYOUT -->
-<div class="max-w-screen-2xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6" x-show="!loading && items.length > 0">
+<!-- BREADCRUMB (visible en edition + volume) -->
+<nav class="max-w-screen-2xl mx-auto px-6 pt-4 breadcrumb text-sm text-gray-600"
+     x-show="!loading && items.length > 0 && view !== 'catalog'"
+     x-cloak>
+  <div class="flex items-center gap-2 flex-wrap">
+    <button @click="goHome()" class="text-gray-500 hover:text-pink-600 transition-colors">← Catálogo</button>
+    <template x-if="view === 'edition' && currentEdition">
+      <span class="text-gray-400">/</span>
+    </template>
+    <template x-if="view === 'edition' && currentEdition">
+      <span class="font-medium text-gray-900" x-text="currentEdition.display"></span>
+    </template>
+    <template x-if="view === 'volume' && selectedItem">
+      <span class="text-gray-400">/</span>
+    </template>
+    <template x-if="view === 'volume' && selectedItem">
+      <button x-show="selectedItem.edition_key"
+              @click="openEditionByKey(selectedItem.edition_key)"
+              class="text-gray-500 hover:text-pink-600 transition-colors"
+              x-text="selectedItem.edition_display || selectedItem.series_display || '(sin edición)'">
+      </button>
+    </template>
+    <template x-if="view === 'volume' && selectedItem">
+      <span class="text-gray-400">/</span>
+    </template>
+    <template x-if="view === 'volume' && selectedItem">
+      <span class="font-medium text-gray-900 truncate" x-text="selectedItem.title"></span>
+    </template>
+  </div>
+</nav>
+
+<!-- MAIN LAYOUT (catalog + edition) -->
+<div class="max-w-screen-2xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6"
+     x-show="!loading && items.length > 0 && view !== 'volume'">
 
   <!-- SIDEBAR FILTERS -->
   <aside class="sidebar bg-white rounded-lg border border-gray-200 p-5 space-y-4 self-start">
@@ -217,54 +319,142 @@
       </div>
     </div>
 
-    <!-- Grid de cards -->
-    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-      <template x-for="item in paginated" :key="item.url + item.detected_at">
-        <div @click="openModal(item)"
-             class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
-          <div class="img-wrap relative">
-            <template x-if="item.image_url">
-              <img :src="item.image_url" :alt="item.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
-            </template>
-            <div class="img-placeholder" :style="item.image_url ? 'display:none' : ''">📚</div>
-            <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
-                  :class="scoreClass(item.score)" x-text="item.score"></span>
-            <template x-if="item.stock_type === 'limited'">
-              <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
-            </template>
-          </div>
-          <div class="p-3 flex-1 flex flex-col">
-            <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-2" x-text="item.title"></h3>
-            <div class="mt-auto space-y-1 text-xs text-gray-600">
-              <div class="flex items-center gap-1">
-                <span>🌍</span>
-                <span x-text="item.country || '—'"></span>
-                <template x-if="item.sources && item.sources.length > 1">
-                  <span class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-[10px]"
-                        :title="item.sources.length + ' fuentes encontradas'">
-                    🔗 <span x-text="item.sources.length"></span>
-                  </span>
-                </template>
-              </div>
-              <div class="flex items-center gap-1 truncate">
-                <span>🏢</span>
-                <span x-text="item.publisher || item.source" class="truncate"></span>
-              </div>
-              <div class="flex items-center gap-1">
-                <span>📚</span>
-                <span x-text="item.product_type || '—'" class="capitalize"></span>
-                <template x-if="item.price">
-                  <span class="ml-auto text-pink-700 font-semibold" x-text="item.price"></span>
-                </template>
+    <!-- VIEW: catalog (grid de EDICIONES) -->
+    <template x-if="view === 'catalog'">
+      <div>
+        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          <template x-for="ed in paginated" :key="ed.edition_key">
+            <div :class="ed.tomoCount > 1 ? 'stack-wrap' : ''">
+              <template x-if="ed.tomoCount > 1">
+                <div>
+                  <div class="stack-leaf stack-leaf-3"></div>
+                  <div class="stack-leaf stack-leaf-2"></div>
+                  <div class="stack-leaf stack-leaf-1"></div>
+                </div>
+              </template>
+              <div @click="ed.tomoCount > 1 ? openEditionByKey(ed.edition_key) : openVolume(ed.leader)"
+                   class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+                <div class="img-wrap relative">
+                  <template x-if="ed.leader.image_url">
+                    <img :src="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+                  </template>
+                  <div class="img-placeholder" :style="ed.leader.image_url ? 'display:none' : ''">📚</div>
+                  <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
+                        :class="scoreClass(ed.leader.score)" x-text="ed.leader.score"></span>
+                  <template x-if="ed.tomoCount > 1">
+                    <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
+                      <span x-text="ed.tomoCount"></span> tomos
+                    </span>
+                  </template>
+                  <template x-if="ed.tomoCount === 1 && ed.leader.stock_type === 'limited'">
+                    <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
+                  </template>
+                </div>
+                <div class="p-3 flex-1 flex flex-col">
+                  <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-1">
+                    <template x-if="ed.tomoCount > 1">
+                      <span x-text="ed.display"></span>
+                    </template>
+                    <template x-if="ed.tomoCount === 1">
+                      <span x-text="ed.leader.title"></span>
+                    </template>
+                  </h3>
+                  <template x-if="ed.tomoCount > 1">
+                    <p class="text-xs text-gray-500 mb-2">
+                      Desde tomo <span x-text="ed.leader.volume || '?'"></span>
+                      <template x-if="ed.volumeRange">
+                        · <span x-text="ed.volumeRange"></span>
+                      </template>
+                    </p>
+                  </template>
+                  <div class="mt-auto space-y-1 text-xs text-gray-600">
+                    <div class="flex items-center gap-1">
+                      <span>🌍</span>
+                      <span x-text="ed.leader.country || '—'"></span>
+                      <template x-if="ed.leader.sources && ed.leader.sources.length > 1">
+                        <span class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-[10px]"
+                              :title="ed.leader.sources.length + ' fuentes encontradas'">
+                          🔗 <span x-text="ed.leader.sources.length"></span>
+                        </span>
+                      </template>
+                    </div>
+                    <div class="flex items-center gap-1 truncate">
+                      <span>🏢</span>
+                      <span x-text="ed.leader.publisher || ed.leader.source" class="truncate"></span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <span>📚</span>
+                      <span x-text="ed.leader.product_type || '—'" class="capitalize"></span>
+                      <template x-if="ed.tomoCount === 1 && ed.leader.price">
+                        <span class="ml-auto text-pink-700 font-semibold" x-text="ed.leader.price"></span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
-      </template>
-    </div>
+      </div>
+    </template>
+
+    <!-- VIEW: edition (grid de TOMOS de la edición seleccionada) -->
+    <template x-if="view === 'edition'">
+      <div>
+        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          <template x-for="item in paginated" :key="item.url">
+            <div @click="openVolume(item)"
+                 class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+              <div class="img-wrap relative">
+                <template x-if="item.image_url">
+                  <img :src="item.image_url" :alt="item.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+                </template>
+                <div class="img-placeholder" :style="item.image_url ? 'display:none' : ''">📚</div>
+                <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
+                      :class="scoreClass(item.score)" x-text="item.score"></span>
+                <template x-if="item.volume">
+                  <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
+                    Tomo <span x-text="item.volume"></span>
+                  </span>
+                </template>
+                <template x-if="item.stock_type === 'limited'">
+                  <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
+                </template>
+              </div>
+              <div class="p-3 flex-1 flex flex-col">
+                <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-2" x-text="item.title"></h3>
+                <div class="mt-auto space-y-1 text-xs text-gray-600">
+                  <div class="flex items-center gap-1">
+                    <span>🌍</span>
+                    <span x-text="item.country || '—'"></span>
+                    <template x-if="item.sources && item.sources.length > 1">
+                      <span class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-[10px]"
+                            :title="item.sources.length + ' fuentes encontradas'">
+                        🔗 <span x-text="item.sources.length"></span>
+                      </span>
+                    </template>
+                  </div>
+                  <div class="flex items-center gap-1 truncate">
+                    <span>🏢</span>
+                    <span x-text="item.publisher || item.source" class="truncate"></span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <span>📚</span>
+                    <span x-text="item.product_type || '—'" class="capitalize"></span>
+                    <template x-if="item.price">
+                      <span class="ml-auto text-pink-700 font-semibold" x-text="item.price"></span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
 
     <!-- Vacío con filtros -->
-    <template x-if="filtered.length === 0">
+    <template x-if="paginated.length === 0 && !loading">
       <div class="text-center py-16 text-gray-500">
         <p class="text-lg">Sin resultados con estos filtros.</p>
         <button @click="resetFilters()" class="mt-3 text-pink-600 underline">Reset filtros</button>
@@ -273,7 +463,6 @@
 
     <!-- Paginación -->
     <div class="flex items-center justify-center gap-1 mt-8 flex-wrap" x-show="totalPages > 1">
-      <!-- Primera página + anterior -->
       <button @click="goToPage(1)" :disabled="page === 1"
               class="px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100"
               title="Primera página">«</button>
@@ -282,10 +471,8 @@
         ‹ Anterior
       </button>
 
-      <!-- Ellipsis antes si hay páginas escondidas a la izquierda -->
       <span x-show="visiblePages[0] > 1" class="px-2 text-sm text-gray-400">…</span>
 
-      <!-- Páginas numeradas (current ± 5) -->
       <template x-for="p in visiblePages" :key="p">
         <button @click="goToPage(p)"
                 :class="p === page
@@ -295,10 +482,8 @@
                 x-text="p"></button>
       </template>
 
-      <!-- Ellipsis después si hay páginas escondidas a la derecha -->
       <span x-show="visiblePages[visiblePages.length - 1] < totalPages" class="px-2 text-sm text-gray-400">…</span>
 
-      <!-- Siguiente + última -->
       <button @click="goToPage(page + 1)" :disabled="page === totalPages"
               class="px-3 py-1.5 border border-gray-300 rounded-md text-sm disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100">
         Siguiente ›
@@ -308,7 +493,6 @@
               title="Última página">»</button>
     </div>
 
-    <!-- Info de página + saltar -->
     <div class="flex items-center justify-center gap-2 mt-3 text-sm text-gray-600" x-show="totalPages > 1">
       Página <strong x-text="page"></strong> de <strong x-text="totalPages"></strong>
       <span class="text-gray-400">·</span>
@@ -322,170 +506,170 @@
   </main>
 </div>
 
-<!-- MODAL DETALLE -->
-<div x-show="selectedItem" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay" @click.self="closeModal()" style="display:none">
-  <div class="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" @click.stop>
-    <template x-if="selectedItem">
-      <div>
-        <!-- Modal header -->
-        <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-start justify-between gap-4">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-start gap-2">
-              <h2 class="text-xl font-bold flex-1" x-text="selectedItem.title"></h2>
-              <button @click="copyTitle()"
-                      :title="copiedTitle ? 'Copiado' : 'Copiar título'"
-                      class="flex-shrink-0 px-2 py-1 rounded-md text-sm border border-gray-200 hover:bg-gray-100 hover:border-gray-300 transition-colors"
-                      :class="copiedTitle ? 'bg-green-50 border-green-300 text-green-700' : 'text-gray-500'">
-                <span x-show="!copiedTitle">📋 Copiar</span>
-                <span x-show="copiedTitle">✓ Copiado</span>
+<!-- VIEW: volume (detalle full-page, lo que antes era el modal) -->
+<div class="max-w-3xl mx-auto px-6 py-6"
+     x-show="view === 'volume' && selectedItem"
+     x-cloak>
+  <template x-if="selectedItem">
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <!-- Header -->
+      <div class="border-b border-gray-200 px-6 py-4 flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-start gap-2">
+            <h2 class="text-xl font-bold flex-1" x-text="selectedItem.title"></h2>
+            <button @click="copyTitle()"
+                    :title="copiedTitle ? 'Copiado' : 'Copiar título'"
+                    class="flex-shrink-0 px-2 py-1 rounded-md text-sm border border-gray-200 hover:bg-gray-100 hover:border-gray-300 transition-colors"
+                    :class="copiedTitle ? 'bg-green-50 border-green-300 text-green-700' : 'text-gray-500'">
+              <span x-show="!copiedTitle">📋 Copiar</span>
+              <span x-show="copiedTitle">✓ Copiado</span>
+            </button>
+          </div>
+          <template x-if="selectedItem.title_original && selectedItem.title_original !== selectedItem.title">
+            <p class="text-sm text-gray-500 italic mt-0.5" :title="'Título original de la fuente'">
+              <span class="text-gray-400 text-xs not-italic mr-1">原題:</span>
+              <span x-text="selectedItem.title_original"></span>
+            </p>
+          </template>
+          <p class="text-sm text-gray-500 mt-1">
+            <template x-if="!selectedItem.sources || selectedItem.sources.length <= 1">
+              <span><span x-text="selectedItem.source"></span> · <span x-text="selectedItem.status" class="capitalize"></span></span>
+            </template>
+            <template x-if="selectedItem.sources && selectedItem.sources.length > 1">
+              <span>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-xs">
+                  🔗 <span x-text="selectedItem.sources.length"></span> fuentes
+                </span>
+                · <span x-text="selectedItem.status" class="capitalize"></span>
+              </span>
+            </template>
+          </p>
+        </div>
+        <span class="px-3 py-1 rounded-full text-sm font-bold flex-shrink-0" :class="scoreClass(selectedItem.score)" x-text="selectedItem.score"></span>
+      </div>
+
+      <!-- Body -->
+      <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-[200px_1fr] gap-6">
+        <div>
+          <template x-if="selectedItem.image_url">
+            <img :src="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200">
+          </template>
+          <template x-if="!selectedItem.image_url">
+            <div class="img-wrap rounded-lg border border-gray-200"><div class="img-placeholder">📚</div></div>
+          </template>
+          <template x-if="selectedItem.stock_type === 'limited'">
+            <div class="mt-3 px-3 py-2 rounded-md badge-limited text-sm text-center font-semibold">
+              ⚠️ Stock limitado
+            </div>
+          </template>
+        </div>
+
+        <div class="space-y-3 text-sm">
+          <template x-for="field in detailFields" :key="field.key">
+            <div x-show="selectedItem[field.key]">
+              <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold" x-text="field.label"></span>
+              <p class="mt-0.5 text-gray-900" x-text="formatField(selectedItem, field.key)"></p>
+            </div>
+          </template>
+
+          <template x-if="selectedItem.signals && selectedItem.signals.length">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Señales detectadas</span>
+              <div class="mt-1 flex flex-wrap gap-1">
+                <template x-for="sig in selectedItem.signals" :key="sig">
+                  <span class="px-2 py-0.5 bg-accent-soft text-pink-800 rounded-full text-xs" x-text="sig"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="selectedItem.description">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Fragmento</span>
+              <p class="mt-1 text-gray-700 text-xs italic whitespace-pre-wrap" x-text="selectedItem.description.slice(0, 800)"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Sources -->
+      <template x-if="selectedItem.sources && selectedItem.sources.length > 0">
+        <div class="px-6 pb-5">
+          <h3 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
+            Encontrado en <span x-text="selectedItem.sources.length"></span>
+            <span x-text="selectedItem.sources.length === 1 ? 'fuente' : 'fuentes'"></span>
+          </h3>
+          <div class="space-y-2">
+            <template x-for="(src, idx) in selectedItem.sources" :key="src.url || idx">
+              <a :href="src.url" target="_blank" rel="noopener"
+                 class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 hover:border-pink-300 hover:bg-pink-50 transition-colors group">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-medium text-sm text-gray-900 group-hover:text-pink-700" x-text="src.name"></span>
+                    <span x-show="src.country" class="text-xs text-gray-500" x-text="'· ' + src.country"></span>
+                    <span x-show="src.stock_type === 'limited'" class="text-xs px-1.5 py-0.5 rounded badge-limited font-semibold">stock limitado</span>
+                  </div>
+                  <div class="text-xs text-gray-500 mt-0.5 truncate" x-text="src.url"></div>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <div x-show="src.price" class="text-sm font-semibold text-gray-900" x-text="src.price"></div>
+                  <div class="text-xs text-gray-400 group-hover:text-pink-600">Ver ↗</div>
+                </div>
+              </a>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Feedback -->
+      <div class="px-6 pb-3" x-show="feedbackOpen" x-cloak>
+        <div class="border border-red-200 bg-red-50 rounded-lg p-3">
+          <label class="block text-xs uppercase tracking-wider text-red-700 font-semibold mb-1">
+            ¿Por qué es una mala elección?
+          </label>
+          <textarea x-model="feedbackReason" rows="3" :disabled="feedbackSending"
+                    placeholder="Ej: no es manga, es un cómic occidental; o el título está roto; o es merchandising…"
+                    class="w-full px-3 py-2 text-sm border border-red-200 rounded-md focus:outline-none focus:border-red-400 disabled:bg-gray-100"></textarea>
+          <div class="mt-2 flex justify-between items-center gap-2">
+            <span class="text-xs"
+                  :class="feedbackError ? 'text-red-700' : (feedbackSent ? 'text-green-700' : 'text-gray-500')"
+                  x-text="feedbackError || (feedbackSent ? '✓ Guardado en data/feedback.jsonl' : '')"></span>
+            <div class="flex gap-2">
+              <button @click="cancelFeedback()" :disabled="feedbackSending"
+                      class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button @click="submitFeedback()" :disabled="feedbackSending || !feedbackReason.trim()"
+                      class="px-3 py-1.5 text-sm bg-red-600 text-white rounded-md font-semibold hover:opacity-90 disabled:opacity-50">
+                <span x-show="!feedbackSending">Enviar</span>
+                <span x-show="feedbackSending">Enviando…</span>
               </button>
             </div>
-            <!-- Título original (tal como vino del scrape) cuando difiere del display.
-                 Útil para JP/ES/FR sources donde el display es el canonical EN
-                 ("Demon Slayer Limited 23") pero el original es "鬼滅の刃 23 特装版". -->
-            <template x-if="selectedItem.title_original && selectedItem.title_original !== selectedItem.title">
-              <p class="text-sm text-gray-500 italic mt-0.5" :title="'Título original de la fuente'">
-                <span class="text-gray-400 text-xs not-italic mr-1">原題:</span>
-                <span x-text="selectedItem.title_original"></span>
-              </p>
-            </template>
-            <p class="text-sm text-gray-500 mt-1">
-              <template x-if="!selectedItem.sources || selectedItem.sources.length <= 1">
-                <span><span x-text="selectedItem.source"></span> · <span x-text="selectedItem.status" class="capitalize"></span></span>
-              </template>
-              <template x-if="selectedItem.sources && selectedItem.sources.length > 1">
-                <span>
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 font-semibold text-xs">
-                    🔗 <span x-text="selectedItem.sources.length"></span> fuentes
-                  </span>
-                  · <span x-text="selectedItem.status" class="capitalize"></span>
-                </span>
-              </template>
-            </p>
-          </div>
-          <span class="px-3 py-1 rounded-full text-sm font-bold flex-shrink-0" :class="scoreClass(selectedItem.score)" x-text="selectedItem.score"></span>
-          <button @click="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
-        </div>
-
-        <!-- Modal body -->
-        <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-[200px_1fr] gap-6">
-          <div>
-            <template x-if="selectedItem.image_url">
-              <img :src="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200">
-            </template>
-            <template x-if="!selectedItem.image_url">
-              <div class="img-wrap rounded-lg border border-gray-200"><div class="img-placeholder">📚</div></div>
-            </template>
-            <template x-if="selectedItem.stock_type === 'limited'">
-              <div class="mt-3 px-3 py-2 rounded-md badge-limited text-sm text-center font-semibold">
-                ⚠️ Stock limitado
-              </div>
-            </template>
-          </div>
-
-          <div class="space-y-3 text-sm">
-            <template x-for="field in detailFields" :key="field.key">
-              <div x-show="selectedItem[field.key]">
-                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold" x-text="field.label"></span>
-                <p class="mt-0.5 text-gray-900" x-text="formatField(selectedItem, field.key)"></p>
-              </div>
-            </template>
-
-            <template x-if="selectedItem.signals && selectedItem.signals.length">
-              <div>
-                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Señales detectadas</span>
-                <div class="mt-1 flex flex-wrap gap-1">
-                  <template x-for="sig in selectedItem.signals" :key="sig">
-                    <span class="px-2 py-0.5 bg-accent-soft text-pink-800 rounded-full text-xs" x-text="sig"></span>
-                  </template>
-                </div>
-              </div>
-            </template>
-
-            <template x-if="selectedItem.description">
-              <div>
-                <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Fragmento</span>
-                <p class="mt-1 text-gray-700 text-xs italic whitespace-pre-wrap" x-text="selectedItem.description.slice(0, 800)"></p>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Sources / fuentes donde aparece el item -->
-        <template x-if="selectedItem.sources && selectedItem.sources.length > 0">
-          <div class="px-6 pb-5">
-            <h3 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
-              Encontrado en <span x-text="selectedItem.sources.length"></span>
-              <span x-text="selectedItem.sources.length === 1 ? 'fuente' : 'fuentes'"></span>
-            </h3>
-            <div class="space-y-2">
-              <template x-for="(src, idx) in selectedItem.sources" :key="src.url || idx">
-                <a :href="src.url" target="_blank" rel="noopener"
-                   class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 hover:border-pink-300 hover:bg-pink-50 transition-colors group">
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="font-medium text-sm text-gray-900 group-hover:text-pink-700" x-text="src.name"></span>
-                      <span x-show="src.country" class="text-xs text-gray-500" x-text="'· ' + src.country"></span>
-                      <span x-show="src.stock_type === 'limited'" class="text-xs px-1.5 py-0.5 rounded badge-limited font-semibold">stock limitado</span>
-                    </div>
-                    <div class="text-xs text-gray-500 mt-0.5 truncate" x-text="src.url"></div>
-                  </div>
-                  <div class="text-right flex-shrink-0">
-                    <div x-show="src.price" class="text-sm font-semibold text-gray-900" x-text="src.price"></div>
-                    <div class="text-xs text-gray-400 group-hover:text-pink-600">Ver ↗</div>
-                  </div>
-                </a>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <!-- Feedback (mala elección) -->
-        <div class="px-6 pb-3" x-show="feedbackOpen" x-cloak>
-          <div class="border border-red-200 bg-red-50 rounded-lg p-3">
-            <label class="block text-xs uppercase tracking-wider text-red-700 font-semibold mb-1">
-              ¿Por qué es una mala elección?
-            </label>
-            <textarea x-model="feedbackReason" rows="3" :disabled="feedbackSending"
-                      placeholder="Ej: no es manga, es un cómic occidental; o el título está roto; o es merchandising…"
-                      class="w-full px-3 py-2 text-sm border border-red-200 rounded-md focus:outline-none focus:border-red-400 disabled:bg-gray-100"></textarea>
-            <div class="mt-2 flex justify-between items-center gap-2">
-              <span class="text-xs"
-                    :class="feedbackError ? 'text-red-700' : (feedbackSent ? 'text-green-700' : 'text-gray-500')"
-                    x-text="feedbackError || (feedbackSent ? '✓ Guardado en data/feedback.jsonl' : '')"></span>
-              <div class="flex gap-2">
-                <button @click="cancelFeedback()" :disabled="feedbackSending"
-                        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50">
-                  Cancelar
-                </button>
-                <button @click="submitFeedback()" :disabled="feedbackSending || !feedbackReason.trim()"
-                        class="px-3 py-1.5 text-sm bg-red-600 text-white rounded-md font-semibold hover:opacity-90 disabled:opacity-50">
-                  <span x-show="!feedbackSending">Enviar</span>
-                  <span x-show="feedbackSending">Enviando…</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Modal footer -->
-        <div class="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-between items-center gap-3">
-          <span class="text-xs text-gray-500">Detectado: <span x-text="formatDate(selectedItem.detected_at)"></span></span>
-          <div class="flex items-center gap-2">
-            <button @click="toggleFeedback()"
-                    :title="feedbackOpen ? 'Cerrar feedback' : 'Marcar como mala elección'"
-                    class="px-3 py-2 rounded-md text-sm border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    :class="feedbackOpen ? 'bg-red-50 border-red-300 text-red-700' : 'text-gray-500'">
-              👎
-            </button>
-            <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
-              Ver en sitio original ↗
-            </a>
           </div>
         </div>
       </div>
-    </template>
-  </div>
+
+      <!-- Footer -->
+      <div class="bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-between items-center gap-3">
+        <span class="text-xs text-gray-500">Detectado: <span x-text="formatDate(selectedItem.detected_at)"></span></span>
+        <div class="flex items-center gap-2">
+          <button @click="goBack()"
+                  class="px-3 py-2 rounded-md text-sm border border-gray-300 hover:bg-gray-100 text-gray-700">
+            ← Volver
+          </button>
+          <button @click="toggleFeedback()"
+                  :title="feedbackOpen ? 'Cerrar feedback' : 'Marcar como mala elección'"
+                  class="px-3 py-2 rounded-md text-sm border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
+                  :class="feedbackOpen ? 'bg-red-50 border-red-300 text-red-700' : 'text-gray-500'">
+            👎
+          </button>
+          <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
+            Ver en sitio original ↗
+          </a>
+        </div>
+      </div>
+    </div>
+  </template>
 </div>
 
 <script>
@@ -495,6 +679,12 @@ function mangaApp() {
     error: null,
     items: [],
     selectedItem: null,
+
+    // Navegación de vistas: 'catalog' | 'edition' | 'volume'
+    view: 'catalog',
+    currentEditionKey: '',
+    currentVolumeUrl: '',
+
     page: 1,
     perPage: 60,
     sort: "score_desc",
@@ -505,7 +695,7 @@ function mangaApp() {
       language: "",
       productType: "",
       sourceClass: "",
-      signalTypes: [],   // multi-select chip filter
+      signalTypes: [],
       minScore: 20,
       onlyLimited: false,
     },
@@ -522,8 +712,17 @@ function mangaApp() {
       { key: "tags", label: "Tags" },
     ],
 
+    async init() {
+      await this.loadItems();
+      this._loadStateFromUrl();
+      // hashchange: manual edits a URL bar. popstate: botón back/forward del
+      // browser (pushState entries no disparan hashchange si la URL completa
+      // no cambia el hash, así que ambos listeners son necesarios).
+      window.addEventListener("hashchange", () => this._loadStateFromUrl());
+      window.addEventListener("popstate", () => this._loadStateFromUrl());
+    },
+
     async loadItems() {
-      // 1. Intentar leer datos embebidos (generados por scripts/build_web.py).
       const inlineTag = document.getElementById("manga-data");
       if (inlineTag) {
         try {
@@ -533,13 +732,9 @@ function mangaApp() {
             this.loading = false;
             return;
           }
-        } catch (e) { /* sigue al fallback */ }
+        } catch (e) { /* fallback */ }
       }
 
-      // 2. Fallback: fetch del JSONL (requiere servidor local).
-      // Si abriste el HTML directo (file://), fetch falla por CORS. En ese caso:
-      //   .venv/bin/python scripts/build_web.py    (embebe los datos)
-      //   ./web/serve.sh                            (lanza server local)
       try {
         if (location.protocol === "file:") {
           throw new Error(
@@ -585,7 +780,6 @@ function mangaApp() {
         u.search = keep.length
           ? "?" + keep.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")
           : "";
-        // Shopify: /collections/X/products/Y → /products/Y
         u.pathname = u.pathname.replace(/^\/collections\/[^/]+\/(products\/.+)$/, "/$1");
         if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
           u.pathname = u.pathname.replace(/\/+$/, "");
@@ -599,11 +793,6 @@ function mangaApp() {
     },
 
     dedupByUrl(items) {
-      // Dedup en dos pases:
-      // 1) Por URL normalizada (mismo producto mismo retailer, distintas URLs).
-      // 2) Por ISBN: items que comparten ISBN se FUSIONAN en una sola entrada
-      //    con sources[] preservando precio/URL/imagen de cada fuente.
-      // Tie-break para canónico: mayor score gana; empate → más reciente.
       const pickWinner = (a, b) => {
         if (!a) return b;
         if (!b) return a;
@@ -628,21 +817,12 @@ function mangaApp() {
         score:        item.score || 0,
       });
 
-      // Pase 1: por URL normalizada.
       const byUrl = new Map();
       for (const item of items) {
         const key = this.normalizeUrlForDedup(item.url);
         byUrl.set(key, pickWinner(byUrl.get(key), item));
       }
 
-      // Pase 2: por cluster_key (con merge a sources[]).
-      // cluster_key viene precalculada en items.jsonl (Python:
-      // derive_cluster_key). Es ISBN cuando existe; sino una fuzzy key
-      // (lang|serie|vol|variantes|publisher). Items con clave "url:..."
-      // no se agrupan con nadie (cada URL es única).
-      //
-      // Si el item ya viene con sources[] (caso build_web.py embed), no
-      // sobreescribimos — respetamos el agrupamiento del backend.
       const clusterGroups = new Map();
       const preGrouped = [];
       for (const item of byUrl.values()) {
@@ -650,8 +830,6 @@ function mangaApp() {
           preGrouped.push(item);
           continue;
         }
-        // Fallback para items legacy sin cluster_key: usar ISBN si existe,
-        // o "url:<url>" para standalone.
         let key = item.cluster_key;
         if (!key) {
           const isbn = (item.isbn || "").trim();
@@ -690,7 +868,6 @@ function mangaApp() {
         }
       }
 
-      // Pre-agrupados (vienen del backend con sources[]): pasan tal cual.
       for (const item of preGrouped) {
         final.push(item);
       }
@@ -699,7 +876,6 @@ function mangaApp() {
 
     get unique() {
       const u = (key) => Array.from(new Set(this.items.map(i => i[key]).filter(Boolean))).sort();
-      // signal_types es un array por item — flatten antes de dedupear.
       const signalTypes = Array.from(new Set(
         this.items.flatMap(i => Array.isArray(i.signal_types) ? i.signal_types : []).filter(Boolean)
       )).sort();
@@ -719,8 +895,10 @@ function mangaApp() {
         .filter(Boolean)
         .sort()
         .pop();
+      const editions = new Set(this.items.map(i => i.edition_key || `__solo__${i.url}`)).size;
       return {
         total: this.items.length,
+        editions,
         countries: this.unique.countries.length,
         publishers: this.unique.publishers.length,
         lastDetected: lastDetected ? new Date(lastDetected).toLocaleDateString() : "",
@@ -732,10 +910,6 @@ function mangaApp() {
       const q = f.search.trim().toLowerCase();
       return this.items.filter(i => {
         if (q) {
-          // Buscar en title (display canonical/standardized) + title_original
-          // (preservado del scrape: JP/ES/FR/IT) + series_display (alias canonical
-          // de la obra). Así "Demon Slayer", "鬼滅の刃", "Guardianes de la Noche"
-          // y "Kimetsu no Yaiba" encuentran el mismo manga.
           const haystack = [
             i.title || "",
             i.title_original || "",
@@ -749,7 +923,6 @@ function mangaApp() {
         if (f.productType && i.product_type !== f.productType) return false;
         if (f.sourceClass && i.source_class !== f.sourceClass) return false;
         if (f.signalTypes && f.signalTypes.length > 0) {
-          // intersección no-vacía entre signal_types del item y los seleccionados
           const itemSigs = Array.isArray(i.signal_types) ? i.signal_types : [];
           if (!f.signalTypes.some(s => itemSigs.includes(s))) return false;
         }
@@ -772,18 +945,119 @@ function mangaApp() {
       return arr.sort(cmp[this.sort] || cmp.score_desc);
     },
 
+    // Parsea un valor de "volume" a número para comparar.
+    // "1" → 1, "1.5" → 1.5, "Box" → +Inf (queda al final), "" → +Inf.
+    _volumeNumber(v) {
+      if (v === null || v === undefined) return Infinity;
+      const s = String(v).trim();
+      if (!s) return Infinity;
+      const m = s.match(/(\d+(?:\.\d+)?)/);
+      return m ? parseFloat(m[1]) : Infinity;
+    },
+
+    // Agrupa items.sorted por edition_key. Items sin edition_key son
+    // grupos singleton (su propia URL como key). Devuelve un array de
+    // grupos { edition_key, display, leader, tomoCount, volumeRange }.
+    // El leader es el tomo de menor número (parseado); en empate, mayor score.
+    get editions() {
+      const arr = this.sorted;
+      const groups = new Map();
+      const order = [];
+      for (const item of arr) {
+        const ek = item.edition_key || `__solo__${item.url}`;
+        if (!groups.has(ek)) {
+          groups.set(ek, []);
+          order.push(ek);
+        }
+        groups.get(ek).push(item);
+      }
+      const editionList = [];
+      for (const ek of order) {
+        const g = groups.get(ek);
+        // Leader: menor volumen numérico; tie-break por score desc, luego detected desc.
+        const leader = [...g].sort((a, b) => {
+          const va = this._volumeNumber(a.volume);
+          const vb = this._volumeNumber(b.volume);
+          if (va !== vb) return va - vb;
+          if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+          return (b.detected_at || "").localeCompare(a.detected_at || "");
+        })[0];
+        // Display de la edición: edition_display o series_display + edición desde leader.
+        const display = leader.edition_display
+          || leader.series_display
+          || leader.title
+          || "(sin edición)";
+        // Rango de tomos: "Vol 1–14" si todos numéricos.
+        let volumeRange = "";
+        if (g.length > 1) {
+          const nums = g
+            .map(it => this._volumeNumber(it.volume))
+            .filter(n => isFinite(n));
+          if (nums.length > 1) {
+            const min = Math.min(...nums);
+            const max = Math.max(...nums);
+            if (min !== max) {
+              const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+              volumeRange = `Vol ${fmt(min)}–${fmt(max)}`;
+            }
+          }
+        }
+        editionList.push({
+          edition_key: ek,
+          display,
+          leader,
+          tomoCount: g.length,
+          volumeRange,
+          items: g,
+        });
+      }
+      return editionList;
+    },
+
+    // Items de la edición actualmente seleccionada (view === 'edition'),
+    // filtrados + ordenados por número de volumen ascendente.
+    get currentEdition() {
+      if (this.view !== 'edition' || !this.currentEditionKey) return null;
+      const ek = this.currentEditionKey;
+      const items = this.sorted.filter(i =>
+        (i.edition_key || `__solo__${i.url}`) === ek
+      );
+      if (items.length === 0) return null;
+      const sortedByVol = [...items].sort((a, b) => {
+        const va = this._volumeNumber(a.volume);
+        const vb = this._volumeNumber(b.volume);
+        if (va !== vb) return va - vb;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+      const leader = sortedByVol[0];
+      const display = leader.edition_display
+        || leader.series_display
+        || leader.title
+        || "(sin edición)";
+      return { edition_key: ek, display, items: sortedByVol };
+    },
+
+    // Lista a paginar según view actual.
+    get _activeList() {
+      if (this.view === 'edition') {
+        const e = this.currentEdition;
+        return e ? e.items : [];
+      }
+      // catalog (y fallback)
+      return this.editions;
+    },
+
     get totalPages() {
-      return Math.max(1, Math.ceil(this.sorted.length / this.perPage));
+      return Math.max(1, Math.ceil(this._activeList.length / this.perPage));
     },
 
     get paginated() {
-      // Reset page if out of range when filters change
       if (this.page > this.totalPages) {
         this.page = 1;
-        this._syncPageToUrl();
+        this._syncStateToUrl();
       }
       const start = (this.page - 1) * this.perPage;
-      return this.sorted.slice(start, start + this.perPage);
+      return this._activeList.slice(start, start + this.perPage);
     },
 
     scoreClass(score) {
@@ -803,19 +1077,136 @@ function mangaApp() {
       try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
     },
 
-    openModal(item) {
+    // --- Navegación entre vistas ---
+    goHome() {
+      const wasInDifferentView = this.view !== 'catalog';
+      this.view = 'catalog';
+      this.currentEditionKey = '';
+      this.currentVolumeUrl = '';
+      this.selectedItem = null;
+      this._resetFeedback();
+      this.page = 1;
+      this._syncStateToUrl({ push: wasInDifferentView });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+
+    openEditionByKey(editionKey) {
+      if (!editionKey) return;
+      // Single-tomo o sin edition_key (solo): saltar directo a la vista de volumen.
+      if (editionKey.startsWith('__solo__')) {
+        const ed = this.editions.find(e => e.edition_key === editionKey);
+        if (ed) return this.openVolume(ed.leader);
+        return;
+      }
+      const isViewChange = this.view !== 'edition' || this.currentEditionKey !== editionKey;
+      this.view = 'edition';
+      this.currentEditionKey = editionKey;
+      this.currentVolumeUrl = '';
+      this.selectedItem = null;
+      this._resetFeedback();
+      this.page = 1;
+      this._syncStateToUrl({ push: isViewChange });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+
+    openVolume(item) {
+      if (!item) return;
+      const isViewChange = this.view !== 'volume' || this.currentVolumeUrl !== item.url;
+      this.view = 'volume';
+      this.currentVolumeUrl = item.url || '';
       this.selectedItem = item;
       this.copiedTitle = false;
       this._resetFeedback();
-      document.body.style.overflow = "hidden";
-    },
-    closeModal() {
-      this.selectedItem = null;
-      this.copiedTitle = false;
-      this._resetFeedback();
-      document.body.style.overflow = "";
+      this._syncStateToUrl({ push: isViewChange });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
+    goBack() {
+      // Si vengo de una edición multi-tomo, vuelvo a la edición; sino al catálogo.
+      if (this.selectedItem && this.selectedItem.edition_key) {
+        const ek = this.selectedItem.edition_key;
+        // Buscar el conteo de la edición en el dataset completo (no filtrado).
+        const sameEdition = this.items.filter(i => i.edition_key === ek);
+        if (sameEdition.length > 1) {
+          this.openEditionByKey(ek);
+          return;
+        }
+      }
+      this.goHome();
+    },
+
+    // --- Hash routing ---
+    // #/                            → catalog
+    // #/edition/<urlencoded-key>    → edition view
+    // #/volume/<urlencoded-url>     → volume view
+    //
+    // push=true (cambio de vista) → pushState → el botón back del browser
+    // navega entre vistas. push=false (cambio de filtro/página dentro de la
+    // misma vista) → replaceState para no contaminar el historial.
+    _syncStateToUrl({ push = false } = {}) {
+      try {
+        let hash = '';
+        if (this.view === 'edition' && this.currentEditionKey) {
+          hash = `#/edition/${encodeURIComponent(this.currentEditionKey)}`;
+        } else if (this.view === 'volume' && this.currentVolumeUrl) {
+          hash = `#/volume/${encodeURIComponent(this.currentVolumeUrl)}`;
+        }
+        const u = new URL(window.location.href);
+        if (this.view !== 'volume' && this.page > 1) {
+          u.searchParams.set('page', String(this.page));
+        } else {
+          u.searchParams.delete('page');
+        }
+        const target = u.pathname + u.search + hash;
+        const current = window.location.pathname + window.location.search + window.location.hash;
+        if (target !== current) {
+          if (push) history.pushState({}, '', target);
+          else history.replaceState({}, '', target);
+        }
+      } catch (e) { /* ignore */ }
+    },
+
+    _loadStateFromUrl() {
+      try {
+        const h = (window.location.hash || '').replace(/^#\/?/, '');
+        const pageQ = parseInt(new URL(window.location.href).searchParams.get('page') || '0', 10);
+        if (!h) {
+          this.view = 'catalog';
+          this.currentEditionKey = '';
+          this.currentVolumeUrl = '';
+          this.selectedItem = null;
+          this.page = pageQ > 0 ? pageQ : 1;
+          return;
+        }
+        const [type, ...rest] = h.split('/');
+        const raw = rest.join('/');
+        if (type === 'edition' && raw) {
+          this.view = 'edition';
+          this.currentEditionKey = decodeURIComponent(raw);
+          this.currentVolumeUrl = '';
+          this.selectedItem = null;
+          this.page = pageQ > 0 ? pageQ : 1;
+          return;
+        }
+        if (type === 'volume' && raw) {
+          const url = decodeURIComponent(raw);
+          this.view = 'volume';
+          this.currentVolumeUrl = url;
+          const match = this.items.find(i => i.url === url);
+          this.selectedItem = match || null;
+          this.page = 1;
+          return;
+        }
+        // hash inválido → reset a catalog.
+        this.view = 'catalog';
+        this.currentEditionKey = '';
+        this.currentVolumeUrl = '';
+        this.selectedItem = null;
+        this.page = pageQ > 0 ? pageQ : 1;
+      } catch (e) { /* ignore */ }
+    },
+
+    // --- Feedback ---
     feedbackOpen: false,
     feedbackReason: "",
     feedbackSending: false,
@@ -866,17 +1257,15 @@ function mangaApp() {
       }
     },
 
+    // --- Paginación ---
     goToPage(n) {
       const clamped = Math.max(1, Math.min(this.totalPages, n));
       if (clamped === this.page) return;
       this.page = clamped;
-      this._syncPageToUrl();
+      this._syncStateToUrl();
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
 
-    // Devuelve la lista de páginas a mostrar como botones: current ± 5,
-    // con clamp a [1, totalPages]. Si current=1 y totalPages=20 → [1..6]
-    // (no [-4..6]). Si current=15 y totalPages=20 → [10..20].
     get visiblePages() {
       const range = 5;
       const start = Math.max(1, this.page - range);
@@ -884,25 +1273,6 @@ function mangaApp() {
       const out = [];
       for (let i = start; i <= end; i++) out.push(i);
       return out;
-    },
-
-    _syncPageToUrl() {
-      try {
-        const u = new URL(window.location.href);
-        if (this.page <= 1) {
-          u.searchParams.delete("page");
-        } else {
-          u.searchParams.set("page", String(this.page));
-        }
-        history.replaceState({}, "", u);
-      } catch (e) { /* silently ignore */ }
-    },
-
-    _loadPageFromUrl() {
-      try {
-        const p = parseInt(new URL(window.location.href).searchParams.get("page") || "0", 10);
-        if (p > 0) this.page = p;
-      } catch (e) { /* ignore */ }
     },
 
     copiedTitle: false,
@@ -913,7 +1283,6 @@ function mangaApp() {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(title);
         } else {
-          // Fallback para http://localhost o navegadores antiguos.
           const ta = document.createElement("textarea");
           ta.value = title;
           ta.style.position = "fixed";
@@ -937,7 +1306,7 @@ function mangaApp() {
         minScore: 20, onlyLimited: false,
       };
       this.page = 1;
-      this._syncPageToUrl();
+      this._syncStateToUrl();
     },
 
     toggleSignalType(sig) {
@@ -948,16 +1317,19 @@ function mangaApp() {
         this.filters.signalTypes.push(sig);
       }
       this.page = 1;
-      this._syncPageToUrl();
+      this._syncStateToUrl();
     },
   };
 }
 
-// ESC para cerrar modal
+// ESC: en volume → volver a la edición/catálogo; en edition → catálogo.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     const root = document.querySelector("[x-data]");
-    if (root && root.__x) root.__x.$data.closeModal();
+    if (!root || !root.__x) return;
+    const d = root.__x.$data;
+    if (d.view === 'volume') d.goBack();
+    else if (d.view === 'edition') d.goHome();
   }
 });
 </script>

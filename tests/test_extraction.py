@@ -3316,6 +3316,80 @@ def test_append_jsonl_keeps_rows_without_url(tmp_path):
     assert sum(1 for _ in path.open()) == 3
 
 
+def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
+    """Si el item existente tiene `standardized_at`, los campos curados por
+    `/standardize-catalog` (title, series_key, edition_key, etc.) se
+    preservan en upserts subsiguientes — solo los scrapeados se refrescan.
+
+    Sin esta merge, un re-scrape borraría la estandarización LLM-verified.
+    """
+    path = tmp_path / "items.jsonl"
+    # Estado inicial: item curado por skill
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Deluxe 1",
+        "title_original": "Berserk Vol. 1 Deluxe Hardcover Edition",
+        "series_key": "berserk",
+        "series_display": "Berserk",
+        "edition_key": "berserk-darkhorse-deluxe",
+        "edition_display": "Deluxe Edition (Dark Horse)",
+        "volume": "1",
+        "price": "USD 39.99",
+        "image_url": "https://example.com/old.jpg",
+        "standardized_at": "2026-05-22T10:00:00+00:00",
+        "detected_at": "2026-05-22",
+    }])
+
+    # Re-scrape: title scrapeado raw + price actualizado + image nueva
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Vol. 1 Deluxe Hardcover Edition",
+        "series_key": "berserk-1",  # heurístico crudo del scraper, peor que el canónico
+        "edition_key": "berserk-1-darkhorse-special",
+        "volume": "",  # scraper no detecta vol
+        "price": "USD 44.99",  # subió
+        "image_url": "https://example.com/new.jpg",  # actualizada
+        "detected_at": "2026-06-01",
+    }])
+
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    it = items[0]
+    # Curados preservados:
+    assert it["title"] == "Berserk Deluxe 1"
+    assert it["title_original"] == "Berserk Vol. 1 Deluxe Hardcover Edition"
+    assert it["series_key"] == "berserk"
+    assert it["edition_key"] == "berserk-darkhorse-deluxe"
+    assert it["volume"] == "1"
+    assert it["standardized_at"] == "2026-05-22T10:00:00+00:00"
+    # Scrapeados refrescados:
+    assert it["price"] == "USD 44.99"
+    assert it["image_url"] == "https://example.com/new.jpg"
+    assert it["detected_at"] == "2026-06-01"
+
+
+def test_append_jsonl_does_not_preserve_when_no_standardized_at(tmp_path):
+    """Items SIN standardized_at son reemplazados completos en re-scrape
+    (comportamiento previo, intacto)."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "scraper raw 1",
+        "series_key": "wrong-key",
+        "detected_at": "2026-01-01",
+    }])
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "scraper raw 2",
+        "series_key": "wrong-key-2",
+        "detected_at": "2026-02-01",
+    }])
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0]["title"] == "scraper raw 2"
+    assert items[0]["series_key"] == "wrong-key-2"
+
+
 # ----- otaku_calendar.py (wiki EN) -----
 
 def test_otaku_calendar_parse_date_text():
