@@ -55,7 +55,87 @@ def _flag(arg: str, label: str, help: str, *, type: str = "bool",
 
 SCRIPTS: list[dict[str, Any]] = [
     # =====================================================================
-    # DÍA A DÍA
+    # ⭐ SCRIPTS CANÓNICOS — los 2 que ejecutás regularmente
+    # =====================================================================
+    {
+        "id": "scrape_delta",
+        "category": "⭐ Canónicos",
+        "icon": "⚡",
+        "name": "Scrape DELTA (incremental, diario/semanal)",
+        "tagline": "Detecta novedades de los últimos meses. Rápido (~30-60 min).",
+        "what": (
+            "Encadena toda la pipeline en modo INCREMENTAL: scrape de las "
+            "fuentes del YAML + listadomanga CALENDARIO (mes actual + 2 "
+            "anteriores) + manga-sanctuary + otaku-calendar + manga-mexico + "
+            "socialanime + blogbbm + search discovery + cleanup retrofits + "
+            "build_web. NO recorre las ~3432 colecciones de listadomanga "
+            "lista.php — eso es del scrape FULL."
+        ),
+        "when": (
+            "Diario o semanal. Es lo que querés correr cuando solo querés "
+            "agarrar lo nuevo. Tiempo: 30-60 min. Para correr el catálogo "
+            "completo de listadomanga, usar 'Scrape FULL' (mensual)."
+        ),
+        "command": ["bash", "scripts/scrape_delta.sh"],
+        "presets": [
+            {
+                "id": "default",
+                "label": "🟢 Estándar (recomendado)",
+                "desc": "Todas las fases activas, sin Whakoom ni Wayback (riesgo/lento).",
+                "values": {},
+            },
+            {
+                "id": "with_whakoom",
+                "label": "🟡 + Whakoom spider (riesgo Cloudflare)",
+                "desc": "Agrega spider profundo de Whakoom. Puede bloquearse por Cloudflare.",
+                "env": {"INCLUDE_WHAKOOM_SPIDER": "1"},
+                "values": {},
+            },
+        ],
+        "flags": [],  # se controla por env vars (INCLUDE_*, SKIP_*)
+    },
+    {
+        "id": "scrape_full",
+        "category": "⭐ Canónicos",
+        "icon": "📚",
+        "name": "Scrape FULL (catálogo completo, mensual)",
+        "tagline": "Recorre las ~3432 colecciones de listadomanga.es vía lista.php. ~2-4 horas.",
+        "what": (
+            "Encadena toda la pipeline en modo COMPLETO. Lo más importante: "
+            "recorre las ~3432 colecciones del catálogo de listadomanga.es "
+            "vía lista.php (índice oficial alfabético), buscando en cada "
+            "una ediciones especiales / portadas alternativas / cofres / "
+            "extras de primera edición / formato premium. También corre "
+            "listadomanga-blog histórico, manga-sanctuary, otaku-calendar, "
+            "manga-mexico, mangavariant (sitemap completo), socialanime, "
+            "blogbbm + search discovery + cleanup retrofits + build_web."
+        ),
+        "when": (
+            "1x/mes o 1x/trimestre. Cuando querés un refresh completo del "
+            "catálogo o cuando agregaste reglas/patterns nuevos al parser. "
+            "Tiempo: 2-4 horas. Para deltas diarios: usar 'Scrape DELTA'."
+        ),
+        "command": ["bash", "scripts/scrape_full.sh"],
+        "presets": [
+            {
+                "id": "default",
+                "label": "🟢 Estándar (recomendado)",
+                "desc": "Todas las fases activas, sin Whakoom ni Wayback.",
+                "values": {},
+            },
+            {
+                "id": "with_extras",
+                "label": "🟡 + Whakoom + Wayback recovery (lento ~6h)",
+                "desc": "Agrega Whakoom spider y Wayback recovery. Para refresh ultra-completo.",
+                "env": {"INCLUDE_WHAKOOM_SPIDER": "1", "INCLUDE_WAYBACK_RECOVERY": "1"},
+                "values": {},
+            },
+        ],
+        "flags": [],
+    },
+
+    # =====================================================================
+    # DÍA A DÍA — scripts individuales (avanzado)
     # =====================================================================
     {
         "id": "scrape",
@@ -136,6 +216,12 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Corre todo igual pero NO escribe en data/items.jsonl. "
                   "Sirve para ver qué pasaría sin tocar tu catálogo.",
                   type="bool", default=False),
+            _flag("--skip-image-download", "No descargar portadas al espejo local",
+                  "Por defecto el scrape descarga cada portada a "
+                  "data/images/ (espejo local, así somos dueños de la "
+                  "imagen aunque la fuente muera). Activá esto para "
+                  "saltear la descarga en corridas de prueba rápidas.",
+                  type="bool", default=False, advanced=True),
 
             _flag("--countries", "Solo estos países",
                   "Lista de países separados por coma. Ejemplo: España,Japón. "
@@ -280,6 +366,62 @@ SCRIPTS: list[dict[str, Any]] = [
                 ),
                 "values": {"--bootstrap-wiki": "mangavariant"},
             },
+            {
+                "id": "socialanime",
+                "label": "🇮🇹 SocialAnime - variant + cofanetti italianos",
+                "desc": (
+                    "MangaStore de socialanime.it: ~840 items entre variant/"
+                    "limited/special editions y cofanetti (Star Comics, Panini, "
+                    "Edizioni BD, Goen, Magic Press, Dynit, 001 Edizioni...). "
+                    "Las URLs van a Amazon Italia. Ignora el rango de fechas."
+                ),
+                "values": {"--bootstrap-wiki": "socialanime"},
+            },
+            {
+                "id": "blogbbm",
+                "label": "🇧🇷 Biblioteca Brasileira de Mangás - capas variantes + extras",
+                "desc": (
+                    "Dos posts curados de blogbbm.com: ediciones con capa variante "
+                    "(~25 items) y volúmenes con extras/brindes (~10 items). "
+                    "Cubre publishers BR (Panini, JBC, NewPOP, MPEG, Pipoca & Nanquim) "
+                    "con clasificación explícita de variant/special/bonus. "
+                    "Ignora el rango de fechas."
+                ),
+                "values": {"--bootstrap-wiki": "blogbbm"},
+            },
+            {
+                "id": "listadomanga_collections_piloto",
+                "label": "🇪🇸 Listado Manga - colecciones (piloto Fase 1, primeros 100 ids)",
+                "desc": (
+                    "Parser por colección individual coleccion.php?id=N. "
+                    "Fase 1: ediciones especiales / portadas alternativas / "
+                    "packs con extras / formato premium (kanzenban, cartoné A5, "
+                    "tapa dura, artbook). Piloto: ids 1-100 para validar antes de "
+                    "iterar todo el catálogo. Usa --coleccion-from / --coleccion-to "
+                    "en vez de --wiki-from / --wiki-to."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "listadomanga-collections",
+                    "--coleccion-from": "1",
+                    "--coleccion-to": "100",
+                },
+            },
+            {
+                "id": "listadomanga_collections_full",
+                "label": "🇪🇸 Listado Manga - colecciones (Fase 3, todo el catálogo)",
+                "desc": (
+                    "Iteración completa coleccion.php?id=1..6500. ~6500 ids = "
+                    "~30-60 min con sleep 0.3s. Para automatizar semanalmente; "
+                    "ojo con el volumen de items resultante (estimado ~2-5k "
+                    "items nuevos en Fase 1, mucho más con Fase 2 cuando se "
+                    "active la vinculación extra→tomo)."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "listadomanga-collections",
+                    "--coleccion-from": "1",
+                    "--coleccion-to": "6500",
+                },
+            },
         ],
         "flags": [
             _flag("--bootstrap-wiki", "Wiki a importar",
@@ -287,7 +429,8 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="choice", default="listadomanga",
                   choices=["listadomanga", "listadomanga-blog", "whakoom",
                            "manga-sanctuary", "otaku-calendar", "manga-mexico",
-                           "mangavariant"]),
+                           "mangavariant", "socialanime", "blogbbm",
+                           "listadomanga-collections"]),
             _flag("--wiki-from", "Mes inicial (YYYY-MM)",
                   "Desde qué mes traer items. Aplica a wikis basadas en "
                   "calendario (listadomanga, manga-sanctuary, otaku-calendar). "
@@ -298,6 +441,15 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Hasta qué mes. Vacío = mes actual.",
                   type="str", default="",
                   placeholder="2026-05"),
+            _flag("--coleccion-from", "Id inicial (listadomanga-collections)",
+                  "Para listadomanga-collections, id inicial de la iteración "
+                  "secuencial. Default 1. Los otros bootstrap-wiki lo ignoran.",
+                  type="int", default=1, advanced=True),
+            _flag("--coleccion-to", "Id final (listadomanga-collections)",
+                  "Para listadomanga-collections, id final. Default 6500 (cubre "
+                  "todo el catálogo a 2026-05). El bootstrap también se detiene "
+                  "automáticamente tras 50 ids consecutivos sin contenido.",
+                  type="int", default=6500, advanced=True),
             _flag("--fetch-details", "Rellenar detalles después",
                   "Tras importar entra a cada detalle para portada/autor/ISBN. "
                   "RECOMENDADO.",
@@ -305,6 +457,11 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--dry-run", "Modo prueba (no guarda)",
                   "Lista lo que importaría sin escribir nada.",
                   type="bool", default=False),
+            _flag("--skip-image-download", "No descargar portadas al espejo local",
+                  "Por defecto el import descarga cada portada a "
+                  "data/images/. Activá esto para saltear la descarga en "
+                  "corridas de prueba.",
+                  type="bool", default=False, advanced=True),
         ],
     },
 
@@ -630,6 +787,74 @@ SCRIPTS: list[dict[str, Any]] = [
                   placeholder="darkhorse.com"),
             _flag("--dry-run", "Modo prueba (no fetchea)",
                   "Solo cuenta cuántos serían candidatos.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "mirror_images",
+        "category": "Mantenimiento",
+        "icon": "🖼️",
+        "name": "Espejo local de portadas (bajar + limpiar)",
+        "tagline": "Descarga las portadas a data/images/ así sos dueño de las imágenes.",
+        "what": (
+            "PandaWatch guarda las portadas en su propia carpeta "
+            "(data/images/) en vez de depender de la web de la tienda — "
+            "si esa web se cae o bloquea el enlace, la imagen sigue "
+            "funcionando. Este script (1) descarga la portada de cada item "
+            "que todavía no la tenga bajada, y (2) limpia de data/images/ "
+            "las imágenes de items que ya no están en el catálogo. La "
+            "primera vez baja miles de imágenes y demora varios minutos."
+        ),
+        "when": (
+            "La primera vez, para bajar todo el catálogo histórico. "
+            "Después el scraper ya baja las portadas de los items nuevos "
+            "solo — alcanza con correr esto de vez en cuando para limpiar "
+            "imágenes huérfanas."
+        ),
+        "command": [PYTHON, "scripts/retrofit/mirror_images.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Solo reporta cuántas portadas faltan y cuántos archivos sobran.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "all",
+                "label": "🟢 Bajar todo + limpiar",
+                "desc": "Backfill completo del catálogo + limpieza de huérfanos a cuarentena.",
+                "values": {},
+            },
+            {
+                "id": "gc_only",
+                "label": "🧹 Solo limpiar huérfanos",
+                "desc": "Sin descargar nada; solo saca de data/images/ lo que ya no se usa.",
+                "values": {"--gc-only": True},
+            },
+        ],
+        "flags": [
+            _flag("--workers", "Descargas en paralelo",
+                  "Cuántas portadas bajar al mismo tiempo. Default 8.",
+                  type="int", default=8),
+            _flag("--limit", "Máx items a bajar",
+                  "0 = sin límite. Útil para probar con --limit 100.",
+                  type="int", default=0, placeholder="100"),
+            _flag("--no-gc", "No limpiar huérfanos",
+                  "Solo descarga las portadas faltantes, sin la pasada de "
+                  "limpieza.",
+                  type="bool", default=False, advanced=True),
+            _flag("--gc-only", "Solo limpiar (no descargar)",
+                  "Salta el backfill y corre únicamente la limpieza de "
+                  "imágenes huérfanas.",
+                  type="bool", default=False, advanced=True),
+            _flag("--gc-delete", "Borrar huérfanos (no cuarentena)",
+                  "Por defecto los archivos huérfanos se mueven a "
+                  "data/images/_orphans/ (reversible). Esto los borra de "
+                  "verdad.",
+                  type="bool", default=False, advanced=True),
+            _flag("--dry-run", "Modo prueba (no baja ni borra)",
+                  "Solo reporta qué haría, sin tocar nada.",
                   type="bool", default=False),
         ],
     },
