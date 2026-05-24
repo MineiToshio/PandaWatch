@@ -11,5 +11,11 @@ data/state.json
 data/state.json.bak*
 data/feedback.jsonl
 data/*.broken.json
+data/images/
 reports/
 logs/
+
+# Backups locales de auditorías/migraciones (snapshots de trabajo)
+data/series_aliases.yml.pre-*
+data/unmapped_series.jsonl.pre-*
+.claude/scheduled_tasks.lock
