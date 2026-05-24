@@ -3305,12 +3305,37 @@ def fetch_with_metadata(
 # ---------------------------------------------------------------------------
 
 _PLAYWRIGHT_AVAILABLE: bool | None = None
-_PLAYWRIGHT_BROWSER: Any | None = None
-_PLAYWRIGHT_INSTANCE: Any | None = None
 _PLAYWRIGHT_REAL_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+# Dedicated Playwright worker thread + request queue.
+#
+# Por qué un dedicated thread y no un singleton compartido entre workers
+# del ThreadPoolExecutor:
+#   `sync_playwright().start()` instala greenlets bound al thread que lo
+#   inicia. Si OTRO thread del pool intenta llamar métodos del browser
+#   singleton, Playwright tira `greenlet.error: Cannot switch to a
+#   different thread` (observado en scrape_full del 2026-05-24 con
+#   workers=8 → 4 sources kind:js fallaron: Crunchyroll Noticias, Kibook,
+#   Seven Seas Box Sets, Meian).
+#
+#   El `js_lock` viejo solo serializaba el acceso pero NO movía las
+#   llamadas al thread dueño del greenlet event loop.
+#
+# Solución: TODO el trabajo Playwright (start, launch, navigate, close)
+# corre en UN solo dedicated thread (`_PLAYWRIGHT_WORKER`). Los workers
+# HTTP siguen paralelos; cuando uno necesita Playwright, mete un job en
+# `_PLAYWRIGHT_QUEUE` y espera la respuesta vía `queue.Queue` privada.
+# La queue serializa naturalmente (sin lock manual) y greenlets nunca
+# cruzan threads.
+import queue as _queue_mod
+
+_PLAYWRIGHT_QUEUE: _queue_mod.Queue | None = None
+_PLAYWRIGHT_WORKER: threading.Thread | None = None
+_PLAYWRIGHT_WORKER_LOCK = threading.Lock()
+_PLAYWRIGHT_SHUTDOWN_SENTINEL = object()
 
 
 def _playwright_available() -> bool:
@@ -3326,46 +3351,96 @@ def _playwright_available() -> bool:
     return _PLAYWRIGHT_AVAILABLE
 
 
-def _get_playwright_browser() -> Any:
-    """Singleton de browser para reutilizar entre sources."""
-    global _PLAYWRIGHT_BROWSER, _PLAYWRIGHT_INSTANCE
-    if _PLAYWRIGHT_BROWSER is not None:
-        return _PLAYWRIGHT_BROWSER
-    from playwright.sync_api import sync_playwright
-    _PLAYWRIGHT_INSTANCE = sync_playwright().start()
-    # Argumentos para reducir señales de automation detectables por WAF.
+def _playwright_worker_loop(req_queue: _queue_mod.Queue) -> None:
+    """Loop del dedicated thread: lazy-launch del browser + procesa jobs.
+
+    Cada job es (url, timeout_ms, wait_until, resp_queue) — el worker
+    ejecuta `_fetch_impl` y devuelve `('ok', (html, meta))` o
+    `('err', exc)` por la `resp_queue` del caller.
+
+    Sentinel `_PLAYWRIGHT_SHUTDOWN_SENTINEL` termina el loop limpiamente.
+    """
+    pw_instance = None
+    browser = None
     launch_args = [
         "--disable-blink-features=AutomationControlled",
         "--disable-features=IsolateOrigins,site-per-process",
         "--no-sandbox",
     ]
-    _PLAYWRIGHT_BROWSER = _PLAYWRIGHT_INSTANCE.chromium.launch(
-        headless=True, args=launch_args
-    )
-    return _PLAYWRIGHT_BROWSER
+    while True:
+        job = req_queue.get()
+        try:
+            if job is _PLAYWRIGHT_SHUTDOWN_SENTINEL:
+                break
+            url, timeout_ms, wait_until, resp_q = job
+            try:
+                # Lazy-launch en el primer job (el greenlet binding queda
+                # en ESTE thread, donde vive permanentemente).
+                if browser is None:
+                    from playwright.sync_api import sync_playwright
+                    pw_instance = sync_playwright().start()
+                    browser = pw_instance.chromium.launch(
+                        headless=True, args=launch_args
+                    )
+                result = _fetch_with_playwright_impl(
+                    browser, url, timeout_ms, wait_until
+                )
+                resp_q.put(("ok", result))
+            except Exception as exc:  # noqa: BLE001
+                resp_q.put(("err", exc))
+        finally:
+            req_queue.task_done()
+    # Cleanup del browser dentro del MISMO thread (donde se creó).
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+    if pw_instance is not None:
+        try:
+            pw_instance.stop()
+        except Exception:
+            pass
+
+
+def _ensure_playwright_worker() -> _queue_mod.Queue:
+    """Lazy-init del dedicated thread + queue. Idempotente y thread-safe."""
+    global _PLAYWRIGHT_QUEUE, _PLAYWRIGHT_WORKER
+    with _PLAYWRIGHT_WORKER_LOCK:
+        if _PLAYWRIGHT_QUEUE is None:
+            _PLAYWRIGHT_QUEUE = _queue_mod.Queue()
+        if _PLAYWRIGHT_WORKER is None or not _PLAYWRIGHT_WORKER.is_alive():
+            _PLAYWRIGHT_WORKER = threading.Thread(
+                target=_playwright_worker_loop,
+                args=(_PLAYWRIGHT_QUEUE,),
+                name="playwright-worker",
+                daemon=True,
+            )
+            _PLAYWRIGHT_WORKER.start()
+        return _PLAYWRIGHT_QUEUE
 
 
 def close_playwright() -> None:
-    """Cierra browser al final del run (best-effort)."""
-    global _PLAYWRIGHT_BROWSER, _PLAYWRIGHT_INSTANCE
-    if _PLAYWRIGHT_BROWSER is not None:
-        try:
-            _PLAYWRIGHT_BROWSER.close()
-        except Exception:
-            pass
-        _PLAYWRIGHT_BROWSER = None
-    if _PLAYWRIGHT_INSTANCE is not None:
-        try:
-            _PLAYWRIGHT_INSTANCE.stop()
-        except Exception:
-            pass
-        _PLAYWRIGHT_INSTANCE = None
+    """Termina el dedicated thread + cleanup browser (best-effort)."""
+    global _PLAYWRIGHT_QUEUE, _PLAYWRIGHT_WORKER
+    with _PLAYWRIGHT_WORKER_LOCK:
+        worker = _PLAYWRIGHT_WORKER
+        q = _PLAYWRIGHT_QUEUE
+        if worker is not None and worker.is_alive() and q is not None:
+            q.put(_PLAYWRIGHT_SHUTDOWN_SENTINEL)
+            worker.join(timeout=10)
+        _PLAYWRIGHT_WORKER = None
+        _PLAYWRIGHT_QUEUE = None
 
 
 def fetch_with_playwright(
     url: str, timeout_ms: int = 30000, wait_until: str = "domcontentloaded"
 ) -> tuple[str, dict[str, Any]]:
     """Renderiza la página con Chromium headless y devuelve (html, metadata).
+
+    Internamente delega al dedicated `_PLAYWRIGHT_WORKER` thread vía queue
+    (ver comentario arriba — sin esto, ThreadPoolExecutor con workers>1
+    causa `greenlet.error: Cannot switch to a different thread`).
 
     Requiere `pip install playwright && playwright install chromium`.
     """
@@ -3374,7 +3449,28 @@ def fetch_with_playwright(
             "Playwright no está instalado. Instalar con: "
             "pip install playwright && playwright install chromium"
         )
-    browser = _get_playwright_browser()
+    req_q = _ensure_playwright_worker()
+    resp_q: _queue_mod.Queue = _queue_mod.Queue()
+    req_q.put((url, timeout_ms, wait_until, resp_q))
+    # Espera con timeout generoso (timeout_ms del fetch + buffer para
+    # launch del browser + cola si hay backlog de jobs).
+    status, value = resp_q.get(timeout=(timeout_ms / 1000) + 60)
+    if status == "err":
+        raise value
+    return value
+
+
+def _fetch_with_playwright_impl(
+    browser: Any,
+    url: str,
+    timeout_ms: int,
+    wait_until: str,
+) -> tuple[str, dict[str, Any]]:
+    """Implementation real del fetch — corre SIEMPRE en el dedicated thread.
+
+    NO llamar directamente; entrá por `fetch_with_playwright` que despacha
+    el job via queue al thread dueño del greenlet event loop.
+    """
     context = browser.new_context(
         user_agent=_PLAYWRIGHT_REAL_UA,
         locale="es-ES",
@@ -5679,8 +5775,12 @@ def run(args: argparse.Namespace) -> int:
         lambda: threading.Semaphore(per_host_limit)
     )
     host_locks_lock = threading.Lock()
-    # Playwright sync NO es thread-safe → todos los kind:js van por este lock.
-    js_lock = threading.Lock()
+    # Playwright sync NO es thread-safe (greenlets bound al thread inicial).
+    # NO usamos un lock manual: `fetch_with_playwright` despacha jobs al
+    # dedicated `_PLAYWRIGHT_WORKER` thread via queue, que serializa
+    # naturalmente y garantiza que todas las llamadas corren en el thread
+    # dueño del greenlet event loop. Ver comentario en
+    # `_playwright_worker_loop` arriba.
     print_lock = threading.Lock()
 
     def _safe_print(line: str) -> None:
@@ -5759,13 +5859,15 @@ def run(args: argparse.Namespace) -> int:
                 visited_urls.add(current_url)
                 pages_visited = page_num
 
-                # Fetch con per-host semaphore (HTTP) o js_lock (Playwright).
+                # Fetch con per-host semaphore (HTTP). Las fuentes kind:js
+                # van por `fetch_with_playwright` que internamente despacha
+                # al dedicated `_PLAYWRIGHT_WORKER` thread (sin lock manual
+                # aquí; la queue del worker serializa los jobs JS).
                 if source.kind == "js":
-                    with js_lock:
-                        text, fetch_meta = fetch_with_playwright(
-                            url=current_url,
-                            timeout_ms=args.read_timeout * 1000,
-                        )
+                    text, fetch_meta = fetch_with_playwright(
+                        url=current_url,
+                        timeout_ms=args.read_timeout * 1000,
+                    )
                 elif source.kind == "bluesky":
                     handle = bluesky_handle_from_url(current_url)
                     if not handle:
@@ -5903,7 +6005,8 @@ def run(args: argparse.Namespace) -> int:
                 time.sleep(args.sleep_seconds)
     else:
         # Path paralelo: ThreadPoolExecutor con per-host semaphore.
-        # JS sources se serializan vía js_lock interno.
+        # JS sources se serializan vía el dedicated _PLAYWRIGHT_WORKER
+        # thread (queue interna); workers HTTP siguen paralelos.
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="scrape") as pool:
             futures = {
                 pool.submit(_scrape_one, idx, src): src

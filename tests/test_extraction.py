@@ -2039,6 +2039,103 @@ def test_clean_title_strips_funside_cart_prefix():
     ) == "AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
 
 
+def test_fetch_with_playwright_dispatches_to_worker_thread():
+    """`fetch_with_playwright` debe correr el trabajo Playwright SIEMPRE en
+    el dedicated `_PLAYWRIGHT_WORKER` thread, no en el thread caller.
+
+    Esto previene el bug `greenlet.error: Cannot switch to a different
+    thread` observado en scrape_full del 2026-05-24 con workers=8 (cuando
+    cualquier worker del ThreadPoolExecutor podía intentar usar el
+    Playwright singleton creado por OTRO thread).
+
+    Mockea `_fetch_with_playwright_impl` y `_playwright_available` para
+    no requerir Chromium instalado. Verifica:
+      1. Que el impl corre en un thread distinto del caller.
+      2. Que 8 dispatches paralelos desde threads distintos comparten
+         UN ÚNICO worker thread (serializados por la queue, sin race).
+      3. Que close_playwright termina limpiamente y permite re-init.
+    """
+    import threading
+    import concurrent.futures as cf
+    import sys as _sys
+
+    # Mock minimal sin requerir Playwright real
+    real_available = mw._playwright_available
+    real_impl = mw._fetch_with_playwright_impl
+    mw._playwright_available = lambda: True
+
+    impl_threads: list[str] = []
+
+    def fake_impl(browser, url, timeout_ms, wait_until):
+        impl_threads.append(threading.current_thread().name)
+        return ("<html>ok</html>", {"http_status": 200, "fetch_ms": 1})
+
+    mw._fetch_with_playwright_impl = fake_impl
+
+    # Mock sync_playwright en sys.modules (el worker lo importa lazy)
+    class _FakeBrowser:
+        def close(self): pass
+    class _FakeChromium:
+        def launch(self, **kw): return _FakeBrowser()
+    class _FakePW:
+        chromium = _FakeChromium()
+        def stop(self): pass
+    class _FakeSyncPW:
+        def start(self): return _FakePW()
+    fake_pw_mod = type(_sys)("playwright")
+    fake_sync_mod = type(_sys)("playwright.sync_api")
+    fake_sync_mod.sync_playwright = lambda: _FakeSyncPW()
+    saved_pw = _sys.modules.get("playwright")
+    saved_sync = _sys.modules.get("playwright.sync_api")
+    _sys.modules["playwright"] = fake_pw_mod
+    _sys.modules["playwright.sync_api"] = fake_sync_mod
+
+    # Asegurarse que arrancamos limpio
+    mw.close_playwright()
+
+    try:
+        # Test 1: el impl corre en el dedicated worker, no en main
+        caller = threading.current_thread().name
+        html, _ = mw.fetch_with_playwright("http://example.test/1", timeout_ms=5000)
+        assert html == "<html>ok</html>"
+        assert len(impl_threads) == 1
+        assert impl_threads[0] != caller, \
+            f"impl ran in caller thread {caller!r}; expected worker"
+        assert impl_threads[0] == "playwright-worker"
+
+        # Test 2: 8 dispatches paralelos → todos ejecutan en el mismo worker
+        impl_threads.clear()
+        def call_one(i):
+            return mw.fetch_with_playwright(f"http://example.test/{i}", timeout_ms=5000)
+        with cf.ThreadPoolExecutor(max_workers=8) as pool:
+            results = [f.result() for f in [pool.submit(call_one, i) for i in range(16)]]
+        assert all(r[0] == "<html>ok</html>" for r in results)
+        assert len(impl_threads) == 16
+        # TODOS los jobs corrieron en el mismo worker thread (queue serializa)
+        assert set(impl_threads) == {"playwright-worker"}, \
+            f"jobs ran in multiple threads: {set(impl_threads)}"
+
+        # Test 3: close + re-init
+        mw.close_playwright()
+        assert mw._PLAYWRIGHT_WORKER is None
+        impl_threads.clear()
+        html2, _ = mw.fetch_with_playwright("http://example.test/restart", timeout_ms=5000)
+        assert html2 == "<html>ok</html>"
+        assert impl_threads == ["playwright-worker"]
+    finally:
+        mw.close_playwright()
+        mw._playwright_available = real_available
+        mw._fetch_with_playwright_impl = real_impl
+        if saved_pw is None:
+            _sys.modules.pop("playwright", None)
+        else:
+            _sys.modules["playwright"] = saved_pw
+        if saved_sync is None:
+            _sys.modules.pop("playwright.sync_api", None)
+        else:
+            _sys.modules["playwright.sync_api"] = saved_sync
+
+
 def test_clean_title_strips_isolated_price():
     assert mw.clean_title("My Manga Volume 1 $19.99") == "My Manga Volume 1"
     assert mw.clean_title("Manga Title 12,35 €") == "Manga Title"
