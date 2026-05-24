@@ -160,9 +160,35 @@ Standardize manga catalog entries. Read `/tmp/manga-standardize-run/chunk_<NN>.j
 Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized name (EN typically, JP romanji if canonical). Examples: "berserk", "demon-slayer", "spy-x-family", "attack-on-titan", "naruto", "boruto", "jujutsu-kaisen", "one-piece", "fullmetal-alchemist", "20th-century-boys".
 
 ### edition_key — `{series}-{publisher_slug}-{edition_slug}`
-publisher_slug: "darkhorse", "glenat", "viz", "panini", "norma", "planeta", "ivrea", "ivrea-ar", "kana", "pika", "kaze", "kioon", "star", "kodansha", "kodansha-us", "shueisha", "squareenix", "kadokawa", "meian", "ecc", "arechi", "delcourt", "tokyopop", "jbc", "devir", "newpop", "pipoca-nanquim", "kamite", "mangaline", "mangadreams", "funside", "milkyway", "dokidoki", "nobinobi", "tomodomo", "fandogamia". Unknown → "unknown".
+publisher_slug (allowlist canonical — usar el slug literal de esta lista):
+- **Major ES/LatAm/US/FR/IT (single-token)**: "darkhorse", "glenat", "viz",
+  "panini", "norma", "planeta", "ivrea", "kana", "pika", "kaze", "kioon",
+  "star", "kodansha", "shueisha", "squareenix", "kadokawa", "meian", "ecc",
+  "arechi", "delcourt", "tokyopop", "jbc", "devir", "newpop", "kamite",
+  "mangaline", "mangadreams", "funside", "milkyway", "dokidoki", "nobinobi",
+  "tomodomo", "fandogamia".
+- **Multi-token publishers (usar el slug COMPLETO con guion)**: "ivrea-ar"
+  (Ivrea Argentina, distinto de "ivrea" España), "kodansha-us" (Kodansha
+  USA), "pipoca-nanquim" (Pipoca & Nanquim BR), "kim-dong" (Kim Đồng VN),
+  "panini-mx", "panini-es", "panini-ar", "panini-br" (mercados distintos
+  cuando hay variantes locales).
+- **JP/IT/FR/BR publishers comunes (también canonical, NO usar "unknown")**:
+  "kurokawa" (FR Solo Leveling line), "edizionibd" (Edizioni BD IT),
+  "dynit" (IT), "jpop" (J-Pop IT), "shogakukan", "akita" (Akita Shoten JP),
+  "hakusensha" (JP), "ichijinsha" (JP), "futabasha" (JP), "takeshobo" (JP),
+  "tokuma" (JP), "asciimw" (ASCII Media Works JP), "frontier" (Frontier
+  Works JP), "yenpress" (US), "carlsen" (DE), "noeve" (Noeve Grafx FR),
+  "distrito" (Distrito Manga ES), "001edizioni" (001 Edizioni IT),
+  "goen" (Goen IT), "gpmanga" (GP Manga IT), "kbooks" (Kbooks FR import
+  imprint), "luckpim" (Luckpim TH), "ipm" (IPM VN), "isan" (Isan TH),
+  "nxb" (NXB Trẻ VN), "mpeg" (MPEG/Newpop variants BR), "tokyomangasha"
+  (TokyoManga.it IT distributor), "crunchyroll" (Crunchyroll Manga US).
+- **Unknown publisher** (no en la lista de arriba) → "unknown" como fallback,
+  pero PREFERÍ buscar el slug canónico arriba antes. Si el publisher es
+  un retailer (Amazon, Fnac, Cdiscount) NO uses "unknown" — usá el slug
+  del publisher real (editor del libro), no del retailer.
 
-edition_slug (most distinctive): "deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant", "limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate", "master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine", "steelbox", "slipcase", "prestige", "grimorio", "grimoire", "regular", "special".
+edition_slug (most distinctive): "deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant", "limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate", "master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine", "steelbox", "slipcase", "prestige", "grimorio", "grimoire", "regular", "special", "taniguchi" (línea Panini IT autor-específica).
 
 **REGLA ANTI-COMPOUND** — IMPORTANTE: elegir **UN SOLO** slug, NO componer dos
 edition_slugs juntos. Errores comunes a evitar:
@@ -174,6 +200,40 @@ edition_slugs juntos. Errores comunes a evitar:
   el nombre de la edición)
 - ❌ `kill-la-kill-udon-hardcover-limited`
 - ✅ `kill-la-kill-udon-limited`
+
+**TRAMPAS OBSERVADAS en corridas pasadas** (no caer en éstas — corregidas
+retroactivamente el 2026-05-24, ver gotcha update):
+- ❌ `tokyo-ghoul-edizionibd-deluxe-box` → ✅ `tokyo-ghoul-edizionibd-boxset`
+  (es una **box** que CONTIENE la edición deluxe — el slug físico-final
+  es "boxset", "deluxe" es un atributo del contenido pero NO del producto
+  físico que es la box).
+- ❌ `blame-panini-ultimate-deluxe` → ✅ `blame-panini-ultimate`
+  ("Ultimate Deluxe Edition" es la línea editorial Panini IT "Ultimate";
+  el "Deluxe" es genérico de formato y se descarta).
+- ❌ `shonan-junai-gumi-meian-collector-box` → ✅ `shonan-junai-gumi-meian-collector`
+  ("Collector's Box" — collector es el nombre de la edición, box es formato
+  físico genérico — collector gana).
+- ❌ `blanca-panini-taniguchi-deluxe` → ✅ `blanca-panini-taniguchi`
+  ("Taniguchi Deluxe Collection" es la línea Panini IT autor-específica
+  "Taniguchi"; "deluxe" se descarta).
+- ❌ `love-clinic-jpop-collection-box` → ✅ `love-clinic-jpop-boxset`
+  ("Collection Box" — collection es genérico, el producto físico es boxset).
+- ❌ `tokyo-ghoul-edizionibd-deluxe-box` (cualquier `*-X-box` donde X es slug
+  ≠ "boxset") → casi siempre `*-boxset`.
+- ❌ `z-mazinger-panini-ultimate-variant` → ✅ `z-mazinger-panini-variant`
+  ("Ultimate Variant" — variant es la edición; ultimate es prefijo de la
+  línea pero NO se compone).
+
+**Regla general derivada**: si dudás entre dos slugs donde UNO es **formato
+físico** (`box`, `boxset`, `hardcover`, `coffret`, `cofanetto`, `kanzenban`,
+`deluxe`, `slipcase`, `steelbox`) y el OTRO es **nombre de edición/colección**
+(`collector`, `ultimate`, `taniguchi`, `master`, `maximum`, `integral`,
+`grimorio`, `prestige`, `limited`, `anniversary`, `variant`, etc.), elegí el
+nombre de edición — el formato físico es metadata implícita.
+**Excepción**: si el producto físico ES una box que contiene N tomos (NO un
+volumen individual), el slug correcto puede ser `boxset` solo, descartando
+el nombre de la edición que contiene (porque hay un edition_key separado
+para los tomos individuales de esa edición).
 
 Cuando dudás entre dos slugs:
 1. Si UNO es nombre de edición específico (limited/collector/integral/grimorio/
@@ -244,6 +304,102 @@ for chunk_num in chunks_to_process:
 ```
 
 Wait for completion notifications, then process the next wave.
+
+## Step 3.5 — Verificar integridad post-spawn (CRÍTICO)
+
+Antes de hacer merge, hay que verificar que cada `result_NN.jsonl`
+tiene el **mismo número de URLs** que el `chunk_NN.jsonl` correspondiente
+y que las URLs no se truncaron. Trampas observadas (2026-05-24):
+
+1. **Session limits**: subagente hit limit a mitad de chunk y output
+   queda short por N items.
+2. **URL truncation**: subagente lee URLs largas y las copia al output
+   cortadas (típicamente a ~80-100 chars). Detectable por mismatch URL
+   entre chunk y result.
+
+Snippet de verificación + auto-recovery:
+
+```bash
+.venv/bin/python << 'PY'
+import json
+from pathlib import Path
+base = Path('/tmp/manga-standardize-run')
+missing_items = []  # (chunk_n, item_dict) — items que necesitan procesarse inline
+for cf in sorted(base.glob('chunk_*.jsonl')):
+    n = cf.stem.replace('chunk_', '')
+    rf = base / f'result_{n}.jsonl'
+    chunk_urls, chunk_items = [], {}
+    for line in open(cf):
+        line = line.strip()
+        if not line: continue
+        try:
+            it = json.loads(line)
+            chunk_urls.append(it['url'])
+            chunk_items[it['url']] = it
+        except: pass
+    chunk_set = set(chunk_urls)
+
+    # If result missing → ALL items go to retry queue
+    if not rf.exists():
+        for url in chunk_urls:
+            missing_items.append((n, chunk_items[url]))
+        continue
+
+    result_urls = set()
+    out_lines = []
+    # FIX URL TRUNCATION: build prefix map for chunk URLs
+    prefix_map = {url[:80]: url for url in chunk_urls}
+    patched = 0
+    for line in open(rf):
+        line = line.strip()
+        if not line: continue
+        try: r = json.loads(line)
+        except: continue
+        if r.get('url') not in chunk_set:
+            # Try prefix match (URL was truncated by subagent)
+            match = prefix_map.get(r.get('url','')[:80])
+            if match:
+                r['url'] = match
+                patched += 1
+            else:
+                continue  # garbage row, drop
+        result_urls.add(r['url'])
+        out_lines.append(json.dumps(r, ensure_ascii=False))
+
+    # Re-write the result file with patched URLs
+    if patched > 0:
+        rf.write_text('\n'.join(out_lines) + '\n')
+        print(f"chunk {n}: patched {patched} truncated URLs")
+
+    # Queue missing items for inline processing
+    for url in chunk_set - result_urls:
+        missing_items.append((n, chunk_items[url]))
+
+print(f"\nTotal items requiring inline processing: {len(missing_items)}")
+if missing_items:
+    print("Sample missing:")
+    for n, it in missing_items[:10]:
+        print(f"  chunk {n}: {it.get('title','')[:60]}")
+    # Save to file for the assistant to process manually
+    with open(base / 'inline_retry.jsonl', 'w') as fh:
+        for n, it in missing_items:
+            fh.write(json.dumps({'chunk': n, 'item': it}, ensure_ascii=False) + '\n')
+    print(f"\nSaved to {base / 'inline_retry.jsonl'} for manual processing.")
+PY
+```
+
+Si `Total items requiring inline processing > 0`, **procesar inline**
+ANTES del merge step:
+- Si son ≤10 items: el asistente principal genera los 10 records JSON
+  directamente y los appendea al respectivo `result_NN.jsonl`.
+- Si son >10 items: agruparlos en un nuevo "chunk de retry"
+  (`chunk_retry.jsonl`) y spawn un subagente fresh con el mismo prompt
+  template. Después agregar el resultado al merge normal.
+
+**NO saltear este paso.** Sin él, items que el subagente perdió quedan
+en items.jsonl SIN `standardized_at` y serán re-procesados en la próxima
+corrida del skill (gasto innecesario de tokens + posible inconsistencia
+si la corrida actual cambió las reglas).
 
 ## Step 4 — Merge results + apply
 
