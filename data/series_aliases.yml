@@ -1,954 +1,6059 @@
+17-anos:
+  display: '17 Años'
+  aliases:
+    - 17 anos
+    - 17 años
+    - 17 years old
+
 20th-century-boys:
-  display: 20th Century Boys
+  display: '20th Century Boys'
   aliases:
-  - 20 Seiki Shounen
-  - 20th Century Boys - Chłopaki z dwudziestego wieku
-  - 20thCB
-  - 20世紀少年
-  - Nijuu Seiki Shounen
-  - Nijuusseiki Shounen
+    - 20 Seiki Shounen
+    - 20th Century Boys - Chłopaki z dwudziestego wieku
+    - 20thCB
+    - 20世紀少年
+    - Nijuu Seiki Shounen
+    - Nijuusseiki Shounen
+
+360-material:
+  display: '360° Material'
+  aliases:
+    - 360 degrees material
+    - 360 material
+    - 360° material
+
+5-elementos-artbook:
+  display: '5 Elementos'
+  aliases:
+    - 5 elementos artbook
+    - 5-elementos
+    - five elements
+
+666-satan:
+  display: 'O-Parts Hunter'
+  aliases:
+    - 666 Satan
+    - 666 サタン
+    - 'O-Parts Hunter: 666 Satan'
+
+86-eighty-six:
+  display: '86: Eighty-Six'
+  aliases:
+    - 86 Eighty Six
+    - 86 EIGHTY-SIX
+    - 86—EIGHTY-SIX
+
 a-bitter-fruit:
-  display: A Bitter Fruit
+  display: 'A Bitter Fruit'
   aliases:
-  - Dark Passion
-  - Nigai Kajitsu
-  - 苦い果実
+    - Dark Passion
+    - Nigai Kajitsu
+    - 苦い果実
+
 a-brides-story:
-  display: A Bride's Story
+  display: 'A Bride''s Story'
   aliases:
-  - A Bride's Story
-  - Bride Stories
-  - Cô dâu thảo nguyên
-  - I Giorni Della Sposa
-  - Opowieść Panny Młodej
-  - Otome-Katari
-  - Otomegatari
-  - Otoyome Gatari
-  - Otoyomegatari
-  - The Bride's Stories
-  - Young Bride's Story
-  - a bride's story
-  - a brides story
-  - otoyomegatari
-  - 乙嫁語り
-  - 姊嫁物語
+    - A Bride's Story
+    - a brides story
+    - Bride Stories
+    - Cô dâu thảo nguyên
+    - I Giorni Della Sposa
+    - Opowieść Panny Młodej
+    - Otome-Katari
+    - Otomegatari
+    - Otoyome Gatari
+    - Otoyomegatari
+    - The Bride's Stories
+    - Young Bride's Story
+    - 乙嫁語り
+    - 姊嫁物語
+
+a-condition-called-love:
+  display: 'A Condition Called Love'
+  aliases:
+    - A tes côtés
+    - Adicto a ti
+    - Hananoi và triệu chứng tình yêu
+    - Hananoi-kun to Koi no Yamai
+    - I'm addicted to you
+    - Una enfermedad llamada amor
+    - una-enfermedad-llamada-amor
+    - 花野井くんと恋の病
+
+a-couple-of-cuckoos:
+  display: 'A Couple of Cuckoos'
+  aliases:
+    - Cuckoo's Fiance
+    - Kakkou no Iinazuke
+    - The Cuckoo’s Fiancee
+    - Una pareja de cucos
+    - カッコウの許嫁
+
+a-man-and-his-cat:
+  display: 'A Man and His Cat'
+  aliases:
+    - el hombre y el gato
+    - el-hombre-y-el-gato
+    - le chat qui rendait l'homme heureux
+    - Ojisama to Neko
+    - um homem e seu gato
+    - Un Hombre y Su Gato
+    - おじさまと猫
+
+a-sign-of-affection:
+  display: 'A Sign of Affection'
+  aliases:
+    - Ein Zeichen der Zuneigung
+    - Signos de Afecto
+    - Um Sinal de Afeto
+    - Yubiren
+    - Yubisaki to Renren
+    - ゆびさきと恋々
+
+a-silent-voice:
+  display: 'A Silent Voice'
+  aliases:
+    - a forma da voz
+    - a voz do silêncio
+    - koe no katachi
+    - la forma della voce
+    - the shape of voice
+    - una voz silenciosa
+
+abara:
+  display: 'Abara'
+  aliases:
+    - Abara
+    - Digimortal
+    - アバラ
+
+abismos-y-sinfonias-tales-of:
+  display: 'Abismos y Sinfonías: Tales of'
+  aliases:
+    - abismos y sinfonias tales of
+    - abismos-y-sinfonias-tales
+
+acquerelli:
+  display: 'Acquerelli'
+  aliases: []
+
+adolf:
+  display: 'Message to Adolf'
+  aliases:
+    - Adolf
+    - Adolf ni Tsugu
+    - L'Histoire des 3 Adolf
+    - La Storia dei Tre Adolf
+    - Message to Adolf
+    - アドルフに告ぐ
+
+after-the-rain:
+  display: 'After the Rain'
+  aliases:
+    - Amor es cuando cesa la lluvia
+    - amor-cesa-lluvia
+    - Koi wa Ameagari no You ni
+    - 恋は雨上がりのように
+
+ah-my-goddess:
+  display: 'Ah! My Goddess'
+  aliases:
+    - Aa Megami-sama
+    - Ah My Goddess
+    - Ah! My Goddess
+    - Oh My Goddess!
+    - ああっ女神さまっ
+
+aishite-knight:
+  display: 'Aishite Knight'
+  aliases:
+    - Aishite Night
+    - Embrasse-moi Lucile
+    - Kiss Me Licia
+    - Love Me Knight
+    - Love me, my Knight
+
+ajin:
+  display: 'Ajin: Demi-Human'
+  aliases:
+    - Ajin
+    - Ajin (Semihumano)
+    - 'Ajin: Yarı İnsan'
+    - Demi-Human
+    - 亜人
+    - 亞人
+
 akame-ga-kill:
-  display: Akame ga KILL!
+  display: 'Akame ga KILL!'
   aliases:
-  - Akame Keser
-  - Akame ga Kill!
-  - Akame ga Kiru!
-  - Red Eyes Sword
-  - アカメが斬る！
+    - Akame ga Kill!
+    - Akame ga Kiru!
+    - Akame Keser
+    - Red Eyes Sword
+    - アカメが斬る！
+
+akame-ga-kill-zero:
+  display: 'Akame ga Kill! Zero'
+  aliases:
+    - Akame ga KILL! ZERO
+    - Red Eyes Sword Zero
+    - アカメが斬る！零
+
+akane-banashi:
+  display: 'Akane-banashi'
+  aliases:
+    - akane banashi
+    - akane-banashi
+
 akira:
-  display: Akira
+  display: 'Akira'
   aliases:
-  - AKIRA
-  - アキラ
+    - AKIRA
+    - アキラ
+
+album-de-graduacion:
+  display: 'Álbum de graduación'
+  aliases:
+    - Sotsugyou Album
+    - Álbum de graduación
+
+alice-and-zoroku:
+  display: 'Alice & Zoroku'
+  aliases:
+    - alice & zoroku
+    - alice to zouroku
+    - alice zoroku
+    - alice-zoroku
+
+alice-in-borderland:
+  display: 'Alice in Borderland'
+  aliases:
+    - Alice in Borderland
+    - Imawa no Kuni no Alice
+    - 'Imawa no Kuni no Alice: Alice in Borderland'
+    - 今際の国のアリス
+
+all-of-us-are-dead:
+  display: 'All of Us Are Dead'
+  aliases:
+    - estamos muertos
+    - jigeum uri hakgyoneun
+    - now at our school
+    - 지금 우리 학교는
+
+alma:
+  display: 'Alma'
+  aliases: []
+
+alya-sometimes-hides-feelings-in-russian:
+  display: 'Alya Sometimes Hides Her Feelings in Russian'
+  aliases:
+    - alya momoco
+    - alya-sometimes-hides-feelings
+    - roshidere
+    - tokidoki bosotto russian-go de dereru tonari no alya-san
+    - 時々ボソッとロシア語でデレる隣のアーリャさん
+
+amanchu:
+  display: 'Amanchu'
+  aliases: []
+
+amebe:
+  display: 'Amebe'
+  aliases: []
+
+amon-darkside-of-the-devilman:
+  display: 'Amon: The Darkside of the Devilman'
+  aliases:
+    - Amon
+    - Amon – The Darkside of the Devilman
+    - 'Amon: The Darkside of the Devilman'
+    - アモン デビルマン黙示録
+
+ancient-magus-bride:
+  display: 'The Ancient Magus'' Bride'
+  aliases:
+    - Mahou Tsukai no Yome
+    - Mahoutsukai no Yome
+    - The Ancient Mage's Bride
+    - The Ancient Magus Bride
+    - The Magician's Bride
+    - 魔法使いの嫁
+
+angel-beats:
+  display: 'Angel Beats!'
+  aliases:
+    - angel beats angel diary
+    - エンジェルビーツ
+
+angel-beats-the-last-operation:
+  display: 'Angel Beats! The Last Operation'
+  aliases:
+    - angel beats the last operation
+    - angel beats! -the last operation-
+
+angel-heart-2nd-season:
+  display: 'Angel Heart 2nd Season'
+  aliases:
+    - angel heart - 2nd season
+    - angel heart 2nd season
+
+animal-crossing:
+  display: 'Animal Crossing'
+  aliases:
+    - Animal Crossing
+    - どうぶつの森
+
+another:
+  display: 'Another'
+  aliases: []
+
+antik-panic:
+  display: 'Antik Panic'
+  aliases: []
+
+ao-haru-ride:
+  display: 'Ao Haru Ride'
+  aliases:
+    - Ao no Haru Ride
+    - ao-no-haru-ride
+    - Nuestra salvaje juventud
+
 ao-no-hako:
-  display: Ao no Hako
+  display: 'Ao no Hako'
   aliases:
-  - Blue Box
-  - アオのハコ
-  - 青色之箱
+    - Blue Box
+    - アオのハコ
+    - 青色之箱
+
+aoashi:
+  display: 'Aoashi'
+  aliases:
+    - Ao Ashi
+    - Ao Ashi - Playmaker
+    - ao-ashi
+    - アオアシ
+
+aposimz:
+  display: 'APOSIMZ'
+  aliases:
+    - アポシムズ
+
 apothecary-diaries:
-  display: The Apothecary Diaries
+  display: 'The Apothecary Diaries'
   aliases:
-  - apothecary diaries
-  - apothicaire
-  - carnets de l'apothicaire
-  - kusuriya no hitorigoto
-  - les carnets de l'apothicaire
-  - the apothecary diaries
-  - 薬屋のひとりごと
+    - apothecary diaries
+    - apothicaire
+    - carnets de l'apothicaire
+    - kusuriya no hitorigoto
+    - les carnets de l'apothicaire
+    - the apothecary diaries
+    - 薬屋のひとりごと
+
+appleseed:
+  display: 'Appleseed'
+  aliases: []
+
+aquarium-wa-odoranai:
+  display: 'Aquarium wa Odoranai'
+  aliases:
+    - the aquarium does not dance
+    - アクアリウムは踊らない
+
+arashiyama-la-montana-de-los-deseos:
+  display: 'Arashiyama, la montaña de los deseos'
+  aliases:
+    - arashiyama
+    - Arashiyama, la montaña de los deseos
+
 are-you-alice:
-  display: Are You Alice?
+  display: 'Are You Alice?'
   aliases:
-  - Are you Alice?
+    - Are you Alice?
+
+area-d:
+  display: 'Area D'
+  aliases:
+    - Area D
+    - AREA D 異能領域
+    - 'Area D: Inou Ryouiki'
+    - AreaD
+
+ares-soldat-errant:
+  display: 'Arès le Soldat Errant'
+  aliases:
+    - Ares
+    - Ares le Soldat Errant
+    - Ares the Wandering Soldier
+    - 아레스
+
+ariadne-in-the-blue-sky:
+  display: 'Ariadne in the Blue Sky'
+  aliases: []
+
+art-of-kyu-yong-eom:
+  display: 'The Art of Kyu Yong Eom'
+  aliases:
+    - art of kyu yong eom
+    - kyu yong eom
+    - kyu-yong-eom
+
+artbook-loputyn:
+  display: 'Artbook Loputyn'
+  aliases:
+    - loputyn
+    - loputyn artbook
+
+asadora:
+  display: 'Asadora!'
+  aliases:
+    - Asadora
+    - Asadora!
+    - あさドラ！
+    - 連続漫画小説 あさドラ！
+
 assassination-classroom:
-  display: Assassination Classroom
+  display: 'Assassination Classroom'
   aliases:
-  - Ansatsu Kyoushitsu
-  - Ansatsu Kyoushitsu Extra
-  - Klasa Skrytobójców
-  - Suikast Sınıfı
-  - 暗殺教室
+    - Ansatsu Kyoushitsu
+    - Ansatsu Kyoushitsu Extra
+    - Klasa Skrytobójców
+    - Suikast Sınıfı
+    - 暗殺教室
+
+assassins-creed-blade-of-shao-jun:
+  display: 'Assassin''s Creed: Blade of Shao Jun'
+  aliases:
+    - 'Assassin''s Creed: Blade of Shao Jun'
+
+assault-lily-bouquet:
+  display: 'Assault Lily Bouquet'
+  aliases:
+    - assault lily
+    - アサルトリリィ Bouquet
+
+astro-boy:
+  display: 'Astro Boy | Mighty Atom'
+  aliases:
+    - Astro Boy
+    - Astroboy
+    - Atom
+    - Mighty Atom
+    - Tetsuwan Atom
+    - Tetsuwan Atomu
+    - 鉄腕 アトム
+    - 鉄腕アトム
+
 atom-cat:
-  display: Atom Cat
+  display: 'Atom Cat'
   aliases:
-  - Astro Cat
-  - Atomcat
-  - Atomu Cat
-  - アトムキャット
+    - Astro Cat
+    - Atomcat
+    - Atomu Cat
+    - アトムキャット
+
 attack-on-titan:
-  display: Attack on Titan
+  display: 'Attack on Titan'
   aliases:
-  - Atac als Titans
-  - Atacul Titanilor
-  - Atak Tytanów
-  - Ataque a los Titanes
-  - Ataque de los Titanes
-  - Ataque dos Titãs
-  - L'Attacco dei Giganti
-  - L'Attaque des Titans
-  - Napad titana
-  - Shingeki no Kyojin
-  - Titaanien sota - Attack on Titan
-  - Titana Saldırı
-  - ataque a los titanes
-  - ataque dos titãs
-  - attack on titan
-  - l'attacco dei giganti
-  - l'attaque des titans
-  - shingeki no kyojin
-  - Útok titánů
-  - Đại chiến Titan
-  - 進撃の巨人
-  - 進擊的巨人
+    - Atac als Titans
+    - Atacul Titanilor
+    - Atak Tytanów
+    - Ataque a los Titanes
+    - Ataque de los Titanes
+    - Ataque dos Titãs
+    - attack on titan
+    - L'Attacco dei Giganti
+    - L'Attaque des Titans
+    - Napad titana
+    - Shingeki no Kyojin
+    - Titaanien sota - Attack on Titan
+    - Titana Saldırı
+    - Útok titánů
+    - Đại chiến Titan
+    - 進撃の巨人
+    - 進擊的巨人
+
+attack-on-titan-before-the-fall:
+  display: 'L''Attacco dei Giganti - Before the Fall'
+  aliases:
+    - 'Ataque a los Titanes: Antes de la caída'
+    - 'Attack on Titan: Before the Fall'
+    - attack-on-titan-antes-caida
+    - 'Shingeki no Kyojin: Before the Fall'
+
+attack-on-titan-birth-of-rivaille:
+  display: 'Attack on Titan: Birth of Rivaille'
+  aliases:
+    - attack on titan birth of levi
+    - shingeki no kyojin birth of rivaille
+    - 進撃の巨人 リヴァイ誕生秘話
+
+attack-on-titan-no-regrets:
+  display: 'Attack on Titan: No Regrets'
+  aliases:
+    - 'Ataque a los Titanes: No Regrets'
+    - 'Attack on Titan Side Story: A Choice with No Regrets'
+    - 'Attack on Titan: Sin Remordimientos'
+    - 'L''Attacco dei Giganti: Birth of Rivaille'
+    - L'Attaque des Titans - Birth of Livaï
+    - 'Shingeki no Kyojin Gaiden: Kuinaki Sentaku'
+    - 進撃の巨人 外伝 悔いなき選択
+
+ayako:
+  display: 'Ayako'
+  aliases:
+    - Ayako (Tezuka)
+    - アヤコ
+
+ayanashi:
+  display: 'Ayanashi'
+  aliases:
+    - アヤナシ
+
+b-project:
+  display: 'B-Project'
+  aliases:
+    - B-Project On and Off
+
+bakemonogatari:
+  display: 'Bakemonogatari'
+  aliases:
+    - Monogatari
+    - 'Monogatari Series: First Season'
+    - Monster Tale
+    - 化物語
+    - 化物语
+
+baki:
+  display: 'Baki the Grappler'
+  aliases:
+    - Baki
+    - Baki the Grappler
+    - Grappler Baki
+    - グラップラー刃牙
+
+baki-dou-part-4:
+  display: 'Baki-Dou (Part 4)'
+  aliases:
+    - Baki-Dou (part 4)
+    - Baki-Dou Part 4
+    - バキ道
+
+baki-gaiden-kizudzura:
+  display: 'Baki Gaiden: Kizudzura'
+  aliases:
+    - Baki Gaiden Kizudzura
+    - 'Baki Gaiden: Kizudzura'
+    - バキ外伝 疵面
+
+bakidou-part-5:
+  display: 'Bakidou (Part 5)'
+  aliases:
+    - Bakidou (part 5)
+    - Bakidou Part 5
+    - バキ道
+
+bakuman:
+  display: 'Bakuman'
+  aliases:
+    - Bakuman。
+    - バクマン。
+
+banana-fish:
+  display: 'Banana Fish'
+  aliases:
+    - バナナフィッシュ
+
+barakamon:
+  display: 'Barakamon'
+  aliases:
+    - Barakamon
+    - ばらかもん
+
+barefoot-gen:
+  display: 'Barefoot Gen'
+  aliases:
+    - barefoot gen
+    - barfuß durch hiroshima
+    - Gen aux pieds nus
+    - gen d'hiroshima
+    - Gen di Hiroshima
+    - gen of hiroshima
+    - gen-of-hiroshima
+    - Hadashi no Gen
+    - Pies Descalzos
+    - Pies Descalzos (Barefoot Gen)
+    - 'pies descalzos: una historia de hiroshima'
+    - はだしのゲン
+
+barrage:
+  display: 'Barrage'
+  aliases:
+    - Barrage
+    - Sensei no Bulge
+    - 戦星のバルジ
+
+bastard:
+  display: 'Bastard!!'
+  aliases: []
+
+batmanga:
+  display: 'Batman: The Jiro Kuwata Batmanga'
+  aliases:
+    - Batmanga
+    - Il Batmanga di Jiro Kuwata
+    - バットマン
+
+battle-angel-alita:
+  display: 'Battle Angel Alita'
+  aliases:
+    - Alita
+    - Alita l'angelo della battaglia
+    - GUNNM
+    - 銃夢
+
+bayonetta-3-artbook:
+  display: 'Bayonetta 3 Official Art Book'
+  aliases:
+    - Bayonetta 3
+    - bayonetta-3
+    - ベヨネッタ3
+
+be-blues:
+  display: 'BE BLUES!: Ao ni Nare'
+  aliases:
+    - Be Blues
+    - Be Blues!
+    - BE BLUES!〜青になれ〜
+
+beastars:
+  display: 'Beastars'
+  aliases: []
+
+beasts-art-book:
+  display: 'Beasts Art Book'
+  aliases:
+    - 獣人アンソロジー画集
+
+beck:
+  display: 'BECK'
+  aliases:
+    - Agregar a mi lista de deseos! BECK
+    - agregar-a-mi-lista-de-deseos-beck
+    - Beck
+    - 'Beck: Mongolian Chop Squad'
+    - ベック
+
+beelzebub:
+  display: 'Beelzebub'
+  aliases: []
+
 berserk:
-  display: Berserk
+  display: 'Berserk'
   aliases:
-  - Berserk Max
-  - Beruseruku
-  - ベルセルク
-  - 烙印勇士
-  - 烙印战士
-  - 烙印戰士
+    - Berserk Max
+    - Beruseruku
+    - ベルセルク
+    - 烙印勇士
+    - 烙印战士
+    - 烙印戰士
+
+bestiarius:
+  display: 'Bestiarius'
+  aliases: []
+
+bibliomania:
+  display: 'Bibliomania'
+  aliases: []
+
+big-gto:
+  display: 'Big GTO'
+  aliases: []
+
+billy-bat:
+  display: 'Billy Bat'
+  aliases:
+    - Billy Bat
+    - ビリーバット
+
+biomega:
+  display: 'Biomega'
+  aliases:
+    - バイオメガ
+
+bj-alex:
+  display: 'BJ Alex'
+  aliases:
+    - BJ Alex
+    - 비제이 알렉스
+
+black-bird:
+  display: 'Black Bird'
+  aliases:
+    - ブラックバード
+
+black-box:
+  display: 'Black-Box'
+  aliases: []
+
 black-butler:
-  display: Black Butler
+  display: 'Black Butler'
   aliases:
-  - Crni batler
-  - Dark Butler
-  - Hắc Quản Gia
-  - Kara Kâhya
-  - Kuro Shitsuji
-  - Kuroshitsuji
-  - Kuroshitsuzi
-  - Mroczny Kamerdyner
-  - 黑執事
-  - 黒執事
+    - Crni batler
+    - Dark Butler
+    - Hắc Quản Gia
+    - Kara Kâhya
+    - Kuro Shitsuji
+    - Kuroshitsuji
+    - Kuroshitsuzi
+    - Mroczny Kamerdyner
+    - 黑執事
+    - 黒執事
+
 black-clover:
-  display: Black Clover
+  display: 'Black Clover'
   aliases:
-  - ブラッククローバー
+    - blank space
+    - blank-space
+    - ブラッククローバー
+
+black-jack:
+  display: 'Black Jack'
+  aliases:
+    - Burakku Jakku
+    - ブラック・ジャック
+
 black-lagoon:
-  display: Black Lagoon
+  display: 'Black Lagoon'
   aliases:
-  - BLACK LAGOON
-  - Burakku Laguun
-  - ブラック・ラグーン
+    - BLACK LAGOON
+    - Burakku Laguun
+    - ブラック・ラグーン
+
+black-torch:
+  display: 'Black Torch'
+  aliases:
+    - BLACK TORCH
+    - ブラックトーチ
+
+blade-of-the-immortal:
+  display: 'Blade of the Immortal'
+  aliases:
+    - Blade of the Immortal
+    - L'Habitant de l'infini
+    - L'Immortale
+    - La Espada del Inmortal
+    - Mugen no Juunin
+    - 無限の住人
+
 blame:
-  display: BLAME!
+  display: 'BLAME!'
   aliases:
-  - Buramu!
-  - ブラム!
+    - Buramu!
+    - ブラム!
+
+blame-academy-and-so-on:
+  display: 'BLAME! Academy and So On'
+  aliases:
+    - blame academy
+    - blame! gakuen and so on
+    - blame-academy
+    - ブラム学園! アンドソーオン
+
+blazer-drive:
+  display: 'Blazer Drive'
+  aliases:
+    - Blazer Drive
+    - ブレイザードライブ
+
 bleach:
-  display: Bleach
+  display: 'Bleach'
   aliases:
-  - BLEACH
-  - ブリーチ
+    - BLEACH
+    - ブリーチ
+
+blood-blockade-battlefront:
+  display: 'Blood Blockade Battlefront'
+  aliases:
+    - blood blockade battlefront back 2 back
+    - kekkai sensen
+    - kekkai sensen back 2 back
+
+blood-lad:
+  display: 'Blood Lad'
+  aliases:
+    - ブラッドラッド
+
+bloody-monday:
+  display: 'Bloody Monday'
+  aliases: []
+
+bloom-into-you:
+  display: 'Bloom Into You'
+  aliases:
+    - Yagate Kimi ni Naru
+    - やがて君になる
+
+blue-box:
+  display: 'Blue Box'
+  aliases:
+    - Ao no Hako
+    - アオのハコ
+
+blue-dragon-ralgrad:
+  display: 'Blue Dragon Ral Ω Grad'
+  aliases:
+    - Blue Dragon RalΩGrad
+    - 'Blue Dragon: RalΩGrad'
+    - ブルードラゴン ラルΩグラド
+
+blue-exorcist:
+  display: 'Blue Exorcist'
+  aliases:
+    - Ao no Exorcist
+    - Ao no Exorcist Salaryman Exorcist
+    - Ao no Futsumashi
+    - The Blue Magic Exorcist
+    - 青の祓魔師
+    - 青の祓魔師(エクソシスト)
+
+blue-giant:
+  display: 'Blue Giant'
+  aliases:
+    - BLUE GIANT
+    - ブルージャイアント
+
+blue-giant-supreme:
+  display: 'Blue Giant Supreme'
+  aliases:
+    - blue giant supreme
+
 blue-lock:
-  display: Blue Lock
+  display: 'Blue Lock'
   aliases:
-  - Bluelock
-  - ブルーロック
+    - Bluelock
+    - ブルーロック
+
+blue-morning:
+  display: 'Blue Morning'
+  aliases:
+    - Ao no Kioku
+    - 蒼のメモリーズ
+
 blue-period:
-  display: Blue Period
+  display: 'Blue Period'
   aliases:
-  - BLUE PERIOD
-  - Blue Period
-  - Bluper
-  - ブルーピリオド
+    - BLUE PERIOD
+    - Bluper
+    - ブルーピリオド
+
+bocchi-the-rock:
+  display: 'Bocchi the Rock!'
+  aliases:
+    - bocchi the rock
+    - Bocchi za Rokku!
+    - ぼっち・ざ・ろっく！
+    - 孤独摇滚！
+
+bokura-no-kiseki:
+  display: 'Bokura no Kiseki'
+  aliases:
+    - Our Miracle
+    - ボクラノキセキ
+
 boruto:
   display: 'Boruto: Naruto Next Generations'
   aliases:
-  - boruto naruto next generations
-  - 'boruto: naruto next generations'
-  - ボルト
+    - boruto naruto next generations
+    - 'boruto: naruto next generations'
+    - ボルト
+
+boruto-two-blue-vortex:
+  display: 'Boruto - Two Blue Vortex'
+  aliases: []
+
+btooom:
+  display: 'Btooom!'
+  aliases:
+    - Btooom
+    - ブトゥーム
+
+buddha:
+  display: 'Buddha'
+  aliases:
+    - Buda
+    - Budda
+    - ブッダ
+
 bungo-stray-dogs:
-  display: Bungo Stray Dogs
+  display: 'Bungo Stray Dogs'
   aliases:
-  - Bezpańscy literaci
-  - Bungou Stray Dogs
-  - Literary Stray Dogs
-  - Văn hào lưu lạc
-  - 文豪Stray Dogs
-  - 文豪ストレイドッグス
-  - 文豪野犬
+    - Bezpańscy literaci
+    - Bungou Stray Dogs
+    - Literary Stray Dogs
+    - Văn hào lưu lạc
+    - 文豪Stray Dogs
+    - 文豪ストレイドッグス
+    - 文豪野犬
+
+bunny-garden:
+  display: 'Bunny Garden'
+  aliases:
+    - Bunny Garden & Heberereke
+    - バニーガーデン
+
+burn-the-witch:
+  display: 'Burn the Witch'
+  aliases:
+    - Burn The Witch
+
+cagaster:
+  display: 'Cagaster'
+  aliases:
+    - Cagaster
+    - Cagaster of an Insect Cage
+    - Insect Cage
+    - insect-cage
+    - Mushikago no Cagaster
+    - 虫籠のカガステル
+
+call-of-the-night:
+  display: 'Call of the Night'
+  aliases: []
+
+called-game:
+  display: 'Called Game'
+  aliases:
+    - Called Game
+    - コールドゲーム
+
+candy-candy:
+  display: 'Candy Candy'
+  aliases: []
+
+capitan-harlock-memorias-de-la-arcadia:
+  display: 'Capitán Harlock: Memorias de la Arcadia'
+  aliases:
+    - capitan harlock arcadia
+    - capitan-harlock-arcadia
+    - captain harlock memorias de la arcadia
+
+captain-harlock:
+  display: 'Captain Harlock'
+  aliases:
+    - Captain Harlock
+    - Space Pirate Captain Harlock
+    - Uchuu Kaizoku Captain Harlock
+    - 宇宙海賊キャプテンハーロック
+
+captain-harlock-dimensional-voyage:
+  display: 'Captain Harlock: Dimensional Voyage'
+  aliases:
+    - Captain Harlock Dimensional Voyage
+    - キャプテンハーロック 次元航海
+
+captain-tsubasa:
+  display: 'Captain Tsubasa'
+  aliases:
+    - Capitán Tsubasa
+    - Captain Tsubasa
+    - Olive et Tom
+    - Oliver y Benji
+    - キャプテン翼
+
 cardcaptor-sakura:
-  display: Cardcaptor Sakura
+  display: 'Cardcaptor Sakura'
   aliases:
-  - CCS
-  - Card Captor Sakura
-  - 'Cardcaptor Sakura: Master of the Clow'
-  - Cardcaptors
-  - Sakura, Cazadora de Cartas
-  - Sakura, la Caçadora de Cartes
-  - カードキャプターさくら
-  - 庫洛魔法使
+    - Card Captor Sakura
+    - 'Cardcaptor Sakura: Master of the Clow'
+    - Cardcaptors
+    - CCS
+    - Sakura, Cazadora de Cartas
+    - Sakura, la Caçadora de Cartes
+    - カードキャプターさくら
+    - 庫洛魔法使
+
+cardcaptor-sakura-clear-card-arc:
+  display: 'Cardcaptor Sakura: Clear Card Arc'
+  aliases:
+    - 'CardCaptor Sakura: Clear Card Arc'
+    - 'Cardcaptor Sakura: Clear Card-hen'
+    - cardcaptor-sakura-clear-card
+    - カードキャプターさくら クリアカード編
+
+casas-con-historias-seiji-yoshida:
+  display: 'Casas con historias - Seiji Yoshida'
+  aliases:
+    - houses with stories
+    - seiji yoshida
+    - seiji-yoshida
+
+cat-street:
+  display: 'Cat Street'
+  aliases:
+    - Cat Street
+    - キャットストリート
+
+cats-eye:
+  display: 'Cat''s Eye'
+  aliases:
+    - Cat's Eye
+    - Cats Eye
+    - キャッツ アイ
+    - 猫眼三姐妹
+
+cats-of-the-louvre:
+  display: 'Cats of the Louvre'
+  aliases:
+    - Die Katzen des Louvre
+    - gatos-del-louvre
+    - I gatti del Louvre
+    - Les Chats du Louvre
+    - Los Gatos del Louvre
+    - Louvre no Neko
+
+cells-at-work:
+  display: 'Cells at Work!'
+  aliases:
+    - Cells At Work
+    - Cells at Work! - Lavori in corpo
+    - Hataraku Saibou
+    - Les Brigades immunitaires
+    - はたらく細胞
+
+centuria:
+  display: 'Centuria'
+  aliases: []
+
 chainsaw-man:
-  display: Chainsaw Man
+  display: 'Chainsaw Man'
   aliases:
-  - CSM
-  - Testere Adam
-  - チェンソーマン
-  - 电锯人
-  - 鏈鋸人
+    - CSM
+    - Testere Adam
+    - チェンソーマン
+    - 电锯人
+    - 鏈鋸人
+
+cherry-magic:
+  display: 'Cherry Magic'
+  aliases:
+    - 30-sai made Doutei da to Mahou Tsukai ni Nareru Rashii
+    - 30歳まで童貞だと魔法使いになれるらしい
+    - Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!
+    - チェリまほ
+
+chibi-la-guia-oficial:
+  display: 'Chibi! La guía oficial'
+  aliases:
+    - Chibi! La guía oficial
+    - chibi-guia
+
+chihayafuru:
+  display: 'Chihayafuru'
+  aliases:
+    - Chihayafuru
+    - ちはやふる
+
+chiikawa:
+  display: 'Chiikawa'
+  aliases:
+    - Chiikawa - Süßer kleiner Fratz
+    - 'Chiikawa: Nanka Chiisakute Kawaii Yatsu'
+    - ちいかわ
+    - ちいかわ なんか小さくてかわいいやつ
+    - なんか小さくてかわいいやつ
+    - 吉伊卡哇 這又小又可愛的傢伙
+
+chiisakobe:
+  display: 'Chiisakobe'
+  aliases:
+    - Chiisakobee
+    - ちいさこべえ
+
+children-of-the-whales:
+  display: 'Children of the Whales'
+  aliases:
+    - Die Walkinder
+    - Kujira no Kora wa Sajou ni Utau
+    - Les enfants de la baleine
+    - クジラの子らは砂上に歌う
+
+chobits:
+  display: 'Chobits'
+  aliases:
+    - Chobittsu
+    - ちょびっツ
+
+choujin-x:
+  display: 'Choujin X'
+  aliases: []
+
+citrus:
+  display: 'Citrus'
+  aliases:
+    - 'citrus: saburouta presents secret love affair with sister'
+    - 'citrus: secret love affair with sister'
+    - citrus~柑橘味香氣~
+    - citrus～柑橘味香气～
+    - シトラス
+
 city-hunter:
-  display: City Hunter
+  display: 'City Hunter'
   aliases:
-  - Nicky Larson
-  - シティーハンター
+    - Nicky Larson
+    - シティーハンター
+
+city-hunter-xyz:
+  display: 'City Hunter XYZ'
+  aliases:
+    - City Hunter - XYZ
+    - Hojo Tsukasa Tanpenshuu
+    - シティーハンター - XYZ -
+
+classroom-of-the-elite:
+  display: 'Classroom of the Elite'
+  aliases: []
+
+clevatess:
+  display: 'Clevatess'
+  aliases:
+    - Clevatess
+    - 'Clevatess: Majuu no Ou to Akago to Kabane no Yuusha'
+    - 'Clevatess: The King of Devil Beasts'
+    - クレバテス-魔獣の王と赤子と屍の勇者-
+
+clover-clamp:
+  display: 'Clover'
+  aliases:
+    - clover
+    - Clover (CLAMP)
+    - クローバー
+
+coffee-moon:
+  display: 'Coffee Moon'
+  aliases:
+    - Coffee Moon
+    - コーヒームーン
+
+cofre-5o-aniversario-planeta-manga:
+  display: 'Cofre 5º Aniversario Planeta Manga'
+  aliases:
+    - cofre 5 aniversario planeta manga
+    - cofre 5o aniversario planeta manga
+    - cofre 5º aniversario planeta manga
+
+colorless:
+  display: 'Colorless'
+  aliases:
+    - Colorless
+
+comercios-de-tokio:
+  display: 'Comercios de Tokio - Mateusz Urbanowicz'
+  aliases:
+    - Comercios de Tokio
+    - mateusz-urbanowicz
+    - Tokyo Storefronts
+    - 'Tokyo Storefronts: The Artwork of Mateusz Urbanowicz'
+
+confuso-primer-amor:
+  display: 'Confuso Primer Amor'
+  aliases:
+    - Confusing First Love
+    - Konna Hazu ja Nakatta Hatsukoi
+
+crayon-shin-chan:
+  display: 'Crayon Shin-chan'
+  aliases:
+    - Crayon Shin chan
+    - Crayon Shin-chan
+    - Crayon Shinchan
+    - crayon-shin-cha
+    - Kureyon Shinchan
+    - Shin-chan
+    - クレヨンしんちゃん
+
+cyberpunk-edgerunners-madness:
+  display: 'Cyberpunk: Edgerunners Madness'
+  aliases:
+    - cyberpunk edgerunners madness
+    - サイバーパンク エッジランナーズ MADNESS
+    - 'サイバーパンク: エッジランナーズ MADNESS'
+
+d-gray-man:
+  display: 'D.Gray-man'
+  aliases:
+    - D. Gray man
+    - D. Gray-man
+    - D. Grayman
+    - D.Gray-man
+    - Dグレ
+    - ディー・グレイマン
+    - 驱魔少年
+
+d-n-angel:
+  display: 'D.N.Angel'
+  aliases:
+    - D.N. Angel
+    - DN Angel
+    - dn-angel
+    - D·N·Angel
+    - D・N・ANGEL
+    - ディー・エヌ・エンジェル
+
+dahlia-in-bloom:
+  display: 'Dahlia in Bloom'
+  aliases:
+    - 'Dahlia in Bloom: Crafting a Fresh Start with Magical Tools'
+    - Madougushi Dahlia wa Utsumukanai
+    - 魔導具師ダリヤはうつむかない
+
 dandadan:
-  display: Dandadan
+  display: 'Dandadan'
   aliases:
-  - ダンダダン
-  - 膽大黨
+    - ダンダダン
+    - 膽大黨
+
+danmachi:
+  display: 'Is It Wrong to Try to Pick Up Girls in a Dungeon?'
+  aliases:
+    - Danmachi
+    - Dungeon ni Deai wo Motomeru no wa Machigatteiru Darou ka
+    - ダンジョンに出会いを求めるのは間違っているだろうか
+
+darwins-game:
+  display: 'Darwin''s Game'
+  aliases:
+    - darwin's game
+    - darwins game
+
+darwins-incident:
+  display: 'The Darwin Incident'
+  aliases:
+    - darwin jihen
+    - darwin's incident
+    - darwins incident
+    - el incidente darwin
+
+date-a-bullet:
+  display: 'Date A Bullet'
+  aliases:
+    - date a live fragment date a bullet
+    - デート・ア・バレット
+
+dead-dead-demons-dededededestruction:
+  display: 'Dead Dead Demon''s Dededededestruction'
+  aliases:
+    - Dead Dead Demon's Dededededestruction
+    - Dead Dead Demons Dededede Destruction
+    - dead-dead-demons
+    - DeDeDeDe
+    - デッドデッドデーモンズデデデデデストラクション
+
+dead-rock:
+  display: 'Dead Rock'
+  aliases:
+    - Dead Rock
+    - デッドロック
+
+dead-tube:
+  display: 'DEAD Tube'
+  aliases:
+    - DEAD Tube ～デッドチューブ～
+    - デッドチューブ
+
+deadpool-samurai:
+  display: 'Deadpool: Samurai'
+  aliases:
+    - Deadpool Samurai
+    - 'Deadpool: Samurai'
+    - 'デッドプール:SAMURAI'
+
 death-note:
-  display: Death Note
+  display: 'Death Note'
   aliases:
-  - Beležnica smrti
-  - DEATH NOTE
-  - Death Note - Zápisník smrti
-  - Ölüm Defteri
-  - Τετράδιο θανάτου
-  - デスノート
-  - 死亡筆記本
+    - Beležnica smrti
+    - DEATH NOTE
+    - Death Note - Zápisník smrti
+    - Ölüm Defteri
+    - Τετράδιο θανάτου
+    - デスノート
+    - 死亡筆記本
+
+death-note-black:
+  display: 'Death Note - Black'
+  aliases: []
+
+death-shield:
+  display: 'Death Shield'
+  aliases: []
+
 deep-3:
-  display: Deep 3
+  display: 'Deep 3'
   aliases:
-  - Deep3
-  - deep three
-  - deep3
-  - ディープスリー
+    - deep three
+    - Deep3
+    - ディープスリー
+
+dementia-21:
+  display: 'Dementia 21'
+  aliases:
+    - Demencia 21
+    - Dementia 21
+    - ディメンシャ 21
+
+demon-slave:
+  display: 'Demon Slave'
+  aliases:
+    - Demon Slave
+    - Mato Seihei no Slave
+    - Slave of the Magic Capital's Elite Troops
+    - 魔都精兵のスレイブ
+
 demon-slayer:
-  display: Demon Slayer
+  display: 'Demon Slayer'
   aliases:
-  - 'Demon Slayer: Kimetsu no Yaiba'
-  - Guardianes de la Noche
-  - Guardians de la Nit
-  - Kimetsu no Yaiba
-  - KnY
-  - Les Rôdeurs de la nuit
-  - Miecz zabójcy demonów
-  - Thanh gươm diệt quỷ
-  - Ubica demona
-  - Zabiják démonů
-  - 'demon slayer: kimetsu no yaiba'
-  - guardianes de la noche
-  - kimetsu no yaiba
-  - İblis Keser
-  - 鬼滅の刃
-  - 鬼滅之刃
+    - 'Demon Slayer: Kimetsu no Yaiba'
+    - Guardianes de la Noche
+    - Guardians de la Nit
+    - İblis Keser
+    - Kimetsu no Yaiba
+    - KnY
+    - Les Rôdeurs de la nuit
+    - Miecz zabójcy demonów
+    - Thanh gươm diệt quỷ
+    - Ubica demona
+    - Zabiják démonů
+    - 鬼滅の刃
+    - 鬼滅之刃
+
+demon-tune:
+  display: 'Demon Tune'
+  aliases: []
+
+dengeki-daisy:
+  display: 'Dengeki Daisy'
+  aliases: []
+
+dengeki-girls-boys-smile:
+  display: 'Dengeki Girl''s & Boy''s Smile'
+  aliases:
+    - dengeki smile
+    - 電撃Girl's&Boy's Smile
+
+deseado-por-la-muerte:
+  display: 'Deseado por la Muerte'
+  aliases:
+    - Desired by Death
+    - Shi ni Aisareta Shounen
+
+dessert-eagle:
+  display: 'Dessert Eagle'
+  aliases:
+    - Desert Eagle
+    - デザートイーグル
+
 detective-conan:
-  display: Detective Conan
+  display: 'Detective Conan'
   aliases:
-  - Case Closed
-  - Detectiu Conan
-  - Detective Conan
-  - Detektif Conan
-  - Meitantei Conan
-  - Mesterdetektiven Conan
-  - Mästerdetektiven Conan
-  - Salapoliisi Conan
-  - 名探偵コナン
+    - Case Closed
+    - Detectiu Conan
+    - Detective Conan
+    - Detektif Conan
+    - Meitantei Conan
+    - Mesterdetektiven Conan
+    - Mästerdetektiven Conan
+    - Salapoliisi Conan
+    - 名探偵コナン
+
+detroit-metal-city:
+  display: 'Detroit Metal City'
+  aliases:
+    - Detroit Metal City Dmc
+    - DMC
+    - 'DMC: Detroit Metal City'
+    - デトロイト・メタル・シティ
+
+devilman:
+  display: 'Devilman'
+  aliases:
+    - Devilman
+    - 'Devilman: The Classic Collection'
+    - デビルマン
+
+diamond-in-the-rough:
+  display: 'Diamond in the Rough'
+  aliases:
+    - Daiya no Genseki
+    - Diamante en bruto
+    - diamante-en-bruto
+    - Diamond in the Rough
+
+diamond-is-unbreakable-jojo-part-4:
+  display: 'Diamond is Unbreakable – JoJo part 4'
+  aliases:
+    - Diamond is Unbreakable
+    - Diamond is Unbreakable – Jojo part 4
+    - diamond-is-unbreakable
+    - 'JoJo no Kimyou na Bouken: Diamond wa Kudakenai'
+    - 'JoJo''s Bizarre Adventure Part 4: Diamond is Unbreakable'
+    - 'Le bizzarre avventure di JoJo: Diamond is Unbreakable'
+    - ジョジョの奇妙な冒険 ダイヤモンドは砕けない
+
+dimension-w:
+  display: 'Dimension W'
+  aliases:
+    - Dimension W
+    - ディメンション W
+
+dofus:
+  display: 'Dofus'
+  aliases:
+    - Dofus Manga
+
 don-t-toy-with-me-miss-nagatoro:
-  display: Don't Toy With Me, Miss Nagatoro
+  display: 'Don''t Toy With Me, Miss Nagatoro'
   aliases:
-  - Arrête de me chauffer, Nagatoro
-  - Ijiranaide, Nagatoro-san
-  - Neck mich nicht, Nagatoro-san
-  - Nie drocz się ze mną, Nagatoro!
-  - No me jodas, Nagatoro
-  - No me rayes, Nagatoro
-  - Não Mexa Comigo, Nagatoro
-  - Please don't bully me, Nagatoro
-  - イジらないで、長瀞さん
-  - 不要欺負我，長瀞同學
-  - 不要欺负我、长瀞同学
+    - Arrête de me chauffer, Nagatoro
+    - Don't Toy With Me, Nagatoro
+    - Ijiranaide, Nagatoro-san
+    - nagatoro
+    - Neck mich nicht, Nagatoro-san
+    - Nie drocz się ze mną, Nagatoro!
+    - No me jodas, Nagatoro
+    - No me rayes, Nagatoro
+    - Não Mexa Comigo, Nagatoro
+    - Please don't bully me, Nagatoro
+    - イジらないで、長瀞さん
+    - 不要欺負我，長瀞同學
+    - 不要欺负我、长瀞同学
+
+dorohedoro:
+  display: 'Dorohedoro'
+  aliases:
+    - ドロヘドロ
+
 dr-stone:
-  display: Dr. STONE
+  display: 'Dr. STONE'
   aliases:
-  - Dr.STONE
+    - Dr.STONE
+
 dragon-ball:
-  display: Dragon Ball
+  display: 'Dragon Ball'
   aliases:
-  - Bola de Drac
-  - Dragon Ball - 7 Viên Ngọc Rồng
-  - Dragon Ball Z
-  - Dragonball
-  - Dragonball Z
-  - ドラゴンボール
-  - 七龍珠
+    - Bola de Drac
+    - Dragon Ball - 7 Viên Ngọc Rồng
+    - Dragon Ball Z
+    - Dragonball
+    - Dragonball Z
+    - ドラゴンボール
+    - 七龍珠
+
+dragon-ball-cultura:
+  display: 'Dragon Ball Cultura'
+  aliases:
+    - derek padula dragon ball
+    - dragon ball culture
+
+dragon-ball-le-super-livre:
+  display: 'Dragon Ball: Le Super Livre'
+  aliases:
+    - Dragon Ball Daizenshuu
+    - Dragon Ball le super livre
+    - Dragon Ball Super Exciting Guide
+    - ドラゴンボール大全集
+
 dragon-ball-super:
-  display: Dragon Ball Super
+  display: 'Dragon Ball Super'
   aliases:
-  - Bola de Drac Super
-  - Dragon Ball Chou
-  - ドラゴンボール超
+    - Bola de Drac Super
+    - Dragon Ball Chou
+    - ドラゴンボール超
+
+dragon-head:
+  display: 'Dragon Head'
+  aliases:
+    - Doragon Heddo
+    - ドラゴンヘッド
+
+dragon-quest-emblem-of-roto:
+  display: 'Dragon Quest: The Mark of Erdrick'
+  aliases:
+    - DQ-EoR
+    - 'Dragon Quest Retsuden: Roto no Monshou'
+    - 'Dragon Quest Saga: Emblem of Roto'
+    - 'Dragon Quest: Emblem of Roto'
+    - The mark of Roto
+    - ドラゴンクエスト列伝 ロトの紋章
+
+dragon-quest-illustrations:
+  display: 'Dragon Quest: Illustrations (Toriyama)'
+  aliases:
+    - Dragon Quest Illustrations
+    - 'Dragon Quest: Ilustraciones'
+    - Toriyama Dragon Quest
+
+drcl-midnight-children:
+  display: '#DRCL Midnight Children'
+  aliases:
+    - #DRCL midnight children
+    - DRCL midnight children
+    - ドラクル
+
+dreamland:
+  display: 'Dreamland'
+  aliases:
+    - Dreamland Reno Lemaire
+
+dreams-factory:
+  display: 'Dreams Factory'
+  aliases:
+    - Dreams facrory
+
+eagle-kawaguchi:
+  display: 'Eagle: The Making of an Asian-American President'
+  aliases:
+    - eagle
+    - eagle kawaguchi
+    - 'eagle: the making of an asian-american president'
+
+eden:
+  display: 'Eden: It''''s an Endless World!'
+  aliases:
+    - Eden
+    - Eden It's an Endless World
+    - EDEN 〜It's an Endless World!〜
+    - 'Eden: It''''s an Endless World'
+    - エデン イッツ・アン・エンドレス・ワールド
+
+edens-zero:
+  display: 'Edens Zero'
+  aliases:
+    - EDENS ZERO伊甸星原
+    - EDEN’S ZERO
+    - エデンズゼロ
+
+egregor:
+  display: 'Egregor'
+  aliases:
+    - 에그르고르
+
+el-club-del-divorcio:
+  display: 'El Club del Divorcio'
+  aliases:
+    - Rikon Kurabu
+    - The Divorce Club
+    - 離婚倶楽部
+
+el-mojigato:
+  display: 'El Mojigato'
+  aliases:
+    - El Mojigato
+    - Nekonaughey
+    - ネコノヒー
+
+el-olimpo-de-seiya:
+  display: 'El Olimpo de Seiya'
+  aliases:
+    - olimpo de seiya
+    - olimpo-de-seiya
+    - saint seiya olimpo
+
+el-planeta-de-los-zombis:
+  display: 'El Planeta de los Zombis'
+  aliases:
+    - El Planeta de los Zombis
+    - planeta-de-los-zombis
+    - Zombie Wakusei
+    - ゾンビ惑星
+
+elden-ring:
+  display: 'Elden Ring'
+  aliases:
+    - Elden Ring - Der Weg zum Erdenbaum
+    - ELDEN RING 黄金樹への道
+    - 'Elden Ring: Droga do Złotego Drzewa'
+    - 'ELDEN RING: La Senda Del Árbol Áureo'
+    - 'Elden Ring: O Caminho para Térvore'
+    - 'ELDEN RING: Ougonju e no Michi'
+    - 'ELDEN RING: The Road to the Erdtree'
+    - エルデンリング
+    - エルデンリング 黄金樹への道
+
+elf-kareshi-to-boyish-kanojo:
+  display: 'Elf Boyfriend & Boyish Girlfriend'
+  aliases:
+    - Boyish Kanojo
+    - boyish-kanojo
+    - Elf Kareshi to Boyish Kanojo
+    - エルフ彼氏とボーイッシュ彼女
+    - ボーイッシュ彼女が可愛すぎる
+
+ensemble-stars:
+  display: 'Ensemble Stars!'
+  aliases:
+    - Ensemble Stars!!
+    - Enstars
+    - あんさんぶるスターズ!
+
+estampas-de-una-libreria-encantada-yogisya:
+  display: 'Estampas de una librería encantada - Yogisya'
+  aliases:
+    - haunted bookstore prints
+    - yogisya
+
+evangelion-new-theatrical-edition:
+  display: 'Evangelion: New Theatrical Edition'
+  aliases:
+    - evangelion new theatrical
+    - evangelion-new-theatrical
+    - rebuild of evangelion
+    - 新劇場版エヴァンゲリオン
+
+even-if-tempest:
+  display: 'Even If Tempest'
+  aliases:
+    - Tatoe Hai ni Nattemo
+    - たとえ灰になっても
+
 f-compo:
-  display: F.COMPO
+  display: 'F.COMPO'
   aliases:
-  - Family Compo (ファミリー・コンポ)
+    - Family Compo (ファミリー・コンポ)
+
+fairy-girls:
+  display: 'Fairy Girls'
+  aliases:
+    - Fairy Girls
+    - フェアリーガールズ
+
 fairy-tail:
-  display: FAIRY TAIL
+  display: 'FAIRY TAIL'
   aliases:
-  - Each Individual Day
-  - Fairy Tail - Les Couleurs du coeur
-  - 'Fairy Tail 2: After the Grand Magic Games'
-  - 'Fairy Tail 2: Dai Matou Enbu Sonogo'
-  - 'Fairy Tail 3: Trouble Twins'
-  - 'Fairy Tail: Kokoro ni Yadoru Color'
-  - 'Fairy Tail: The Color Residing Within The Heart'
-  - Sorezore no 1-nichi
+    - Each Individual Day
+    - Fairy Tail - Les Couleurs du coeur
+    - 'Fairy Tail 2: After the Grand Magic Games'
+    - 'Fairy Tail 2: Dai Matou Enbu Sonogo'
+    - 'Fairy Tail 3: Trouble Twins'
+    - 'Fairy Tail: Kokoro ni Yadoru Color'
+    - 'Fairy Tail: The Color Residing Within The Heart'
+    - Sorezore no 1-nichi
+
+fairy-tail-100-years-quest:
+  display: 'Fairy Tail: 100 Years Quest'
+  aliases:
+    - FAIRY TAIL 100 YEARS QUEST
+    - FAIRY TAIL 100年クエスト
+    - 'FAIRY TAIL: 100 YEARS QUEST'
+    - 'FAIRY TAIL: 100-nen Quest'
+    - FAIRY TAIL魔導少年 百年任務
+    - fairy-tail-100-years
+
+fairy-tail-s:
+  display: 'Fairy Tail S'
+  aliases:
+    - Fairy Tail S
+    - 'Fairy Tail: Tales from Fairy Tail'
+    - フェアリーテイルS
+
+farewell-my-dear-cramer:
+  display: 'Farewell, My Dear Cramer'
+  aliases:
+    - Sayonara Watashi no Cramer
+    - さよなら私のクラマー
+
+fashion-el-arte-de-tanaka:
+  display: 'Fashion - El arte de Tanaka'
+  aliases:
+    - Fashion - El arte de Tanaka
+    - Tanaka Fashion Artbook
+    - tanaka-fashion
+
+fate-apocrypha:
+  display: 'Fate/Apocrypha'
+  aliases:
+    - Fate/Apocrypha
+    - フェイト/アポクリファ
+
+fate-grand-order-epic-of-remnant:
+  display: 'Fate/Grand Order: Epic of Remnant'
+  aliases:
+    - Fate/Grand Order
+    - Fate/Grand Order -Epic of Remnant-
+    - 'Fate/Grand Order: Epic of Remnant - Ashutokuiten EX Shinkai Dennou Rakudo SE.RA.PH'
+    - 'Fate/Grand Order: Epic of Remnant - Deep Sea Cyber-Paradise SE.RA.PH'
+
+fate-grand-order-mortalis-stella:
+  display: 'Fate/Grand Order -mortalis:stella-'
+  aliases:
+    - Fate Grand Order mortalis stella
+    - FGO mortalis stella
+
+fate-grand-order-turas-realta:
+  display: 'Fate/Grand Order -turas réalta-'
+  aliases: []
+
 fate-kaleid-prisma-illya:
-  display: Fate/kaleid liner Prisma☆Illya
+  display: 'Fate/kaleid liner Prisma☆Illya'
   aliases:
-  - Fate/kaleid liner Prisma Illya 3rei!!
-  - Fate/kaleid liner Prisma Illya drei!!
-  - Fate/kaleid liner Prisma ☆ Illya Drei 3!!
-  - Fate/kaleid liner Prisma☆Illya 3rei!!
-  - Fate/kaleid liner プリズマ☆イリヤ ドライ！！
+    - Fate/kaleid liner Prisma Illya 3rei!!
+    - Fate/kaleid liner Prisma Illya drei!!
+    - Fate/kaleid liner Prisma ☆ Illya Drei 3!!
+    - Fate/kaleid liner Prisma☆Illya 3rei!!
+    - Fate/kaleid liner プリズマ☆イリヤ ドライ！！
+
+fate-stay-night:
+  display: 'Fate/stay night'
+  aliases: []
+
+fate-stay-night-heavens-feel:
+  display: 'Fate/stay night: Heaven''s Feel'
+  aliases:
+    - fate stay night heavens feel
+    - fate/stay night heaven's feel
+    - 'fate/stay night: heaven''s feel'
+
+fate-zero:
+  display: 'Fate/Zero'
+  aliases:
+    - fate zero
+    - fate/zero
+
+felin-pour-l-autre:
+  display: 'Félin pour l''autre'
+  aliases:
+    - Cat + Crazy
+    - Felin pour l'autre
+    - Nekottake!
+    - ねこったけ!
+
+filles-le-paradis:
+  display: 'Filles le paradis'
+  aliases:
+    - filles le paradis ichiri
+
 fire-force:
-  display: Fire Force
+  display: 'Fire Force'
   aliases:
-  - Blazing Fire Brigade
-  - Enen no Shouboutai
-  - Fire Brigade of Flames
-  - 'Fire Force: Alev Gücü'
-  - La brigada de bomberos de las llamas
-  - 炎炎ノ消防隊
-  - 炎炎消防隊
+    - Blazing Fire Brigade
+    - Enen no Shouboutai
+    - Fire Brigade of Flames
+    - 'Fire Force: Alev Gücü'
+    - La brigada de bomberos de las llamas
+    - 炎炎ノ消防隊
+    - 炎炎消防隊
+
+fire-punch:
+  display: 'Fire Punch'
+  aliases:
+    - ファイアパンチ
+
+fire-yokoyama:
+  display: 'Fire!'
+  aliases:
+    - fire
+    - Fire! (Hideko Mizuno)
+    - ファイヤー！
+
+firefly-wedding:
+  display: 'Firefly Wedding'
+  aliases: []
+
+fist-of-the-blue-sky:
+  display: 'Fist of the Blue Sky'
+  aliases:
+    - Fist of the Blue Sky
+    - Soten no Ken
+    - 'Soten no Ken: Fist of the Blue Sky'
+    - soten-no-ken-fist-of-the-blue-sky
+    - Souten no Ken
+    - 蒼天の拳
+
+flores-de-piedra:
+  display: 'Flores de Piedra'
+  aliases:
+    - Hanaipusu
+    - 花氷
+
+food-wars:
+  display: 'Food Wars'
+  aliases:
+    - 'Food Wars!: Shokugeki no Soma'
+    - Kulinarne pojedynki
+    - Shokugeki no Soma
+    - Shokugeki no Souma
+    - 食戟のソーマ
+
+for-the-kid-i-saw-in-my-dreams:
+  display: 'For the Kid I Saw in My Dreams'
+  aliases:
+    - echoes
+    - por el chico que veia en suenos
+    - por el chico que veía en sueños
+    - por-el-chico-en-suenos
+    - yume de mita ano ko no tame ni
+    - 夢で見たあの子のために
+
 frieren:
-  display: Frieren
+  display: 'Frieren'
   aliases:
-  - 'FRIEREN: Más allá del fin del viaje'
-  - Frieren - Pháp sư tiễn táng
-  - Frieren After "The End"
-  - Frieren at the Funeral
-  - Frieren e a Jornada para o Além
-  - Frieren – Nach dem Ende der Reise
-  - Frieren. U kresu drogi
-  - 'Frieren: Beyond Journey’s End'
-  - 'Frieren: Oltre la Fine del Viaggio'
-  - 'Frieren: Remnants of the Departed'
-  - 'Frieren: Ved reisens ende'
-  - Sousou no Frieren
-  - frieren beyond journey's end
-  - frieren la voyageuse
-  - 'frieren: beyond journey''s end'
-  - sousou no frieren
-  - 葬送のフリーレン
-  - 葬送的芙莉蓮
+    - Frieren - Pháp sư tiễn táng
+    - Frieren After "The End
+    - Frieren at the Funeral
+    - frieren beyond journey's end
+    - Frieren e a Jornada para o Além
+    - frieren la voyageuse
+    - Frieren – Nach dem Ende der Reise
+    - Frieren. U kresu drogi
+    - 'frieren: beyond journey''''s end'
+    - 'Frieren: Beyond Journey’s End'
+    - 'FRIEREN: Más allá del fin del viaje'
+    - 'Frieren: Oltre la Fine del Viaggio'
+    - 'Frieren: Remnants of the Departed'
+    - 'Frieren: Ved reisens ende'
+    - Sousou no Frieren
+    - 葬送のフリーレン
+    - 葬送的芙莉蓮
+
+fruits-basket:
+  display: 'Fruits Basket'
+  aliases:
+    - Fruba
+    - Fruits Basket
+    - Furuba
+    - フルバ
+    - フルーツバスケット
+
+fruits-basket-another:
+  display: 'Fruits Basket Another'
+  aliases:
+    - Fruits Basket Another
+    - フルーツバスケット another
+
 fullmetal-alchemist:
-  display: Fullmetal Alchemist
+  display: 'Fullmetal Alchemist'
   aliases:
-  - Cang Giả Kim Thuật Sư
-  - Full Metal Alchemist
-  - Fullmetal Alchemist - Ocelový alchymista
-  - Fullmetal Alchemist Gaiden
-  - HagaRen
-  - Hagane no Renkinjutsushi
-  - alchimiste plein-métal
-  - el alquimista de acero
-  - 'fullmetal alchemist: brotherhood'
-  - hagane no renkinjutsushi
-  - l'alchimiste plein-métal
-  - Çelik Simyacı
-  - Čelični alhemičar
-  - 鋼の錬金術師
-  - 鋼之鍊金術師
+    - alchimiste plein-métal
+    - Cang Giả Kim Thuật Sư
+    - el alquimista de acero
+    - Full Metal Alchemist
+    - Fullmetal Alchemist - Ocelový alchymista
+    - Fullmetal Alchemist Gaiden
+    - 'fullmetal alchemist: brotherhood'
+    - Hagane no Renkinjutsushi
+    - HagaRen
+    - l'alchimiste plein-métal
+    - Çelik Simyacı
+    - Čelični alhemičar
+    - 鋼の錬金術師
+    - 鋼之鍊金術師
+
+fuse-box:
+  display: 'Fuse Box'
+  aliases:
+    - Sonoda Kenichi Shoki Sakuhinshu Fuse Box
+
+fushigi-yugi:
+  display: 'Fushigi Yûgi'
+  aliases:
+    - Fushigi Yugi
+    - Fushigi Yuugi
+    - 'Fushigi Yûgi: The Mysterious Play'
+    - The Mysterious Play
+    - ふしぎ遊戯
+
+futari-ecchi:
+  display: 'Futari Ecchi'
+  aliases:
+    - futari etchi
+    - futari-etchi
+    - love diary
+    - manga love story
+    - manga sutra
+    - step up - love story
+
+fuzichoco-gashu-saigenkyou:
+  display: 'Fuzichoco Gashu: Saigenkyou'
+  aliases:
+    - Fuzichoco Gashu Saigenkyou
+    - Saigenkyou
+    - 藤ちょこ画集 彩幻境
+
+fuzichoco-gashu-shukusai-junrei:
+  display: 'Fuzichoco Gashu: Shukusai Junrei'
+  aliases:
+    - Fuzichoco Gashu Shukusai Junrei
+    - Shukusai Junrei
+    - 藤ちょこ画集 祝彩巡礼
+
 gachiakuta:
-  display: Gachiakuta
+  display: 'Gachiakuta'
   aliases:
-  - Gachi Akuta
-  - ガチアクタ
+    - Gachi Akuta
+    - ガチアクタ
+
+gakuen-alice:
+  display: 'Gakuen Alice'
+  aliases:
+    - Alice Academy
+    - Alice, Escuela de Magia
+    - Gakuen Alice
+    - L'académie Alice
+    - 学園アリス
+
+gakuen-idolmaster-gold-rush:
+  display: 'Gakuen Idolmaster: GOLD RUSH'
+  aliases:
+    - 'Gakuen IDOLM@STER: GOLD RUSH'
+    - Gakuen Idolmaster GOLD RUSH
+    - gold-rush
+    - 学園アイドルマスター GOLD RUSH
+
+gamera-rebirth:
+  display: 'Gamera -Rebirth-'
+  aliases:
+    - gamera rebirth
+    - ガメラ リバース
+
+gannibal:
+  display: 'Gannibal'
+  aliases:
+    - 'Gannibal: Vila dos Canibais'
+    - ガンニバル
+
+gantz:
+  display: 'Gantz'
+  aliases: []
+
+gantz-osaka:
+  display: 'Gantz/Osaka'
+  aliases:
+    - gantz-osaka
+
+gash-bell:
+  display: 'Gash Bell!!'
+  aliases:
+    - Konjiki no Gash Bell!!
+    - Konjiki no Gash!!
+    - Zatch Bell
+    - zatch-bell
+    - 金色のガッシュベル!!
+
+genjitsu-no-yohane:
+  display: 'Genjitsu no Yohane -SUNSHINE in the MIRROR-'
+  aliases:
+    - genjitsu no yohane
+    - yohane the parhelion sunshine in the mirror
+    - 幻日のヨハネ
+
+genshin-impact-officiel:
+  display: 'Genshin Impact Officiel'
+  aliases:
+    - Genshin impact - officiel
+    - Genshin Impact - Officiel Artbook
+
+georgie:
+  display: 'Georgie!'
+  aliases:
+    - Georgie
+    - Georgie!
+
+gigant:
+  display: 'Gigant'
+  aliases: []
+
+gintama:
+  display: 'Gintama'
+  aliases: []
+
+girls-last-tour:
+  display: 'Girls'' Last Tour'
+  aliases:
+    - As Viajantes do Fim
+    - L'ultimo viaggio delle ragazze
+    - Shoujo Shuumatsu Ryokou
+    - 少女終末旅行
+
+given:
+  display: 'Given'
+  aliases:
+    - Given
+    - ギヴン
+
+go-nagai-artbook:
+  display: 'Go Nagai Artbook'
+  aliases:
+    - Go Nagai
+    - go-nagai
+
+go-toubun-no-hanayome:
+  display: 'The Quintessential Quintuplets'
+  aliases:
+    - 5-toubun no hanayome
+    - gotobun no hanayome
+    - gotobun-no-hanayome
+    - gotoubun no hanayome
+    - las quintillizas
+    - the quintessential quintuplets
+    - 五等分の花嫁
+
+go-with-the-clouds-north-by-northwest:
+  display: 'Go with the Clouds, North-by-Northwest'
+  aliases:
+    - Dans le sens du vent Nord, Nord-Ouest
+    - Folge den Wolken nach Nord-Nordwest
+    - Hokuhokusei ni Kumo to Ike
+    - Nuvole a Nordovest
+    - Sigue las nubes al nornoroeste
+    - sigue-las-nubes
+    - 北北西に曇と往け
+
 goblin-slayer:
-  display: Goblin Slayer!
+  display: 'Goblin Slayer!'
   aliases:
-  - Goblin Slayer
-  - ゴブリンスレイヤー
+    - Goblin Slayer
+    - ゴブリンスレイヤー
+
+gokinjo-monogatari:
+  display: 'Gokinjo Monogatari'
+  aliases:
+    - cortili del cuore
+    - gokinjo monogatari
+    - gokinjo monogatari | neighborhood story
+    - gokinjo, une vie de quartier
+    - gokinjo-monogatari-neighborhood-sto
+    - historia de un vecindario
+    - neighborhood story
+
+gokurakugai:
+  display: 'Gokurakugai'
+  aliases:
+    - Gokurakugai
+    - 極楽街
+    - 極樂街
+
+golden-kamuy:
+  display: 'Golden Kamuy'
+  aliases:
+    - Golden Kamui
+    - Golden Kamuy
+    - ゴールデンカムイ
+    - 黃金神威
+
+golgo-13:
+  display: 'Golgo 13'
+  aliases:
+    - Golgo Thirteen
+    - Gorugo 13
+    - ゴルゴ13
+
+gon:
+  display: 'Gon'
+  aliases:
+    - Gon
+    - Gon.
+    - ゴン
+
+goodbye-eri:
+  display: 'Goodbye Eri'
+  aliases: []
+
 grand-blue-dreaming:
-  display: Grand Blue Dreaming
+  display: 'Grand Blue Dreaming'
   aliases:
-  - Grand Blue
-  - ぐらんぶる
+    - Grand Blue
+    - ぐらんぶる
+
+great-mazinger:
+  display: 'Great Mazinger'
+  aliases:
+    - great mazinga
+    - great mazinger
+    - great mazinger (go nagai)
+    - great-mazinger-go-nagai
+    - gureto majinga
+
+great-teacher-onizuka:
+  display: 'Great Teacher Onizuka'
+  aliases:
+    - Great Teacher Onizuka
+    - GTO
+    - 'GTO: Great Teacher Onizuka'
+    - グレート・ティーチャー・オニヅカ
+
+gto:
+  display: 'GTO: Great Teacher Onizuka'
+  aliases:
+    - Great Teacher Onizuka
+    - GTO
+    - 'GTO: Great Teacher Onizuka'
+    - グレート・ティーチャー・オニヅカ
+
+gto-paradise-lost:
+  display: 'GTO: Paradise Lost'
+  aliases:
+    - 'Great Teacher Onizuka: Paradise Lost'
+    - GTO Paradise Lost
+    - GTO パラダイス・ロスト
+    - 'GTO: Paradise Lost'
+
+gto-shonan-14-days:
+  display: 'GTO: Shonan 14 Days'
+  aliases:
+    - 'Great Teacher Onizuka: Shonan 14 Days'
+    - GTO Shonan 14 Days
+    - GTO 湘南14日
+    - 'GTO: 14 Days in Shonan'
+    - 'GTO: SHONAN 14 DAYS'
+
+guilty-gear-strive:
+  display: 'Guilty Gear -Strive-'
+  aliases:
+    - guilty gear strive
+    - ギルティギア ストライヴ
+
+guilty-gear-xrd:
+  display: 'Guilty Gear Xrd'
+  aliases:
+    - guilty gear xrd series
+    - ギルティギア イグザード
+
+gun-dragon-sigma:
+  display: 'Gun Dragon Sigma'
+  aliases:
+    - Gun Dragon Sigma
+    - GUN DRAGON Σ
+
+gunslinger-girl:
+  display: 'Gunslinger Girl'
+  aliases:
+    - gunslinger girl
+
+guyver:
+  display: 'Guyver'
+  aliases:
+    - bio booster armor guyver
+    - kyoushoku soukou guyver
+    - 強殖装甲ガイバー
+
+haganai:
+  display: 'Haganai'
+  aliases:
+    - boku wa tomodachi ga sukunai
+    - bokutomo
+    - haganai
+    - haganai – i have few friends
+    - i can't make friends
+    - i don't have many friends
+
+hai-step-jun:
+  display: 'Hai Step Jun'
+  aliases:
+    - Hai Step Kun
+    - Hello Spank
+    - Hola Spank
+    - Hola, Spank!
+    - hola-spank
+    - Vas-y Julie
+    - Yes Step Jun
+
+haikyu:
+  display: 'Haikyu!!'
+  aliases:
+    - Ball High!!
+    - haikyu
+    - Haikyu!! - Chàng khổng lồ tí hon
+    - Haikyuu!!
+    - Haikyū!!
+    - High Kyuu!!
+    - HQ!!
+    - ハイキュー!!
+    - ハイキュー！！
+    - 排球少年!!
+
+hajime-no-ippo:
+  display: 'Hajime no Ippo'
+  aliases:
+    - Fighting Spirit
+    - 'Hajime no Ippo: Fighting Spirit!'
+    - The Fighting
+    - はじめの一歩
+
+hakaiju:
+  display: 'Hakaiju'
+  aliases:
+    - creature!
+    - hakaiju
+    - hakaiju | creature
+    - hakaiju-creature
+    - hakaijuu
+
+hakkenden-eight-dogs-of-the-east:
+  display: 'Hakkenden: Eight Dogs of the East'
+  aliases:
+    - hakkenden
+    - hakkenden eight dogs of the east
+    - 八犬伝－東方八犬異聞－
+
+hakuoki-shinkai:
+  display: 'Hakuoki Shinkai'
+  aliases:
+    - hakuouki shinkai
+    - 薄桜鬼 真改
+
+hanazakari-no-kimitachi-e:
+  display: 'Hana-Kimi: For You in Full Blossom'
+  aliases:
+    - For You in Full Blossom
+    - Hana Kimi
+    - Hanakimi
+    - Hanazakari no Kimitachi e
+    - Parmi eux
+    - Parmi Eux - Hanakimi
+    - 花ざかりの君たちへ
+
+hanma-baki:
+  display: 'Hanma Baki (Baki Son of Ogre)'
+  aliases:
+    - baki-son-of-ogre-part-3
+    - 'Baki: Son of Ogre'
+    - 'Baki: Son of Ogre (part 3)'
+    - Grappler Baki - Son of Ogre
+    - Hanma Baki
+    - 範馬刃牙
+
 happy:
-  display: Happy!
+  display: 'Happy!'
   aliases:
-  - ハッピー!
+    - ハッピー!
+
 harukana-receive:
-  display: Harukana Receive
+  display: 'Harukana Receive'
   aliases:
-  - はるかなレシーブ
+    - はるかなレシーブ
+
+heart-gear:
+  display: 'Heart Gear'
+  aliases:
+    - HEART GEAR
+    - HEART GEAR 機器人之心
+    - ハートギア
+
+heaven-officials-blessing:
+  display: 'Heaven Official''s Blessing'
+  aliases:
+    - heaven officials blessing
+    - la bendicion del oficial del cielo
+    - la bendición del oficial del cielo
+    - tian guan ci fu
+    - 天官赐福
+
 helck:
-  display: Helck
+  display: 'Helck'
   aliases:
-  - Helck the Hero
-  - Helck-勇者赫魯庫-
-  - ヘルク
-  - 勇者赫魯庫-Helck-
-  - 勇者赫鲁库
+    - Helck the Hero
+    - Helck-勇者赫魯庫-
+    - ヘルク
+    - 勇者赫魯庫-Helck-
+    - 勇者赫鲁库
+
+helena-mr-wolf:
+  display: 'Helena & Mr Wolf'
+  aliases:
+    - helena and mr wolf
+
+helios-rising-heroes:
+  display: 'Helios Rising Heroes'
+  aliases:
+    - Helios Rising Heroes Visual Fanbook
+
 hell-s-paradise:
-  display: Hell’s Paradise
+  display: 'Hell’s Paradise'
   aliases:
-  - Heavenhell
-  - Hell's Paradise
-  - 'Hell’s Paradise: Jigokuraku'
-  - Jigoku Raku
-  - Jigokuraku
-  - Paradition
-  - Piekielny Raj
-  - 地獄楽
-  - 地獄樂
+    - Heavenhell
+    - Hell's Paradise
+    - 'Hell’s Paradise: Jigokuraku'
+    - Jigoku Raku
+    - Jigokuraku
+    - Paradition
+    - Piekielny Raj
+    - 地獄楽
+    - 地獄樂
+
+hello-spank:
+  display: 'Hello! Spank'
+  aliases:
+    - hallo kurt
+    - hello spank
+    - hola spank
+    - ohayou spank
+    - ohayou! spank
+    - ¡hola, spank!
+
 hells-paradise:
-  display: Hell's Paradise
+  display: 'Hell''s Paradise'
   aliases:
-  - 'hell''s paradise: jigokuraku'
-  - hells paradise
-  - jigokuraku
-  - 地獄楽
+    - 'hell''''s paradise: jigokuraku'
+    - hells paradise
+    - jigokuraku
+    - 地獄楽
+
 hellsing:
-  display: HELLSING
+  display: 'HELLSING'
   aliases:
-  - Crossfire
-  - Hellsing Cross Fire
-  - ヘルシング
+    - Crossfire
+    - Hellsing Cross Fire
+    - ヘルシング
+
+hetalia-axis-powers:
+  display: 'Hetalia: Axis Powers'
+  aliases:
+    - Axis Powers Hetalia
+    - Hetalia Axis Powers
+    - 'Hetalia: Axis Powers'
+    - 'Hetaria: Axis Powers'
+    - ヘタリア Axis Powers
+
+hideo-kojima:
+  display: 'Hideo Kojima'
+  aliases:
+    - hideo kojima book
+    - hideo kojima especial
+
+hikari-man:
+  display: 'Hikari-Man'
+  aliases:
+    - hikari man
+    - hikaru otoko
+    - 光る男
+
 hikaru-no-go:
-  display: Hikaru no Go
+  display: 'Hikaru no Go'
   aliases:
-  - Hikago
-  - Hikaru's Go
-  - ヒカルの碁
+    - Hikago
+    - Hikaru's Go
+    - ヒカルの碁
+
+hinowa-ga-crush:
+  display: 'Hinowa ga Crush!'
+  aliases:
+    - Hinowa ga Crush!
+    - ヒノワが征く!
+
+hirayasumi:
+  display: 'Hirayasumi'
+  aliases:
+    - hirayasumi
+
+hokkaido-gals-are-super-adorable:
+  display: 'Hokkaido Gals Are Super Adorable!'
+  aliases:
+    - dosanko gal wa namara menkoi
+    - dosanko gyaru is mega cute
+    - dosanko gyaru wa namaramenkoi
+    - esa gal de hokkaido es demasiado linda
+    - hokkaido gals
+    - hokkaido gals are super adorable
+    - hokkaido-gals
+
+hokuto-no-ken:
+  display: 'Fist of the North Star'
+  aliases:
+    - El Puño de la Estrella del Norte
+    - Hokuto no Ken
+    - 'Hokuto no Ken: Fist of the North Star'
+    - hokuto-no-ken-fist-of-the-north-sta
+    - Ken le survivant
+    - 北斗の拳
+    - 北斗之拳
+
 horimiya:
-  display: Horimiya
+  display: 'Horimiya'
   aliases:
-  - Horimiya - Hori and Miyamura
-  - ホリミヤ
+    - Horimiya - Hori and Miyamura
+    - ホリミヤ
+
+hosaka-san-to-miyoshi-kun:
+  display: 'Hosaka-san to Miyoshi-kun'
+  aliases:
+    - a miyoshi le gusta hosaka
+    - hosaka i miyoshi
+    - miyoshi hosaka
+    - miyoshi-hosaka
+    - 保坂さんと三好くん
+
+houshou-marine:
+  display: 'Houshou Marine'
+  aliases:
+    - hololive houshou marine
+    - 宝鐘マリン
+
+howls-moving-castle-novel:
+  display: 'Howl''s Moving Castle'
+  aliases:
+    - diana wynne jones howls moving castle
+    - el castell ambulant
+    - el castillo ambulante
+    - howl's moving castle
+    - howls-moving-castle
+
 hunter-x-hunter:
-  display: Hunter x Hunter
+  display: 'Hunter x Hunter'
   aliases:
-  - HUNTER×HUNTER
-  - HxH
-  - ハンター×ハンター
+    - HUNTER×HUNTER
+    - HxH
+    - ハンター×ハンター
+
+hypnosis-mic:
+  display: 'Hypnosis Mic'
+  aliases:
+    - Hypnosis Mic -Before the Battle- Dawn of Divisions
+    - 'Hypnosis Mic: Division Rap Battle'
+    - ヒプノシスマイク
+    - ヒプノシスマイク -Before the Battle- Dawn of Divisions
+    - ヒプノシスマイク -Division Rap Battle-
+
+i-am-a-hero:
+  display: 'I Am a Hero'
+  aliases:
+    - Ben Bir Kahramanım
+    - Ja sam heroj
+    - アイアムアヒーロー
+
+i-chu:
+  display: 'I★Chu'
+  aliases:
+    - i chu memoire
+    - i-chu
+    - ichu
+    - アイ★チュウ
+
+ichi-the-witch:
+  display: 'Ichi the Witch'
+  aliases:
+    - Ichi the Witch
+    - Ichi, el brujo.
+    - Ichi, o Bruxo
+    - Madan no Ichi
+    - 魔男のイチ
+
+icons-terada-katsuya:
+  display: 'Icons (Terada Katsuya Artbook)'
+  aliases:
+    - icons
+    - icons artbook
+
+idolish7:
+  display: 'Idolish7'
+  aliases:
+    - idolish seven
+    - アイドリッシュセブン
+
+ikigami:
+  display: 'Ikigami: The Ultimate Limit'
+  aliases:
+    - Ikigami
+    - イキガミ
+
+ikkitousen:
+  display: 'Ikkitousen'
+  aliases:
+    - Battle Vixens
+    - Ikki Tosen
+    - Ikki Tousen
+    - Ikkitosen
+    - Ikkitousen
+    - 一騎当千
+
+im-great-priest-imhotep:
+  display: 'Im: Great Priest Imhotep'
+  aliases:
+    - Im - Daiinshikan Imhotep
+    - Im - El Sumo Sacerdote Imhotep
+    - im-imhotep
+    - イム-Great Priest Imhotep-
+
+im-the-villainess-so-im-taming-the-final-boss:
+  display: 'I''m the Villainess, So I''m Taming the Final Boss'
+  aliases:
+    - Si je suis la Vilaine, autant mater le Boss final
+    - si-je-suis-la-vilaine-autant-mater-le-boss-final
+    - Watashi wa Akuyaku Reijou nano de Last Boss wo Kattemimashita
+    - 私は悪役令嬢なので、ラスボスを飼ってみました
+
+in-the-clear-moonlit-dusk:
+  display: 'In the Clear Moonlit Dusk'
+  aliases:
+    - El ocaso de la luna
+    - En La Hermosa Luna Crepuscular
+    - Mooning Over You
+    - Sob a Luz da Lua
+    - Ton visage au clair de lune
+    - ton-visage-clair-lune
+    - Uruwashi no Yoi no Tsuki
+
+initial-d:
+  display: 'Initial D'
+  aliases:
+    - Initial D
+    - 頭文字D
+
+innocent-sakamoto:
+  display: 'Innocent'
+  aliases:
+    - innocent
+
+insomniacs-after-school:
+  display: 'Insomniacs After School'
+  aliases: []
+
+inuyasha:
+  display: 'Inuyasha'
+  aliases:
+    - Inu Yasha
+    - Inu-Yasha
+    - Inuyasha
+    - 犬夜叉
+
+inuyashiki:
+  display: 'Inuyashiki'
+  aliases: []
+
+io-sakisaka-illustrations:
+  display: 'Io Sakisaka Illustrations'
+  aliases:
+    - Io Sakisaka
+    - Io Sakisaka Illustrations
+    - io-sakisaka
+
+irene-of-love:
+  display: 'Irene of Love'
+  aliases:
+    - aijou no irene
+    - love irene
+
+iruma-kun-if-episode-of-mafia:
+  display: 'Welcome to Demon School! Iruma-kun: if Episode of Mafia'
+  aliases:
+    - Iruma giá đáo!
+    - Iruma w szkole demonów
+    - Iruma à l’école des démons
+    - Iruma-kun en el instituto demoníaco
+    - IruMafia
+    - Mairimashita! Iruma-kun if Episode of Mafia
+    - welcome to demon school iruma kun i
+    - Welcome to Demon School! Iruma-kun if Episode of Mafia
+    - 入間同學入魔了！
+    - 入间同学入魔了
+    - 魔入りました！入間くん if Episode of Mafia
+
+is-katsura:
+  display: 'I''''s'
+  aliases:
+    - i''s
+    - i's
+    - is
+    - is katsura
+
+issak:
+  display: 'Issak'
+  aliases:
+    - イサック
+
+jaco-the-galactic-patrolman:
+  display: 'Jaco The Galactic Patrolman'
+  aliases: []
+
+jagaan:
+  display: 'Jagaan'
+  aliases:
+    - Jagaan
+    - ジャガーン
+
+jinmen:
+  display: 'Jinmen'
+  aliases: []
+
+jiro-taniguchi-collection:
+  display: 'Jiro Taniguchi Collection'
+  aliases:
+    - Jiro Taniguchi Deluxe
+    - Taniguchi Jiro Collection
+
+jojolion:
+  display: 'JoJolion (JoJo Part 8)'
+  aliases:
+    - Dai 8 Bu Jousuke Higashikata
+    - JoJo no Kimyou na Bouken Part 8
+    - 'JoJo no Kimyou na Bouken: JoJolion'
+    - 'JoJo''''s Bizarre Adventure Part 8: Jojolion'
+    - JoJo's Bizarre Adventure - JoJolion
+    - JoJo's Bizarre Adventure Part 8
+    - jojolion
+    - 'Le bizzarre avventure di JoJo: JoJolion'
+    - ジョジョの奇妙な冒険 Part 8
+    - ジョジョの奇妙な冒険 ジョジョリオン
+    - ジョジョリオン
+
+jojos-bizarre-adventure-steel-ball-run:
+  display: 'JoJo''s Bizarre Adventure: Steel Ball Run'
+  aliases:
+    - 'jojo no kimyou na bouken: steel ball run'
+    - jojo sbr
+    - jojo's bizarre adventure - steel ball run
+    - 'jojo''s bizarre adventure: part 7–steel ball run'
+    - jojo-sbr
+    - 'le bizzarre avventure di jojo: steel ball run'
+    - steel ball run
+
 jujutsu-kaisen:
-  display: Jujutsu Kaisen
+  display: 'Jujutsu Kaisen'
   aliases:
-  - Batalha de Feiticeiros
-  - Chú thuật hồi chiến
-  - Contiendas de Brujería
-  - Guerra de Hechiceros
-  - JJK
-  - La guerra màgica
-  - Lanet Savaşları
-  - Prokleté války
-  - Sorcery Fight
-  - batalha de feiticeiros
-  - guerra de hechiceros
-  - sorcery fight
-  - 呪術廻戦
-  - 咒术回战
-  - 咒術迴戰
+    - Batalha de Feiticeiros
+    - Chú thuật hồi chiến
+    - Contiendas de Brujería
+    - Guerra de Hechiceros
+    - JJK
+    - La guerra màgica
+    - Lanet Savaşları
+    - Prokleté války
+    - Sorcery Fight
+    - 呪術廻戦
+    - 咒术回战
+    - 咒術迴戰
+
+junji-ito:
+  display: 'Junji Ito'
+  aliases:
+    - Itou Junji Kessakushuu
+    - Junji Ito Masterpiece Collection
+    - Junji Ito Story Collection
+    - Junji Ito Terror Insolito
+    - 'Junji Ito: Terror Insólito'
+    - junji-ito-terror-insolito
+    - 伊藤潤二傑作集
+
+junji-ito-complete-works:
+  display: 'Junji Ito: Complete Works'
+  aliases:
+    - junji ito complete works
+    - 'junji ito: complete works'
+
+k-on:
+  display: 'K-On!'
+  aliases:
+    - k on
+    - K-On
+    - Keion
+    - けいおん!
+    - けいおん！
+
+kageno-tambien-quiere-disfrutar-de-la-juventud:
+  display: 'Kageno también quiere disfrutar de la juventud'
+  aliases:
+    - Kageno también quiere disfrutar de la juventud
+    - kageno-juventud
+    - Kageno-kun mo Seishun Shitai
+
+kago-archive:
+  display: 'Kago''s Archive'
+  aliases:
+    - Kago Archive
+    - Kago's Archive
+    - kagos-archive
+    - Shintaro Kago Archive
+
 kagurabachi:
-  display: Kagurabachi
+  display: 'Kagurabachi'
   aliases:
-  - KGB
-  - カグラバチ
-  - 神樂鉢
+    - KGB
+    - カグラバチ
+    - 神樂鉢
+
+kaguya-sama:
+  display: 'Kaguya-sama: Love is War'
+  aliases:
+    - kaguya sama
+    - 'Kaguya sama: Love is War'
+    - 'Kaguya Wants to be Confessed To: The Geniuses'''' War of Love and Brains'
+    - Kaguya-sama wa Kokurasetai
+    - 'Kaguya-sama wa Kokurasetai: Tensai-tachi no Renai Zunousen'
+    - 'Kaguya-sama wa Kokurasetai: Tensaitachi no Renai Zunousen'
+    - かぐや様は告らせたい
+    - かぐや様は告らせたい〜天才たちの恋愛頭脳戦〜
+    - かぐや様は告らせたい～天才たちの恋愛頭脳戦～
+
+kaijin-reijoh:
+  display: 'Kaijin Reijoh'
+  aliases:
+    - Kaijin Reijoh
+    - Kaijin Reijou
+    - Monster Lady
+    - 怪人麗嬢
+
 kaiju-no-8:
-  display: Kaiju No. 8
+  display: 'Kaiju No. 8'
   aliases:
-  - 'Kaiju No. 8: Relax'
-  - 'Kaijuu 8-gou: RELAX'
-  - 怪獣８号 RELAX
+    - Kaiju 8
+    - 'Kaiju No. 8: Relax'
+    - kaiju-8
+    - 'Kaijuu 8-gou: RELAX'
+    - 怪獣８号 RELAX
+
+kakegurui:
+  display: 'Kakegurui'
+  aliases: []
+
+kakegurui-twin:
+  display: 'Kakegurui Twin'
+  aliases: []
+
+kamen-rider-black:
+  display: 'Kamen Rider Black'
+  aliases:
+    - kamen rider black
+    - masked rider black
+
+kamisama-kiss:
+  display: 'Kamisama Kiss'
+  aliases:
+    - Divine Nanami
+    - Kamisama Hajimemashita
+    - 神様はじめました
+
+karakuri-circus:
+  display: 'Karakuri Circus'
+  aliases:
+    - Le Cirque de Karakuri
+    - からくりサーカス
+
+kasai-ayumi-reijin-1993-2025:
+  display: 'Kasai Ayumi Gashu Reijin 1993-2025'
+  aliases:
+    - kasai ayumi reijin
+    - reijin 1993-2025
+    - 笠井あゆみ画集 麗人1993-2025
+
+katekyo-hitman-reborn:
+  display: 'Katekyo Hitman Reborn!'
+  aliases:
+    - katekyo hitman reborn
+    - katekyo hitman reborn i & ii
+    - katekyō hitman reborn
+    - reborn
+    - 家庭教師ヒットマンREBORN!
+
+kawarage-ryuuen-gakan:
+  display: 'Kawarage Gashu: Ryuuen Gakan'
+  aliases:
+    - kawarage gashu ryuuen gakan
+    - ryuuen gakan
+    - かわらげ画集 龍苑画巻
+    - 龍苑画巻
+
+kenen:
+  display: 'Ken''en'
+  aliases:
+    - Ken'en
+    - Ken'en - Comme Chien et Singe
+    - Kenen
+
+kengan-ashura:
+  display: 'Kengan Ashura'
+  aliases:
+    - Kengan Asura
+    - ケンガンアシュラ
+
+ki-hi:
+  display: 'Ki & Hi'
+  aliases: []
+
+kikanetsu-daisuke-richard:
+  display: 'Kikanetsu - DaisukeRichard'
+  aliases:
+    - daisuke-richard
+    - Kikanetsu
+    - Kikanetsu - DaisukeRichard
+    - 気化熱
+
+kill-la-kill:
+  display: 'Kill La Kill'
+  aliases: []
+
+killing-stalking:
+  display: 'Killing Stalking'
+  aliases:
+    - Killing Stalking
+    - キリング・ストーキング
+
+kimengumi:
+  display: 'Kimengumi'
+  aliases:
+    - Flash! Kimengumi
+    - Funny-face Club
+    - Le collège fou fou fou
+    - 奇面組
+
+kimi-ga-koi-ni-oboreru:
+  display: 'Kimi ga Koi ni Oboreru'
+  aliases:
+    - drowning love
+    - 君が恋に溺れる
+
+kimi-ni-todoke:
+  display: 'Kimi ni Todoke'
+  aliases:
+    - from me to you
+    - 君に届け
+
+kindergarten-wars:
+  display: 'Kindergarten Wars'
+  aliases:
+    - Kindergarten Wars
+    - Youchien WARS
+    - 幼稚園WARS
+
 kingdom:
-  display: Kingdom
+  display: 'Kingdom'
   aliases:
-  - キングダム
+    - キングダム
+
+kiniro-no-corda-starlight-orchestra:
+  display: 'Kiniro no Corda Starlight Orchestra'
+  aliases:
+    - kiniro no corda starlight
+    - la corda d'oro starlight orchestra
+    - 金色のコルダ スターライトオーケストラ
+
+kiss-him-not-me:
+  display: 'Kiss Him, Not Me'
+  aliases: []
+
+kissho-tennyo:
+  display: 'Kisshō Tennyo'
+  aliases:
+    - kissho tennyo
+    - 吉祥天女
+
+kizumono-no-hanayome:
+  display: 'Kizumono no Hanayome'
+  aliases:
+    - 'Koukoku no Souheki: Kizumono no Hanayome Gaiden'
+    - 傷モノの花嫁
+    - 皇國の双璧 傷モノの花嫁 外伝
+
 knights-of-sidonia:
-  display: Knights of Sidonia
+  display: 'Knights of Sidonia'
   aliases:
-  - Cydonia no Kishi
-  - Knights of Cydonia
-  - Rycerze Sidonii
-  - Sidonia no Kishi
-  - シドニアの騎士
-  - 銀河騎士傳
+    - Cydonia no Kishi
+    - Knights of Cydonia
+    - Rycerze Sidonii
+    - Sidonia no Kishi
+    - シドニアの騎士
+    - 銀河騎士傳
+
+kobato:
+  display: 'Kobato'
+  aliases:
+    - Kobato
+    - Kobato.
+    - こばと。
+
+kochikame:
+  display: 'Kochikame'
+  aliases:
+    - Kochikame
+    - 'KochiKame: Tokyo Beat Cops'
+    - Kochira Katsushika-ku Kameari Kouen-mae Hashutsujo
+    - こちら葛飾区亀有公園前派出所
+
+kodomo-no-omocha:
+  display: 'Kodomo no Omocha'
+  aliases:
+    - Child's Toy
+    - Il Giocattolo dei Bambini
+    - Kodocha
+    - Kodomo no Omocha
+    - こどものおもちゃ
+
 komi-can-t-communicate:
-  display: Komi Can't Communicate
+  display: 'Komi Can''t Communicate'
   aliases:
-  - Comi san ha Comyusho desu
-  - Komi - Nữ thần sợ giao tiếp
-  - Komi Konuşmaktan Korkuyor
-  - Komi Não Consegue se Comunicar
-  - Komi Sulit Berkomunikasi
-  - Komi cherche ses mots
-  - Komi ne ume da komunicira
-  - Komi-san Can't Communicate
-  - Komi-san Has a Communication Disorder
-  - Komi-san no puede comunicarse
-  - Komi-san wa Communication Shougai desu.
-  - Komi-san wa Comyushou desu.
-  - Komi-san wa, Komyushou desu.
-  - Miss Komi is Bad at Communication.
-  - 古見さんは、コミュ症です。
-  - 古见同学有交流障碍症
+    - Comi san ha Comyusho desu
+    - Komi - Nữ thần sợ giao tiếp
+    - Komi cherche ses mots
+    - Komi Konuşmaktan Korkuyor
+    - Komi ne ume da komunicira
+    - Komi Não Consegue se Comunicar
+    - Komi Sulit Berkomunikasi
+    - Komi-san Can't Communicate
+    - Komi-san Has a Communication Disorder
+    - Komi-san no puede comunicarse
+    - Komi-san wa Communication Shougai desu.
+    - Komi-san wa Comyushou desu.
+    - Komi-san wa, Komyushou desu.
+    - Miss Komi is Bad at Communication.
+    - 古見さんは、コミュ症です。
+    - 古见同学有交流障碍症
+
+konosuba:
+  display: 'Konosuba: God''s Blessing on This Wonderful World!'
+  aliases:
+    - Kono Subarashii Sekai ni Shukufuku wo!
+    - konosuba-god-s-blessing-on-this-won
+    - 'Konosuba: God''s Blessing on This Wonderful World!'
+    - この素晴らしい世界に祝福を！
+
+konosuba-explosion:
+  display: 'Konosuba: An Explosion on This Wonderful World!'
+  aliases:
+    - Gifting this Wonderful World with Explosions!
+    - Kono Subarashii Sekai ni Bakuen wo!
+    - Kono Subarashii Sekai ni Mou Ichido Bakuen wo!
+    - konosuba-an-explosion-on-this-wonde
+    - konosuba-more-explosions-on-this-wo
+    - 'Konosuba: an Explosion on This Wonderful World!'
+    - 'Konosuba: More Explosions on This Wonderful World!'
+    - この素晴らしい世界に爆焔を!
+    - 為美好的世界獻上爆焰！
+
+konosuba-fantastic-days:
+  display: 'KonoSuba: Fantastic Days'
+  aliases:
+    - kono subarashii sekai ni shukufuku wo fantastic days
+    - konosuba fantastic days
+    - この素晴らしい世界に祝福を!ファンタスティックデイズ
+
+kotetsu-jeeg:
+  display: 'Kotetsu Jeeg'
+  aliases:
+    - Kotetsu Jeeg
+    - Kotetsu Shin Jeeg
+    - Steel Jeeg
+    - 鋼鉄ジーグ
+
 koukoku-no-souheki-kizumono-no-hanayome-gaiden:
   display: 'Koukoku no Souheki: Kizumono no Hanayome Gaiden'
   aliases:
-  - 皇國の双璧　傷モノの花嫁 外伝
+    - 皇國の双璧　傷モノの花嫁 外伝
+
+kowloon-generic-romance:
+  display: 'Kowloon Generic Romance'
+  aliases:
+    - Kyuuryuu Generic Romance
+    - 九龍ジェネリックロマンス
+    - 九龍大眾浪漫
+
+kuma-kuma-kuma-bear:
+  display: 'Kuma Kuma Kuma Bear'
+  aliases:
+    - the bears bear a bare kuma
+
+kuro-somato:
+  display: 'Kuro'
+  aliases:
+    - kuro
+
+kyoukai-no-rinne:
+  display: 'Kyoukai no Rinne'
+  aliases:
+    - Rin-ne
+    - Rin-ne Círculo de Reencarnación
+    - Rinne, le cercle de la réincarnation
+    - 境界のRINNE
+
+la-esencia-del-judo:
+  display: 'La Esencia del Judo'
+  aliases:
+    - judo no shinzui
+    - the essence of judo
+
+la-gameuse-et-son-chat:
+  display: 'La Gameuse Et Son Chat'
+  aliases:
+    - A Gamer Living with a Cat
+    - Cat + Gamer
+    - gameuse-son-chat
+    - La Gameuse Et Son Chat
+    - Life With a Cat and Games
+    - Neko Gurashi no Gamer-san
+    - 猫暮らしのゲーマーさん
+
+la-gran-aventura-de-dragon-ball:
+  display: 'La gran aventura de Dragon Ball'
+  aliases:
+    - dragon ball gran aventura
+    - dragon-ball-gran-aventura
+    - great dragon ball adventure
+
+la-leyenda-de-dragon-quest:
+  display: 'La Leyenda de Dragon Quest'
+  aliases:
+    - dragon quest leyenda
+    - dragon-quest-leyenda
+    - legend of dragon quest
+
+la-luna-negra:
+  display: 'La Luna Negra'
+  aliases:
+    - luna negra
+    - the black moon
+
+la-odisea-del-rey-mono:
+  display: 'La Odisea del Rey Mono'
+  aliases:
+    - monkey king odyssey
+    - odisea del rey mono
+
+la-professoressa-mente:
+  display: 'La Professoressa Mente'
+  aliases:
+    - professor's white lies
+    - sensei no shiroi uso
+
+la-singularidad-de-ptolomeo:
+  display: 'La Singularidad de Ptolomeo'
+  aliases:
+    - La Singularidad de Ptolomeo
+    - Ptolemaios no Tokuiten
+    - Ptolemy's Singularity
+    - singularidad-ptolomeo
+
+lady-snowblood:
+  display: 'Lady Snowblood'
+  aliases:
+    - princess snowblood
+    - shura yukihime
+    - shurayuki-hime
+    - 'yuki: vingança na neve'
+
+land-of-the-lustrous:
+  display: 'Land of the Lustrous'
+  aliases:
+    - das land der juwelen
+    - houseki no kuni
+    - l'ère des cristaux
+    - la tierra de las gemas
+    - land of the lustrous
+    - terra das gemas
+
+last-game:
+  display: 'Last Game'
+  aliases:
+    - Last Game
+    - ラストゲーム
+
+legend-of-zelda:
+  display: 'The Legend of Zelda'
+  aliases: []
+
+leiji-matsumoto-unpublished-works:
+  display: 'Leiji Matsumoto''s Unpublished Works'
+  aliases:
+    - Leiji Matsumoto Unpublished Works
+    - Leiji Matsumoto's unpublished works
+    - leiji-matsumoto-s-unpublished-works
+
+liar-game:
+  display: 'Liar Game'
+  aliases:
+    - ライアーゲーム
+
+little-nuns:
+  display: 'Little Nuns'
+  aliases:
+    - ちいさな修道女
+
+little-witch-academia:
+  display: 'Little Witch Academia'
+  aliases:
+    - リトルウィッチアカデミア
+
+lone-wolf-and-cub:
+  display: 'Lone Wolf and Cub'
+  aliases:
+    - Kozure Ookami
+    - Lobo Solitario y su Cachorro
+    - Lobo Solitário
+    - Lone Wolf & Cub
+    - Lone Wolf And Cub
+    - 子連れ狼
+
+look-back:
+  display: 'Look Back'
+  aliases: []
+
+losers:
+  display: 'Losers: El Nacimiento de la Primera Revista Semanal de Seinen en Japón'
+  aliases:
+    - losers
+    - losers el nacimiento de la primera revista semanal de seinen en japon
+
+love-hina:
+  display: 'Love Hina'
+  aliases:
+    - ラブひな
+
+love-live-nijigasaki-high-school-idol-club:
+  display: 'Love Live! Nijigasaki High School Idol Club'
+  aliases:
+    - love live nijigasaki
+    - love live nijigasaki gakuen school idol doukoukai
+    - love-live-nijigasaki
+    - ラブライブ!虹ヶ咲学園スクールアイドル同好会
+
+love-me-love-me-not:
+  display: 'Love Me, Love Me Not'
+  aliases:
+    - Amar y Ser Amado, Dejar y Ser Dejado
+    - Furi Fura - Amores e Desenganos
+    - Love Me Love Me Not
+    - Love, be loved Leave, be left
+    - Omoi, Omoware, Furi, Furare
+    - 思い、思われ、ふり、ふられ
+
+luce-to-shiro-no-keiyaku:
+  display: 'Luce to Shiro no Keiyaku'
+  aliases:
+    - Luce and the White Contract
+    - ルーチェと白の契約
+
+lupin-iii:
+  display: 'Lupin III'
+  aliases:
+    - Lupin III
+    - Lupin the Third
+    - ルパン三世
+
+lycoris-recoil:
+  display: 'Lycoris Recoil'
+  aliases:
+    - Lycoris Recoil
+    - リコリス・リコイル
+
+made-in-abyss:
+  display: 'Made in Abyss'
+  aliases:
+    - Made in Abyss
+    - Meido in Abisu
+    - メイドインアビス
+
+magic-artisan-dahlia-wilts-no-more:
+  display: 'Magic Artisan Dahlia Wilts No More'
+  aliases:
+    - Madougushi Dahlia wa Utsumukanai
+    - madoushi-daria
+    - Magic Artisan Dahliya Won't Hang Her Head
+    - 魔導具師ダリヤはうつむかない
+
+magic-knight-rayearth:
+  display: 'Magic Knight Rayearth'
+  aliases:
+    - guerreiras mágicas de rayearth
+    - luchadoras de leyenda
+    - mahou kishi rayearth
+
+magica:
+  display: 'Magica'
+  aliases:
+    - Gokuaku Utopia
+    - Heinous Utopia
+    - MAGICA
+    - マジカ
+    - 極悪ユートピア
+
+magical-girl-howling-moon:
+  display: 'Divine Raiment Magical Girl Howling Moon'
+  aliases:
+    - Divine Raiment Magical Girl Howling Moon
+    - Magical Girl Howling Moon
+    - Shinsou Mahou Shoujo Howling Moon
+    - 神装魔法少女ハウリングムーン
+
+magus-of-the-library:
+  display: 'Magus of the Library'
+  aliases:
+    - Magus of the Library
+    - Toshokan no Daimajutsushi
+    - 図書館の大魔術師
+
+mahouka-koukou-no-yuutousei:
+  display: 'Mahouka Koukou no Yuutousei'
+  aliases:
+    - mahouka yuutousei
+    - the honor student at magic high school
+    - 魔法科高校の優等生
+
+maison-ikkoku:
+  display: 'Maison Ikkoku'
+  aliases:
+    - Cara dolce Kyoko
+    - Maison Ikkoku
+    - めぞん一刻
+
+makai-no-shuyaku-wa-wareware-da:
+  display: 'Makai no Shuyaku wa Wareware da!'
+  aliases:
+    - makai no shuyaku wa wareware da
+    - makai no shuyaku wa wareware da!
+    - we are the main characters of the demon world!
+
+make-the-exorcist-fall-in-love:
+  display: 'Make the Exorcist Fall in Love'
+  aliases: []
+
+manchuria-opium-squad:
+  display: 'Manchuria Opium Squad'
+  aliases:
+    - Manshuu Ahen Squad
+    - 満州アヘンスクワッド
+
+manga-bible:
+  display: 'The Manga Bible'
+  aliases:
+    - Bible Manga
+    - La Biblia (Manga)
+    - la-biblia
+    - 'Manga de Dokuha: Seisho'
+
+mao:
+  display: 'Mao'
+  aliases:
+    - Mao
+    - マオ
+
+maravillas-y-delicias-de-japon:
+  display: 'Maravillas y delicias de Japón'
+  aliases:
+    - Maravillas y delicias de Japón
+    - maravillas-delicias-japon
+
+march-comes-in-like-a-lion:
+  display: 'March Comes In like a Lion'
+  aliases:
+    - 3-gatsu no Lion
+    - 3月のライオン
+    - 3月的獅子
+    - El león de marzo
+    - Lion of March
+    - March Comes Like a Lion
+    - Marcowy lew
+    - O Leão de Março
+    - Sangatsu no Lion
+    - Sư Tử Tháng 3
+    - Un marzo da leoni
+
+marmalade-boy:
+  display: 'Marmalade Boy'
+  aliases:
+    - Mamare-do Bo-i
+    - ママレード・ボーイ
+
+marmalade-boy-little:
+  display: 'Marmalade Boy Little'
+  aliases:
+    - Marmalade Boy Little
+    - ママレード・ボーイ little
+
+mashiro-kun:
+  display: 'Mashiro-kun'
+  aliases:
+    - mashiro kun
+    - ましろくん
+
 mashle:
-  display: Mashle
+  display: 'Mashle'
   aliases:
-  - MASHLE
-  - 'Mashle: Magia e Músculos'
-  - 'Mashle: Magic and Muscles'
-  - マッシュル-MASHLE-
-  - 肌肉魔法使─MASHLE─
+    - MASHLE
+    - 'Mashle: Magia e Músculos'
+    - 'Mashle: Magic and Muscles'
+    - マッシュル-MASHLE-
+    - 肌肉魔法使─MASHLE─
+
+masurao:
+  display: 'Masurao'
+  aliases: []
+
+mazinger-z:
+  display: 'Mazinger Z'
+  aliases:
+    - Majinga Z
+    - mazinger z
+    - mazinger z (go nagai)
+    - mazinger-z-go-nagai
+    - マジンガーZ
+
+medaka-box:
+  display: 'Medaka Box'
+  aliases: []
+
+message-to-adolf:
+  display: 'Message to Adolf'
+  aliases:
+    - adolf
+    - adolf ni tsugu
+    - adolf-tezuka
+    - adorufu ni tsugu
+    - biblioteca tezuka adolf
+    - l'histoire des 3 adolf
+    - la storia dei tre adolf
+    - tell adolf
+    - アドルフに告ぐ
+
+metamorphose-no-engawa:
+  display: 'BL Metamorphosis'
+  aliases:
+    - BL Metamorphosis
+    - La Métamorphose du BL
+    - Metamorfosis BL
+    - Metamorfosis BL (Metamorphose no Engawa)
+    - metamorfosis-bl
+    - Metamorphose no Engawa
+    - メタモルフォーゼの縁側
+
+mi-prometido-yakuza:
+  display: 'Mi prometido yakuza'
+  aliases:
+    - Mi prometido yakuza
+    - Yakuza Fiance
+    - 'Yakuza Fiance: Raise wa Tanin ga Ii'
+    - Yakuza no Oshigoto
+    - 来世は他人がいい
+
+midnight-diner:
+  display: 'Midnight Diner'
+  aliases:
+    - La Cantina de Medianoche
+    - La Cantina de Medianoche (Midnight Diner)
+    - Shinya Shokudo
+    - Shinya Shokudou
+    - 深夜食堂
+
+mihara-jun-special-box:
+  display: 'Mihara Jun Special Box'
+  aliases:
+    - 三原順スペシャルBox
+    - 総特集 三原順
+
+minatos-laundromat:
+  display: 'Minato''s Laundromat'
+  aliases:
+    - La lavandería de Minato
+    - Minato Shouji Coin Laundry
+    - Minato Trading Coin Laundry
+    - Minato's Coin Laundry
+    - minato-shouji-coin-laundry
+    - Tiệm giặt là nhà Minato
+    - みなと商事コインランドリー
+
+mingo:
+  display: 'Mingo: Don''t Think All Italians Are Popular'
+  aliases:
+    - Mingo
+    - mingo-dont-think-all-italians-are-p
+    - 'Mingo: Don''t Think All Italians Are Popular'
+
+mirai-nikki:
+  display: 'Mirai Nikki'
+  aliases:
+    - future diary
+    - mirai nikki
+    - mirai nikki future diary
+    - mirai nikki | future diary
+    - mirai-nikki-future-diary
+
 miss-kobayashis-dragon-maid:
-  display: Miss Kobayashi's Dragon Maid
+  display: 'Miss Kobayashi''s Dragon Maid'
   aliases:
-  - Kobayashi-san Chi no Maid Dragon
-  - Kobayashi-san Chi no Maidragon
-  - The maid dragon of Kobayashi-san
-  - 小林さんちのメイドラゴン
+    - Kobayashi-san Chi no Maid Dragon
+    - Kobayashi-san Chi no Maidragon
+    - The maid dragon of Kobayashi-san
+    - 小林さんちのメイドラゴン
+
+mission-yozakura-family:
+  display: 'Mission: Yozakura Family'
+  aliases:
+    - La misión de la familia Yozakura
+    - 'Misión: Familia Yozakura'
+    - Mission Yozakura Family
+    - 'Missão: Família Yozakura'
+    - Nhiệm vụ tối thượng nhà Yozakura
+    - Yozakura-san Chi no Daisakusen
+    - 夜桜さんちの大作戦
+    - 夜櫻家大作戰
+
+mitsubara-no-kekkon:
+  display: 'Mitsubara no Kekkon'
+  aliases:
+    - 'Mitsubara no Kekkon: Deep Love'
+    - 蜜薔薇の結婚
+
+miyoshi-jukujo:
+  display: 'A Miyoshi le Gustan los Pechos'
+  aliases:
+    - a-miyoshi-le
+    - Miyoshi-san wa Kyonyuu ga Suki
+    - 三好さんは巨乳が好き
+
+mo-dao-zu-shi:
+  display: 'Mo Dao Zu Shi'
+  aliases:
+    - Grandmaster of Demonic Cultivation
+    - 'Grandmaster of Demonic Cultivation: Mo Dao Zu Shi'
+    - Le Grand Maître de la Cultivation Démoniaque
+    - MDZS
+    - Modao Zushi
+    - O Fundador da Cultivação Demoníaca
+    - The Founder of Diabolism
+    - The Grandmaster of Demonic Cultivation
+    - 赤笛云琴记
+    - 魔道祖师
+    - 魔道祖師
+
+mob-psycho-100:
+  display: 'Mob Psycho 100'
+  aliases:
+    - Mob Psycho 100
+    - モブサイコ100
+
+mobile-police-patlabor:
+  display: 'Mobile Police Patlabor'
+  aliases:
+    - Kidou Keisatsu Patlabor
+    - Patlabor
+    - 機動警察パトレイバー
+
+mobile-suit-gundam-series-and-spin:
+  display: 'Mobile Suit Gundam: series and spin-offs'
+  aliases: []
+
+moglie-di-una-spia:
+  display: 'Moglie di una Spia'
+  aliases:
+    - spy no tsuma
+    - wife of a spy
+    - スパイの妻
+
 monster:
-  display: Monster
+  display: 'Monster'
   aliases:
-  - MONSTER
+    - MONSTER
+
+monster-hunter-epic:
+  display: 'Monster Hunter Epic'
+  aliases:
+    - Monster Hunter Epic
+    - モンスターハンター エピック
+
+monster-hunter-flash-hunter:
+  display: 'Monster Hunter: Flash Hunter'
+  aliases:
+    - Monster Hunter Flash Hunter
+    - Monster Hunter Senkou no Karyuudo
+    - モンスターハンター 閃光の狩人
+
+monster-hunter-orage:
+  display: 'Monster Hunter Orage'
+  aliases:
+    - Monster Hunter Orage
+    - モンスターハンター オラージュ
+
+monster-musume:
+  display: 'Monster Musume: Everyday Life with Monster Girls'
+  aliases:
+    - Codzienność z potworzycami
+    - Die Monster Mädchen
+    - Everyday That There Is a Monster Girl
+    - Monmusu
+    - Monster Girls
+    - Monster Musume
+    - Monster Musume no Iru Nichijou
+    - モンスター娘のいる日常
+
+more-than-a-married-couple-but-not:
+  display: 'More Than a Married Couple but Not Lovers'
+  aliases: []
+
+moriarty-the-patriot:
+  display: 'Moriarty the Patriot'
+  aliases:
+    - Moriarty
+    - Moriarty el Patriota
+    - Moriarty's Patriotism
+    - Moriarty, o patriota
+    - Patriootti Moriarty
+    - Patriot Moriarty
+    - Yuukoku no Moriarty
+    - 憂国のモリアーティ
+
+mujina-into-the-deep:
+  display: 'Mujina Into The Deep'
+  aliases: []
+
+murcielago:
+  display: 'Murciélago'
+  aliases:
+    - Murcielago
+    - MURCIÉLAGO
+    - MURCIÉLAGO-ムルシエラゴ-
+
+museum:
+  display: 'Museum'
+  aliases:
+    - Museum
+    - 'Museum: The Serial Killer is Laughing in the Rain'
+    - ミュージアム
+
+mushishi:
+  display: 'Mushishi'
+  aliases:
+    - Mushi-shi
+    - Mushishi
+    - 蟲師
+
+mushoku-tensei:
+  display: 'Mushoku Tensei: Jobless Reincarnation'
+  aliases:
+    - Jobless Reincarnation
+    - Mushoku Tensei (Anime)
+    - mushoku tensei jobless reincarnatio
+    - 'Mushoku Tensei: In dieser Welt mach ich alles anders'
+    - 'Mushoku Tensei: Isekai Ittara Honki Dasu'
+    - 無職転生 ～異世界行ったら本気だす～
+
+mushoku-tensei-redundant-reincarnation:
+  display: 'Mushoku Tensei: Redundant Reincarnation'
+  aliases:
+    - Mushoku Tensei Dasokuhen
+    - 'Mushoku Tensei: Dasoku-hen'
+    - mushoku-tensei-dasokuhen
+    - 無職転生 蛇足編
+
+my-brothers-husband:
+  display: 'My Brother''s Husband'
+  aliases:
+    - Il Marito di Mio Fratello
+    - Le Mari de Mon Frère
+    - Otouto no Otto
+    - 弟の夫
+
+my-dearest-patrolman:
+  display: 'My Dearest Patrolman'
+  aliases:
+    - boku no omawari-san
+    - meu querido policial
+    - mi querido policia
+    - my dearest cop
+    - my pretty policeman
+    - my-pretty-policeman
+    - 僕のおまわりさん
+
 my-dress-up-darling:
-  display: My Dress-Up Darling
+  display: 'My Dress-Up Darling'
   aliases:
-  - Kisekoi
-  - Láska ve střihu cosplaye
-  - Minha Adorável Cosplayer
-  - Moja lutka za oblačenje
-  - More Than a Doll
-  - Oyuncak Bebek Sevgilim
-  - 'Projekt: Cosplay'
-  - Sexy Cosplay Doll
-  - Sono Bisque Doll wa Koi wo Suru
-  - Sono Kisekae Ningyou wa Koi wo suru
-  - その着せ替え人形は恋をする
-  - 戀上換裝娃娃
-  - 更衣人偶坠入爱河
+    - Kisekoi
+    - Láska ve střihu cosplaye
+    - Minha Adorável Cosplayer
+    - Moja lutka za oblačenje
+    - More Than a Doll
+    - My Dress-Up Darling | Bisque Doll
+    - Oyuncak Bebek Sevgilim
+    - 'Projekt: Cosplay'
+    - Sexy Cosplay Doll
+    - Sono Bisque Doll wa Koi wo Suru
+    - Sono Kisekae Ningyou wa Koi wo suru
+    - その着せ替え人形は恋をする
+    - 戀上換裝娃娃
+    - 更衣人偶坠入爱河
+
+my-dress-up-darling-bisque-doll:
+  display: 'My Dress-Up Darling | Bisque Doll'
+  aliases: []
+
+my-garland:
+  display: 'My Garland'
+  aliases:
+    - my garland artbook
+
 my-happy-marriage:
-  display: My Happy Marriage
+  display: 'My Happy Marriage'
   aliases:
-  - Benim Mutlu Evliliğim
-  - Hôn nhân hạnh phúc của tôi
-  - Meine ganz besondere Hochzeit
-  - Mi Feliz Matrimonio
-  - Moje szczęśliwe małżeństwo
-  - My Blissful Marriage
-  - Watashi no Shiawase na Kekkon
-  - わたしの幸せな結婚
-  - 我的幸福婚姻
-  - 我的美好婚事
+    - Benim Mutlu Evliliğim
+    - Hôn nhân hạnh phúc của tôi
+    - Meine ganz besondere Hochzeit
+    - Mi Feliz Matrimonio
+    - Moje szczęśliwe małżeństwo
+    - My Blissful Marriage
+    - Watashi no Shiawase na Kekkon
+    - わたしの幸せな結婚
+    - 我的幸福婚姻
+    - 我的美好婚事
+
 my-hero-academia:
-  display: My Hero Academia
+  display: 'My Hero Academia'
   aliases:
-  - Boku no Hero Academia
-  - HeroAca
-  - Học Viện Siêu Anh Hùng
-  - Kahramanlık Akademim
-  - Mitt Helteakademia
-  - My Hero Academia - Moje hrdinská akademie
-  - My Hero Academia- Akademia bohaterów
-  - ヒロアカ
-  - 僕のヒーローアカデミア
-  - 我的英雄學院
+    - Boku no Hero Academia
+    - HeroAca
+    - Học Viện Siêu Anh Hùng
+    - Kahramanlık Akademim
+    - Mitt Helteakademia
+    - My Hero Academia - Moje hrdinská akademie
+    - My Hero Academia- Akademia bohaterów
+    - ヒロアカ
+    - 僕のヒーローアカデミア
+    - 我的英雄學院
+
+my-lesbian-experience-with-loneliness:
+  display: 'My Lesbian Experience with Loneliness'
+  aliases:
+    - experiencia-lesbiana-soledad
+    - Mi experiencia lesbiana con la soledad
+    - Sabishisugite Lesbian Fuuzoku ni Ikimashita Report
+    - さびしすぎてレズ風俗に行きましたレポ
+
+my-love-mix-up:
+  display: 'My Love Mix-Up!'
+  aliases:
+    - Confuso primer amor
+    - Faded First Love
+    - Kieta Hatsukoi
+    - kieta-hatsukoi
+    - 消えた初恋
+
+my-love-story-with-yamada-kun-at-lv999:
+  display: 'My Love Story with Yamada-kun at Lv999'
+  aliases:
+    - loving yamada at lv999
+    - mi amor por yamada está al nv. 999
+    - yamada-kun lv999
+    - yamada-kun to lv999 no koi wo suru
+    - yamada-kun-to-lv999
+    - 山田くんとLv999の恋をする
+
+my-neighbor-totoro:
+  display: 'My Neighbor Totoro'
+  aliases:
+    - Mi vecino Totoro
+    - Mon voisin Totoro
+    - Tonari no Totoro
+    - となりのトトロ
+
+naci-para-esto:
+  display: 'Nací para esto'
+  aliases:
+    - Nací para esto
+
+nana:
+  display: 'Nana'
+  aliases:
+    - ナナ
+
+naoki-urasawa-dibujar-sin-descanso:
+  display: 'Naoki Urasawa: Dibujar sin descanso'
+  aliases:
+    - naoki urasawa
+    - naoki-urasawa
+    - urasawa naoki manben
+
+napoli-new-york:
+  display: 'Napoli-New York'
+  aliases:
+    - napoli new york
+    - napoli new york movie
+    - napoli-new york movie
+
 naruto:
-  display: Naruto
+  display: 'Naruto'
   aliases:
-  - NARUTO
-  - NARUTO -ナルト-
-  - 火影忍者
+    - NARUTO
+    - NARUTO -ナルト-
+    - raruto
+    - 火影忍者
+
+nausicaa-of-the-valley-of-the-wind:
+  display: 'Nausicaä of the Valley of the Wind'
+  aliases:
+    - Kaze no Tani no Nausicaä
+    - nausicaa
+    - Nausicaä
+    - Nausicaä de la Vallée du Vent
+    - Nausicaä del Valle del Viento
+    - Nausicaä della Valle del vento
+    - Nausicaä do Vale do Vento
+    - 風の谷のナウシカ
+
+negima:
+  display: 'Negima!'
+  aliases:
+    - mahou sensei negima
+    - negima
+    - negima magister negi magi
+    - 魔法先生ネギま！
+
 neon-genesis-evangelion:
-  display: Neon Genesis Evangelion
+  display: 'Neon Genesis Evangelion'
   aliases:
-  - Neogénesis Evangelion
-  - Shin Seiki Evangelion
-  - Shinseiki Evangelion
-  - 新世紀エヴァンゲリオン
-  - 新世紀福音戰士
+    - Neogénesis Evangelion
+    - Shin Seiki Evangelion
+    - Shinseiki Evangelion
+    - 新世紀エヴァンゲリオン
+    - 新世紀福音戰士
+
+neun:
+  display: 'NeuN'
+  aliases:
+    - NeuN
+    - ノイン
+
+new-grappler-baki:
+  display: 'New Grappler Baki'
+  aliases:
+    - 'baki: the search of our strongest hero'
+    - new grappler baki
+    - 'new grappler baki: in search of our strongest hero'
+
+nisekoi:
+  display: 'Nisekoi'
+  aliases:
+    - 'nisekoi: false love'
+    - ニセコイ
+
+no-game-no-life-please:
+  display: 'No Game No Life, Please!'
+  aliases:
+    - No Game No Life Please!
+    - No Game No Life, desu!
+    - No Game No Life, Please!
+    - ノーゲーム・ノーライフ・です!
+
+no-guns-life:
+  display: 'No Guns Life'
+  aliases:
+    - ノー・ガンズ・ライフ
+
+noblesse:
+  display: 'Noblesse'
+  aliases:
+    - Noblesse
+    - 大貴族
+
+noise-nihei:
+  display: 'NOiSE'
+  aliases:
+    - NOiSE
+    - ノイズ
+
+noragami:
+  display: 'Noragami'
+  aliases:
+    - Noragami
+    - 'Noragami: Stray God'
+    - Stray God
+    - ノラガミ
+
+nues-exorcist:
+  display: 'Nue''s Exorcist'
+  aliases:
+    - Nue no Onmyouji
+    - Nue's Exorcist
+    - 鵺の陰陽師
+
+nuestras-preciosas-conversaciones:
+  display: 'Nuestras preciosas conversaciones'
+  aliases:
+    - Bokura no Shokutaku
+    - Nuestras preciosas conversaciones
+    - preciosas-conversaciones
+
+nurarihyon-no-mago:
+  display: 'Nura: Rise of the Yokai Clan'
+  aliases:
+    - 'Nura: Le Seigneur des Yokai'
+    - Nurarihyon no Mago
+    - ぬらりひょんの孫
+
+ogeretsu-tanaka-yarichin-bitch-anniversary:
+  display: 'Ogeretsu Tanaka & Yarichin Bitch Club Anniversary'
+  aliases:
+    - ogeretsu tanaka 8 aniversario yarichin bitch club 10 aniversario
+    - yarichin bitch club anniversary
+
+ogiva-o-mundo-nao-e-mais-nosso:
+  display: 'Ogiva: O Mundo Não é Mais Nosso (Artbook)'
+  aliases:
+    - A Arte de Ogiva
+    - arte de ogiva
+    - 'Ogiva: O Mundo Não é Mais Nosso'
+
+oh-great-artbook:
+  display: 'Oh!great Artbook'
+  aliases:
+    - Oh!great
+    - ohgreat
+    - Oogure Ito Artbook
+
 old-boy:
-  display: Old Boy
+  display: 'Old Boy'
   aliases:
-  - Oldboj
-  - Oldboy
-  - oldboy
-  - オールドボーイ
+    - Oldboj
+    - Oldboy
+    - オールドボーイ
+
+omniscient-readers-viewpoint:
+  display: 'Omniscient Reader''s Viewpoint'
+  aliases:
+    - der allwissende leser
+    - jeonjijeok dokja sijeom
+    - lecteur omniscient
+    - lector omnisciente
+    - omniscient reader
+    - omniscient reader's viewpoint
+    - zenchiteki na dokusha no shiten kara
+
 one-piece:
-  display: One Piece
+  display: 'One Piece'
   aliases:
-  - 'Food Wars!: Shokugeki no Sanji'
-  - ONE PIECE
-  - ONE PIECE～航海王～
-  - 'One Piece: Shokugeki no Sanji'
-  - Sanjis Food Wars
-  - Shokugeki no Sanji
-  - ワンピース
-  - 食戟のサンジ
+    - 'Food Wars!: Shokugeki no Sanji'
+    - ONE PIECE
+    - 'One Piece: Shokugeki no Sanji'
+    - ONE PIECE～航海王～
+    - Sanjis Food Wars
+    - Shokugeki no Sanji
+    - ワンピース
+    - 食戟のサンジ
+
+one-piece-doors:
+  display: 'One Piece Doors'
+  aliases:
+    - ONE PIECE DOORS
+    - One Piece Doors Fanbook
+
 one-punch-man:
-  display: One-Punch Man
+  display: 'One-Punch Man'
   aliases:
-  - ONE-PUNCH MAN 一拳超人
-  - OPM
-  - One Punch Man
-  - One Punch-Man
-  - 'One-Punch Man: Tek Yumruk'
-  - Wanpanman
-  - ワンパンマン
+    - One Punch Man
+    - One Punch-Man
+    - ONE-PUNCH MAN 一拳超人
+    - 'One-Punch Man: Tek Yumruk'
+    - OPM
+    - Wanpanman
+    - ワンパンマン
+
+one-room-angel:
+  display: 'One Room Angel'
+  aliases: []
+
+one-week-friends:
+  display: 'One Week Friends'
+  aliases:
+    - isshukan friends
+    - 一週間フレンズ。
+
+oneira:
+  display: 'Oneira'
+  aliases:
+    - oneira
+
+onna-no-sono-no-hoshi:
+  display: 'Onna no Sono no Hoshi'
+  aliases:
+    - star of the girls' garden
+    - 女の園の星
+
+orange:
+  display: 'orange'
+  aliases: []
+
+orb-on-the-movements-of-the-earth:
+  display: 'Orb: On the Movements of the Earth'
+  aliases:
+    - chi chikyuu no undou ni tsuite
+    - chi the movement of the earth
+    - orb on the movements of the earth
+    - チ。―地球の運動について―
+
+ore-monogatari:
+  display: 'Ore Monogatari!!'
+  aliases:
+    - My Love Story!!
+    - Ore Monogatari
+    - 俺物語!!
+
+origin:
+  display: 'Origin'
+  aliases:
+    - オリジン
+
+oruchuban-ebichu:
+  display: 'Oruchuban Ebichu'
+  aliases:
+    - Ebichu the Housekeeping Hamster
+    - OL Shinkaron
+    - オるチュばんエビちゅ
+
 oshi-no-ko:
   display: '[Oshi no Ko]'
   aliases:
-  - Anak Idola
-  - Favorite Girl
-  - My Idol's Child
-  - OSHI NO KO - DƯỚI ÁNH HÀO QUANG
-  - 'Oshi no Ko: Minha Estrela Preferida'
-  - '[Mein*Star]'
-  - '[Moje hvězda]'
-  - 【MOJA GWIAZDA】
-  - 【OSHI NO KO】
-  - 【OSHI NO KO】Mi Idol Favorita
-  - 【我推的孩子】
-  - 【推しの子】
+    - '[Mein*Star]'
+    - '[Moje hvězda]'
+    - Anak Idola
+    - Favorite Girl
+    - My Idol's Child
+    - OSHI NO KO - DƯỚI ÁNH HÀO QUANG
+    - 'Oshi no Ko: Minha Estrela Preferida'
+    - 【MOJA GWIAZDA】
+    - 【OSHI NO KO】
+    - 【OSHI NO KO】Mi Idol Favorita
+    - 【我推的孩子】
+    - 【推しの子】
+
+otaku-vampires-love-bite:
+  display: 'Otaku Vampire''s Love Bite'
+  aliases:
+    - Oshi ni Amagami
+    - À crocs à toi
+    - 推しに甘噛み
+
+our-little-sister:
+  display: 'Our Little Sister'
+  aliases:
+    - Kamakura Diary
+    - Umimachi Diary
+    - 海街diary
+
+our-not-so-lonely-planet-travel-guide:
+  display: 'Our Not-So-Lonely Planet Travel Guide'
+  aliases:
+    - Bokura no Chikyuu no Arukikata
+    - Nuestra vuelta al mundo
+    - Our Not So Lonely Planet
+    - Our Not So Lonely Planet Travel Guide
+    - our-not-so-lonely-planet
+    - 僕らの地球の歩き方
+
+our-wild-youth:
+  display: 'Our Wild Youth'
+  aliases:
+    - Bokura no Hentai
+    - Bokura wa Minna Kawaisou
+    - Wakamonotachi
+
+ouran-host-club:
+  display: 'Ouran High School Host Club'
+  aliases:
+    - Colégio Ouran Host Club
+    - Host Club
+    - Host Club - Amore in affitto
+    - Host club - Le Lycée de la séduction
+    - Il liceo Host Club
+    - Instituto Ouran Host Club
+    - Le club host de l'école Ouran
+    - OHSHC
+    - Ouran Koukou Host Club
+    - Romantic Egoist
+    - 桜蘭高校ホスト部
+    - 櫻蘭高校男公關部
+
+overlord:
+  display: 'Overlord'
+  aliases:
+    - Over Lord
+    - オーバーロード
+
 pandora-hearts:
-  display: Pandora Hearts
+  display: 'Pandora Hearts'
   aliases:
-  - Pandora Hearts Pilot
-  - PandoraHearts
-  - パンドラハーツ
+    - Pandora Hearts Pilot
+    - PandoraHearts
+    - パンドラハーツ
+
+parasyte:
+  display: 'Parasyte'
+  aliases:
+    - Kiseiju
+    - Kiseiju - L'ospite indesiderato
+    - Kiseiju Parasite
+    - Kiseiju | Parasite
+    - kiseiju-parasite
+    - Kiseijuu
+    - Parasite
+    - Parasyte
+    - 寄生獣
+
+paredes-que-nos-separan:
+  display: 'Paredes que nos separan'
+  aliases:
+    - Paredes que nos separan
+
+perfect-world:
+  display: 'Perfect World'
+  aliases:
+    - Perfect World
+    - パーフェクトワールド
+
+phoenix:
+  display: 'Phoenix'
+  aliases:
+    - Fenix
+    - Fénix
+    - Hi no Tori
+    - L'Oiseau de Feu
+    - La Fenice
+    - 火の鳥
+
+ping-pong:
+  display: 'Ping Pong'
+  aliases: []
+
+pink-heart-jam:
+  display: 'Pink Heart Jam'
+  aliases: []
+
+piofiore-no-bansho:
+  display: 'Piofiore no Bansho'
+  aliases:
+    - piofiore episodio 1926
+    - piofiore fated memories
+    - ピオフィオーレの晩鐘
+
+planetes:
+  display: 'Planetes'
+  aliases:
+    - Planetes
+    - プラネテス
+
+platinum-end:
+  display: 'Platinum End'
+  aliases:
+    - Platina End
+    - プラチナエンド
+    - 白金终局
+
+platos-con-pintaza:
+  display: 'Platos con Pintaza - Mao Momiji'
+  aliases:
+    - mao-momiji
+    - Platos con Pintaza
+    - Platos con Pintaza - Mao Momiji
+
+please-tell-me-galko-chan:
+  display: 'Please Tell Me! Galko-chan'
+  aliases:
+    - Oshiete! Galko-chan
+    - Please Tell Me! Galko-chan
+    - おしえて! ギャル子ちゃん
+
+plinivs:
+  display: 'Plinivs'
+  aliases:
+    - pline
+    - plinius
+
+plum-historias-gatunas:
+  display: 'Plum, Historias Gatunas'
+  aliases:
+    - Neko Mix Genkitan Toraji
+    - Plum Crazy! Stories of a Tiger-Striped Cat
+    - Plum, Historias Gatunas
+    - 猫ミックス幻奇譚とらじ
+
+pokemon-adventures:
+  display: 'Pokémon Adventures'
+  aliases:
+    - Pocket Monsters SPECIAL
+    - Pokemon
+    - Pokemon Special
+    - 'Pokèmon: La Grande Avventura'
+    - Pokémon
+    - Pokémon Adventures
+    - Pokémon Integral
+    - Pokémon Special
+    - Pokémon, het grote avontuur
+    - ポケットモンスターSPECIAL
+
+pokemon-omega-ruby-alpha-sapphire:
+  display: 'Pokémon Omega Ruby & Alpha Sapphire'
+  aliases:
+    - Pokemon Omega Ruby Alpha Sapphire
+    - pokemon-omega-ruby-alpha
+    - Pokémon Ω Rubí・α Zafiro
+    - ポケットモンスター オメガルビー・アルファサファイア
+
+pokemon-sun-moon:
+  display: 'Pokémon Sun & Moon'
+  aliases:
+    - Pocket Monsters Sun & Moon
+    - pokemon-sun-moon
+    - Pokémon Sol y Luna
+    - Pokémon Sol・Luna
+    - Pokémon Sun & Moon
+    - ポケットモンスター サン・ムーン
+
+polaris-will-never-be-gone:
+  display: 'Polaris Will Never Be Gone'
+  aliases:
+    - Polaris no Sora wa Mata Habatakanai
+    - ポラリスの空はまた羽ばたかない
+
+pole-princess:
+  display: 'Pole Princess!!'
+  aliases:
+    - Pole Princess
+    - ポールプリンセス!!
+
+pone:
+  display: 'Pone'
+  aliases:
+    - PONE
+
+pone-arte-posuka-demizu:
+  display: 'PONE - El arte de Posuka Demizu'
+  aliases:
+    - PONE - El arte de Posuka Demizu
+    - PONE Posuka Demizu Art Works
+    - posuka-demizu
+
+princess-jellyfish:
+  display: 'Princess Jellyfish'
+  aliases:
+    - Kuragehime
+    - Princesse Méduse
+    - 海月姫
+
+princess-knight:
+  display: 'Princess Knight'
+  aliases:
+    - a princesa e o cavaleiro
+    - la princesa caballero
+    - princesse saphir
+    - ribbon knight
+    - ribbon no kishi
+    - リボンの騎士
+
+prison-school:
+  display: 'Prison School'
+  aliases:
+    - Kangoku Gakuen
+    - プリズンスクール
+    - 監獄学園
+
+professor-layton:
+  display: 'Professor Layton'
+  aliases:
+    - Layton-kyouju
+    - Le Professeur Layton
+    - レイトン教授
+
+project-sekai:
+  display: 'Project Sekai: Colorful Stage!'
+  aliases:
+    - Project Sekai Colorful Stage
+    - Project Sekai Colorful Stage! feat. Hatsune Miku Comic Anthology
+    - 'Project Sekai: Colorful Stage!'
+    - プロジェクトセカイ カラフルステージ！ feat.初音ミク
+    - プロセカ
+
+psychic-detective-yakumo:
+  display: 'Psychic Detective Yakumo'
+  aliases:
+    - Shinrei Tantei Yakumo
+    - 心霊探偵八雲
+
+puella-magi-madoka-magica:
+  display: 'Puella Magi Madoka Magica'
+  aliases:
+    - Madoka Magica
+    - Mahou Shoujo Madoka Magica
+    - Mahou Shoujo Madoka★Magica
+    - 魔法少女まどか★マギカ
+
+puella-magi-madoka-magica-rebellion:
+  display: 'Puella Magi Madoka Magica: The Movie Rebellion'
+  aliases:
+    - Madoka Magica Rebellion
+    - 'Mahou Shoujo Madoka Magica: Hangyaku no Monogatari'
+    - puella-magi-madoka-magica-the-movie-rebellion
+    - 魔法少女まどか☆マギカ 叛逆の物語
+
+purr-evil:
+  display: 'Purr Evil'
+  aliases: []
+
+pygmalion:
+  display: 'Pygmalion'
+  aliases:
+    - ピグマリオン
+
+q-on-the-seaside:
+  display: 'Q on the Seaside'
+  aliases:
+    - Umibe no Kyuu
+    - Umibe no Q
+    - 海辺のキュー
+
+queue-kanna-kii:
+  display: 'Queue - Kanna Kii Artbook'
+  aliases:
+    - queue - Kanna Kii
+    - Queue Kanna Kii
+
 radiant:
-  display: Radiant
+  display: 'Radiant'
   aliases:
-  - Sanran
+    - Sanran
+
+radiant-tale:
+  display: 'Radiant Tale'
+  aliases:
+    - Radiant Tale Fanbook
+    - ラディアンテイル
+
+rainbow-parakeet:
+  display: 'Rainbow Parakeet'
+  aliases:
+    - nanairo inko
+
+rakudai-kishi-no-cavalry:
+  display: 'Rakudai Kishi no Cavalry'
+  aliases:
+    - A Tale of Worst One
+    - Chivalry of a Failed Knight
+    - Rakudai Kishi no Cavalry
+    - Rakudai Kishi no Cavalry | A Tale of Worst One
+    - rakudai-kishi-no-cavalry-a-tale-of
+    - 落第騎士の英雄譚
+
+ranma-1-2:
+  display: 'Ranma 1/2'
+  aliases:
+    - ranma 1 2
+    - Ranma Nibunnoichi
+    - Ranma ½
+    - らんま1/2
+
+rascal-does-not-dream:
+  display: 'Rascal Does Not Dream'
+  aliases:
+    - rascal does not dream
+    - rascal does not dream of bunny girl senpai
+    - rascal does not dream of…
+    - rascal-does-not-dream-of
+    - seishun buta yarou
+    - seishun buta yarou wa bunny girl senpai no yume wo minai
+
+rave:
+  display: 'Rave Master'
+  aliases:
+    - Groove Adventure Rave
+    - RAVE
+    - Thánh thạch RAVE
+    - レイヴ
+
+real:
+  display: 'Real'
+  aliases:
+    - リアル
+
+record-of-lodoss-war:
+  display: 'Record of Lodoss War'
+  aliases:
+    - Chronicles of the Heroic Knight
+    - Lodoss-tou Senki
+    - 'Record of Lodoss War: La Dama de Faris'
+    - ロードス島戦記
+
+record-of-ragnarok:
+  display: 'Record Of Ragnarok'
+  aliases:
+    - Ragnarök Valkürleri
+    - Record of Ragnarök
+    - Shuumatsu no Valkyrie
+    - Shuumatsu no Walkure
+    - Shuumatsu no Walküre
+    - Valkyrie of the End
+    - Walkirie kresu dziejów
+    - 終末のワルキューレ
+
+reiraku:
+  display: 'Reiraku'
+  aliases:
+    - Descent
+    - Reiraku
+    - 零落
+
 rent-a-girlfriend:
-  display: Rent-A-Girlfriend
+  display: 'Rent-A-Girlfriend'
   aliases:
-  - Dziewczyna do wynajęcia
-  - 'Kanojo Okarishimasu: Rent-a-Girlfriend'
-  - Kanojo, Okarishimasu
-  - Kanokari
-  - Namorada de Aluguel
-  - Rental Girlfriend
-  - 女朋友、借我一下
-  - 彼女、お借りします
+    - Dziewczyna do wynajęcia
+    - 'Kanojo Okarishimasu: Rent-a-Girlfriend'
+    - Kanojo, Okarishimasu
+    - Kanokari
+    - Namorada de Aluguel
+    - Rental Girlfriend
+    - 女朋友、借我一下
+    - 彼女、お借りします
+
+requiem-of-the-rose-king:
+  display: 'Requiem of the Rose King'
+  aliases:
+    - Bara-ou no Souretsu
+    - Baraou no Souretsu
+    - Le requiem du roi des roses
+    - requiem-rey-rosa
+    - Réquiem por el rey de la rosa
+    - The Rose King's Funeral Procession
+    - 薔薇王の葬列
+
+resident-evil-death-island:
+  display: 'Resident Evil: Death Island'
+  aliases:
+    - 'Biohazard: Death Island'
+    - バイオハザード：デスアイランド
+
+revolutionary-girl-utena:
+  display: 'Revolutionary Girl Utena'
+  aliases:
+    - La chica revolucionaria
+    - Shoujo Kakumei Utena
+    - utena
+    - Utena, La chica revolucionaria
+    - 少女革命ウテナ
+
+riflessi-di-luce:
+  display: 'Riflessi di Luce'
+  aliases: []
+
+rise-of-the-ronin:
+  display: 'Rise of the Ronin'
+  aliases:
+    - ライズオブザローニン
+
+rokudenashi-majutsu-koushi:
+  display: 'Akashic Records of Bastard Magic Instructor'
+  aliases:
+    - Mishima Kurone Artbook
+    - RokuAka
+    - Rokudenashi Majutsu Koushi to Akashic Records
+    - Rokudenashi Majutsu Koushi to Kinki Kyouten
+    - ロクでなし魔術講師と禁忌教典
+
+ron-kamonohashi-deranged-detective:
+  display: 'Ron Kamonohashi: Deranged Detective'
+  aliases:
+    - El misterio prohibido de Ron Kamonohashi
+    - Kamonohashi Ron no Kindan Suiri
+    - Meisterdetektiv Ron Kamonohashi
+    - Ron Kamonohashi
+    - 'Ron Kamonohashi: Deranged Detective'
+    - ron-kamonohashi
+    - 鴨乃橋ロンの禁断推理
+
+rooster-fighter:
+  display: 'Rooster Fighter'
+  aliases:
+    - niwatori fighter
+    - rooster fighter - coq de baston
+    - 'rooster fighter: o galo lutador'
+
+rosario-to-vampire:
+  display: 'Rosario + Vampire'
+  aliases:
+    - Rosario to Vampire
+    - Rosario Vampire
+    - ロザリオとバンパイア
+
+rose-of-versailles:
+  display: 'The Rose of Versailles'
+  aliases:
+    - Berusaiyu no Bara
+    - La Rose de Versailles
+    - Lady Oscar
+    - Lady Oscar - La contessa dall'abito nero
+    - Le Rose di Versailles
+    - Rose of Versailles
+    - rose-di-versailles
+    - Versailles no Bara
+    - ベルサイユのばら
+
+rosen-garten-saga:
+  display: 'Rosen Garten Saga'
+  aliases:
+    - rosengarten saga
+
+route-end:
+  display: 'Route End'
+  aliases:
+    - Route End
+    - ルートエンド
+
+rozen-maiden:
+  display: 'Rozen Maiden'
+  aliases:
+    - rozen maiden ii
+    - rozen maiden tales
+
+rune-factory-ryu-no-kuni:
+  display: 'Rune Factory: Ryu no Kuni'
+  aliases:
+    - rune factory ryu no kuni
+    - ルーンファクトリー 龍の国
+
 ruri-dragon:
-  display: Ruri Dragon
+  display: 'Ruri Dragon'
   aliases:
-  - ruridragon
-  - ルリドラゴン
+    - ruridragon
+    - ルリドラゴン
+
+rurouni-kenshin:
+  display: 'Rurouni Kenshin'
+  aliases:
+    - Kenshin - Samurai vagabondo
+    - Kenshin le Vagabond
+    - Kenshin, o Samurai Errante
+    - Rurouni Kenshin Meiji Swordsman Romantic Story
+    - 'Rurouni Kenshin: Meiji Kenkaku Romantan'
+    - Samurai X
+    - るろうに剣心
+
+ryuko:
+  display: 'Ryuko'
+  aliases:
+    - 'Ryuko: The Scent of Iron'
+    - Ryūko
+
 s-h-n-d-ero-gal-iru-tte-hontou-desu-ka:
   display: 'S.H.N.D.: Ero Gal Iru tte Hontou desu ka!?'
   aliases:
-  - Arrogance
-  - Deai Fureai
-  - Enjoy Life!!
-  - Fatty Stream
-  - Itai Oneesan wa Toshishita ga Osuki
-  - S.H.N.D.エロ★GALいるって本当ですか！？
-  - Secret Love
-  - Toshishita no Osananajimi ga Kawaiku na tte Ita Kudan ni Tsuite
-  - Tsubuyaiter
+    - Arrogance
+    - Deai Fureai
+    - Enjoy Life!!
+    - Fatty Stream
+    - Itai Oneesan wa Toshishita ga Osuki
+    - S.H.N.D.エロ★GALいるって本当ですか！？
+    - Secret Love
+    - Toshishita no Osananajimi ga Kawaiku na tte Ita Kudan ni Tsuite
+    - Tsubuyaiter
+
+saekano:
+  display: 'Saekano: How to Raise a Boring Girlfriend'
+  aliases:
+    - how to raise a boring girlfriend
+    - misaki kurehito fine
+    - saenai heroine no sodatekata
+    - saenai kanojo no sodatekata
+    - 冴えない彼女の育てかた
+
+sailor-moon:
+  display: 'Sailor Moon'
+  aliases: []
+
 saint-seiya:
-  display: Saint Seiya
+  display: 'Saint Seiya'
   aliases:
-  - Cavaleiros do Zodíaco
-  - Knights of the Zodiac
-  - Les chevaliers du zodiaque
-  - Los caballeros del zodiaco
-  - Saint Seiya
-  - Zodiac Knights
-  - Áo Giáp Vàng
-  - 圣斗士星矢
-  - 聖闘士星矢
+    - Cavaleiros do Zodíaco
+    - Knights of the Zodiac
+    - Les chevaliers du zodiaque
+    - Los caballeros del zodiaco
+    - Saint Seiya
+    - Zodiac Knights
+    - Áo Giáp Vàng
+    - 圣斗士星矢
+    - 聖闘士星矢
+
 saint-seiya-episode-g:
-  display: Saint Seiya Episode G
+  display: 'Saint Seiya Episode G'
   aliases:
-  - 'Cavaleiros do Zodíaco: Episódio G'
-  - 聖闘士星矢 エピソードG
+    - 'Cavaleiros do Zodíaco: Episódio G'
+    - 聖闘士星矢 エピソードG
+
+saint-seiya-next-dimension:
+  display: 'Saint Seiya: Next Dimension'
+  aliases:
+    - Saint Seiya Gaiden
+    - Saint Seya Gaiden
+
+saint-seiya-saintia-sho:
+  display: 'Saint Seiya: Saintia Sho'
+  aliases:
+    - saint seiya saintia sho
+    - saintia sho
+
+saint-seiya-the-lost-canvas:
+  display: 'Saint Seiya: The Lost Canvas'
+  aliases:
+    - i cavalieri dello zodiaco - the lost canvas - il mito di ade
+    - 'os cavaleiros do zodíaco: the lost canvas - a saga de hades'
+    - saint seiya - the lost canvas - la légende d'hadès
+    - saint seiya the lost canvas
+    - 'saint seiya: the lost canvas - meiou shinwa'
+
+saint-seiya-the-lost-canvas-gaiden:
+  display: 'Saint Seiya: the Lost Canvas Gaiden (Anecdotes)'
+  aliases: []
+
+saint-seiya-time-odyssey:
+  display: 'Saint Seiya: Time Odyssey'
+  aliases:
+    - Saint Seiya - Time Odyssey
+    - Saint Seiya Time Odyssey
+    - 聖闘士星矢 Time Odyssey
+
+saint-young-men:
+  display: 'Saint Young Men'
+  aliases:
+    - Las Vacaciones de Jesús y Buda
+    - Les vacances de Jésus & Boudha
+    - Saint Oniisan
+    - Saint Young Men
+    - Saint☆Onii-san
+    - 聖☆おにいさん
+
 sakamoto-days:
-  display: Sakamoto Days
+  display: 'Sakamoto Days'
   aliases:
-  - SAKAMOTO DAYS
-  - SAKAMOTO DAYS 坂本日常
-  - サカモト デイズ
+    - SAKAMOTO DAYS
+    - SAKAMOTO DAYS 坂本日常
+    - サカモト デイズ
+
+sakura-mail:
+  display: 'Sakura Mail'
+  aliases:
+    - cherry tree communication
+    - sakura diaries
+    - sakura tsuushin
+
+sakura-saku:
+  display: 'Sakura, Saku'
+  aliases:
+    - Sakura Saku
+    - Sakura, Saku
+
+samurai-8-the-tale-of-hachimaru:
+  display: 'Samurai 8: The Tale of Hachimaru'
+  aliases:
+    - Samurai 8
+    - 'Samurai 8: Hachimaruden'
+    - サムライ8 八丸伝
+
+sanctuary:
+  display: 'Sanctuary'
+  aliases:
+    - サンクチュアリ
+
+sanda:
+  display: 'Sanda'
+  aliases:
+    - Sanda
+    - サンダ
+
+sasaki-and-miyano:
+  display: 'Sasaki and Miyano'
+  aliases:
+    - Sasaki e Miyano
+    - Sasaki i Miyano
+    - Sasaki to Miyano
+    - Sasaki y Miyano
+    - sasaki-to-miyano
+    - 佐々木と宮野
+
+satoshi-kon-la-mirada-de-un-autor:
+  display: 'Satoshi Kon: La mirada de un autor'
+  aliases:
+    - satoshi kon
+    - satoshi-kon
+
+sazan-and-comet-girl:
+  display: 'Sazan and Comet Girl'
+  aliases:
+    - Sazan Aizu
+    - サザンと彗星の少女
+
+school-detective:
+  display: 'School Detective'
+  aliases:
+    - School Detective
+
+secret-reiko-shimizu:
+  display: 'Secret'
+  aliases:
+    - secret
+
+seishun-tetsudou:
+  display: 'Seishun Tetsudou'
+  aliases:
+    - Youth Railway
+    - 青春鉄道
+
+sekisei-inko:
+  display: 'Sekisei Inko'
+  aliases:
+    - Budgerigar
+    - セキセイインコ
+
+sengoku-night-blood:
+  display: 'Sengoku Night Blood'
+  aliases:
+    - sengoku night blood koumei
+    - 戦国NIGHT BLOOD
+
+sensei-no-kaban:
+  display: 'The Walking Man'
+  aliases:
+    - A Valise do Professor
+    - anos-dulces
+    - Gli Anni Dolci
+    - Les Années Douces
+    - Los Años Dulces
+    - Sensei no Kaban
+    - The Briefcase
+
+sensei-no-shiroi-uso:
+  display: 'Sensei''s Pious Lie'
+  aliases:
+    - En proie au silence
+    - Las Mentiras de la Profesora
+    - las-mentiras-de-la-profesora
+    - Sensei no Shiroi Uso
+    - Teacher's White Lie
+    - 先生の白い噓
+
+seraph-of-the-end:
+  display: 'Seraph of the End'
+  aliases:
+    - Owari no Seraph
+    - OwaSera
+    - 'Seraph of the End: Vampire Reign'
+    - 終わりのセラフ
+
+seraph-of-the-end-guren-ichinose-catastrophe-sixteen:
+  display: 'Seraph of the End: Guren Ichinose: Catastrophe at Sixteen'
+  aliases:
+    - 'Owari no Seraph: Ichinose Guren, 16-sai no Catastrophe'
+    - 'Seraph of the End: Guren Ichinose'
+    - seraph-of-the-end-guren
+    - 終わりのセラフ 一瀬グレン、16歳の破滅
+
+sewayaki-kitsune-no-senko-san:
+  display: 'Sewayaki Kitsune no Senko-san'
+  aliases:
+    - sewayaki kitsune senko-san
+    - sewayaki-kitsune-senko-san
+    - The Helpful Fox Senko-san
+    - 世話やきキツネの仙狐さん
+
+shadowboxing:
+  display: 'Shadowboxing'
+  aliases: []
+
+shaman-king:
+  display: 'Shaman King'
+  aliases:
+    - Shaman King
+    - シャーマンキング
+
+shaman-king-flowers:
+  display: 'Shaman King: Flowers'
+  aliases:
+    - shaman king flowers
+
 shangri-la-frontier:
-  display: Shangri-La Frontier
+  display: 'Shangri-La Frontier'
   aliases:
-  - ShanFro
-  - 'Shangri-La Frontier: Kusoge Hunter, Kami ge ni Idoman to su'
-  - 'ShangriLa Frontier: Shitty Games Hunter Challenges Godly Game'
-  - シャングリラ・フロンティア〜クソゲーハンター, 神ゲーに挑まんとす〜
-  - 香格里拉・開拓異境~糞作獵手挑戰神作~
+    - ShanFro
+    - 'Shangri-La Frontier: Kusoge Hunter, Kami ge ni Idoman to su'
+    - 'ShangriLa Frontier: Shitty Games Hunter Challenges Godly Game'
+    - シャングリラ・フロンティア〜クソゲーハンター, 神ゲーに挑まんとす〜
+    - 香格里拉・開拓異境~糞作獵手挑戰神作~
+
+sherlock-manga:
+  display: 'Sherlock'
+  aliases:
+    - sherlock
+    - sherlock a study in pink
+    - sherlock holmes manga
+    - シャーロック
+
+shibatarian:
+  display: 'Shibatarian'
+  aliases: []
+
+shin-mazinger-zero:
+  display: 'Shin Mazinger Zero'
+  aliases:
+    - shin mazinger zero
+
+shinai-naru-m-e:
+  display: 'Shinai Naru M e (Al mio caro M)'
+  aliases:
+    - Al mio caro M
+    - Shinai naru M e
+    - 親愛なるMへ
+
+shintaro-kago:
+  display: 'Shintaro Kago'
+  aliases:
+    - Corpi Estranei
+    - Cuerpos extraños
+    - Ibutsu Konnyuu
+    - Kago Shintarou
+    - Shintaro Kago
+    - 駕籠真太郎
+
+ship-of-theseus:
+  display: 'Ship of Theseus'
+  aliases:
+    - El Barco de Teseo
+    - el-barco-de-teseo
+    - Theseus no Fune
+    - テセウスの船
+
+shonan-junai-gumi:
+  display: 'Shonan Junai Gumi'
+  aliases:
+    - gto the early years
+    - 'gto: the early years'
+    - shonan junai gumi - la banda dell'amore puro di shonan
+    - shonan pure love gang
+    - shounan junaigumi
+    - young gto
+
+shuuen-no-virche-epiclycoris:
+  display: 'Shuuen no Virche -EpiC:lycoris-'
+  aliases:
+    - Shuuen no Virche EpiClycoris
+    - '終遠のヴィルシュ -EpiC:lycoris-'
+
+shuuen-no-virche-error-salvation:
+  display: 'Shuuen no Virche -ErroR:salvation-'
+  aliases:
+    - shuuen no virche
+    - shuuen-no-virche-errorsalvation
+    - virche error salvation
+    - 終遠のヴィルシュ
+
+shuumatsu-nani-shitemasu-ka:
+  display: 'Shuumatsu Nani Shitemasu ka?'
+  aliases:
+    - SukaSuka
+    - 'WorldEnd: What do you do at the end of the world? Are you busy? Will you save'
+    - 終末なにしてますか？
+
+shy:
+  display: 'Shy'
+  aliases:
+    - SHY
+    - Tímida
+    - シャイ
+
+silence-takahashi:
+  display: 'Silence'
+  aliases:
+    - Silence
+
 silent-mobius:
-  display: Silent Möbius
+  display: 'Silent Möbius'
   aliases:
-  - Sairento Mebiusu
-  - Silent Mobius
-  - サイレントメビウス
+    - pack silent mobius
+    - pack silent möbius
+    - pack-silent-mobius
+    - Sairento Mebiusu
+    - Silent Mobius
+    - サイレントメビウス
+
+silent-witch:
+  display: 'Secrets of the Silent Witch'
+  aliases:
+    - Silent Witch
+    - 'Silent Witch: Chinmoku no Majo no Kakushigoto'
+    - サイレント・ウィッチ
+    - サイレント・ウィッチ 沈黙の魔女の隠しごと
+
+silver-spoon:
+  display: 'Silver Spoon'
+  aliases: []
+
+silverday:
+  display: 'Silverday'
+  aliases:
+    - ginyoubi no otogibanashi
+    - silverday, conte de fades de divendres de plata
+    - silverday, cuento de hadas del viernes de plata
+
+sin-amor:
+  display: 'Sin amor'
+  aliases:
+    - Sin amor
+
+sinners:
+  display: 'Sinners'
+  aliases: []
+
+skip-beat:
+  display: 'Skip Beat!'
+  aliases:
+    - Skip Beat
+    - Skip Beat!
+    - スキップ・ビート!
+
 slam-dunk:
-  display: Slam Dunk
+  display: 'Slam Dunk'
   aliases:
-  - SLAM DUNK
-  - 'Slam Dunk: 10 Days After'
-  - スラムダンク
+    - SLAM DUNK
+    - 'Slam Dunk: 10 Days After'
+    - スラムダンク
+
+sleepy-princess-in-the-demon-castle:
+  display: 'Sleepy Princess in the Demon Castle'
+  aliases:
+    - maou-jou de oyasumi
+    - maoujou de oyasumi
+    - sleepy princess
+    - sleepy princess in the demon castle
+    - sleepy-princess
+    - sweet dreams in the demon castle
+
+snack-world:
+  display: 'The Snack World'
+  aliases:
+    - Snack World
+    - スナックワールド
+
+so-im-a-spider-so-what:
+  display: 'So I''m a Spider, So What?'
+  aliases:
+    - Ich bin eine Spinne, na und?
+    - Kumo desu ga, Nani ka?
+    - So I'm a Spider So What?
+    - So I'm a spider what about it?
+    - so im a spider so what
+    - ¡Soy una araña! ¿Y qué?
+    - 蜘蛛ですが、なにか？
+    - 轉生成蜘蛛又怎樣！
+
+solanin:
+  display: 'Solanin'
+  aliases:
+    - solanin
+    - soranin
+
 solo-leveling:
-  display: Solo Leveling
+  display: 'Solo Leveling'
   aliases:
-  - I Level Up Alone
-  - Na Honjaman Level Up
-  - Only I Level Up
-  - Ore dake Level Up na Ken
-  - 俺だけレベルアップな件
-  - 我獨自升級
+    - I Level Up Alone
+    - Na Honjaman Level Up
+    - Only I Level Up
+    - Ore dake Level Up na Ken
+    - 俺だけレベルアップな件
+    - 我獨自升級
+
+sonic-the-hedgehog-la-era-2d:
+  display: 'Sonic the Hedgehog: La era 2D'
+  aliases:
+    - sonic era 2d
+    - sonic the hedgehog 2d era
+    - sonic-era-2d
+
 soul-eater:
-  display: Soul Eater
+  display: 'Soul Eater'
   aliases:
-  - ソウルイーター
+    - 'Soul Eater: The'
+    - 'Soul Eater: The Perfect Edition'
+    - soul-eater-the
+    - ソウルイーター
+
 soul-eater-not:
-  display: Soul Eater Not!
+  display: 'Soul Eater Not!'
   aliases:
-  - ソウルイーターノット!
+    - ソウルイーターノット!
+
+space-battleship-yamato:
+  display: 'Space Battleship Yamato'
+  aliases:
+    - uchuu senkan yamato
+    - yamato iconics
+    - 宇宙戦艦ヤマト
+
+spade-no-kuni-no-alice:
+  display: 'Spade no Kuni no Alice'
+  aliases:
+    - alice in the country of spades
+    - spade no kuni no alice wonderful white world
+    - スペードの国のアリス
+
 spice-and-wolf:
-  display: Spice & Wolf
+  display: 'Spice & Wolf'
   aliases:
-  - Okami to Koshinryo
-  - Ookami to Koushinryou
-  - Spice Wolf
-  - Spice and Wolf
-  - 狼と香辛料
-  - 狼與辛香料
+    - Okami to Koshinryo
+    - Ookami to Koushinryou
+    - Spice and Wolf
+    - Spice Wolf
+    - 狼と香辛料
+    - 狼與辛香料
+
+splatoon:
+  display: 'Splatoon'
+  aliases:
+    - Splatoon
+    - スプラトゥーン
+
+spriggan:
+  display: 'Spriggan'
+  aliases:
+    - Striker
+    - スプリガン
+
+spy-classroom:
+  display: 'Spy Classroom'
+  aliases:
+    - spy kyoushitsu
+    - supai kyoushitsu
+    - スパイ教室
+
 spy-x-family:
-  display: Spy x Family
+  display: 'Spy x Family'
   aliases:
-  - SPY×FAMILY
-  - SPY×FAMILY 間諜家家酒
-  - 'SPY×FAMILY: WJ Special Extra Mission!!'
-  - SxF
-  - spy x family
-  - spy×family
-  - スパイファミリー
-  - 间谍过家家
+    - spy x family
+    - SPY×FAMILY
+    - SPY×FAMILY 間諜家家酒
+    - 'SPY×FAMILY: WJ Special Extra Mission!!'
+    - SxF
+    - スパイファミリー
+    - 间谍过家家
+
+star-clock-liddell:
+  display: 'Star Clock Liddell'
+  aliases:
+    - hoshi no tokei no liddell
+    - liddell
+    - liddell au clair de lune
+
+stardust-crusaders-jojo-part-3:
+  display: 'Stardust Crusaders – Jojo part 3'
+  aliases: []
+
+stargazing-dog:
+  display: 'Stargazing Dog'
+  aliases:
+    - el perro enamorado de las estrellas
+    - hoshi mamoru inu
+    - il cane che guarda le stelle
+    - le chien gardien d'étoiles
+    - o cão que guarda as estrelas
+    - stargazing dog
+
+steam-detectives:
+  display: 'Steam Detectives'
+  aliases:
+    - Kaiketsu Jouki Tantei Dan
+    - 快傑蒸気探偵団
+
+steam-reverie-in-amber:
+  display: 'Steam Reverie in Amber'
+  aliases:
+    - Kohaku no Yume de Yoiniisuru
+    - 'Steam Reverie in Amber: Onirismo de vapor'
+
+steel-ball-run:
+  display: 'Steel Ball Run'
+  aliases:
+    - Dai 7 Bu Johnny Joestar
+    - 'JoJo no Kimyou na Bouken: Steel Ball Run'
+    - 'JoJo''''s Bizarre Adventure Part 7: Steel Ball Run'
+    - 'JoJo''''s Bizarre Adventure: Part 7–Steel Ball Run'
+    - 'Le bizzarre avventure di JoJo: Steel Ball Run'
+    - Steel Ball Run
+    - ジョジョの奇妙な冒険 スティール・ボール・ラン
+
+steins-gate:
+  display: 'Steins;Gate'
+  aliases:
+    - steins gate
+    - steins;gate
+
+strange-houses:
+  display: 'Strange Houses'
+  aliases:
+    - Casas Extrañas
+    - Hen na Ie
+    - 変な家
+
+strategic-lovers:
+  display: 'Strategic Lovers'
+  aliases: []
+
+strike-witches:
+  display: 'Strike Witches'
+  aliases:
+    - strike witches road to berlin
+    - ストライクウィッチーズ
+
+strobe-edge:
+  display: 'Strobe Edge'
+  aliases:
+    - Strobe Edge
+    - ストロボ・エッジ
+
+suicide-island:
+  display: 'Suicide Island'
+  aliases:
+    - jisatsu-tou
+    - jisatsutou
+
 sun-ken-rock:
-  display: Sun-Ken Rock
+  display: 'Sun-Ken Rock'
   aliases:
-  - Sun Ken Rock
-  - 'Trigun: The Lost Plant'
-  - サンケンロック
+    - Sun Ken Rock
+    - 'Trigun: The Lost Plant'
+    - サンケンロック
+
+sweet-paprika:
+  display: 'Sweet Paprika'
+  aliases:
+    - 'Sweet Paprika: Open for Business'
+
+sweet-paprika-black-white-pink:
+  display: 'Sweet Paprika: Black, White & Pink'
+  aliases:
+    - Sweet Paprika Black White Pink
+    - Sweet Paprika BWP
+    - sweet-paprika-bwp
+
+sweet-room-escape:
+  display: 'Sweet Room Escape'
+  aliases: []
+
+sword-art-online:
+  display: 'Sword Art Online'
+  aliases:
+    - SAO
+    - Sword Art Online (Game)
+    - ソードアート・オンライン
+
+sword-art-online-progressive:
+  display: 'Sword Art Online: Progressive'
+  aliases:
+    - SAO Progressive
+    - Sword Art Online Progressive
+    - 'Sword Art Online: Progressive'
+    - ソードアート・オンライン プログレッシブ
+
+tadokoro-san:
+  display: 'Tadokoro-san'
+  aliases:
+    - 田所さん
+
+takane-and-hana:
+  display: 'Takane & Hana'
+  aliases:
+    - Takane & Hana
+    - Takane and Hana
+    - Takane to Hana
+    - 高嶺と花
+
+takopis-original-sin:
+  display: 'Takopi''s Original Sin'
+  aliases:
+    - El Pecado Original de Takopi
+    - Le Péché originel de Takopi
+    - Octoppi's Original Sin
+    - Takopii no Genzai
+    - タコピーの原罪
+
+takumi-kun-series:
+  display: 'Takumi-kun Series'
+  aliases:
+    - barefoot waltz
+    - hadashi no waltz
+    - june pride
+    - takumi-kun
+    - タクミくんシリーズ
+
+tank-chair:
+  display: 'Tank Chair'
+  aliases: []
+
+tatari:
+  display: 'Tatari'
+  aliases:
+    - 祟
+
+tatsuki-fujimoto-short-stories:
+  display: 'Tatsuki Fujimoto Short Stories'
+  aliases:
+    - Fujimoto Tatsuki Tanpenshuu
+    - Tatsuki Fujimoto Before Chainsaw Man
+    - 藤本タツキ短編集
+
+tengoku-struggle-strayside:
+  display: 'Tengoku Struggle -Strayside-'
+  aliases:
+    - tengoku struggle
+    - tengoku struggle strayside
+    - 天獄 Struggle
+
 tenjo-tenge:
-  display: Tenjo Tenge
+  display: 'Tenjo Tenge'
   aliases:
-  - Enfer et Paradis
-  - Heaven and Earth
-  - Inferno e paradiso
-  - TenTen
-  - Tenjho Tenge
-  - Tenjou Tenge
-  - 天上天下
+    - Enfer et Paradis
+    - Heaven and Earth
+    - Inferno e paradiso
+    - Tenjho Tenge
+    - Tenjou Tenge
+    - TenTen
+    - 天上天下
+
 tensura:
-  display: That Time I Got Reincarnated as a Slime
+  display: 'That Time I Got Reincarnated as a Slime'
   aliases:
-  - Aquella Vez en que me Convertí en Slime
-  - Kun jälleensynnyin hirviönä
-  - Meine Wiedergeburt als Schleim in einer anderen Welt
-  - Moi, quand je me réincarne en Slime
-  - Odrodzony jako galareta
-  - Regarding Reincarnating as Slime
-  - TTIGRAAS
-  - TenSura
-  - Tensei Shitara Slime Datta Ken
-  - That Time I Got Reincarnated as a Slime
-  - Vita da slime
-  - tensei shitara slime
-  - tensei shitara slime datta ken
-  - that time i got reincarnated as a slime
-  - 転生したらスライムだった件
-  - 關於我轉生變成史萊姆這檔事
+    - Aquella Vez en que me Convertí en Slime
+    - Kun jälleensynnyin hirviönä
+    - Meine Wiedergeburt als Schleim in einer anderen Welt
+    - Moi, quand je me réincarne en Slime
+    - Odrodzony jako galareta
+    - Regarding Reincarnating as Slime
+    - tensei shitara slime
+    - Tensei Shitara Slime Datta Ken
+    - TenSura
+    - That Time I Got Reincarnated as a Slime
+    - TTIGRAAS
+    - Vita da slime
+    - 転生したらスライムだった件
+    - 關於我轉生變成史萊姆這檔事
+
+terada-katsuya-kim-jung-gi-illustration-book:
+  display: 'Terada Katsuya + Kim Jung Gi Illustration Book'
+  aliases:
+    - terada katsuya kim jung gi
+    - terada kim jung gi
+    - terada-kim-jung-gi
+
+terra-formars:
+  display: 'Terra Formars'
+  aliases:
+    - Terra Formars
+    - テラフォーマーズ
+
 the-apothecary-diaries:
-  display: The Apothecary Diaries
+  display: 'The Apothecary Diaries'
   aliases:
-  - Dược sư tự sự
-  - I diari della speziale
-  - Kusuriya no Hitorigoto
-  - Les Carnets de l'Apothicaire
-  - Los diarios de la boticaria
-  - 薬屋のひとりごと
-  - 藥師少女的獨語
+    - Dược sư tự sự
+    - I diari della speziale
+    - Kusuriya no Hitorigoto
+    - Les Carnets de l'Apothicaire
+    - Los diarios de la boticaria
+    - 薬屋のひとりごと
+    - 藥師少女的獨語
+
+the-book-of-wind:
+  display: 'The Book of Wind'
+  aliases:
+    - Il Libro del Vento
+    - Kaze no Sho
+    - libro-del-vento
+    - The Book of Wind
+    - 風の書
+
+the-box-man:
+  display: 'The Box Man'
+  aliases:
+    - Hako Otoko
+    - 箱男
+
+the-boxer:
+  display: 'The Boxer'
+  aliases:
+    - El boxeador
+
+the-breaker-new-waves:
+  display: 'The Breaker: New Waves'
+  aliases:
+    - The Breaker - New Waves
+    - The Breaker 2
+    - 'The Breaker: NW'
+    - 'The Breaker: Part 2'
+
 the-case-study-of-vanitas:
-  display: The Case Study of Vanitas
+  display: 'The Case Study of Vanitas'
   aliases:
-  - As Memórias de Vanitas
-  - Hồi kí Vanitas
-  - Księga Vanitasa
-  - Les mémoires de Vanitas
-  - Los Apuntes de Vanitas
-  - Memoir of Vanitas
-  - Vanitas no Carte
-  - Vanitas no Shuki
-  - Vanitas no Tehai
-  - ヴァニタスの手記
-  - 瓦尼塔斯的手记
+    - As Memórias de Vanitas
+    - Hồi kí Vanitas
+    - Księga Vanitasa
+    - Les mémoires de Vanitas
+    - Los Apuntes de Vanitas
+    - Memoir of Vanitas
+    - Vanitas no Carte
+    - Vanitas no Shuki
+    - Vanitas no Tehai
+    - ヴァニタスの手記
+    - 瓦尼塔斯的手记
+
+the-climber:
+  display: 'The Climber'
+  aliases:
+    - Kokou no Hito
+    - The Climber
+    - 孤高の人
+
+the-dark-history-of-the-reincarnated-villainess:
+  display: 'The Dark History of the Reincarnated Villainess'
+  aliases:
+    - Tensei Akujo no Kuro Rekishi
+    - tensei-akujo-no-kuro-rekishi
+    - 転生悪女の黒歴史
+
 the-devil-is-a-part-timer:
-  display: The Devil is a Part-Timer!
+  display: 'The Devil is a Part-Timer!'
   aliases:
-  - Demon Lord at Work!
-  - Hataraku Maou-sama!
-  - Hataraku Maousama!
-  - はたらく魔王さま!
+    - Demon Lord at Work!
+    - Hataraku Maou-sama!
+    - Hataraku Maousama!
+    - はたらく魔王さま!
+
+the-dunwich-horror-tanabe:
+  display: 'The Dunwich Horror (Tanabe)'
+  aliases:
+    - dunwich horror
+    - el horror de dunwich
+    - horror de dunwich
+    - horror-de-dunwich
+    - the dunwich horror
+
+the-elusive-samurai:
+  display: 'The Elusive Samurai'
+  aliases:
+    - Héroe fugitivo
+    - Nieuchwytny samuraj
+    - Nige Jouzu no Wakagimi
+    - The Master Escape Samurai
+    - 擅長逃跑的殿下
+    - 逃げ上手の若君
+
+the-eminence-in-shadow:
+  display: 'The Eminence in Shadow'
+  aliases:
+    - kage no jitsuryokusha ni naritakute!
+    - the eminence in shadow
+    - to be a power in the shadows!
+
+the-fable:
+  display: 'The Fable'
+  aliases:
+    - za faburu
+
+the-fragrant-flower-blooms-with-dignity:
+  display: 'The Fragrant Flower Blooms With Dignity'
+  aliases:
+    - a nobreza das flores
+    - kaoru hana wa rin to saku
+    - 'kaoru und rin: so nah und doch so fern'
+    - la nobleza de las flores
+    - the fragrant flower blooms with dignity
+    - the-fragrant-flower-blooms-with-dig
+
+the-girl-from-the-other-side:
+  display: 'The Girl From the Other Side: Siúil, a Rún'
+  aliases:
+    - A Menina do Outro Lado
+    - L'enfant et le maudit
+    - 'La Pequeña Forastera: Siúil, a Rún'
+    - Siúil, a Rún
+    - 'The Girl From the Other Side: Siuil, a Run'
+    - 'The Girl From the Other Side: Siúil, a Rún'
+    - the-girl-from-the-other-side-siuil
+    - Totsukuni no Shoujo
+    - とつくにの少女
+
+the-guy-she-was-interested-in-wasn:
+  display: 'The Guy She Was Interested in Wasn''t a Guy at All'
+  aliases: []
+
+the-heroic-legend-of-arslan:
+  display: 'The Heroic Legend of Arslan'
+  aliases:
+    - Arslan Senki
+    - Heroica Leyenda de Arslan
+    - heroica-leyenda-arslan
+    - La Heroica Leyenda de Arslan
+    - The Heroic Legend of Arslan
+    - アルスラーン戦記
+
+the-husky-and-his-white-cat-shizun:
+  display: 'The Husky and His White Cat Shizun'
+  aliases:
+    - dumb husky and his white cat shizun
+    - erha and his white cat master
+    - erha and his white cat teacher
+    - erha he tade baimao shizun
+    - husky shizun
+    - husky-shizun
+    - the husky and his white cat shizun
+
+the-irregular-at-magic-high-school:
+  display: 'The Irregular at Magic High School'
+  aliases:
+    - Irregular at Magic High
+    - irregular-magic-high-school
+    - Mahouka Koukou no Rettousei
+    - mahouka-koukou-no-rettousei
+    - Mahōka Kōkō no Rettōsei
+    - The Irregular at Magic High School
+    - 魔法科高校の劣等生
+
+the-jojolands:
+  display: 'The JOJOLands'
+  aliases:
+    - 'JoJo no Kimyou na Bouken: The JOJOLands'
+    - 'JoJo''''s Bizarre Adventure Part 9: The JOJOLands'
+    - JoJo's Bizarre Adventure - The JOJOLands
+    - 'JoJo''s Bizarre Adventure: The JOJOLands'
+    - JoJolands
+    - 'Le bizzarre avventure di JoJo: The JOJOLands'
+    - The JojoLands – Jojo part 9
+    - the-jojolands-jojo-part-9
+    - ジョジョの奇妙な冒険 The JOJOLands
+
+the-kajiki-chef-divine-cuisine:
+  display: 'The Kajiki Chef: Divine Cuisine'
+  aliases:
+    - Kajiki no Ryourinin
+
+the-magical-revolution-of-the-reincarnated-princess-and-the-genius-young-lady:
+  display: 'The Magical Revolution of the Reincarnated Princess and the Genius Young Lady'
+  aliases:
+    - magirevo
+    - tensei oujo
+    - tensei oujo to tensai reijou no mahou kakumei
+    - tensei-oujo-tensai-reijou
+    - tenten kakumei
+    - 転生王女と天才令嬢の魔法革命
+
+the-melancholy-of-haruhi-suzumiya:
+  display: 'The Melancholy of Haruhi Suzumiya'
+  aliases: []
+
+the-new-prince-of-tennis:
+  display: 'The New Prince of Tennis'
+  aliases: []
+
+the-new-recruit:
+  display: 'The New Recruit'
+  aliases:
+    - Mnere
+
+the-perfect-crime:
+  display: 'The Perfect Crime'
+  aliases:
+    - Crimen Perfecto
+    - crimen-perfecto
+    - Kanzen Hanzai-tou no Yuuutsu
+    - 完全犯罪党の憂鬱
+
+the-prince-of-tennis:
+  display: 'The Prince of Tennis'
+  aliases:
+    - prince du tennis
+    - tenipuri
+    - tennis no ouji-sama
+    - tennis no oujisama
+    - the prince of tennis
+
 the-promised-neverland:
-  display: The Promised Neverland
+  display: 'The Promised Neverland'
   aliases:
-  - Miền đất hứa
-  - Obećana Nedođija
-  - TPN
-  - Vadedilmiş Yokyer
-  - YakuNeba
-  - Yakusoku no Neverland
-  - Zaslíbená Země Nezemě
-  - 約定的夢幻島
-  - 約束のネバーランド
+    - Miền đất hứa
+    - Obećana Nedođija
+    - TPN
+    - Vadedilmiş Yokyer
+    - YakuNeba
+    - Yakusoku no Neverland
+    - Zaslíbená Země Nezemě
+    - 約定的夢幻島
+    - 約束のネバーランド
+
 the-quintessential-quintuplets:
-  display: The Quintessential Quintuplets
+  display: 'The Quintessential Quintuplets'
   aliases:
-  - 5-toubun no Hanayome
-  - As Quíntuplas
-  - Eşsiz Beşizler
-  - Go-toubun no Hanayome
-  - Las Quintillizas
-  - Nhà có 5 Nàng dâu
-  - Somos quintillizas
-  - Sposób na pięcioraczki
-  - The Five Wedded Brides
-  - 五等分の花嫁
-  - 五等分的新娘
+    - 5-toubun no Hanayome
+    - As Quíntuplas
+    - Eşsiz Beşizler
+    - Go-toubun no Hanayome
+    - Las Quintillizas
+    - Nhà có 5 Nàng dâu
+    - Somos quintillizas
+    - Sposób na pięcioraczki
+    - The Five Wedded Brides
+    - 五等分の花嫁
+    - 五等分的新娘
+
+the-reincarnated-swordmaster:
+  display: 'The Reincarnated Swordmaster'
+  aliases:
+    - Reincarnated Swordmaster
+    - Tensei Kenja
+
+the-rising-of-the-shield-hero:
+  display: 'The Rising of the Shield Hero'
+  aliases:
+    - El ascenso del héroe del escudo
+    - Tate no Yuusha no Nariagari
+    - 盾の勇者の成り上がり
+    - 盾之勇者成名錄
+
 the-seven-deadly-sins:
-  display: The Seven Deadly Sins
+  display: 'The Seven Deadly Sins'
   aliases:
-  - Nanatsu no Taizai
-  - Thất hình đại tội
-  - Yedi Ölümcül Günah
-  - 七つの大罪
-  - 七大罪
+    - Nanatsu no Taizai
+    - Thất hình đại tội
+    - Yedi Ölümcül Günah
+    - 七つの大罪
+    - 七大罪
+
+the-ship-of-theseus:
+  display: 'The Ship of Theseus'
+  aliases:
+    - La nave di Teseo
+    - Le bateau de Thésée
+    - le-bateau-de-thesee
+    - Theseus no Fune
+    - テセウスの船
+
 the-summer-hikaru-died:
-  display: The Summer Hikaru Died
+  display: 'The Summer Hikaru Died'
   aliases:
-  - Hikaru ga Shinda Natsu
-  - 光が死んだ夏
+    - Hikaru ga Shinda Natsu
+    - 光が死んだ夏
+
+the-way-of-the-househusband:
+  display: 'The Way Of The Househusband'
+  aliases: []
+
+thunder-3:
+  display: 'Thunder 3'
+  aliases:
+    - Thunder Three
+    - サンダー3
+
+thus-spoke-rohan-kishibe:
+  display: 'Thus Spoke Rohan Kishibe'
+  aliases:
+    - así habló kishibe rohan
+    - così parlò rohan kishibe
+    - kishibe rohan wa ugokanai
+    - rohan au louvre
+    - thus spoke kishibe rohan
+    - thus spoke rohan kishibe
+
+times-of-botchan:
+  display: 'The Times of Botchan'
+  aliases:
+    - Ai tempi di Bocchan
+    - Au temps de Bocchan
+    - Bocchan no Jidai
+    - Botchan no Jidai
+    - 坊っちゃんの時代
+
+toaru-kagaku-no-railgun:
+  display: 'A Certain Scientific Railgun'
+  aliases:
+    - Railgun T
+    - Toaru Kagaku no Railgun
+    - Toaru Kagaku no Railgun T
+    - toaru-kagaku-no-railgun-t
+    - とある科学の超電磁砲
+
+togen-anki:
+  display: 'Togen Anki'
+  aliases:
+    - Tougen Anki
+    - Tougen anki Sangue maledetto
+    - 'Tougen Anki: Legend of the Cursed Blood'
+    - 桃源暗鬼
+
 toilet-bound-hanako-kun:
-  display: Toilet-Bound Hanako-kun
+  display: 'Toilet-Bound Hanako-kun'
   aliases:
-  - '"Cậu" ma nhà xí Hanako'
-  - Hanako kun - I sette misteri dell'Accademia Kamome
-  - Hanako si Arwah Penasaran
-  - Hanako, duch ze szkolnej toalety
-  - Hanako-Kun e os mistérios do colégio Kamome
-  - Hanako-Kun y los misterios de la Academia Kamome
-  - Hanako-Kun, El Fantasma del Lavabo
-  - Jibaku Shounen Hanako-kun
-  - Mein Schulgeist Hanako
-  - 地縛少年 花子くん
-  - 地缚少年花子君
+    - Cậu" ma nhà xí Hanako
+    - Hanako kun - I sette misteri dell'Accademia Kamome
+    - Hanako si Arwah Penasaran
+    - Hanako, duch ze szkolnej toalety
+    - Hanako-Kun e os mistérios do colégio Kamome
+    - Hanako-Kun y los misterios de la Academia Kamome
+    - Hanako-Kun, El Fantasma del Lavabo
+    - Jibaku Shounen Hanako-kun
+    - Mein Schulgeist Hanako
+    - 地縛少年 花子くん
+    - 地缚少年花子君
+
+tokko:
+  display: 'Tokko'
+  aliases:
+    - Tokko Phantom Hunter
+    - 'Tokko: Devil''s Awaken'
+    - 特公
+
+tokyo-alien-bros:
+  display: 'Tokyo Alien Bros.'
+  aliases:
+    - Tokyo Alien Bros
+
+tokyo-color-sonic:
+  display: 'Tokyo Color Sonic!!'
+  aliases:
+    - tokyo color sonic
+    - 東京カラーソニック
+
+tokyo-genso:
+  display: 'TOKYO GENSO'
+  aliases:
+    - TOKYO GENSO
+    - 東京幻想
+
 tokyo-ghoul:
-  display: Tokyo Ghoul
+  display: 'Tokyo Ghoul'
   aliases:
-  - Tokijski gul
-  - Tokijský ghúl
-  - Tokyo Guru
-  - Tokyo Gûl
-  - Toukyou Kushu
-  - 東京喰種
-  - 東京喰種 トーキョーグール
+    - Tokijski gul
+    - Tokijský ghúl
+    - Tokyo Guru
+    - Tokyo Gûl
+    - Toukyou Kushu
+    - 東京喰種
+    - 東京喰種 トーキョーグール
+
+tokyo-ghoul-re:
+  display: 'Tokyo Ghoul:re'
+  aliases:
+    - 'Tokijský ghúl: re'
+    - Tokyo Ghoul re
+    - 'Tokyo Gûl: RE'
+    - 'Tokyo Kushu:re'
+    - '東京喰種-トーキョーグール-:re'
+    - '東京喰種:re'
+    - '東京喰種トーキョーグール:re'
+
 tokyo-revengers:
-  display: Tokyo Revengers
+  display: 'Tokyo Revengers'
   aliases:
-  - Justițiarii din Tokio
-  - Tokijski osvetnici
-  - Tokyo Manji Revengers
-  - Tokyo卍Revengers
-  - Toukyou卍Revengers
-  - 東京卍リベンジャーズ
+    - Justițiarii din Tokio
+    - Tokijski osvetnici
+    - Tokyo Manji Revengers
+    - Tokyo卍Revengers
+    - Toukyou卍Revengers
+    - 東京卍リベンジャーズ
+
+tomie:
+  display: 'Tomie'
+  aliases:
+    - Tomie
+    - 富江
+
+tonari-no-kaibutsu-kun:
+  display: 'My Little Monster'
+  aliases:
+    - El Monstruo de al Lado
+    - The Monster Next Door
+    - the-girl-next-door-monster
+    - Tonari no Kaibutsu-kun
+    - となりの怪物くん
+
+tonikaku-kawaii:
+  display: 'Fly Me to the Moon'
+  aliases:
+    - Beni Ay'a Götür
+    - Così carina. Fly me to the moon
+    - Fly me to the moon - Tóm lại là em dễ thương, được chưa?
+    - Generally Cute
+    - Tonikaku Cawaii
+    - Tonikaku Kawaii
+    - Tonikaku Kawaii | Fly me to the Moon
+    - トニカクカワイイ
+    - 总之就是非常可爱
+    - 總之就是很可愛
+
+toradora:
+  display: 'Toradora!'
+  aliases:
+    - Tiger X Dragon
+    - TigerxDragon
+    - Toradora!
+    - とらドラ！
+
+touken-ranbu-outdoor-ibun-touken-yaei:
+  display: 'Touken Ranbu: Outdoor Ibun Touken Yaei'
+  aliases:
+    - touken ranbu outdoor
+    - 'touken ranbu: outdoor ibun – touken camp'
+    - touken-ranbu-outdoor
+    - 刀剣乱舞 あうとどあ異聞 刀剣野営
+
+touken-ranbu-yaei:
+  display: 'Touken Ranbu: Outdoor Tales'
+  aliases:
+    - Touken Ranbu Outdoor Ibun Touken Yaei
+    - Touken Ranbu Yaei
+    - 刀剣乱舞 あうとどあ異聞 刀剣野営
+
+tower-dungeon:
+  display: 'Tower Dungeon'
+  aliases:
+    - tower dungeon
+
+toy-e-superbeast:
+  display: 'Toy-E Art Superbeast'
+  aliases:
+    - Toy-E Art Superbeast
+
+transformers-war-for-cybertron-artbook:
+  display: 'The Art and Making of Transformers: War for Cybertron Trilogy'
+  aliases:
+    - The Art and Making of Transformers War for Cybertron Trilogy Artbook
+
+trigun:
+  display: 'Trigun'
+  aliases:
+    - TRIGUN
+    - トライガン
+
+tsubaki-chou-lonely-planet:
+  display: 'Tsubaki-chou Lonely Planet'
+  aliases:
+    - Tsubaki Chou Lonely Planet
+    - 椿町ロンリープラネット
+
+tsubasa-reservoir-chronicle:
+  display: 'Tsubasa: Reservoir Chronicle'
+  aliases:
+    - Tsubasa
+    - Tsubasa Chronicle
+    - Tsubasa Reservoir Chronicle
+    - 'Tsubasa: Reservoir Chronicle'
+    - ツバサ-RESERVoir CHRoNiCLE-
+
+twilight-out-of-focus:
+  display: 'Twilight Out of Focus'
+  aliases:
+    - tasogare outfocus
+    - twilight out of focus long take
+    - twilight outfocus
+    - twilight-outfocus long take
+
+twilight-outfocus-long-take:
+  display: 'Twilight Outfocus Long Take'
+  aliases:
+    - Twilight Out of Focus
+    - Twilight Outfocus
+    - twilight-outfocus
+
+twin-star-exorcists:
+  display: 'Twin Star Exorcists'
+  aliases:
+    - Sousei no Onmyouji
+    - Twin Star Exorcists
+    - 双星の陰陽師
+
+twisted-wonderland-heartslabyul:
+  display: 'Disney Twisted-Wonderland: Book of Heartslabyul'
+  aliases:
+    - 'disney twisted-wonderland the comic: episode of heartslabyul'
+    - 'disney twisted-wonderland: the manga – book of heartslabyul'
+    - twisted wonderland heartslabyul
+    - twisted-wonderland - la maison heartslabyul
+
+twisted-wonderland-savanaclaw:
+  display: 'Disney Twisted-Wonderland: Book of Savanaclaw'
+  aliases:
+    - 'disney twisted-wonderland the comic: episode of savanaclaw'
+    - 'disney twisted-wonderland: the manga – book of savanaclaw'
+    - twisted wonderland savanaclaw
+    - 'twisted wonderland: book of savanaclaw'
+    - twisted-wonderland - la maison savanaclaw
+
+ubel-blatt:
+  display: 'Übel Blatt'
+  aliases:
+    - Evil Blade
+    - Ubel Blatt
+    - Übel Blatt ～ユーベルブラット～
+
+ufo-robot-grendizer:
+  display: 'UFO Robot Grendizer'
+  aliases: []
+
+ultra-maniac:
+  display: 'Ultra Maniac'
+  aliases:
+    - Los Trucos de Nina
+    - ウルトラマニアック
+
 uma-musume-cinderella-gray:
   display: 'Uma Musume: Cinderella Gray'
   aliases:
-  - ウマ娘 シンデレラグレイ
+    - 'Umamusume: Cinderella Gray'
+    - ウマ娘 シンデレラグレイ
+
+una-enfermedad-llamada-amor:
+  display: 'Una enfermedad llamada amor'
+  aliases:
+    - a sickness called love
+    - enfermedad llamada amor
+    - enfermedad-llamada-amor
+
+undead-unluck:
+  display: 'Undead Unluck'
+  aliases:
+    - アンデッドアンラック
+    - 不死不運
+
+under-ninja:
+  display: 'Under Ninja'
+  aliases:
+    - Under Ninja
+    - アンダーニンジャ
+    - 地下忍者
+
+urusei-yatsura:
+  display: 'Urusei Yatsura'
+  aliases:
+    - Lamù
+    - Lum
+    - Those Obnoxious Aliens
+    - うる星やつら
+
+uzumaki:
+  display: 'Uzumaki'
+  aliases:
+    - Spiral
+    - 'Uzumaki: Spiral into Horror'
+    - うずまき
+
+vagabond:
+  display: 'Vagabond'
+  aliases:
+    - Bagabondo
+    - バガボンド
+
+valhallian-the-black-iron:
+  display: 'Valhallian the Black Iron'
+  aliases:
+    - Kurogane no Valhallian
+    - Valhallian The Black Iron
+    - valhallian-black-iron
+    - 黒鉄のヴァルハリアン
+
+vampire-knight:
+  display: 'Vampire Knight'
+  aliases:
+    - Vampire Knight
+    - ヴァンパイア騎士
+    - 吸血鬼騎士
+
+veil:
+  display: 'Veil'
+  aliases:
+    - Veiru
+    - ヴェイル
+
+versus:
+  display: 'Versus'
+  aliases:
+    - ヴァーサス
+
 vinland-saga:
-  display: Vinland Saga
+  display: 'Vinland Saga'
   aliases:
-  - Saga Winlandzka
-  - ヴィンランド・サガ
-  - 海盜戰記VINLAND SAGA
+    - Saga Winlandzka
+    - ヴィンランド・サガ
+    - 海盜戰記VINLAND SAGA
+
+wakfu:
+  display: 'Wakfu'
+  aliases: []
+
+wayne-family-adventures:
+  display: 'Wayne Family Adventures'
+  aliases:
+    - Wayne Family Adventures
+
+welcome-to-demon-school-iruma-kun:
+  display: 'Welcome to Demon School! Iruma-kun'
+  aliases: []
+
+wild-strawberry:
+  display: 'Wild Strawberry'
+  aliases:
+    - Wild Strawberry
+
+wind-breaker:
+  display: 'Wind Breaker'
+  aliases:
+    - Wind Breaker
+    - WIND BREAKER—防風少年—
+    - ウィンドブレイカー
+
+wistoria-wand-and-sword:
+  display: 'Wistoria: Wand and Sword'
+  aliases:
+    - Tsue to Tsurugi no Wistoria
+    - Wistoria Wand and Sword
+    - 'Wistoria: Wand and Sword'
+    - 杖と剣のウィストリア
+
 witch-hat-atelier:
-  display: Witch Hat Atelier
+  display: 'Witch Hat Atelier'
   aliases:
-  - Atelier of Witch Hat
-  - Atelier spiczastych kapeluszy
-  - Atelierul Vrăjitoarelor
-  - Ateliér špičatých klobouků
-  - Cadı Şapkası Atölyesi
-  - Das Geheimnis der Hexen
-  - El Atelier de Sombreros de Mago
-  - Heksehatt-atelieret
-  - L'Atelier des Sorciers
-  - Tongari Boushi no Atelier
-  - Xưởng phép thuật
-  - atelier des sorciers
-  - atelier of witch hat
-  - el atelier del sombrero
-  - l'atelier des sorciers
-  - tongari boushi no atelier
-  - とんがり帽子のアトリエ
-  - 尖帽子的魔法工坊
-  - 魔法帽的工作室
+    - atelier des sorciers
+    - Atelier of Witch Hat
+    - Atelier spiczastych kapeluszy
+    - Atelierul Vrăjitoarelor
+    - Ateliér špičatých klobouků
+    - Cadı Şapkası Atölyesi
+    - Das Geheimnis der Hexen
+    - El Atelier de Sombreros de Mago
+    - el atelier del sombrero
+    - Heksehatt-atelieret
+    - L'Atelier des Sorciers
+    - Tongari Boushi no Atelier
+    - Xưởng phép thuật
+    - とんがり帽子のアトリエ
+    - 尖帽子的魔法工坊
+    - 魔法帽的工作室
+
+worst:
+  display: 'WORST'
+  aliases:
+    - WORST
+
 wotakoi:
-  display: Wotakoi
+  display: 'Wotakoi'
   aliases:
-  - It’s Difficult to Love an Otaku
-  - Keine Cheats für die Liebe
-  - Love is Hard for an Otaku
-  - Otaku Otaku
-  - Qué difícil es el amor para un otaku
-  - WotaKoi
-  - Wotakoi - L'amore è complicato per gli otaku
-  - Wotakoi. Miłość jest trudna dla otaku
-  - 'Wotakoi: Love is Hard for Otaku'
-  - 'Wotakoi: O amor é dificil para otakus'
-  - 'Wotakoi: Otakular İçin Aşk Zordur'
-  - 'Wotakoi: Qué difícil es el amor para los otaku'
-  - Wotaku ni Koi wa Muzukashii
-  - ヲタクに恋は難しい
-  - 阿宅的戀愛太難
+    - It’s Difficult to Love an Otaku
+    - Keine Cheats für die Liebe
+    - Love is Hard for an Otaku
+    - Otaku Otaku
+    - Qué difícil es el amor para un otaku
+    - WotaKoi
+    - Wotakoi - L'amore è complicato per gli otaku
+    - Wotakoi. Miłość jest trudna dla otaku
+    - 'Wotakoi: Love is Hard for Otaku'
+    - 'Wotakoi: O amor é dificil para otakus'
+    - 'Wotakoi: Otakular İçin Aşk Zordur'
+    - 'Wotakoi: Qué difícil es el amor para los otaku'
+    - Wotaku ni Koi wa Muzukashii
+    - ヲタクに恋は難しい
+    - 阿宅的戀愛太難
+
+xblade:
+  display: 'XBlade'
+  aliases:
+    - cross blade
+    - kurosubureido
+
+yamikin-ushijima-kun:
+  display: 'Ushijima the Loan Shark'
+  aliases:
+    - Ushijima
+    - Yamikin Ushijima-kun
+    - 闇金ウシジマくん
+
+yasha:
+  display: 'Yasha'
+  aliases:
+    - Yasha
+    - 夜叉
+
 yawara:
-  display: Yawara!
+  display: 'Yawara!'
   aliases:
-  - Yawara! A Fashionable Judo Girl
-  - ヤワラ
+    - Yawara! A Fashionable Judo Girl
+    - ヤワラ
+
+yo-kai-watch:
+  display: 'Yo-kai Watch'
+  aliases:
+    - Yo-kai Watch
+    - Youkai Watch
+    - 妖怪ウォッチ
+
+yokohama-kaidashi-kikou:
+  display: 'Yokohama Kaidashi Kikou'
+  aliases:
+    - Escale à Yokohama
+    - Quiet Country Cafe
+    - Yokohama Kaidashi Kikou
+    - Yokohama Shopping Log
+    - Yokohama Shopping Trip
+    - ヨコハマ買い出し紀行
+
 yomi-no-tsugai:
-  display: Yomi no Tsugai
+  display: 'Yomi no Tsugai'
   aliases:
-  - Daemons of the Shadow Realm
-  - Das Band der Unterwelt
-  - Espíritus del Inframundo
-  - Kontraduety z zaświatów
-  - Tsugai - Daemons of the Shadow Realm
-  - YomiTsuga
-  - ヨミツガ
-  - 黃泉使者
-  - 黄泉のツガイ
+    - Daemons of the Shadow Realm
+    - Das Band der Unterwelt
+    - Espíritus del Inframundo
+    - Kontraduety z zaświatów
+    - Tsugai - Daemons of the Shadow Realm
+    - YomiTsuga
+    - ヨミツガ
+    - 黃泉使者
+    - 黄泉のツガイ
+
+yona-of-the-dawn:
+  display: 'Yona of the Dawn'
+  aliases:
+    - Akatsuki no Yona
+    - akatsuki-no-yona
+    - Princesse de l'aube
+    - Yona
+    - Yona - Prinzessin der Morgendämmerung
+    - Yona Principessa dell'Alba
+    - Yona w blasku świtu
+    - Yona, Princesa del Amanecer
+    - Yona, Princesse de l'aube
+    - Yona, Principessa dell'Alba
+    - 'Yona: A Princesa do Alvorecer'
+    - 暁のヨナ
+
+youkai-gakkou-no-sensei-hajimemashita:
+  display: 'Youkai Gakkou no Sensei Hajimemashita!'
+  aliases:
+    - i started a job at a youkai school
+    - youkai gakkou no sensei
+    - youkai-gakkou-no-sensei
+    - 妖怪学校の先生はじめました!
+
+your-name:
+  display: 'Your Name'
+  aliases:
+    - Kimi no Na wa
+    - Your Name
+    - 君の名は。
+
+yowamushi-pedal:
+  display: 'Yowamushi Pedal'
+  aliases:
+    - En selle, Sakamichi !
+    - 弱虫ペダル
+
+yu-gi-oh:
+  display: 'Yu-Gi-Oh'
+  aliases: []
+
 yu-yu-hakusho:
-  display: Yu Yu Hakusho
+  display: 'Yu Yu Hakusho'
   aliases:
-  - Hành trình U Linh Giới
-  - YYH
-  - Yu Yu Hakusho - archiwum duchów
-  - Yu degli spettri
-  - YuYu Hakusho
-  - Yuu Yuu Hakusho
-  - Yuu☆Yuu☆Hakusho
-  - yuyu hakusho
-  - yū yū hakusho
-  - 幽☆遊☆白書
-  - 幽遊白書
+    - Hành trình U Linh Giới
+    - Yu degli spettri
+    - Yu Yu Hakusho - archiwum duchów
+    - Yuu Yuu Hakusho
+    - Yuu☆Yuu☆Hakusho
+    - YuYu Hakusho
+    - YYH
+    - yū yū hakusho
+    - 幽☆遊☆白書
+    - 幽遊白書
+
+yuki-yuna-is-a-hero:
+  display: 'Yuki Yuna is a Hero'
+  aliases:
+    - yuki yuna daimankai
+    - yuuki yuuna wa yuusha de aru
+    - 結城友奈は勇者である
+
+yuki-yuna-is-a-hero-hanayui:
+  display: 'Yuki Yuna is a Hero: Hanayui no Kirameki'
+  aliases:
+    - yuki yuna hanayui
+    - yuki-yuna-hanayui
+    - yuuki yuuna wa yuusha de aru hanayui no kirameki
+    - 結城友奈は勇者である 花結いのきらめき
+
+yume-shokunin-to-wasureji-no-kuroi-yousei:
+  display: 'Yume Shokunin to Wasureji no Kuroi Yousei'
+  aliases:
+    - Yume Shokunin
+    - yume-shokunin
+    - 夢職人と忘れじの黒い妖精
+
+yume100:
+  display: 'Yume Oukoku to Nemureru 100-nin no Ouji-sama'
+  aliases:
+    - 100 sleeping princes and the kingdom of dreams
+    - yume oukoku to nemureru 100-nin no ouji-sama
+    - yume100
+    - 夢王国と眠れる100人の王子様
+
+yumeochi-dreaming-of-falling-for-you:
+  display: 'Yumeochi: Dreaming of Falling For You'
+  aliases:
+    - Yumeochi
+    - 'Yumeochi: Yume de Bokura wa Koi ni Ochiru'
+    - ユメオチ
+
+yuragi-sou-no-yuuna-san:
+  display: 'Yuuna and the Haunted Hot Springs'
+  aliases:
+    - Yuna de la posada Yuragi
+    - yuna-yuragi
+    - Yuragi-sou no Yuuna-san
+    - ゆらぎ荘の幽奈さん
+
+yureka:
+  display: 'Yureka'
+  aliases:
+    - iD_eNTITY
+    - Yureka
+
+zankyou-ikegami:
+  display: 'Zankyou'
+  aliases:
+    - Détonations
+    - Resonance
+    - reverberacion
+    - Reverberación
+    - Reverberation
+    - 残響
+
+zelda-breath-of-the-wild:
+  display: 'The Legend of Zelda: Breath of the Wild'
+  aliases:
+    - BotW
+    - Breath of the Wild
+    - Zelda BotW
+    - zelda-breath-wild
+
+zelda-breath-of-the-wild-creating-a-champion:
+  display: 'Zelda: Breath of the Wild - Creando a un Héroe'
+  aliases:
+    - the legend of zelda breath of the wild creating a champion
+    - zelda breath of the wild creating a champion
+    - zelda-breath-of-the-wild
+
+zelda-detras-de-la-leyenda:
+  display: 'Zelda, detrás de la leyenda'
+  aliases:
+    - the legend of zelda behind the legend
+
+zelda-twilight-princess:
+  display: 'The Legend of Zelda: Twilight Princess'
+  aliases:
+    - Twilight Princess
+    - 'Zelda no Densetsu: Twilight Princess'
+    - ゼルダの伝説 トワイライトプリンセス
+
+zetman:
+  display: 'Zetman'
+  aliases:
+    - Zetman
+
+zom-100:
+  display: 'Zom 100: Bucket List of the Dead'
+  aliases:
+    - Zom 100
+    - 'Zom 100: Bucket List of the Dead'
+    - Zombie 100
+    - 'Zombie 100: Bucket List of the Dead'
+    - ゾン100~ゾンビになるまでにしたい100のこと~
+
+zone-00:
+  display: 'Zone-00'
+  aliases:
+    - Zone 00
+    - ゾーン-00
