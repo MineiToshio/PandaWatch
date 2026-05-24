@@ -315,6 +315,25 @@ class Candidate:
     content_hash: str = ""
     price: str = ""
     image_url: str = ""
+    # image_local: filename del espejo local en data/images/ (Image storage
+    # Fase 1). Vacío hasta que mirror_candidate_images lo descarga. image_url
+    # queda como provenance + fallback. Ver "Image storage" en CLAUDE.md.
+    image_local: str = ""
+    # images: carrusel de imágenes asociadas al item (Fase 2 del parser
+    # listadomanga-collections — schema aditivo). Cada elemento es
+    # {url, local, kind, description} donde kind ∈ {cover, extra,
+    # variant_cover, back_cover, gallery}. El primero (kind=cover) es la
+    # portada principal y mantiene sincronía con image_url / image_local
+    # como aliases (no breaking para consumidores existentes). Cuando hay
+    # más de un elemento el dashboard renderiza un carrusel; si está vacío,
+    # el frontend cae al image_url/image_local single.
+    images: list[dict[str, str]] = field(default_factory=list)
+    # extras: descripciones de items extra vinculados a este tomo
+    # (Fase 2 — Layout B parser). Cada elemento es {description,
+    # release_date, source_section} donde source_section ∈ {cofre, regalo,
+    # extra}. Permite renderizar lista "Incluye: marcapáginas, postales..."
+    # en el modal sin embeber todo en description.
+    extras: list[dict[str, str]] = field(default_factory=list)
     release_date: str = ""
     product_type: str = ""
     author: str = ""
@@ -555,6 +574,12 @@ def clean_title(title: str) -> str:
          'Nouveauté Glénat Manga', 'Próximamente', etc.
       2) Quita sufijos (precios, 'On Sale', '(Dark Horse Direct Exclusive)',
          fechas trailing, colas descriptivas tipo Norma).
+      3) Strip de markers de volumen HUÉRFANOS (sin número adyacente).
+         Ej. "Ataque a los Titanes nº Collector's Edition" → "Ataque a los
+         Titanes Collector's Edition". Sin esto, el LLM del skill
+         `/standardize-catalog` ve "nº" suelto y lo interpreta como parte
+         del nombre (lo deja como "no" residual en title y series_key —
+         gotcha #29).
     Iterando hasta estabilizar para que patrones cascading se resuelvan.
     """
     if not title:
@@ -568,9 +593,32 @@ def clean_title(title: str) -> str:
         # Sufijos
         for pattern in TITLE_JUNK_PATTERNS:
             cleaned = pattern.sub("", cleaned).strip()
+        # Strip de markers de volumen huérfanos (sin número adyacente):
+        # `nº`, `n°`, `n.`, `vol.`, `vol`, `tomo`, `tome` que NO van seguidos
+        # de un dígito (con o sin espacio). Conservamos los que sí tienen
+        # número porque ahí denotan volumen legítimo ("Vol. 5", "nº 12").
+        cleaned = _ORPHAN_VOL_MARKER_RE.sub(" ", cleaned)
+        # Collapse whitespace tras posibles strips
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if cleaned == prev:
             break
     return cleaned
+
+
+# Markers de volumen "huérfanos" — `nº` / `n°` / `vol.` que NO van seguidos
+# de un número (con punto / espacio / nada entremedio). Solo strippear los
+# markers que SIEMPRE son markers (no palabras del nombre):
+# - `nº`, `n°`: nunca son palabras legítimas del título
+# - `vol`/`vol.`: idem
+# Excluimos `tomo`/`tome` porque pueden ser palabras legítimas del title
+# ("¡ÚLTIMO TOMO!" en Norma Editorial).
+# El `\.?` dentro del lookahead permite matchear "Vol. 1" (con punto +
+# espacio + dígito) y NO strippearlo. Match típico que SÍ queremos:
+# "Ataque a los Titanes nº Collector's Edition" → "nº" suelto → strip.
+_ORPHAN_VOL_MARKER_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:n[º°]|vol)\.?(?!\.?\s*\d)(?![A-Za-z0-9])",
+    re.IGNORECASE | re.UNICODE,
+)
 
 
 def normalize_text(value: str) -> str:
@@ -615,6 +663,16 @@ TRACKING_PARAMS: frozenset[str] = frozenset({
     # de búsqueda, no el producto. Sin este params, 5 búsquedas distintas
     # generaban 5 items duplicados del mismo /rb/<id>/ (bug detectado 2026-05-22).
     "l-id", "l_id",
+    # Amazon — `tag` es el affiliate id (ya cubierto arriba); los otros son
+    # tracking adicional de Amazon que aparece en URLs SocialAnime y otros
+    # affiliates. `linkCode` (tipo de enlace), `th` (variant select), `psc`
+    # (product select context), `ascsubtag`/`smid` (sub-affiliate / seller),
+    # `pf_rd_*`/`pd_rd_*` (tracking interno de surfaces). Sin esto, dos URLs
+    # del mismo ASIN con afiliados distintos generan rows duplicadas.
+    "linkCode", "th", "psc", "ascsubtag", "smid",
+    "pf_rd_p", "pf_rd_r", "pf_rd_s", "pf_rd_t", "pf_rd_i",
+    "pd_rd_w", "pd_rd_r", "pd_rd_wg", "pd_rd_i",
+    "content-id", "content_id",
 })
 
 
@@ -648,6 +706,14 @@ def normalize_url_for_dedup(url: str) -> str:
     m = re.match(r"^/collections/[^/]+/(products/.+)$", path)
     if m:
         path = "/" + m.group(1)
+
+    # 2.5. Amazon: el path puede llevar un segmento `/ref=...` de tracking
+    # (`/dp/ASIN/ref=cm_sw_r_...`, `/gp/product/ASIN/ref=...`). Es un token
+    # opaco que cambia por sesión/widget y rompe la igualdad de URL. Lo
+    # quitamos para que normalizen al canónico `/dp/<ASIN>` o
+    # `/gp/product/<ASIN>`. Aplica a cualquier amazon.<tld>.
+    if "amazon." in parsed.netloc.lower():
+        path = re.sub(r"/ref=[^/]+(?=/|$)", "", path)
 
     # 3. Trailing slash: quitar excepto si el path es solo "/"
     if len(path) > 1 and path.endswith("/"):
@@ -873,6 +939,11 @@ IMAGE_URL_BAD_PATTERNS = (
     "image_not_available", "image-not-available",
     "default_book", "default-book",
     "logo-glenat",                          # Glénat (logo se cuela como imagen)
+    # Assets de tema / íconos de UI servidos como <img> (no son portadas).
+    # Sanyodo (WP theme): icn_close.svg, "menu open"/"menu close", etc.
+    # viven en /wp-content/themes/<x>/assets/images/common/.
+    "/assets/images/common/",
+    ".svg",                                 # un SVG nunca es portada de manga
     # Data URIs de 1x1 transparente (típico lazy-loading: la imagen real
     # vive en data-src o data-original, el src es solo placeholder).
     "data:image/gif;base64,r0lgodlh",
@@ -882,18 +953,29 @@ IMAGE_URL_BAD_PATTERNS = (
 IMAGE_URL_GOOD_PATTERNS = (
     "/goods/", "/products/", "/product/", "/cover", "/jacket",
     "/manga/", "/manga_", "/book", "/item",
+    "e-hon.ne.jp",   # CDN de portadas de e-hon (Sanyodo linkea sus covers acá)
 )
 
 
 def _img_to_url(img: Any, source_url: str) -> str:
-    """Extrae URL absoluta de un <img> probando src/data-src/srcset/etc."""
+    """Extrae URL absoluta de un <img> probando src/data-src/srcset/etc.
+
+    Saltea valores `data:` URI: en imágenes lazy-loaded el `src` suele ser
+    un placeholder data-URI (1x1 transparente, o un SVG inline) mientras la
+    portada real vive en data-src / data-lazy-src. Como `src` se prueba
+    primero, sin este skip devolveríamos el placeholder data-URI — que no es
+    descargable y rompe el espejo local de portadas.
+    """
     for attr in ("src", "data-src", "data-original", "data-lazy-src", "srcset", "data-srcset"):
         val = img.get(attr)
         if not val:
             continue
         if "srcset" in attr:
             val = val.split(",")[0].strip().split(" ")[0]
-        url = canonicalize_url(source_url, val.strip())
+        val = val.strip()
+        if val.lower().startswith("data:"):
+            continue
+        url = canonicalize_url(source_url, val)
         if url and url != source_url:
             return url
     return ""
@@ -2414,12 +2496,23 @@ COLLECTIBLE_PRODUCT_TYPES = frozenset({
 # básicamente un tomo más grueso. La regla del usuario (gotcha #18): omnibus
 # solo cuenta como coleccionable si viene con otro qualifier premium
 # (hardcover/deluxe/limited/variant/box/extras). Ver `is_collectible_edition`.
+#
+# El patrón matchea Edición/Edizione/Édition además de Edition, así que las
+# palabras genéricas en ES/IT/FR DEBEN excluirse igual que las inglesas — si
+# no, "Nueva Edición" (= "New Edition", una reimpresión) dispara lore_edition
+# falsamente y cuela tomos/omnibus normales por el gate. Ver gotcha #24.
 _GENERIC_X_EDITION_PATTERN = re.compile(
     r"\b(?!(?:The|This|That|First|Second|Third|Fourth|Fifth|Next|Last|"
     r"Latest|New|Old|Same|Other|Another|Each|Every|Any|All|Some|Whole|"
     r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
     r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final|"
-    r"Omnibus)\b)"
+    r"Omnibus"
+    # Genéricos ES/IT/FR (mismas categorías que la lista inglesa de arriba:
+    # new / ordinales / standard / regular / original / digital / idioma).
+    r"|Nueva|Nuova|Nouvelle|Primera|Prima|Première|Premiere"
+    r"|Segunda|Seconda|Tercera|Terza|Última|Ultima"
+    r"|Estándar|Estandar|Regolare|Originale|Digitale|Numérique|Numerique|Impresa"
+    r"|Española|Espanola|Inglesa|Italiana|Japonesa|Alemana|Francesa)\b)"
     r"([A-Za-z][\w\-]{2,})\s+"
     r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
     re.IGNORECASE,
@@ -2974,6 +3067,42 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             continue
         key = normalize_url_for_dedup(url)
         old = existing.get(key)
+        # image_local es sticky: un re-scrape que no descargó la portada
+        # (--skip-image-download o fallo de red puntual) no debe borrar el
+        # espejo local que ya teníamos. Ver "Image storage" en CLAUDE.md.
+        if old and old.get("image_local") and not row.get("image_local"):
+            row["image_local"] = old["image_local"]
+        # images[] es UNION-MERGE entre old y new (Fase 2 listadomanga-collections):
+        # un re-scrape que sólo trae la cover no debe borrar los extras que
+        # se agregaron en una pasada previa con merge extra→tomo, y viceversa
+        # — un re-scrape de extras no debe borrar la cover. Deduplicamos por
+        # (kind, url) preservando el orden (primero los del old, después los
+        # nuevos del row que no estén). Si ambos están vacíos, no escribir.
+        old_images = list((old or {}).get("images") or [])
+        new_images = list(row.get("images") or [])
+        if old_images or new_images:
+            seen_keys: set[tuple[str, str]] = set()
+            merged_images: list[dict[str, Any]] = []
+            for im in old_images + new_images:
+                k = (im.get("kind", ""), im.get("url", ""))
+                if k in seen_keys:
+                    continue
+                seen_keys.add(k)
+                merged_images.append(im)
+            row["images"] = merged_images
+        # extras[]: misma lógica de union-merge dedup por (description, release_date).
+        old_extras = list((old or {}).get("extras") or [])
+        new_extras = list(row.get("extras") or [])
+        if old_extras or new_extras:
+            seen_e: set[tuple[str, str]] = set()
+            merged_e: list[dict[str, Any]] = []
+            for ex in old_extras + new_extras:
+                k = (ex.get("description", ""), ex.get("release_date", ""))
+                if k in seen_e:
+                    continue
+                seen_e.add(k)
+                merged_e.append(ex)
+            row["extras"] = merged_e
         if old and old.get("standardized_at"):
             merged = dict(row)
             for field in _CURATED_FIELDS:
@@ -4474,12 +4603,54 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "content_hash": candidate.content_hash,
         "price": candidate.price,
         "image_url": candidate.image_url,
+        "image_local": candidate.image_local,
         "release_date": candidate.release_date,
         "product_type": candidate.product_type,
         "author": candidate.author,
         "stock_type": candidate.stock_type,
         "isbn": candidate.isbn,
     }
+    # images[] aditivo (Fase 2 listadomanga-collections): carrusel. Normalizamos
+    # garantizando que el primer elemento sea kind=cover y sincronice con
+    # image_url/image_local. Si el Candidate no trajo images[], lo derivamos
+    # del image_url/image_local — backwards-compatible para el resto del
+    # pipeline.
+    images_list = list(getattr(candidate, "images", []) or [])
+    if not images_list and candidate.image_url:
+        images_list = [{
+            "url": candidate.image_url,
+            "local": candidate.image_local,
+            "kind": "cover",
+            "description": "",
+        }]
+    elif images_list:
+        # Si hay un cover explícito en images[], moverlo al frente. Si NO hay
+        # cover (todos los elementos son kind=extra/variant_cover/etc.),
+        # NO promover artificialmente — mantenemos el kind original. Esto
+        # respeta el caso "tomo creado desde extras" (Fase 2 from_extras)
+        # donde la única imagen disponible es del extra (cofre/marcapáginas)
+        # y semánticamente NO es una cover.
+        cover_idx = next(
+            (i for i, im in enumerate(images_list) if im.get("kind") == "cover"),
+            -1,
+        )
+        if cover_idx > 0:
+            images_list.insert(0, images_list.pop(cover_idx))
+        # Sincronizar image_url/image_local con el primer elemento (sea cover
+        # o extra). image_url tiene el rol legacy de "alguna imagen visible";
+        # el dashboard puede consumirla aunque kind no sea cover.
+        first = images_list[0]
+        if first.get("url") and not row["image_url"]:
+            row["image_url"] = first["url"]
+        if first.get("local") and not row["image_local"]:
+            row["image_local"] = first["local"]
+    if images_list:
+        row["images"] = images_list
+
+    extras_list = list(getattr(candidate, "extras", []) or [])
+    if extras_list:
+        row["extras"] = extras_list
+
     row["cluster_key"] = derive_cluster_key(row)
     # Hook: si el Candidate ya tiene series_key/edition_key (set por una pasada
     # de estandarización manual o por un scraper futuro), aplicar
@@ -5074,6 +5245,109 @@ def _parse_wiki_month(value: str, default_year: int, default_month: int) -> tupl
         raise SystemExit(f"--wiki-from/--wiki-to debe ser YYYY-MM. Recibido: {value!r}")
 
 
+def mirror_candidate_images(
+    candidates: list[Candidate],
+    data_dir: Path,
+    session: requests.Session,
+    workers: int = 1,
+    timeout: tuple[int, int] = (10, 30),
+) -> tuple[int, int]:
+    """Espejo local de portadas (Image storage, Fase 1).
+
+    Descarga a `data/images/` la portada de cada candidate nuevo/cambiado
+    que tenga `image_url` y todavía no tenga `image_local`. Setea
+    `candidate.image_local` con el filename local. `image_url` queda
+    intacto como provenance + fallback.
+
+    Idempotente: si la imagen ya está en disco, `download_image` la
+    reusa sin tocar la red. Falla siempre de forma elegante — un fallo
+    de descarga sólo deja `image_local` vacío.
+
+    Devuelve (descargadas_ok, fallidas).
+    """
+    try:
+        import image_store
+    except ImportError:
+        return (0, 0)
+
+    # Cover (image_url) targets — comportamiento previo.
+    cover_targets = [
+        c for c in candidates
+        if c.status in {"new", "changed"} and c.image_url and not c.image_local
+    ]
+    # images[] extras (Fase 2 listadomanga-collections): cada elemento
+    # con kind != cover y sin `local` poblado se mira como target. Cada
+    # tarea descarga UNA imagen extra de UN Candidate.
+    extra_targets: list[tuple[Candidate, int]] = []
+    for c in candidates:
+        if c.status not in {"new", "changed"}:
+            continue
+        imgs = getattr(c, "images", None) or []
+        for idx, im in enumerate(imgs):
+            if im.get("kind") == "cover":
+                continue  # cover ya cubierta por image_url
+            if im.get("url") and not im.get("local"):
+                extra_targets.append((c, idx))
+
+    if not cover_targets and not extra_targets:
+        return (0, 0)
+
+    images_dir = data_dir / image_store.IMAGES_DIRNAME
+
+    def _one_cover(cand: Candidate) -> tuple[Candidate, str]:
+        filename = image_store.download_image(
+            cand.image_url, images_dir, session=session,
+            timeout=timeout, referer=cand.url or cand.source_url,
+        )
+        return cand, filename
+
+    def _one_extra(args: tuple[Candidate, int]) -> tuple[Candidate, int, str]:
+        cand, idx = args
+        im = cand.images[idx]
+        filename = image_store.download_image(
+            im["url"], images_dir, session=session,
+            timeout=timeout, referer=cand.url or cand.source_url,
+        )
+        return cand, idx, filename
+
+    cover_results: list[tuple[Candidate, str]] = []
+    extra_results: list[tuple[Candidate, int, str]] = []
+    if workers <= 1:
+        cover_results = [_one_cover(c) for c in cover_targets]
+        extra_results = [_one_extra(t) for t in extra_targets]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="image") as pool:
+            futs = [pool.submit(_one_cover, c) for c in cover_targets]
+            futs.extend(pool.submit(_one_extra, t) for t in extra_targets)
+            for fut in as_completed(futs):
+                res = fut.result()
+                if len(res) == 2:
+                    cover_results.append(res)
+                else:
+                    extra_results.append(res)
+
+    downloaded = 0
+    failed = 0
+    for cand, filename in cover_results:
+        if filename:
+            cand.image_local = filename
+            # Sincronizar también en images[] si existe el cover ahí.
+            for im in (getattr(cand, "images", None) or []):
+                if im.get("kind") == "cover" and im.get("url") == cand.image_url:
+                    im["local"] = filename
+                    break
+            downloaded += 1
+        else:
+            failed += 1
+    for cand, idx, filename in extra_results:
+        if filename:
+            cand.images[idx]["local"] = filename
+            downloaded += 1
+        else:
+            failed += 1
+    return (downloaded, failed)
+
+
 def _run_wiki_bootstrap(
     args: argparse.Namespace,
     session: requests.Session,
@@ -5112,8 +5386,24 @@ def _run_wiki_bootstrap(
         from wikis.manga_mexico import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "mangavariant":
         from wikis.mangavariant import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "socialanime":
+        from wikis.socialanime import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "blogbbm":
+        from wikis.blogbbm import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "listadomanga-collections":
+        from wikis.listadomanga_collections import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
+
+    # Kwargs extra solo aplicables a ciertas wikis (ej. listadomanga-collections
+    # itera por id en vez de por fecha). El resto las ignora vía **kwargs.
+    extra_kwargs: dict[str, Any] = {}
+    if args.bootstrap_wiki == "listadomanga-collections":
+        extra_kwargs = {
+            "id_from": int(getattr(args, "coleccion_from", 1) or 1),
+            "id_to": int(getattr(args, "coleccion_to", 6500) or 6500),
+            "mode": str(getattr(args, "coleccion_mode", "lista") or "lista"),
+        }
 
     candidates = wiki_bootstrap(
         yf, mf, yt, mt,
@@ -5122,6 +5412,7 @@ def _run_wiki_bootstrap(
         timeout=(args.connect_timeout, args.read_timeout),
         min_score=args.min_score,
         fetch_details=bool(args.fetch_details),
+        **extra_kwargs,
     )
     months = iter_year_months(yf, mf, yt, mt)
 
@@ -5137,6 +5428,13 @@ def _run_wiki_bootstrap(
 
     if not args.dry_run:
         save_state(state_path, state)
+        if not getattr(args, "skip_image_download", False):
+            _wk = max(1, int(getattr(args, "workers", 1) or 1))
+            dl, fail = mirror_candidate_images(
+                reportable, items_path.parent, session,
+                workers=_wk, timeout=(args.connect_timeout, args.read_timeout),
+            )
+            print(f"[IMAGES] {dl} portadas al espejo local data/images/ ({fail} fallidas)")
         new_or_changed = [
             candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
         ]
@@ -5263,6 +5561,13 @@ def _run_sitemap_mining(
 
     if not args.dry_run:
         save_state(state_path, state)
+        if not getattr(args, "skip_image_download", False):
+            _wk = max(1, int(getattr(args, "workers", 1) or 1))
+            dl, fail = mirror_candidate_images(
+                reportable, items_path.parent, session,
+                workers=_wk, timeout=(args.connect_timeout, args.read_timeout),
+            )
+            print(f"[IMAGES] {dl} portadas al espejo local data/images/ ({fail} fallidas)")
         new_or_changed = [
             candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
         ]
@@ -5713,6 +6018,16 @@ def run(args: argparse.Namespace) -> int:
 
     if not args.dry_run:
         save_state(state_path, state)
+        # Espejo local de portadas (Image storage, Fase 1): descarga la
+        # imagen de cada item nuevo/cambiado a data/images/ y guarda el
+        # filename en image_local. Ver "Image storage" en CLAUDE.md.
+        if not args.skip_image_download:
+            dl, fail = mirror_candidate_images(
+                reportable, data_dir, session,
+                workers=workers, timeout=(args.connect_timeout, args.read_timeout),
+            )
+            print("")
+            print(f"[IMAGES] {dl} portadas descargadas al espejo local data/images/ ({fail} fallidas)")
         new_or_changed_rows = [
             candidate_to_json(candidate) for candidate in reportable if candidate.status in {"new", "changed"}
         ]
@@ -5869,9 +6184,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="Ejecuta sin escribir estado, JSONL ni reportes")
     parser.add_argument(
+        "--skip-image-download",
+        action="store_true",
+        help="No descarga las portadas al espejo local data/images/ (Image "
+             "storage Fase 1). Por defecto el scrape sí las descarga. Útil "
+             "para corridas de prueba rápidas.",
+    )
+    parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap).",
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "listadomanga-collections"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(
         "--wiki-from",
@@ -5882,6 +6204,24 @@ def parse_args() -> argparse.Namespace:
         "--wiki-to",
         default="",
         help="Mes final para --bootstrap-wiki (YYYY-MM). Default: mes actual.",
+    )
+    parser.add_argument(
+        "--coleccion-from",
+        type=int,
+        default=1,
+        help="Id inicial de la iteración para --bootstrap-wiki listadomanga-collections. Default: 1.",
+    )
+    parser.add_argument(
+        "--coleccion-to",
+        type=int,
+        default=6500,
+        help="Id final de la iteración para --bootstrap-wiki listadomanga-collections SOLO si --coleccion-mode=range. En el modo 'lista' (default) este flag se ignora.",
+    )
+    parser.add_argument(
+        "--coleccion-mode",
+        choices=["lista", "range"],
+        default="lista",
+        help="Discovery para --bootstrap-wiki listadomanga-collections. 'lista' (default): usa lista.php como índice oficial alfabético (~3432 colecciones activas, modo recomendado). 'range': iteración numérica id_from..id_to (legacy, útil para re-procesar rangos específicos como ids problemáticos detectados en UNKNOWN h2).",
     )
     parser.add_argument(
         "--discover-sitemaps",
