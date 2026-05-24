@@ -23,6 +23,7 @@ no se beneficia automáticamente.
 | `wayback_recover.py` | Para items que dan 404/410, busca snapshot en archive.org y rescata cover/título/autor. | 1×/semana como mucho. Pesado (chequea miles de URLs). |
 | `expand_whakoom_ediciones.py` | Convierte filas con URL Whakoom `/ediciones/<id>/<slug>` en N filas `/comics/<X>/<slug>/<vol>` (una por tomo). | Tras un search discovery que trajo `/ediciones/` desde Gemini. Idealmente: 0 filas `/ediciones/` residuales en el catálogo. Soporta one-shots via `/login?ReturnUrl=`. |
 | `expand_index_pages.py` | Limpia páginas-índice guardadas como productos: Whakoom `/publisher/` (expande), Shopify multi-tomo variants (Dark Horse), `/blogs/news/` (elimina), `/collections/X` sin `/products/` (elimina). | Tras cada `search_discovery`. Idempotente. |
+| `mirror_images.py` | Espejo local de portadas (Image storage Fase 1). Backfill: descarga a `data/images/` la portada de cada item con `image_url` y sin `image_local`. GC mark-and-sweep: saca de `data/images/` los archivos que ningún item referencia (a cuarentena `_orphans/`, o `--gc-delete`). | 1× para bajar el catálogo histórico (el scrape ya baja las portadas de items nuevos). Después, de vez en cuando para el GC. Idempotente. Ver "Image storage" en CLAUDE.md. |
 
 ## Cuándo NO los necesitás
 
@@ -45,6 +46,7 @@ si algo es manga, consolidar nombres multilingües).
 | "Aparecieron items con series_key vacío o crudo" | skill `/standardize-catalog` |
 | "Hay 5 series_keys distintos que son la misma obra en diferentes idiomas" | skill `/enrich-series-aliases` |
 | "Un manga apareció con título 'Spider-Man' por error de scrape" | feedback en dashboard + skill `/standardize-catalog` |
+| "Quiero ser dueño de las portadas / limpiar imágenes viejas" | retrofit `mirror_images.py` |
 
 ## Uso típico
 
@@ -66,6 +68,11 @@ cp data/items.jsonl /tmp/items.jsonl.bak-$(date +%Y%m%d)
 # Expansiones de páginas-índice (Whakoom, Shopify variants)
 .venv/bin/python scripts/retrofit/expand_whakoom_ediciones.py --dry-run
 .venv/bin/python scripts/retrofit/expand_index_pages.py --dry-run
+
+# Espejo local de portadas (backfill + GC)
+.venv/bin/python scripts/retrofit/mirror_images.py --dry-run
+.venv/bin/python scripts/retrofit/mirror_images.py --limit 100   # probar
+.venv/bin/python scripts/retrofit/mirror_images.py               # todo + GC
 ```
 
 Cada script crea un backup `.pre-*-bak` o `/tmp/items.jsonl.bak-*` antes
@@ -76,6 +83,9 @@ de sobrescribir `data/items.jsonl`. Un mal run es recuperable.
 - Total items: **~4400** (después de filtros, standardization, aliases).
 - Cobertura post-Mangavariant integration:
   - image_url: ~100%
+  - image_local (espejo local, Image storage Fase 1): ~98.6%
+    (el resto: image_url mal extraída — data: URI, ícono — o 404
+    muerto; no re-descargable, queda con image_url como fallback)
   - series_key: 100% (todos los items tienen serie canónica)
   - edition_key: 100%
   - volume: ~79% (vacío para artbooks/cover-only/one-shots)

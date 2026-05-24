@@ -117,6 +117,55 @@ web UI served locally.
 - Storage: JSONL with **upsert-by-URL semantics** (see "Storage" below)
 - Tests: pytest (227 passing as of last commit)
 
+## 2 scripts canónicos: full vs delta
+
+Hay dos scripts top-level que encadenan todo el pipeline. Operan sobre las
+mismas fuentes pero con distinto método de descubrimiento para listadomanga.es
+(la fuente más estructural). **El resto de fuentes se comportan igual** entre
+los dos por ahora — la única diferencia importante es cómo se descubre
+listadomanga (decisión 2026-05-23):
+
+| Script | Listadomanga discovery | Frecuencia | Tiempo | Cuándo |
+|---|---|---|---|---|
+| `scripts/scrape_delta.sh` | `calendario.php` mes actual + 2 anteriores | diaria / semanal | ~30-60 min | detectar novedades recientes |
+| `scripts/scrape_full.sh` | `lista.php` → ~3432 colecciones activas en orden alfabético | mensual / trimestral | ~2-4 horas | refresh completo del catálogo |
+
+Ambos corren las mismas fases:
+1. Scrape sources del YAML (`manga_watch.py` con `--workers 8`)
+2. Wiki bootstraps (los wikis que aplican según modo)
+3. Search discovery (Gemini + DDG)
+4. Cleanup retrofits (rescore → filter_non_manga → filter_collectible →
+   clean_titles → backfill_metadata)
+5. Build web
+
+`scripts/overnight_run.sh` queda como alias deprecated de `scrape_delta.sh`
+(retrocompat con cron jobs antiguos).
+
+**`scrape_full` SI hace** lo que `scrape_delta` NO hace:
+- listadomanga-collections via `lista.php` (~3432 colecciones × 0.3s ≈ 17 min)
+- mangavariant sitemap completo
+
+**Modelo simplificado para listadomanga**: `full = lista.php`,
+`delta = calendar`. Sin overlap. El calendar NO está en el full porque
+lista.php ya cubre todas las colecciones activas (decisión 2026-05-23,
+post-investigación: las "exclusivas" del calendar eran falsos negativos
+del parser que se arreglaron con el fix DISCARD→REGULAR para secciones
+`(Planeta DeAgostini Cómics)` / `(Planeta Cómic)`).
+
+**`listadomanga-blog` REMOVED del pipeline canónico** (decisión 2026-05-23).
+Son posts de noticias (anuncios de licencias, "Novedades de X"), no productos
+físicos — `is_collectible_edition` los rechaza al 99%+. 0 items netos al
+catálogo. El módulo `wikis/listadomanga_blog.py` sigue disponible para
+invocación manual si en el futuro se le da otro uso (ej. input para
+`search_discovery`). Mismo razonamiento aplica al RSS feed
+`ES - Listado Manga Blog RSS` en `sources.yml` (ahora `enabled: false`).
+
+**El resto de mejoras "full vs delta" por fuente quedan pendientes** —
+cuando aparezca la necesidad, cada fuente puede tener su propio modo
+incremental específico (ej. SocialAnime delta = solo última página del feed
+en vez de paginación completa). Por ahora la simplificación a "una sola
+diferencia, listadomanga" es suficiente.
+
 ## High-level pipeline
 
 ```
@@ -135,10 +184,14 @@ manga_watch.py (scraper)  ←─── ThreadPoolExecutor(--workers N)
   • fetch_metadata_from_detail() — opt-in HTTP per item for cover/
     author/price/ISBN via JSON-LD + label/value pairs (also
     parallelized in the --fetch-details stage)
+  • mirror_candidate_images() — descarga la portada de cada item
+    nuevo/cambiado a data/images/ (espejo local, campo image_local).
+    On by default; --skip-image-download para saltearlo.
     │
     ▼
 data/items.jsonl  ← upsert by URL (1 line per unique URL).
                     Every row carries `cluster_key` for grouping.
+data/images/      ← espejo local de portadas (image_local apunta acá)
 data/state.json   ← cache of seen URLs (for incremental detection)
     │
     ▼
@@ -189,6 +242,53 @@ data/
   items.jsonl                        — gitignored. Upsert table; every
                                        row carries cluster_key.
   state.json, feedback.jsonl         — gitignored.
+  images/                            — gitignored. Espejo local de
+                                       portadas (Image storage Fase 1):
+                                       1 archivo por imagen, nombre
+                                       <sha256(image_url)[:16]>.<ext>.
+                                       Lo llena el scrape; el JSONL
+                                       referencia el filename en el
+                                       campo `image_local`.
+  unmapped_series.jsonl              — **FUENTE ÚNICA DE VERDAD para cualquier
+                                       registro de items.jsonl que no estemos
+                                       seguros cómo clasificar** (serie,
+                                       edición, agrupación, publisher, lo que
+                                       sea). Antes había también
+                                       `data/uncertain_groupings.jsonl` para
+                                       casos de agrupación; se unificó acá
+                                       (2026-05-23, por feedback del owner:
+                                       "asegurémonos que tener solamente un
+                                       archivo y siempre usamos ese").
+                                       NUNCA crear archivos paralelos de
+                                       "uncertain_X.jsonl" / "review_X.jsonl"
+                                       / etc — todo el flagging va acá.
+
+                                       Schema (append-only, una línea por flag):
+                                       - `series_key` (REQ): slug actual del item.
+                                       - `series_display`: display actual.
+                                       - `sample_title`, `sample_url`, `source`:
+                                         contexto del item.
+                                       - `detected_at`: ISO timestamp.
+                                       - `flagged_by`: origen del flag —
+                                         `"pipeline"` si lo logueó
+                                         `log_unmapped_series()` automáticamente,
+                                         o `"audit:<nombre-pasada>"` /
+                                         `"human"` para casos manuales.
+                                       - Opcionales (auditoría manual):
+                                         `reason`, `notes`,
+                                         `proposed_canonical_key`,
+                                         `proposed_canonical_display`,
+                                         `current_edition_key`, etc.
+                                         Cualquier campo extra está OK;
+                                         el lector (skill enrich-series-aliases
+                                         + audit/unmapped_series.py) ignora
+                                         lo que no conoce.
+
+                                       Vaciado al final de cada corrida del
+                                       skill `/enrich-series-aliases`; el
+                                       pipeline lo repopula en el próximo
+                                       scrape. No lo consume ningún script
+                                       en runtime, sólo skills/auditorías.
 scripts/
   manga_watch.py                     — main module (4400+ lines):
                                        filters, scoring, IO, the
@@ -219,13 +319,23 @@ scripts/
   run_local.sh                       — wrapper que lanza serve.py +
                                        admin_serve.py en paralelo
                                        (Ctrl+C baja ambos).
-  overnight_run.sh                   — chained 5-phase pipeline:
-                                       scrape (parallel) → wikis →
-                                       search → cleanup → build. Opt-in
-                                       knobs: INCLUDE_WHAKOOM_SPIDER,
+  scrape_delta.sh                    — ⭐ CANÓNICO INCREMENTAL. Encadena
+                                       todas las fases en modo delta
+                                       (listadomanga via calendario.php
+                                       últimos 3 meses, no recorre el
+                                       catálogo entero). ~30-60 min.
+                                       Frecuencia: diaria/semanal.
+                                       Opt-in: INCLUDE_WHAKOOM_SPIDER,
                                        INCLUDE_WAYBACK_RECOVERY,
-                                       SCRAPE_WORKERS, PER_HOST_LIMIT,
-                                       GEMINI_SLEEP, LISTADO_BLOG_FROM/TO.
+                                       SKIP_SCRAPE/SKIP_WIKIS/...
+  scrape_full.sh                     — ⭐ CANÓNICO FULL. Recorre las
+                                       ~3432 colecciones de listadomanga
+                                       via lista.php + blog histórico
+                                       completo + mangavariant sitemap
+                                       completo. ~2-4 horas.
+                                       Frecuencia: mensual/trimestral.
+  overnight_run.sh                   — DEPRECATED. Alias de scrape_delta.sh
+                                       por retrocompat con cron jobs.
   retry_failed.sh                    — re-runs only sources that errored
                                        in the latest overnight log.
   wikis/                             — dedicated parsers for wikis.
@@ -243,6 +353,56 @@ scripts/
                                        precio. Yoast sitemap → detail
                                        parser. Ver "URL como referencia"
                                        más abajo.)
+    socialanime.py                   (IT — MangaStore de socialanime.it,
+                                       JSON feed paginado, ~840 items.
+                                       Cubre variant/limited/special editions
+                                       (type=variant, 466) + cofanetti
+                                       (type=box, 440). Las URLs van a
+                                       Amazon Italia con afiliados, se
+                                       canonicalizan al /dp/<ASIN>. ASIN
+                                       de libros italianos = ISBN-10
+                                       (prefijo 88…), 95% cobertura ISBN.
+                                       Cubre publishers que las sources
+                                       directas no agarran: Edizioni BD,
+                                       001 Edizioni, Goen, Magic Press,
+                                       Dynit, Coconino, Tora.)
+    blogbbm.py                       (BR — Biblioteca Brasileira de Mangás,
+                                       parser de 2 posts curados
+                                       continuamente actualizados:
+                                       /2020/10/09/capas_variantes/ y
+                                       /2024/05/15/guia-volumes-especiais-
+                                       de-mangas-com-itens-especiais/.
+                                       Heurística title-driven que soporta
+                                       dos layouts (gallery `<div>` antes
+                                       del título en capas_variantes /
+                                       title con `(MM/YYYY)` parens +
+                                       `<figure>` después en volumes-especiais).
+                                       URLs sintéticas con query param
+                                       `?bbm-entry=vol-N-<stem>` para
+                                       unicidad por entry — ver gotcha #27.)
+    listadomanga_collections.py      (ES — parser por colección individual,
+                                       coleccion.php?id=N. Complementa el
+                                       calendario mensual (listadomanga.py)
+                                       capturando ediciones especiales /
+                                       portadas alternativas / cofres /
+                                       extras de primera edición / formato
+                                       premium (kanzenban A5, cartoné tapa
+                                       dura, doble sobrecubierta, artbook).
+                                       Iteración secuencial id=1..~6500.
+                                       Fase 1 (actual): Layout A — tomos
+                                       de "Números editados (Ediciones
+                                       Especiales)" + "(Portadas alternativas)"
+                                       + Packs con extras + Formato premium
+                                       page-wide. Fase 2 (planeada): Layout B
+                                       — Cofres/Regalos/Extras con
+                                       vinculación extra→tomo + carrusel
+                                       de imágenes (campo `images[]`).
+                                       Fase 3 (planeada): iteración masiva
+                                       de todos los ids del catálogo
+                                       (~6500 colecciones).
+                                       URLs sintéticas con query param
+                                       `?item=<edition_slug>-<vol>` para
+                                       unicidad por tomo — ver gotcha #27.)
   retrofit/                          — utilities to apply changes to
                                        historic data.
     README.md
@@ -281,6 +441,13 @@ scripts/
                                        para una serie entera), /blogs/news/
                                        (elimina), /collections/X sin /products/
                                        (elimina). Ver gotchas #14, #16, #17.
+    mirror_images.py                 — espejo local de portadas (Image
+                                       storage Fase 1): backfill (descarga
+                                       a data/images/ las portadas de items
+                                       sin image_local) + GC mark-and-sweep
+                                       (saca los archivos huérfanos a una
+                                       cuarentena, o --gc-delete). Ver
+                                       sección "Image storage".
   audit/
     source_health.py                 — parses N recent overnight logs
                                        and classifies sources as
@@ -298,6 +465,14 @@ scripts/
                                        a data/unmapped_series.jsonl
                                        cuando una nueva series_key no
                                        está en aliases.yml). Ver gotcha #20.
+  image_store.py                     — primitivas del espejo local de
+                                       portadas (Image storage Fase 1):
+                                       nombre de archivo determinístico
+                                       por hash, descarga con validación
+                                       por magic bytes, idempotencia. Lo
+                                       orquesta mirror_candidate_images()
+                                       en manga_watch.py. Ver sección
+                                       "Image storage".
 .claude/skills/
   enrich-series-aliases.md           — Skill manual: procesa unmapped
                                        series del queue, consulta Anilist,
@@ -337,27 +512,38 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | 4436 (post variant signal + mangadreams variants-europeas, 2026-05-22) |
+| Total unique items (line in items.jsonl) | 5905 (post Fase 3 + re-merge focalizado, 2026-05-23) |
+| Items aportados por listadomanga-collections (Fase 1+2+3 + re-merge) | 1405 (+1065 netos en Fase 3 incluido re-proceso quirúrgico de 67 ids con UNKNOWN h2 ahora resueltos: 48 tomos nuevos creados desde Layout B + 3 items existentes enriquecidos con images/extras) |
 | Items aportados por Mangavariant bootstrap | 2625 (de 2679 URLs en sitemap, 54 reasignados) |
+| Items aportados por SocialAnime bootstrap | 638 (263 type=variant + 375 type=box; 466+440 = 906 raw, ~30% descartados por score/gate/sin link) |
+| Items aportados por BBM bootstrap | 34 (24 Capas Variantes + 10 Volumes Especiais; posts curados continuamente actualizados, ~25 covers variants + ~10 ediciones con brindes) |
+| Items aportados por la lista curada usuario (sources `lista curada`) | 63 (9 MX Panini + 8 MX MangaLine + 8 AR Ivrea + 5 AR Panini/OVNI + 14 ES Panini + 4 ES Norma + 5 ES Planeta + 10 ES Distrito/Milky/MangaLine — H×H pack colapsa 2 entradas en 1 URL) |
 | Items movidos a `data/non_manga_blacklist.jsonl` | 94 (cómics occidentales, light novels, posters, figuras, etc.) |
+| Items eliminados como omnibus/reimpresión sin qualifier premium | 35 (4 One Piece Omnibus VIZ + Ghost in the Shell + 6 omnibus Planeta "3 en 1" + Solanin Integral + 21 reimpresiones "Nueva Edición" + 1 "Segunda Edición" + 1 junk "Pika Édition" — ver gotcha #24) |
 | Items deduplicados por (series_key, edition_key, volume) | 690 (+6 más al re-merger 38 items mangadreams contra Kurokawa/Pika/Star Comics existentes) |
-| Distinct `series_key` (filtro por obra) | 1428 |
-| Distinct `edition_key` (filtro por edición+editorial) | 2918 |
+| Distinct `series_key` (filtro por obra) | 1862 (pre-`/standardize-catalog` sobre items SocialAnime) |
+| Distinct `edition_key` (filtro por edición+editorial) | 3127 (pre-standardize sobre SocialAnime) |
 | `data/series_aliases.yml` entries | 106 canonical works (Anilist + manual) |
-| Sources in YAML | 137 |
-| Sources enabled | 121 / 137 |
+| Sources in YAML | 138 |
+| Sources enabled | 121 / 138 (Listado Manga Blog RSS deshabilitado 2026-05-23) |
 | Sources flagged `purity: mixed` | 17 |
 | Bluesky sources (`kind: bluesky`) | 15 |
-| Countries represented | 15 (Japón, Francia, Italia, España, Estados Unidos, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global). |
-| Image coverage | 100.0% |
-| `series_key` coverage | 100.0% (todos los items tienen serie canónica) |
-| `edition_key` coverage | 100.0% |
-| `volume` coverage | 78.9% (vacío para artbooks, cover-only, one-shots) |
-| Release date coverage | 86.3% |
-| ISBN coverage | 30.5% |
-| Price coverage | 39.9% |
-| Author coverage | 30.3% |
+| Wikis disponibles (`--bootstrap-wiki`) | 10 (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm, **listadomanga-collections** *Fase 1+2+3 completas*) |
+| `images[]` populated (Fase 2 schema aditivo) | 100% (backfilled desde image_url + Layout B merge sobre listadomanga-collections) |
+| Items con carrusel real (`images.length > 1`) | 86 (36 listadomanga-collections con cover+extras + 50 cross-source multi-cover) |
+| Items con `kind=extra` en images[] | 159 (cofres / marcapáginas / pósters / postales vinculados a tomos vía Layout B) |
+| Items con `extras[]` descriptivo (línea "Incluye: ..." en modal) | 160 |
+| Countries represented | 15 (Japón, Francia, Italia, España, Estados Unidos, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global). Tras SocialAnime: Italia 789→1427 (+638, +81%). Tras BBM: **Brasil 40→74 (+34, +85%)** — sale del último puesto y se acerca a Argentina (40). |
+| Image coverage | 99.2% (5097/5136) |
+| `series_key` coverage | 99.0% (5086/5136 — los 50 sin son items wiki sin standardize aún) |
+| `edition_key` coverage | 99.0% (idem) |
+| `volume` coverage | 78.0% (4005/5136 — sube tras `/standardize-catalog` sobre items SocialAnime+BBM pendientes) |
+| Release date coverage | 86.9% (4464/5136) |
+| ISBN coverage | 40.7% (2088/5136 — sube de 33.2% por SocialAnime ASIN-as-ISBN; BBM no trae ISBN) |
+| Price coverage | 50.7% (2602/5136 — +25 BBM con `R$ XX,XX`) |
+| Author coverage | 40.5% (2078/5136 — BBM no expone autor, no aporta) |
 | `cluster_key` populated | 100% (precomputed by candidate_to_json) |
+| `standardized_at` populated | 86.9% (4464/5136 — los 672 wiki recientes quedan pendientes de `/standardize-catalog` por diseño) |
 
 Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
 esperado de añadir 2679 filas curadas que por diseño no tienen esos
@@ -681,6 +867,43 @@ dispatcher AND add a `choices=` entry in the argparse.
 Don't use `open(items_path, 'a')` directly. Use the
 `append_jsonl(path, rows)` helper — it does the upsert + atomic rename.
 
+### When you flag a record as "uncertain" / "needs review"
+
+**Append it a `data/unmapped_series.jsonl` — siempre.** Ese archivo es la
+única fuente de verdad para cualquier registro de la base que no estés
+seguro cómo clasificar (a nivel de serie, edición, publisher,
+agrupación, lo que sea).
+
+**NUNCA crear archivos paralelos** tipo `uncertain_groupings.jsonl`,
+`review_X.jsonl`, `audit_X.jsonl`, etc. Esto fue un problema real (el
+owner pidió consolidación el 2026-05-23 porque algunas auditorías
+escribían en `uncertain_groupings.jsonl` y otras en `unmapped_series.jsonl`).
+Si necesitás agregar contexto al flag (motivo, propuesta, audit-id),
+usá los campos opcionales del schema (`flagged_by`, `reason`, `notes`,
+`proposed_canonical_*`, `current_edition_key`, etc.) — ver schema completo
+en el file map arriba.
+
+Ejemplo mínimo para flagging desde una auditoría manual:
+
+```python
+import json, datetime as dt
+with open('data/unmapped_series.jsonl', 'a') as f:
+    f.write(json.dumps({
+        'series_key': item['series_key'],
+        'series_display': item.get('series_display', ''),
+        'sample_title': item.get('title', ''),
+        'sample_url': item.get('url', ''),
+        'source': item.get('source', ''),
+        'detected_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+        'flagged_by': 'audit:my-audit-name',
+        'reason': '...',
+        'notes': '...',
+    }, ensure_ascii=False) + '\n')
+```
+
+Para flags automáticos desde el pipeline, ya existe `log_unmapped_series()`
+en `scripts/series_aliases.py` — usalo en vez de escribir el archivo a mano.
+
 ### When you add un script nuevo (o flag nuevo a uno existente)
 
 El Panel de Control (`admin/index.html` + `scripts/admin_serve.py`) lee
@@ -743,7 +966,87 @@ Ejemplos concretos:
 - Documentado y guardado en memoria persistente (`feedback_url_as_reference.md`)
   porque el owner lo flageó varias veces.
 
-## The 23 known gotchas
+## Image storage — espejo local de portadas (Fase 1 + Fase 2)
+
+**Problema.** Hasta la Fase 1, `items.jsonl` guardaba sólo `image_url`
+apuntando al sitio fuente (retailer/wiki) y el dashboard hotlinkeaba
+esa imagen. Para desplegar PandaWatch como servicio multi-usuario hay
+que **ser dueños de los bytes**: si la fuente muere, cambia sus URLs o
+agrega protección anti-hotlink, las cards se rompen para todos los
+usuarios.
+
+La estrategia separa dos cosas: **ser dueño de los bytes** (una copia
+propia de cada portada) y **dónde se sirven** (carpeta local vs
+Cloudflare R2). La Fase 1 resuelve lo primero; la Fase 2 mueve el
+serving a R2 al desplegar.
+
+### Fase 1 — espejo local `data/images/` (IMPLEMENTADA)
+
+- El scrape descarga la portada de cada item nuevo/cambiado a
+  `data/images/<sha256(image_url)[:16]>.<ext>` y guarda el **filename**
+  (no la URL completa) en el campo `image_local`.
+- `image_url` queda intacto como **provenance + fallback**: si el
+  espejo local no existe o falla al cargar, el dashboard cae al
+  `image_url` remoto, y si ese también falla muestra el placeholder 📚.
+- Pasa por defecto en TODO scrape (source loop, wiki bootstrap, sitemap
+  mining). Se desactiva con `--skip-image-download`.
+- Módulo `scripts/image_store.py` — primitivas puras de descarga.
+  `mirror_candidate_images()` en `manga_watch.py` orquesta el filtro
+  (sólo new/changed con `image_url`) + descarga paralela (`--workers`).
+- **Idempotente**: el nombre es determinístico, así que re-scrapear la
+  misma imagen reusa el archivo en disco (glob `<stem>.*`, sin red).
+- **Validación por magic bytes**: si el body descargado no empieza con
+  una firma de imagen conocida (típico: una página HTML de error /
+  anti-bot servida en vez de la imagen), se descarta y `image_local`
+  queda vacío. La extensión sale de los magic bytes, no de la URL.
+- **`image_local` es sticky** en `append_jsonl` — ver gotcha #25.
+- `data/images/` está gitignored (entrada propia en `.gitignore` —
+  ojo: `data/` NO está ignorado en bloque, sólo archivos puntuales).
+- **Esquema deploy-agnóstico**: como el JSONL guarda sólo el filename,
+  la misma fila sirve local o desde R2 — sólo cambia la base de la URL
+  (`../data/images/` en el dashboard hoy; un dominio R2 en Fase 2).
+
+**Backfill + GC del corpus existente** — retrofit
+`scripts/retrofit/mirror_images.py`:
+- **Backfill**: recorre `items.jsonl`, descarga la portada de cada item
+  con `image_url` y sin `image_local`, setea el campo. Idempotente.
+  El scrape ya hace esto para items nuevos; el retrofit cubre el corpus
+  histórico (los items previos a la Fase 1).
+- **GC mark-and-sweep**: saca de `data/images/` los archivos que ningún
+  item referencia (orphans, de items quitados del corpus). Por defecto
+  los manda a una cuarentena `data/images/_orphans/` (reversible);
+  `--gc-delete` los borra. La carpeta nunca acumula basura. La misma
+  lógica servirá para el bucket R2 en la Fase 2.
+- Flags: `--dry-run`, `--no-gc`, `--gc-only`, `--gc-delete`,
+  `--workers`, `--limit`. Disponible también en el Panel de Control.
+
+### Fase 2 — subir el espejo a Cloudflare R2 (PLANEADA, no implementada)
+
+Al desplegar PandaWatch, el espejo local se sincroniza a object storage
+S3-compatible (Cloudflare R2). El proyecto hermano **PandaTrack**
+(`/Users/Shared/Proyectos/pandatrack`) ya usa R2 vía `@aws-sdk/client-s3`
+(ver `src/lib/user/avatarStorage.ts`, `src/lib/store/logoStorage.ts`)
+con las env vars `ASSETS_STORAGE_BUCKET/ENDPOINT/REGION/ACCESS_KEY_ID/
+SECRET_ACCESS_KEY` + `ASSETS_PUBLIC_BASE_URL`. PandaWatch reutilizará
+el patrón (en Python sería `boto3`, también S3-compatible).
+
+**Decisión: bucket R2 propio, NO un prefijo dentro del bucket de
+PandaTrack.** Misma cuenta de Cloudflare, bucket separado. Razones:
+- **Blast radius**: credenciales separadas — una key de PandaWatch
+  filtrada no toca los avatares de usuarios de PandaTrack.
+- **GC seguro**: el mark-and-sweep ("borrá lo no referenciado") es
+  peligroso en un bucket compartido — un filtro de prefijo mal hecho
+  podría borrar assets de PandaTrack.
+- Crear buckets en R2 es gratis (se paga storage + operaciones, no
+  por bucket).
+- Cuando los dos proyectos se fusionen (estimado ~1 año), mantener dos
+  buckets o unirlos es trivial; des-unir un bucket compartido no.
+
+Serving en Fase 2: dominio propio (como el `ASSETS_PUBLIC_BASE_URL` de
+PandaTrack), **no** el URL `r2.dev` (está rate-limited, es sólo para
+dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
+
+## The 27 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -773,9 +1076,26 @@ Ejemplos concretos:
 6. **Image placeholders are many.** See `IMAGE_URL_BAD_PATTERNS` for the
    list (Glénat `placeholders/`, Pika `placeholders/`, Manga-Sanctuary
    `visuel_defaut`, Kodansha `kodansha--placeholder`, Panini IT/MX
-   `placeholder_*`, data:image lazy-load placeholders, URLs ending in
-   `/` with no filename). The extractor returns `""` if all candidates
-   are placeholders, which lets backfill re-fetch later.
+   `placeholder_*`, data:image lazy-load placeholders, theme/UI assets
+   under `/assets/images/common/` and any `.svg` — un SVG nunca es
+   portada, es ícono de UI; ej. Sanyodo servía `icn_close.svg` como
+   `image_url` —, URLs ending in `/` with no filename). The extractor
+   returns `""` if all candidates are placeholders, which lets backfill
+   re-fetch later.
+
+   **Lazy-loaded `<img>`: el `src` es un placeholder, la portada real
+   vive en `data-src`/`data-lazy-src`.** `_img_to_url` prueba los
+   atributos en orden (`src` primero) y **saltea valores `data:` URI**
+   — sin ese skip devolvía el data-URI placeholder (típico:
+   `data:image/svg+xml;base64,…` en MangaLine MX) en vez de caer al
+   `data-src` con la URL real. Un `data:` URI no es descargable y rompe
+   el espejo local. Si agregás un atributo lazy nuevo, mantené el skip.
+
+   **`IMAGE_URL_GOOD_PATTERNS` puede llevar hosts, no sólo paths.**
+   `e-hon.ne.jp` está en la lista: es el CDN de portadas que linkea
+   Sanyodo (`/content/images/m_*.jpg` y `/images/syoseki/*.jpg`). Sin
+   ese boost, una portada e-hon con `alt` corto quedaba en score 4 —
+   bajo el umbral 5 del ranking fallback — y no se extraía.
 
 7. **`source_purity` propagates via search-template expansion.** If you
    mark `"FR - Glénat (search)"` as mixed, all 9 search-keyword children
@@ -1142,6 +1462,109 @@ Ejemplos concretos:
     + `test_append_jsonl_does_not_preserve_when_no_standardized_at` cubren
     ambos paths.
 
+24. **`_GENERIC_X_EDITION_PATTERN` debe excluir genéricos en ES/IT/FR, no
+    solo en inglés.**
+
+    El regex `_GENERIC_X_EDITION_PATTERN` matchea `<Word> Edition` para
+    capturar ediciones lore-específicas ("Tarot Edition", "Gold Edition",
+    "Beherit Edition"). Cuando dispara, `score_candidate` agrega el signal
+    `lore_edition` — que ESTÁ en `COLLECTIBLE_EDITION_SIGNAL_TYPES`, así que
+    rescata el item por `is_collectible_edition`.
+
+    El patrón también matchea `Edición / Edizione / Édition` (ES/IT/FR), pero
+    su lista de exclusión de palabras genéricas (First, New, Print, Standard,
+    Regular, Original…) era **solo inglesa**. Resultado: **"Nueva Edición"**
+    (= "New Edition", una simple reimpresión) disparaba `lore_edition` y
+    colaba tomos/omnibus normales por el gate. Caso real (2026-05-22): los
+    omnibus Planeta "One Piece (Nueva Edición 3 en 1)", "Naruto (Nueva
+    Edición 3 en 1)", etc. + ~21 reimpresiones "Nueva Edición" sueltas
+    (Nausicaä, Yu-Gi-Oh!, Detective Conan…). En paralelo, los One Piece
+    "Omnibus Edition" de VIZ arrastraban un `lore_edition` viejo de cuando
+    "Omnibus" todavía no estaba excluido (gotcha #18).
+
+    Fix: la lista de exclusión ahora incluye los equivalentes ES/IT/FR de
+    las mismas categorías (new / ordinales / standard / regular / original /
+    digital / idioma): `Nueva|Nuova|Nouvelle|Primera|Prima|Première|...`.
+    Si agregás un idioma nuevo con su propia palabra "Edition", revisá que
+    sus genéricos también estén excluidos. 33 items omnibus/reimpresión
+    limpiados retroactivamente. Tests:
+    `test_is_collectible_edition_x_edition_stoplist_multilingual` +
+    `test_nueva_edicion_omnibus_does_not_slip_through`.
+
+    **Nota de mantenimiento**: `signal_types` (incluido `lore_edition`) se
+    deriva de `title_original` + `description`, NO del `title`
+    estandarizado. Como `title_original` se preserva intacto (gotcha #22),
+    `signal_types` NO se vuelve caduco cuando el skill `/standardize-catalog`
+    reescribe el `title` — es una propiedad del texto scrapeado, que es
+    estable. La única forma de que `signal_types` quede desactualizado es
+    que cambie el *código* de detectores (p.ej. esta corrección del patrón)
+    — y para eso está `rescore.py`, que el pipeline nocturno corre en su
+    fase de cleanup. No hay que refrescar `signal_types` en cada curación.
+
+25. **`image_local` es sticky en `append_jsonl` — un re-scrape sin
+    descarga no borra el espejo.**
+
+    `image_local` (espejo local de portadas, Image storage Fase 1) NO
+    está en `_CURATED_FIELDS` — es un campo scrapeado, se refresca con
+    cada upsert. Pero un re-scrape corrido con `--skip-image-download`,
+    o con un fallo de red puntual al descargar la portada, produce una
+    row nueva con `image_local` vacío. Sin protección, el upsert
+    borraría el puntero al espejo que ya teníamos en disco.
+
+    Por eso `append_jsonl` trata `image_local` como **sticky**: si la
+    row nueva no trae `image_local` pero la fila existente sí, conserva
+    el de la existente. Aplica a TODO upsert (no sólo a items
+    standardized, a diferencia de `_CURATED_FIELDS`). El archivo en
+    `data/images/` sigue en disco; lo único que se perdería sin esto es
+    la referencia desde el JSONL. Ver sección "Image storage".
+
+    Tests: `test_append_jsonl_image_local_is_sticky`.
+
+26. **Amazon affiliate URL canonicalization** (extiende gotcha #19).
+
+    Las URLs Amazon que llegan vía afiliados (SocialAnime, futuras fuentes)
+    pueden traer hasta dos capas de tracking:
+    - **Query params**: `tag` (affiliate id), `linkCode` (tipo de enlace),
+      `th` (variant select), `psc` (product context), `ascsubtag`/`smid`
+      (sub-affiliate / seller), `pf_rd_*`/`pd_rd_*` (surface tracking),
+      `content-id`. Todos en `TRACKING_PARAMS` — `parse_qsl` los strippea.
+    - **Path token `/ref=...`**: Amazon le pega un segmento opaco al path
+      (`/dp/<ASIN>/ref=cm_sw_r_apa_glt_fabc_xyz`) que cambia por sesión /
+      widget. Como NO es query, no lo agarra `parse_qsl`. `normalize_url_for_dedup`
+      lo strippea sólo cuando el host es `amazon.<tld>` (no aplica a otros
+      retailers porque `/ref=` es semánticamente Amazon).
+
+    Sin esto, dos URLs del mismo ASIN con afiliados distintos (p.ej. SocialAnime
+    `?tag=socianim0c-21` vs un share manual con `?tag=otro&ref_=...`)
+    generaban rows duplicadas. Caso real: si en el futuro la misma SKU
+    aparece desde dos affiliates, el upsert por URL ya las colapsa.
+
+    Tests: `test_normalize_url_strips_amazon_affiliate_params`.
+
+27. **`normalize_url_for_dedup` strippea fragments — usar query param para
+    URLs sintéticas por-entry.**
+
+    Para fuentes wiki que enumeran muchos entries desde UNA misma URL base
+    (BBM `/manga/<slug>/` ficha cubre múltiples volúmenes + variants),
+    necesitamos URLs únicas por entry para que el upsert por URL (gotcha
+    de upsert + `candidate_key`) no los colapse en una sola fila.
+
+    El primer intento fue usar fragment: `<ficha>#vol-N-<image-stem>`.
+    No funcionó: `normalize_url_for_dedup` siempre devuelve fragment vacío
+    (línea final `urlunparse((..., new_query, ""))`), así que 35 entries
+    BBM colapsaban a ~21 ficha URLs distintas. El parser perdía data
+    silenciosamente porque process_state hacía el dedup por la URL
+    normalizada, no por la `candidate.url` original.
+
+    Fix: usar **query param** `?bbm-entry=vol-N-<image-stem>`. El param
+    NO está en `TRACKING_PARAMS` → sobrevive la normalización. BBM ignora
+    el query desconocido y muestra la ficha al clickear. Cualquier
+    futuro parser que necesite URLs sintéticas por entry sobre una base
+    común debe seguir el mismo patrón: query param custom, NO fragment.
+
+    Tests: `test_blogbbm_parses_layout_a_capas_variantes` verifica que
+    35 candidates → 35 distinct `candidate_key`.
+
 ## When the user reports "this item shouldn't be here"
 
 1. Look up the item in `data/items.jsonl` to see its actual source,
@@ -1257,10 +1680,949 @@ These came up in conversation but were explicitly deferred:
   un filtro upstream — los items de referencia siguen siendo válidos
   aunque no encuentren retailer. Diferido hasta haber probado el corpus
   con los datos de Mangavariant cargados.
+- **Image storage Fase 2 — subir el espejo a Cloudflare R2.** La
+  Fase 1 está completa (espejo local en el scrape + retrofit
+  `mirror_images.py` para backfill y GC). Falta sólo la Fase 2: al
+  desplegar, sincronizar `data/images/` a un bucket Cloudflare R2
+  propio. Ver la sección "Image storage" más arriba para la decisión
+  de diseño (bucket separado del de PandaTrack).
+- **listadomanga.es per-collection parser — TERMINADO** (Fases 1+2+3
+  completas en 2026-05-23, ver `scripts/wikis/listadomanga_collections.py`
+  y entradas "Last updated" arriba). Quedan abiertos sólo:
+  - 2 edge cases de h2 desconocido sin cubrir (`Tomos de Manga Hentai
+    incluidos en la revista Hentype`, `Portadas de Roboco y Yo`) —
+    descartables, no aportan items relevantes.
+  - Re-corrida periódica (mensual o trimestral) cuando el catálogo
+    crezca; el `UNKNOWN_H2_LOG` reportará nuevos patrones automáticamente
+    si aparecen.
+
+  Detalle histórico del plan (preservado por referencia):
+  Plan acordado con el owner 2026-05-23:
+
+  **Discovery**: iteración secuencial por `coleccion.php?id=N` desde
+  id=1 hasta el máximo conocido (~6500). No navegamos el grafo "Otras
+  ediciones de X" — la iteración secuencial cubre todas las ediciones
+  igual. Discovery por enumeración, descartando ids que devuelvan 404
+  o que sean páginas vacías.
+
+  **Fase 1 — parser base, Layout A** (en progreso):
+  parser detecta secciones por `<h2>` (con HTML entities decoded y
+  whitespace trim — algunas son `<h2><strong>`, otras `<h2>` puro):
+  - `Números editados` — tomos regulares, **descartados por
+    `is_collectible_edition`** salvo que la página entera sea formato
+    premium (ver más abajo).
+  - `Números editados (Ediciones Especiales)` — tomos con signal
+    `special_edition`, pasan el gate.
+  - `Números editados (Portadas alternativas)` — signal `variant_cover`,
+    pasan.
+  - `Números editados (Packs)` — **solo si traen extra/variant/special**
+    (signal en la línea descriptiva del pack); packs "tomos 1+2 sin
+    extra" se descartan.
+  - `Números editados (Edición Revisada)` — descartado (re-impresión,
+    no coleccionable).
+  - `Números en preparación` / `Números no editados` — opcionalmente
+    incluibles como preventa, sin precio.
+  Items dentro de las secciones se parsean del `<table class="ventana_id1">`:
+  `<img class="portada">` con `alt` = título, líneas `<br/>`-separadas
+  con `XX páginas`, `Y,YY €`, `[día] <a>Mes Año</a>`.
+
+  **Detección "página entera = edición premium"**: lee
+  `<b>Formato:</b> <valor>` (NO `<strong>`) y matchea tokens
+  `cartoné`, `tapa dura`, `A5` (148x210 / 150x210), `Tomo doble`,
+  `doble sobrecubierta`, `Libro de ilustraciones`, `Kanzenban`.
+  Cuando matchea, TODOS los items de "Números editados" reciben el
+  signal correspondiente automáticamente (`kanzenban`, `hardcover`,
+  `omnibus`, `artbook` según el caso). Cubre id=6242 (Edición Grimorio),
+  id=1741 (FMA Kanzenban), id=342 (Slam Dunk Kanzenban), id=4027
+  (Ilustraciones Gotouge). **Kanzenban INCLUIDA** (decisión del owner
+  2026-05-23): el corpus ya tiene kanzenbans desde otras fuentes,
+  sería inconsistente descartar selectivamente; el filtro por signal
+  type en el dashboard permite ocultarlas cuando se quiere navegar
+  solo cofres/extras.
+
+  **URL sintética por item** (gotcha #27 generalizada): cada item
+  genera `coleccion.php?id=<N>&item=<edition_slug>-<vol>` donde
+  `edition_slug ∈ {regular, especial, alternativa, pack, grimorio, ...}`
+  y `vol` es el número de tomo. Determinístico (mismo input → mismo URL)
+  para que `append_jsonl` haga upsert correcto en re-scrapes.
+
+  **Fase 2 — schema `images[]` + Layout B extras**:
+  - **Schema change aditivo**: nuevo campo `images: [{url, local, kind}]`
+    donde `kind ∈ {cover, extra, variant_cover, back_cover, gallery}`.
+    `image_url` / `image_local` se mantienen como alias del primer
+    elemento (`kind=cover`) — no breaking change para consumidores
+    existentes. Frontend modal: render carrusel cuando `images.length > 1`.
+  - **Layout B parser**: secciones `Cofres de regalo con las primeras
+    ediciones de X`, `Regalos con las primeras ediciones de X`,
+    `Regalo con la primera edición de X`, `Regalos de X`, `Extras de X`.
+    Cada item en `<table width="920">` `<td width="150">` con `<br/>`-
+    separated lines.
+  - **Vinculación extra→tomo**: el texto descriptivo de cada extra es
+    estructurado, NO prosa: `<Serie> nº<N>` línea 1, `(1ª Edición)` /
+    `Edición Especial Limitada` / `Portada Alternativa` línea 2,
+    descripción del extra, fecha. Algoritmo:
+    1. Parsear primero Layout A → dict `{(edition_kind, vol_n): item}`.
+    2. Para cada extra Layout B, identificar target via marker:
+       `(1ª Edición)` → target en "Números editados" (regular).
+       `Edición Especial Limitada` → target en "(Ediciones Especiales)".
+       `Portada Alternativa` → target en "(Portadas alternativas)".
+       `Edición Grimorio nº<N>` (sin paréntesis) → la página entera ES
+       la edición premium.
+    3. Si el target EXISTE en el dict → upsert con imagen appendeada al
+       `images[]` y descripción del extra en `extras[]`.
+    4. Si el target NO EXISTE (extra de tomo regular que no se listó por
+       ser tomo normal sin qualifier) → CREAR el tomo con la imagen del
+       extra como `kind=extra` + signal `bonus`, ahora pasa el gate. Esto
+       es lo que "abre la puerta" a tomos regulares de 1ª edición que
+       trajeron marcapáginas/postales/cofres.
+  - **Dedup cross-source**: cada item generado tiene URL sintética única
+    (no se pisa con otras en items.jsonl). Cluster_key (series_key +
+    edition_key + volume) agrupa a presentación con items del mismo
+    tomo desde Norma/Mangavariant/calendario. **El `image_local`
+    sticky** (gotcha #25) protege el espejo cuando se re-scrape.
+
+  **Fase 3 — iteración masiva**: corrida full sobre ~6500 ids. Antes
+  pensar paginación más agresiva en el dashboard, o filtrar
+  agresivamente en Fase 1 (descartar páginas que son solo "Números
+  editados" sin formato premium y sin secciones extras — solo escribir
+  items cuando hay al menos una sección premium o un extra que vincular).
+  Cron semanal vía Panel de Control.
+
+  Status: Fase 1 en implementación. Tras validación piloto sobre 5
+  colecciones conocidas (ids 1606, 3020, 6090, 6242, 2688) + dry-run
+  comparado contra items.jsonl actual, se decide si avanzar Fase 2
+  inmediatamente o esperar feedback del corpus.
 
 ---
 
-Last updated: 2026-05-22 (noche, variant signal + preservación de campos
+Last updated: 2026-05-23 (2 scripts canónicos: scrape_full + scrape_delta;
+listadomanga-collections discovery via lista.php) — Reorganización
+top-level para clarificar el modelo operativo:
+
+- **`scripts/scrape_delta.sh`** (NUEVO, refactor de overnight_run.sh):
+  scraping incremental. Listadomanga via `calendario.php` últimos 3 meses.
+  ~30-60 min. Frecuencia: diaria/semanal. El `overnight_run.sh` original
+  queda como alias deprecated.
+- **`scripts/scrape_full.sh`** (NUEVO): scraping completo. Listadomanga
+  via `lista.php` → recorre las ~3432 colecciones activas en orden
+  alfabético, buscando en cada una ediciones especiales / portadas
+  alternativas / cofres / extras de primera edición. ~2-4 horas.
+  Frecuencia: mensual/trimestral.
+- **Discovery via `lista.php` en `wikis/listadomanga_collections.py`**:
+  nueva función `_discover_via_lista()` + flag `--coleccion-mode {lista|range}`
+  default `lista`. Reemplaza la iteración numérica 1..6500 (que procesaba
+  muchos ids huérfanos) por el índice oficial alfabético (3432 colecciones
+  activas, incluye ids hasta 6624+ que el rango numérico no cubría).
+- **`script_registry.py`**: nuevos presets canónicos arriba del Panel de
+  Control ("⭐ Canónicos" categoría) — `scrape_delta` y `scrape_full`
+  con 2 variantes cada uno (estándar / con opt-ins).
+- **CLAUDE.md**: nueva sección "2 scripts canónicos: full vs delta" al
+  inicio que explica el modelo + tabla comparativa.
+
+**Modelo conceptual aclarado con el owner**: por ahora **una sola
+diferencia entre full y delta es importante** — el discovery de
+listadomanga (lista vs calendario). El resto de fuentes corren igual.
+En el futuro cada fuente podría tener su propio modo full vs delta
+fino, pero hoy se simplifica para no fragmentar la mantenibilidad.
+
+Sin re-correr el catálogo todavía. Próximo paso recomendado: una
+corrida real de `scripts/scrape_full.sh` para re-ingerir las 3432
+colecciones via `lista.php` (vs los 6500 ids numéricos que se usaron
+en Fase 3 inicial — el cambio descubrirá colecciones recientes con
+ids > 6500 que no se procesaron antes).
+
+**Update mismo día (post-revisión owner)**: `listadomanga-blog` removido
+del pipeline canónico. El owner pidió investigar si era necesario y la
+investigación confirmó que aporta 0 items reales al catálogo (los posts
+del blog son noticias, no productos — el gate los rechaza). Ver bloque
+"`listadomanga-blog` REMOVED" en la sección "2 scripts canónicos". El
+RSS feed correspondiente también deshabilitado en sources.yml. Ahorro:
+~30-60 min por corrida full.
+
+**Update mismo día #2**: `listadomanga calendario` ALSO removido del
+scrape_full. La investigación mostró que las 222 "colecciones exclusivas"
+del calendar eran FALSOS NEGATIVOS del parser de collections — el parser
+descartaba secciones `Números editados (Planeta DeAgostini Cómics)` y
+`(Planeta Cómic)` por error, perdiendo colecciones premium como
+"Dragon Ball Box Set Edición de Lujo" (id=1832). Fix aplicado: esas
+secciones ahora se procesan como `regular` (con gate de premium-format
+de la página, como las demás). Verificado en piloto: id=1832 ahora
+extrae 4 items premium (antes 0). El calendar queda SOLO en scrape_delta.
+Modelo final: **full = lista.php exclusivamente, delta = calendar
+exclusivamente, sin overlap**. Test de regresión:
+`test_lmc_planeta_section_processed_as_regular_with_premium_format`.
+
+Last updated previo: 2026-05-23 (Fase 3 cerrada — corrida masiva del catálogo
+listadomanga `coleccion.php?id=1..6457`) — Ejecución completa de la
+Fase 3 con +1017 items netos y carrusel real activo. Cierre incluye:
+
+- **Corrida masiva en 2 pasadas** (split por edge case técnico):
+  - Pasada 1 ids 1-854 cortó por `skip_404_streak=50` demasiado bajo
+    (gaps largos del catálogo). +78 items.
+  - Pasada 2 ids 855-6457 con `skip_404_streak=500` (subido como
+    default permanente) llegó al final del catálogo. +929 items.
+  - Re-procesado focalizado de 67 ids con UNKNOWN h2 → +10 items.
+  - **Total Fase 3: 1017 items nuevos** (items.jsonl 4840 → 5857).
+- **Headers desconocidos descubiertos y cubiertos**: 42 únicos
+  detectados, 40 ahora cubiertos por patterns ampliados:
+  - **Layout B nuevos**: `Pack especial en cofre de X` (singular),
+    `Regalo[s] con X` (sin "primeras ediciones"), `Extras con X`,
+    `Cartas/Lámina de regalo con X`, `Regalos exclusivos de la tienda`,
+    `Cofre de X (sin "de regalo")`.
+  - **SECTION_RULES nuevo**: `Números editados (Ediciones Limitadas)`
+    → `limitada` edition_kind con signals `[limited, special_edition]`.
+  - **DISCARD nuevos**: `(Planeta DeAgostini Cómics)` / `(Planeta Cómic)`
+    (re-ediciones de misma editorial, no premium), `(Novela Gráfica)` /
+    `(Manga Bara)` (subtipos editoriales), `Ilustración de portadas/lomos`
+    (galerías), `Ediciones de X en Japón y España` (comparativa).
+  - Edge cases restantes: 2 (`Tomos de Manga Hentai incluidos en la
+    revista Hentype`, `Portadas de Roboco y Yo`) — descartables manualmente.
+- **Carrusel real activado** en 36 items con multi-imagen, 153 items
+  con al menos un `kind=extra`. Verificado en browser sobre "Mujina into
+  the deep nº1" (Inio Asano, Norma): cover + 4 postales + back cover =
+  6 imágenes navegables con flechas + dots + descripción del extra.
+- **Top series aportadas por Fase 3**: Rurouni Kenshin 43, Bleach 37,
+  Berserk 28, Ranma½ 28, Fénix 24, FullMetal Alchemist 18, Ataque a los
+  Titanes 16, Tokyo Revengers 16, Beck 16, Hajime no Ippo 15.
+- **Cobertura items LMC (1357 filas totales)**: image_url 100%,
+  image_local 100%, images[] 100%, price 75.2%, release_date 97.4%,
+  author 97.2%, publisher 100%.
+- **Top publishers Fase 3**: Norma 348, Planeta Cómic 221, Panini Manga
+  173, EDT/Glénat 66, Distrito Manga 40, Milky Way 27.
+- **`UNKNOWN_H2_LOG` persistente**: el bootstrap escribe el log de h2
+  desconocidos a `logs/listadomanga_unknown_h2.txt` al final de la
+  corrida. Para futuras adiciones del catálogo, basta inspeccionar ese
+  archivo y agregar patterns.
+- Backups: `data/items.jsonl.pre-lmc-fase3-bak` (4840 filas).
+- **Re-merge focalizado final**: tras descubrir los UNKNOWN h2 y agregar
+  los patterns, los items Layout A ya ingeridos (status=seen) no se
+  re-escribían vía `process_state` porque el `content_hash` no incluye
+  `images`/`extras`. Solución: snippet python que re-parsea los 67 ids
+  con UNKNOWN h2 y hace **MERGE union manual** de images[]/extras[]
+  bypaseando `process_state`. Resultado: 48 items nuevos creados desde
+  Layout B (tomos de 1ª edición con cofres/regalos) + 3 items existentes
+  enriquecidos con extras adicionales. **Total final: 5905 items** en
+  items.jsonl. 55/75 imágenes extras descargadas al espejo local (20
+  fallos por hotlinks bloqueados, items mantienen image_url como
+  fallback).
+
+**Conclusión del proyecto listadomanga_collections**: las 3 fases
+completas + re-merge final suman ~1065 items nuevos al corpus de los
+~6457 ids del catálogo (~16% de las colecciones aportan al menos 1
+item coleccionable; el resto son tomos regulares sin formato premium
+ni extras). El carrusel modal + extras[] descriptivos eleva
+sustancialmente la calidad de los items existentes (cofres,
+marcapáginas, postales, pósters, baraja de tarot, etc. visibles en el
+modal).
+
+Last updated previo: 2026-05-23 (Fase 2 cerrada — schema `images[]` aditivo +
+Layout B parser + merge extra→tomo + frontend carrusel) — Implementación
+completa de Fase 2 del parser `scripts/wikis/listadomanga_collections.py`.
+Cierre incluye:
+
+- **Schema aditivo en `items.jsonl`**: nuevos campos
+  - `images: [{url, local, kind, description}]` — carrusel. `kind ∈ {cover,
+    extra, variant_cover, back_cover, gallery}`. Primer elemento siempre
+    `kind=cover`, sincroniza con `image_url`/`image_local` legacy (no
+    breaking). Cuando length > 1 el modal renderiza carrusel.
+  - `extras: [{description, release_date, source_section}]` — descripciones
+    de items extra vinculados al tomo (cofres / postales / marcapáginas).
+- **Layout B parser** en `listadomanga_collections.py`: `<table width="920">`
+  con `<td width="150">` y texto `<br/>`-separated. Detecta marker en línea
+  2 (`(1ª Edición)` / `Edición Especial Limitada` / `Portada Alternativa` /
+  `Edición Grimorio nº N`). Headers reconocidos: `Cofres de regalo con
+  las primeras ediciones de X`, `Regalos con las primeras ediciones de X`,
+  `Regalo con la primera edición de X`, `Regalos de X`, `Extras de X`.
+- **Algoritmo merge extra→tomo** (`_merge_extras_into_items`): para cada
+  extra Layout B, identifica target `(edition_kind, volume)` y:
+  - si target ∈ Layout A → mutación in-place del Candidate (append imagen
+    a `images[]` con `kind=extra`, append entry a `extras[]`).
+  - si target NO existe Y `target_edition_kind=regular` → CREA Candidate
+    nuevo con imagen del extra + signal `bonus` + tag `from_extras`. Esto
+    abre la puerta a tomos regulares de 1ª edición que el gate
+    `is_collectible_edition` no aprobaría sin el extra como justificación.
+- **Log de h2 desconocidos** (`UNKNOWN_H2_LOG`) — registra headers que no
+  matchean ningún SECTION_RULES ni LAYOUT_B_SECTION_PATTERNS para detectar
+  patrones nuevos durante la corrida masiva. En los 5 fixtures piloto +
+  ids 1-100: **0 unknown**.
+- **`append_jsonl` con union-merge** para `images[]` y `extras[]`: dedup por
+  `(kind, url)` y `(description, release_date)` respectivamente. Garantiza
+  que un re-scrape que sólo trae la cover NO borre los extras agregados en
+  una pasada previa con Layout B, y viceversa.
+- **`mirror_candidate_images` extendido** para descargar TODAS las imágenes
+  del `images[]` (no sólo la cover de `image_url`). Cada extra recibe su
+  espejo local en `data/images/` con el mismo nombre determinístico.
+- **Frontend carrusel** en `web/index.html` + `scripts/build_web.py`:
+  - Modal renderiza carrusel cuando `images.length > 1` con flechas + dots
+    indicator + descripción del extra. Si length ≤ 1, fallback a single
+    image legacy (no breaking para items pre-Fase 2).
+  - Estado Alpine `modalImageIdx` que resetea a 0 al abrir item nuevo.
+  - `dedupByUrl` y `_merged_canonical` en build_web propagan `images[]` y
+    `extras[]` con union dedup cross-source.
+  - Lista visible de "Incluye / extras de primera edición" debajo de los
+    datos del modal, con descripción + fecha.
+- **Backfill aplicado**: 4818 items existentes con `image_url` recibieron
+  `images=[{kind:cover}]` para que el carrusel los reconozca cuando un
+  re-scrape posterior agregue extras. Aditivo, sin tocar otros campos.
+- **Tests**: 6 nuevos en `tests/test_extraction.py` (cobertura merge, creación
+  desde extras, marker desconocido = skip, Grimorio pattern, flag
+  `enable_layout_b=False`, union-merge en append_jsonl). Total: **324
+  verde** (304 previos + 20 LMC = Fase 1 14 + Fase 2 6).
+- **Validación local sobre fixtures**: 36 items vs 18 en Fase 1 (+18
+  creados desde extras), 57 imágenes totales, 39 extras descritos, 0 h2
+  desconocidos. Re-corrida ids 1-100 con `--include-seen`: 9 candidates (4
+  nuevos por Layout B + 5 seen) — Kobato vol 6, FullMetal Alchemist vols
+  1/20/27 son tomos de 1ª edición creados desde cofres que no estaban en
+  el catálogo. items.jsonl 4836 → 4840 (+4).
+
+**Estrategia recordada con el owner**: Fase 3 (iteración masiva ids
+1-6500) se hace al final en UNA sola corrida, después de tener Fases 1+2
+estables. Total HTTP ~6700 reqs en vez de ~19500 si corriéramos full
+entre fases.
+
+Last updated previo: 2026-05-23 (Fase 1 cerrada — parser por colección de
+listadomanga.es; piloto ids 1-100 ingerido) — Implementación completa
+de Fase 1 del parser `scripts/wikis/listadomanga_collections.py` para
+`coleccion.php?id=N`. Cierre incluye:
+
+- **Parser Layout A** (`Números editados [+variants]`, packs con extras,
+  formato premium desde `<b>Formato:</b>`). Detección por `<h2>` con
+  HTML entities decodificadas. URLs sintéticas con `?item=<edition_slug>-
+  <vol>-<image_id>` (gotcha #27 generalizada; image_id como disambiguator
+  primario garantiza unicidad cuando un mismo (vol, edition_kind) tiene
+  múltiples productos físicos distintos — caso real Zelda packs 1-5 vs 6-10
+  + Berserk vol 42 con 2 ediciones limitadas distintas).
+- **Dispatcher wiring**: `--bootstrap-wiki listadomanga-collections` +
+  flags `--coleccion-from / --coleccion-to`. Panel de Control con 2
+  presets (piloto 1-100 + full 1-6500). Entrada en sources.yml con
+  `kind: wiki`.
+- **Tests**: 14 nuevos en `tests/test_extraction.py` (12 cobertura
+  inicial + 2 regresiones de bugs encontrados en el piloto). Suite
+  total: **318 verde** (304 previos + 14 LMC).
+- **Piloto ids 1-100** corrido en real: 5 items nuevos (2 artbooks
+  Tsubasa Norma, 1 artbook Uzumaki Glénat, 2 packs Zelda "tomos 1-5 / 6-10
+  + cofre"). Score≥30 todos, gate pasa todos. Items en items.jsonl
+  4831 → 4836. Portadas espejadas 5/5. Backup
+  `data/items.jsonl.pre-lmc-piloto-bak`.
+- **Bugs encontrados y arreglados durante el piloto** (con tests de
+  regresión nuevos):
+  1. *Colisión URL en packs Zelda*: disambiguator de description_extra
+     truncado a 20 chars colapsaba "pack-especial-tomos-1-a-5" y
+     "pack-especial-tomos-6-a-10" al mismo slug. Fix: usar image_id del
+     CDN (hash único + estable) como disambiguator primario.
+  2. *Gate `is_collectible_edition` rechazaba packs*: title
+     "The Legend of Zelda" sin número/URL canónica no cumplía las
+     pruebas de "producto físico" pese a signal `box_set`. Fix: para
+     `edition_kind=pack` enriquezco el title con `description_extra`
+     ("The Legend of Zelda — Pack especial tomos 1 a 5 + cofre de
+     regalo"), aprueba.
+
+**Fase 2 y 3 pendientes** (ver "Next things on the radar"):
+- Fase 2: schema `images[]` aditivo (carrusel cover+extras), Layout B
+  parser (Cofres / Regalos / Extras de X), vinculación extra→tomo —
+  crea tomos regulares de 1ª edición con marcapáginas/postales que hoy
+  no entran al catálogo.
+- Fase 3: iteración masiva ids 1-6500 + paginación dashboard + cron
+  semanal.
+
+**Decisión estratégica con el owner**: implementar Fase 2 + Fase 3
+sin corrida completa intermedia (validamos contra los 5 fixtures locales
+en `/tmp/lmc_fixtures/` + un piloto chico ids 1-100 post-Fase 2 para
+detectar edge cases), después UNA corrida completa final. Total ~6700
+HTTP requests vs ~19500 si corriéramos full entre fases. Mitigación de
+bugs ocultos: log estructurado de `<h2>` desconocidos durante la
+corrida completa para detectar patrones nuevos no cubiertos por los
+fixtures (lo agrego como parte de Fase 2).
+
+Last updated previo: 2026-05-23 (plan + Fase 1 del parser por colección de
+listadomanga.es — `scripts/wikis/listadomanga_collections.py`) —
+Análisis de patrones sobre 15+ páginas `coleccion.php?id=N`
+confirmó dos layouts HTML mutuamente excluyentes y un texto de extras
+muy estructurado (no prosa libre). Plan acordado con el owner en 3
+fases. Sin cambios todavía a items.jsonl (el piloto se hizo en la
+sesión siguiente — entrada de arriba).
+
+Last updated previo: 2026-05-23 (consolidación: `unmapped_series.jsonl` es la
+única fuente de verdad para "uncertain records"; eliminado
+`uncertain_groupings.jsonl`) — Por feedback del owner: a veces algunas
+auditorías escribían flags en `data/uncertain_groupings.jsonl` y otras en
+`data/unmapped_series.jsonl`. Decisión: **único bucket**. Cambios:
+
+1. **Schema extendido** en `unmapped_series.jsonl` para aceptar entries de
+   auditoría manual: campos opcionales `flagged_by` (`pipeline` /
+   `audit:<nombre>` / `human`), `reason`, `notes`, `proposed_canonical_key`,
+   `proposed_canonical_display`, `current_edition_key`. El pipeline
+   (`log_unmapped_series` en `scripts/series_aliases.py`) sigue escribiendo
+   sus 6 campos básicos; los readers (skill `/enrich-series-aliases` +
+   `scripts/audit/unmapped_series.py`) ignoran cualquier campo extra que
+   no entiendan.
+2. **Migración**: las 2 entradas activas de `data/uncertain_groupings.jsonl`
+   (studio-ghibli, tsukasa-hojo) appendeadas a `unmapped_series.jsonl`
+   con sus `reason`/`notes` preservados via los campos opcionales.
+3. **Borrado**: `data/uncertain_groupings.jsonl` +
+   `data/uncertain_groupings.jsonl.pre-web-audit-bak` eliminados. Ambos
+   estaban untracked (no en git).
+4. **Convención documentada** en el file map (entry `unmapped_series.jsonl`)
+   + nueva sección "When you flag a record as 'uncertain' / 'needs review'"
+   en CLAUDE.md. NUNCA crear archivos paralelos tipo
+   `uncertain_groupings.jsonl` / `review_X.jsonl` / `audit_X.jsonl` —
+   todo flag va a `unmapped_series.jsonl` con `flagged_by` discriminando
+   el origen.
+
+Sin cambios de código ni de items.jsonl. La memoria persistente del agente
+también se actualizó con esta convención (feedback memory) para que sesiones
+futuras no creen archivos paralelos sin pedir confirmación.
+
+Last updated previo: 2026-05-23 (auditoría de `unmapped_series.jsonl` — limpieza
+completa de la cola de series sin alias) — Pasada de mantenimiento sobre
+`data/unmapped_series.jsonl` (la cola append-only que el scraper alimenta
+cuando encuentra una `series_key` no presente en `series_aliases.yml`).
+Estado inicial: **1786 entradas** (1739 únicas). Workflow:
+
+1. **Prune de stale entries**: 1143 entradas correspondían a `series_key`
+   ya remapeadas por `/standardize-catalog` previos y no existen más en
+   `items.jsonl`. Pruneadas (backup en `.pre-prune-bak`). Live: 596.
+
+2. **Carrera con `/standardize-catalog`**: durante mi prune, otra invocación
+   del skill `/standardize-catalog` corrió en paralelo (probablemente del
+   usuario) y remapeó 422 entradas más de la cola live. Al re-correr el
+   prune contra el snapshot actual de items.jsonl: live=174. *Lección
+   operativa*: si `unmapped_series.jsonl` y `items.jsonl` se editan en
+   paralelo, conviene re-snapshot antes de aplicar.
+
+3. **Heurística local** (sin LLM, `/tmp/unmapped_audit/heuristic_cleanup.py`)
+   sobre las 174 vivas:
+   - 84 fuzzy-match ratio=1.0 contra sí mismas (keys ya canónicas en items.jsonl
+     pero ausentes de aliases.yml).
+   - 1 fuzzy-match real: `kaguya-sama-love-is-war` → `kaguya-sama` (ratio 0.98).
+   - 0 stripped-exact-match en este paso (el otro skill ya había barrido los
+     casos con qualifiers obvios).
+   - 89 a investigar.
+
+4. **Investigación**: dividí 90 entradas (89 + uncertain margin) en 3 chunks
+   de 30 a subagentes paralelos con WebSearch/WebFetch + acceso al
+   `canonical_catalog.json` (535 series canónicas del corpus) y a
+   `series_aliases.yml`. Cada subagente decidió por cada fila:
+   `merge-to-existing` / `new-canonical` (con aliases multilingüe) /
+   `uncertain`.
+
+5. **Veredictos** (todos los 90):
+   - **17 merge-to-existing**: variants retailer-exclusivos (Blue Lock
+     Fnac/Momie/Panini → `blue-lock`; Dandadan Canal BD → `dandadan`;
+     Boruto Two Blue Vortex Fnac → `boruto-two-blue-vortex`),
+     traducciones (Ataque a los Titanes Inside → `attack-on-titan`;
+     Carnets de l'Apothicaire → `apothecary-diaries`; Gen di Hiroshima →
+     `gen-of-hiroshima`; Mushoku Tensei Reencarnación → `mushoku-tensei`),
+     boxsets MX (Lone Wolf → `lone-wolf-and-cub`), spin-offs Gundam
+     (Crossbone, Origin → `mobile-suit-gundam-series-and-spin`), un caso
+     de scraper-artifact (`prochainement` → `slam-dunk`, Kana metió
+     "Prochainement"/banner como series), y artbooks (Promised Neverland
+     World → `the-promised-neverland`, Visões Grotescas → `junji-ito`).
+   - **71 new-canonical**: agregados a `series_aliases.yml` con aliases
+     multilingüe. Incluyen series genuinamente nuevas en el catálogo
+     (Aposimz, Black Bird, Bloom Into You, Btooom!, Chiisakobe, Captain
+     Harlock: Dimensional Voyage, Heaven Official's Blessing, Kyoukai
+     no Rinne, Orb: On the Movements of the Earth, Steam Reverie in
+     Amber, Times of Botchan, Pygmalion, Sweet Paprika, The Box Man,
+     Tokyo Alien Bros, Tsubaki-chou Lonely Planet, Yuuna and the
+     Haunted Hot Springs, Zone-00, etc.) + artbooks/ilustración
+     (Fuzichoco Gashu Saigenkyou/Shukusai Junrei, Beasts Art Book,
+     Kasai Ayumi Reijin 1993-2025, Dragon Quest Illustrations, Mihara
+     Jun Special Box, Visões Grotescas como artbook). De los 71, 21
+     llevaron canonical_key distinto del slug logueado (e.g., `1993-2025`
+     → `kasai-ayumi-reijin-1993-2025`; `box` → `mihara-jun-special-box`;
+     `katekyo-hitman-reborn-i-ii` → `katekyo-hitman-reborn`), así que
+     items.jsonl también se remapeó.
+   - **2 uncertain**: `studio-ghibli` (Coffret es un libro de cinema-ref,
+     no manga) y `tsukasa-hojo` (series_key es nombre de autor, no de
+     obra). Guardados en `data/uncertain_groupings.jsonl`.
+
+6. **Aplicación**:
+   - **items.jsonl**: 38 filas remapeadas (17 merge + 21 new-canonical con
+     key distinta). Backup `.pre-unmapped-web-bak`.
+   - **series_aliases.yml**: 106 → **261** entradas (+71 new-canonical
+     +84 self-canonicals para evitar re-logueo). Backup
+     `.pre-unmapped-web-bak`. Fix encontrado por el camino:
+     `yaml.safe_dump` no representa `OrderedDict` (raise `RepresenterError`
+     → archivo trunco a 0 bytes); restauración desde backup + re-escritura
+     con `dict` plano (Python 3.7+ preserva orden de inserción).
+   - **uncertain_groupings.jsonl**: +2 casos para revisión manual.
+   - **unmapped_series.jsonl**: 174 → **0**. Cola limpia.
+   - **cluster_key**: refrescado tras los remaps (`backfill_cluster_key.py`).
+
+7. **Decisión técnica registrada**: el "fix correcto" para entries que el
+   resolver no agarra es **remap directo en items.jsonl + entry en
+   `series_aliases.yml`**, no agregar más aliases en blanco. Las 84
+   self-canonicals se agregaron al YAML con `aliases: []` puramente para
+   evitar re-aparecer en el log futuro — no porque la display tenga
+   variants conocidas (los aliases reales se irán enriqueciendo con
+   `/enrich-series-aliases`).
+
+Corpus: items.jsonl está en **4841** filas (bajó de 5136 entre el inicio
+de la sesión y ahora; `/standardize-catalog` corrido en paralelo movió
+non-manga a blacklist + dedupeó por `(series, edition, vol)`). Tests
+304/304 verde. CLAUDE.md actualizado.
+
+Last updated previo: 2026-05-23 (auditoría de agrupaciones — fase 2, resolución por
+web research) — Continuación de la pasada de auditoría del día anterior:
+los 5 casos que quedaron en `data/uncertain_groupings.jsonl` se resolvieron
+investigándolos en internet. Workflow:
+
+1. **5 subagentes en paralelo**, uno por caso, con WebFetch + WebSearch
+   para verificar el producto real. Tres pegaron contra el session limit
+   antes de terminar (NieR Art, Tokyo Ghoul Zakki:re, Yomi no Tsugai), así
+   que los investigué desde el hilo principal con WebFetch directo.
+2. **Veredictos**:
+   - **Blue Lock × Liverpool FC** (Manga Dreams IT) → **confirm-fix**.
+     Es un collab one-time de Kodansha JP (oct 2024) que reagrupa los
+     vols 1-5 con tapas Liverpool FC para el anime S2. NO es un variant
+     line de mangadreams.it, es producto Kodansha. Movido a
+     `blue-lock-kodansha-liverpool-collab`.
+   - **Gannibal box set (Vol. 2)** (Amazon IT, 001 Edizioni) →
+     **confirm-fix**. ISBN 8871822900 es el **2º box de la línea
+     "Collection box" de 001 Edizioni**, contiene vols 4-6 (el "(Vol. 2)"
+     refiere al número de caja, no al volumen del manga). Movido al
+     series_key `gannibal-collection-box` para hermanarse con
+     "Collection box (Vol. 1-3)" y "Collection box (Vol. 4)".
+   - **NieR Art** (Kurokawa FR) → **leave-as-is**. Artbook standalone
+     de 160 páginas por Kazuma Koda (concept artist) que cubre TODA
+     la franquicia (Replicant + Automata + Reincarnation + Yorha stage).
+     La sibling `nier-automata-kurokawa-artbook` es la "World Guide"
+     Automata-específica → ambos correctamente distintos.
+   - **Tokyo Ghoul Zakki:re** (Norma ES) → **leave-as-is**. Artbook
+     oficial de 288 páginas que expande el universo entero post-:re.
+     La versión Glénat FR ya está bajo `tokyo-ghoul-glenat-artbook`,
+     consistente. Mantener ambas bajo `tokyo-ghoul` (franquicia-raíz).
+   - **Yomi no Tsugai** (Mangavariant) → **confirm-fix + remap masivo**.
+     `data/series_aliases.yml` ya tiene `yomi-no-tsugai` como canonical
+     con "Daemons of the Shadow Realm" como alias, pero 11 items en
+     items.jsonl quedaron con el `series_key=yomi-no-tsugai-daemons-of-the-shado`
+     (artefacto de truncado del slugify a 33 chars que `canonical_series_key`
+     nunca resolvió). Remap aplicado: `series_key` → `yomi-no-tsugai`,
+     `series_display` → `Yomi no Tsugai`, `edition_key` prefix-replace
+     (`-unknown-collector` con publisher Kurokawa → `-kurokawa-collector`,
+     etc.).
+3. **Aplicado**: 2 confirm-fix individuales (Blue Lock, Gannibal) + 11
+   filas remapeadas (Yomi). Total **13 items modificados**.
+4. **Cluster_key refresh**: corrí `backfill_cluster_key.py` porque cambié
+   `series_display` en 13 filas.
+5. **`data/uncertain_groupings.jsonl` vaciado** — los 5 casos quedaron
+   todos resueltos. Backup en `.pre-web-audit-bak` por si se necesita
+   revisar la cola original.
+
+Tests: 304/304 verde. Backups `data/items.jsonl.pre-web-audit-bak`
+preservado. Decisión de diseño confirmada: items que sobreviven la
+auditoría como **leave-as-is** valen igual que los corregidos — son
+casos donde la agrupación actual ya era buena y la heurística los flagueó
+de más; mantenerlos sin tocar es la respuesta correcta.
+
+Patrón aprendido para futuras auditorías: cuando un alias YA existe en
+`series_aliases.yml` pero `canonical_series_key()` no lo resolvió, el
+problema es que la `series_key` derivada en el scrape no matchea ningún
+alias normalizado (el resolver compara contra display y key normalizados,
+no contra cualquier substring). El fix correcto es remap directo en
+items.jsonl, no agregar más aliases.
+
+Last updated previo: 2026-05-23 (nueva fuente BR — Biblioteca Brasileira de Mangás) —
+Segunda fuente nueva en cadena tras SocialAnime: **blogbbm.com**, un blog
+comunitario brasileño que mantiene **dos posts-guía curados continuamente
+actualizados** (la última entrada agregada es de mayo 2026, el primer
+post arrancó en 2020). Cubre publishers BR con clasificación explícita
+de variant/special/bonus que el scrape directo de Panini BR / JBC /
+NewPOP / Pipoca & Nanquim / MPEG no marca por sí solo.
+
+Trabajo entregado en esta pasada:
+
+1. **Parser `scripts/wikis/blogbbm.py`** (~370 líneas) — heurística
+   **title-driven** que soporta dos layouts distintos del mismo blog:
+   - **Layout A** (`/2020/10/09/capas_variantes/`): gallery `<div>`
+     ANTES del título, prose después. Cada entry separado por `<hr>`,
+     pero algunos chunks tardíos agrupan varios entries sin `<hr>` entre
+     ellos. Las imágenes siempre van a un buffer `pending_imgs` y se
+     atan al siguiente título — esto resuelve el alineamiento aunque
+     haya N entries dentro de un mismo chunk.
+   - **Layout B** (`/2024/05/15/guia-volumes-especiais-...`): título
+     con `(MM/YYYY)` parens al final, `<figure>` después. `<figure>`
+     adentro del current entry (post-título).
+
+   Distinción: `<div>` siempre va al buffer (entre entries), `<figure>`
+   va al entry actual.
+
+   Detección de título: parens-date `(MM/YYYY)` al final OR ficha link
+   `/manga/<slug>/` cubre ≥80%. Modo lenient (cuando pending_imgs está
+   cargado sin asignar) acepta volume marker `#NN` solo o `<strong>`
+   envolviendo. Cubre entries Layout A sin ficha (Re:Zero, NGNL).
+   Reject prefijos narrativos largos para no agarrar prose ("Em janeiro",
+   "No Brasil", "A editora", "O volume #") — cuidado con prefijos cortos
+   ambiguos como "no " (chocaría con "No Game No Life").
+
+2. **URL sintética por-entry con query param** (gotcha #27 nueva).
+   Primer intento usaba fragment `<ficha>#vol-N-<stem>`, pero
+   `normalize_url_for_dedup` strippea fragments siempre → 35 candidates
+   colapsaban a 21 ficha-URLs distintas, perdiendo 14 entries
+   silenciosamente. Fix: query param custom `?bbm-entry=vol-N-<image-stem>`
+   que NO está en `TRACKING_PARAMS` y sobrevive la normalización.
+   Patrón replicable para futuros wikis con muchos entries derivados de
+   una URL ficha común.
+
+3. **Dispatcher + UI**: `--bootstrap-wiki blogbbm` en argparse choices;
+   preset 🇧🇷 BBM en `script_registry.py`; fase `02g` en
+   `overnight_run.sh` (whakoom opt-in ahora es 02h).
+
+4. **Tests**: 5 nuevos — parse layout A / parse layout B / rejects
+   narrativos / image proxy stripping (i0.wp.com → blogbbm.com) /
+   iter_year_months. **304/304 verde**.
+
+5. **Ingesta**:
+   - 35 candidates (25 Capas + 10 Volumes), 1 dropped por gate
+     `is_collectible_edition` → **34 reportables**.
+   - Backup `data/items.jsonl.pre-blogbbm-bak`.
+   - **Corpus: 5102 → 5136** (+34).
+   - **Brasil: 40 → 74** (+85%) — sale del último puesto y se acerca a
+     Argentina. Antes BR estaba subrepresentado pese a tener 6 sources
+     directas porque ninguna marcaba "capa variante" en title; ahora 34
+     items con `variant_cover` + `special_edition`/`bonus` signals
+     explícitos.
+   - Cobertura BBM: image 100%, release_date 100%, publisher 85% (29/34),
+     price 73% (25/34). ISBN 0% (BBM no expone — esperado, son items
+     de referencia).
+   - 34/34 portadas espejadas a `data/images/`. URLs de imagen usan
+     proxy `i0.wp.com` que el parser convierte a `blogbbm.com` directo
+     para que el espejo descargue del origen.
+   - `standardized_at` NO setado — los 34 quedan pendientes para
+     `/standardize-catalog`.
+
+Quedan integrados los dos posts conocidos. Si BBM saca un nuevo
+post-guía con otro shape, basta con agregar el meta al `BBM_POSTS`
+del parser — la lógica de detección es genérica para layouts WordPress
+similares.
+
+Last updated previo: 2026-05-22 (auditoría de agrupaciones con descripción + URL) —
+Pasada manual de re-revisión sobre items.jsonl buscando agrupaciones mal
+asignadas que se nos colaron porque `/standardize-catalog` solo miró el
+title (caso semilla: vol 2 de "One Piece Doors Fanbook" estaba en
+`one-piece-glenat-fanbook` porque Manga-Sanctuary scrapeó el título sin
+"Doors" — la descripción y el URL slug sí decían "Doors"). Workflow:
+
+1. **Heurísticas de candidatos** (`/tmp/regroup_audit/build_candidates.py`,
+   no quedó en repo — utility one-shot):
+   - **H1 superset**: items donde la descripción menciona una serie conocida
+     más específica que su `series_display` actual (e.g., propio="One Piece"
+     + desc menciona "One Piece Doors").
+   - **H2 orphan-con-hermana-extendida**: edition_keys de tamaño 1 cuyo
+     prefijo coincide con otra edition_key de serie más larga
+     (e.g., `one-piece-glenat-fanbook` vs `one-piece-doors-glenat-fanbook`).
+   - Output: 113 candidatos (27 H1 + 86 H2 + 3 ambos).
+2. **4 subagentes en paralelo** (chunks de ~28 c/u) revisaron cada
+   candidato leyendo `title` + `title_original` + `description` + URL
+   slug + ediciones hermanas. Veredictos:
+   - **confirm-fix**: 34 — agrupación corregida en items.jsonl
+     (campos `series_key`, `series_display`, `edition_key`,
+     `edition_display`, `title`; `title_original` preservado).
+   - **leave-as-is**: 74 — falsos positivos. Patrón principal: el "sibling"
+     que la heurística sugería es en realidad una edición con `series_key`
+     malformado por qualifiers italianos ("Ediz. variant", "Ediz. limitata")
+     o tokens de volumen filtrados en el slug — el candidato estaba bien;
+     el hermano es el que necesita limpieza (queda para futura pasada).
+   - **uncertain**: 5 — guardados en **`data/uncertain_groupings.jsonl`**
+     (archivo nuevo, append-only) para revisión manual.
+3. **Fixes aplicados notables**:
+   - **Dragon Ball le super livre** (3 fanbooks, vols 1-3) — title scrapeado
+     decía "Dragon Ball Fanbook N" pero desc + URL: "Dragon Ball le super
+     livre". Mismo patrón que One Piece Doors.
+   - **Pokémon Or et Argent / Espada y Escudo / Noir et Blanc** — cada
+     generación de Pokémon es su propia sub-serie. Estaban bajo `pokemon`
+     genérico; ahora cada gen tiene su `series_key`.
+   - **My Hero Academia Ultra Analysis Fanbook** — sub-línea distinta de
+     `my-hero-academia` (no es la serie principal, es el fanbook "Ultra
+     Analysis"). Antes orphan en `my-hero-academia-kioon-fanbook`.
+   - **Kaiju No. 8** vols Collector y Celebration — Star Comics y
+     Manga-Sanctuary dropearon el "8" al derivar series_key, quedando
+     `kaiju-no`. Movidos a `kaiju-no-8`.
+   - **The Legend of Zelda: Breath of the Wild Artbook** — estaba bajo
+     `legend-of-zelda` genérico; reasignado al sub-key `zelda-breath-wild`.
+   - **Cyberpunk: Edgerunners Madness** — sub-serie distinta, ahora bajo
+     `cyberpunk-edgerunners-madness` (el principal sigue en
+     `cyberpunk-edgerunners`).
+   - **Genshin Impact Artbook officiel vol 1** — los vols 2 y 3 estaban
+     en `genshin-impact-officiel`, el 1 en `genshin-impact` genérico.
+     Mergeado.
+   - **Animal Crossing New Horizons — Le Journal de l'île** — sub-serie
+     dedicada, no la genérica.
+   - **Killing Stalking Season 1 / Season 3** — el "Box" se había
+     embebido en el series_key (`killing-stalking-season-box`); limpiado.
+   - **Slam Dunk Takehiko Inoue Illustrations** — artbook dedicado, no la
+     línea genérica de Slam Dunk.
+   - **Cyberpunk Edgerunners Madness, Negima Boxset, NieR:Automata
+     Artbook**, etc. — varios casos similares.
+4. **Backfill cluster_key**: corrí `scripts/retrofit/backfill_cluster_key.py`
+   porque los fixes cambiaron `series_display` (componente de la fuzzy key).
+   1857 cluster_keys refrescadas; 50 items en 25 grupos consolidados
+   (-25 cards en el dashboard).
+
+Corpus: distinct series_key **1863 → 1855** (-8), distinct edition_key
+**3128 → 3115** (-13). Total items: 5102 (sin cambios). Backups
+`data/items.jsonl.pre-regroup-audit-bak` y `data/items.jsonl.pre-cluster-bak`
+preservados.
+
+**Casos uncertain en `data/uncertain_groupings.jsonl`** (para revisar
+manual o web-check después):
+- *Blue Lock x Liverpool FC* — ¿variant retailer-exclusivo merece su propio
+  edition_key vs la línea genérica de variantes mangadreams?
+- *Gannibal box set (Vol. 2)* — ¿es 2º box numerado o el box del vol 2 solo?
+- *NieR Art Vol 1* (Kurokawa) — ¿artbook genérico de NieR o solo de
+  NieR:Automata? Hay sibling para Automata.
+- *Tokyo Ghoul Zakki:re* — artbook combinado de Tokyo Ghoul + :re, no claro
+  bajo qué key debe colgarse.
+- *Yomi no Tsugai / Daemons of the Shadow Realm* — caso de
+  series_aliases (un solo manga con dos nombres), no de regrouping —
+  hay que consolidar las dos keys en `series_aliases.yml`.
+
+**Patrón meta detectado por los subagentes** (no corregido en esta pasada,
+candidato para futura): muchos `series_key` malformados con qualifiers
+italianos/japoneses filtrados (`-ediz-variant`, `-ediz-limitata`,
+volúmenes pegados, "box" embebido en el slug). Un retrofit nuevo que
+detecte y limpie esos `series_key` por reglas (tokens prohibidos en
+slugs) ahorraría una pasada de subagentes en el futuro.
+
+Tests: 299/299 verde. Nueva entrada en file map para
+`data/uncertain_groupings.jsonl`. No hay schema change a items.jsonl —
+los campos modificados ya existían.
+
+Last updated previo: 2026-05-22 (nueva fuente IT — SocialAnime variant + cofanetti) —
+Nueva wiki `socialanime` que importa el MangaStore italiano de
+**socialanime.it** vía un JSON feed paginado (descubierto inspeccionando
+`store.js`; el endpoint `flow_mangafeed.php?type={variant|box}&group_no=N&macro_filter=best_of_all`
+devuelve 25 items por página con title/link/img/precio/editore/autore/trama/
+PublicationDate/extra_class). Cubre 466 variant + 440 cofanetti del mercado
+italiano de publishers que las sources directas (Panini IT search, Star
+Comics search, Manga Dreams) no capturaban: **Edizioni BD, 001 Edizioni,
+Goen, Magic Press, Dynit, Coconino, Tora, Dokusho**.
+
+Trabajo entregado en esta pasada:
+
+1. **Parser `scripts/wikis/socialanime.py`** (~300 líneas) — paginación
+   automática hasta página vacía sobre tipos `variant` + `box`, inyecta
+   hint "Cofanetto / box set." en la descripción para items de type=box
+   sin keyword explícito (sin esto `detect_signals` no levantaría `box_set`
+   y caerían fuera del gate). ASIN Amazon → ISBN-10 cuando el ASIN parece
+   ISBN legacy italiano (prefijo 88, no `B0…` que son Kindle). Skip items
+   sin link Amazon (~10% del feed son entries delisteadas sin URL canónica).
+
+2. **Canonicalización Amazon en `normalize_url_for_dedup`** (gotcha #26
+   nueva, extiende #19): añadidos a `TRACKING_PARAMS` los affiliate
+   params Amazon (`linkCode`, `th`, `psc`, `ascsubtag`, `smid`, `pf_rd_*`,
+   `pd_rd_*`, `content-id`) + path-token stripping `/ref=...` que NO es
+   query y por eso parse_qsl no lo agarra. Sólo aplica a host amazon.*.
+   Cualquier futura fuente con Amazon affiliates ya cae al mismo canónico
+   `/dp/<ASIN>` o `/gp/product/<ASIN>`.
+
+3. **Dispatcher + UI**: `--bootstrap-wiki socialanime` en argparse
+   choices; entrada en `script_registry.py` con preset 🇮🇹 SocialAnime
+   para que aparezca en el Panel de Control; fase `02f` agregada al
+   `overnight_run.sh` (el whakoom opt-in pasa a `02g`).
+
+4. **Tests**: 8 nuevos (parse variant item / box hint / box-no-duplica /
+   skip sin link / skip sin título / ASIN Kindle no es ISBN /
+   iter_year_months / Amazon URL canonicalization). 299/299 verde.
+
+5. **Ingesta**:
+   - 906 items raw del feed → 640 candidates score>=20 → **638 reportables**
+     (1 dropped por gate is_collectible_edition, 1 colision dedup local).
+   - Backup `data/items.jsonl.pre-socialanime-bak` preservado.
+   - **Corpus: 4464 → 5102** (+638, +14%). **Italia: 789 → 1427 (+81%)** —
+     pasa de 4º país a empatar con Francia.
+   - Cobertura SocialAnime items: **ISBN 95.3%, image_local 97.5%,
+     price 100%, release_date 99%**. ISBN viene del ASIN Amazon
+     (libros italianos legacy con prefijo 88 son ISBN-10 válido).
+   - 622/638 portadas espejadas a `data/images/` en la ingesta (los 16
+     fallidos son URLs de imagen Amazon con anti-hotlink, quedan con
+     `image_url` como fallback).
+   - **`standardized_at` NO setado** — los 638 quedan pendientes para
+     `/standardize-catalog` (flujo de doble pasada, gotcha #21). Hay
+     que correr el skill después para asignarles series_key/edition_key
+     canónicos (algunos ya tienen los del heurístico del scraper, otros
+     necesitan revisión LLM porque los títulos italianos con prefijo
+     "Ediz." + variante son ambiguos).
+
+Próximos pasos sugeridos por el dueño (en orden):
+- Fuente 2: **Biblioteca Brasileira de Mangás** (`/2020/10/09/capas_variantes/`)
+  — post-guía consolidado actualizado continuamente con secciones por
+  título + dos imágenes (normal vs variant) + editorial BR.
+- Fuente 3: **BBM `/guia-volumes-especiais-de-mangas-com-itens-especiais/`**
+  — post-guía con volúmenes que traen brindes/postales/marcapáginas/cards.
+
+Last updated previo: 2026-05-22 (ingesta de lista curada usuario — 63 items
+nuevos de variantes/ediciones especiales MX/AR/ES). El usuario pasó una
+lista de ~75 portadas alternativas / ediciones especiales / sobrecubiertas
+reversibles publicadas por Panini México, MangaLine México, Editorial
+Ivrea (Argentina), Panini Argentina, OVNI Press, Panini España, Norma
+Editorial, Planeta Cómic, Distrito Manga, Milky Way Ediciones, MangaLine
+Ediciones (España) y ECC Ediciones. Workflow ejecutado:
+
+1. **Cruce automatizado contra items.jsonl** vía script ad-hoc
+   (`/tmp/curated-list/`): 30 entradas ya cubiertas en el corpus desde
+   agregadores (Mangavariant / ListadoManga / Whakoom) — confirmadas
+   como duplicados por presencia. 41 entradas genuinamente faltantes.
+   4 dudosas resueltas por research adicional.
+2. **Política multi-source confirmada con el usuario**: para variantes
+   donde el corpus ya tenía una entrada vía agregador pero NO la URL
+   editorial oficial, agregar la URL oficial igual — el dashboard
+   agrupa múltiples filas en una sola card vía `cluster_key`. Por
+   eso el alcance final fueron 64 entradas a investigar (no solo
+   las 41 missing).
+3. **Investigación paralela en 8 subagentes** (uno por familia editorial,
+   batches de 4-15 entradas). Cada subagente buscó URL canónica
+   (preferencia: tienda oficial → Whakoom → ListadoManga → casadellibro
+   → otras), imagen de portada, ISBN, fecha, precio, autor, descripción
+   de extras. Resultado: 57/64 con tienda oficial, 7/64 fallback Whakoom
+   (`/ediciones/` para items descontinuados Panini MX/Ivrea AR).
+4. **Construcción de filas** vía script (`build_rows.py`): para cada
+   resultado, derivar `series_key` canónico (vía `series_aliases.py`),
+   `edition_key` `{series}-{publisher_slug}-{edition_slug}` con
+   publisher_slug market-suffixed (`panini-mx` vs `panini-es` vs
+   `panini-ar` para distinguir mercados), `volume` del input,
+   `cluster_key` ISBN-based si hay ISBN si no fuzzy, `signal_types`
+   del subagente, `standardized_at=NOW` para no re-procesar con
+   `/standardize-catalog`. Source field `<MARKET> - <publisher> (lista
+   curada)`, source_class=`official` o `curated`.
+5. **Descarga de imágenes** vía `image_store.download_image()`
+   paralelizada (workers=6). 53/64 OK al primer intento; 7 Whakoom
+   re-intentadas explícitamente con `Accept-Encoding: gzip, deflate`
+   (NO brotli, ver gotcha #15) — todas funcionaron. 3 imágenes Norma
+   con URLs CDN stale, re-fetched og:image desde la página del producto.
+   **Cobertura final: 64/64**.
+6. **Append vía `append_jsonl`**: 64 filas → +63 netos (H×H pack
+   castellano #1+#37 son 2 entradas que comparten URL única del pack).
+7. **Tests**: 291 passing.
+
+Notas:
+- **Cluster merging**: solo 1 fila nueva (MHA Cofre 42 castellano)
+  mergea con una existente vía ISBN. Las otras 62 quedan como cards
+  separadas de los registros agregador-only correspondientes, porque
+  el `publisher` field difiere entre Mangavariant ("Panini Manga"),
+  ListadoManga ("Panini Manga") y mis nuevas filas ("Panini Manga
+  España"). Solución futura: correr `/standardize-catalog` con
+  `--force-all` para re-unificar series_key/edition_key/volume en todo
+  el corpus y dedupear (la skill colapsa las mismas (series, edition,
+  vol) en 1 fila aunque vinieran de fuentes distintas).
+- **Países**: México 91→108 (+17), Argentina 27→40 (+13), España 385→418
+  (+33). Argentina antes era el tercer país con menos cobertura tras
+  Reino Unido y Taiwán; ahora está en el rango medio.
+- **Backup**: `data/items.jsonl.pre-curated-list-bak` preservado por si
+  hay que rollback.
+- **Subagentes**: ~720k tokens totales + 340 tool uses en ~7 min
+  cumulativos. La estrategia de 1 subagente por familia editorial
+  funcionó bien porque cada familia tiene patrones de búsqueda comunes
+  (mismo dominio, mismas SKUs, mismo schema de ficha).
+
+Last updated previo: 2026-05-22 (fix extracción de portadas — Sanyodo theme
+assets + MangaLine data-URI) — El extractor de imágenes guardaba junk
+como `image_url` en dos fuentes: **Sanyodo** (~33 items) capturaba el
+ícono de tema `icn_close.svg`, y **MangaLine MX** (~8 items) guardaba
+un placeholder `data:image/svg+xml;base64,…` en vez de la portada
+lazy-loaded. Cambios (ver gotcha #6 ampliada):
+- `IMAGE_URL_BAD_PATTERNS` += `/assets/images/common/` (theme assets de
+  WP) y `.svg` (un SVG nunca es portada). Rechaza los íconos de Sanyodo.
+- `_img_to_url` ahora saltea valores `data:` URI — así una imagen
+  lazy-loaded cae al `data-src`/`data-lazy-src` con la URL real en vez
+  de devolver el placeholder data-URI. Aplica al listing extractor y al
+  detail extractor (steps 4-5).
+- `IMAGE_URL_GOOD_PATTERNS` += `e-hon.ne.jp` — CDN de portadas que
+  linkea Sanyodo; sin el boost una cover e-hon con `alt` corto quedaba
+  bajo el umbral 5 del ranking.
+- Retrofit: limpié el `image_url` junk de los 41 items, corrí
+  `backfill_metadata.py --only image_url` (38 recuperaron portada real
+  vía detail-fetch; 3 Sanyodo quedaron sin portada porque su búsqueda
+  `?s=ISBN` ya no devuelve resultados — el libro salió del catálogo) y
+  `mirror_images.py` (38 portadas nuevas en el espejo local). MangaLine
+  8/8 recuperados; Sanyodo 30/33.
+- Tests: 291 passing (+6 — data-URI skip, theme/SVG reject, e-hon host).
+
+Last updated previo: 2026-05-22 (Image storage Fase 1 — espejo local de
+portadas) — Nueva estrategia para ser dueños de las imágenes de portada
+en vez de hotlinkearlas (necesario para desplegar PandaWatch como
+servicio multi-usuario). Cambios:
+- Campo nuevo `image_local` en items.jsonl: filename del espejo local
+  en `data/images/`. `image_url` queda como provenance + fallback.
+- Módulo nuevo `scripts/image_store.py` — primitivas de descarga:
+  nombre de archivo determinístico por hash del URL, validación por
+  magic bytes (rechaza HTML de error), idempotencia (no re-descarga).
+- `mirror_candidate_images()` en manga_watch.py orquesta la descarga
+  paralela; conectada en las 3 rutas de escritura (source loop, wiki
+  bootstrap, sitemap mining). On by default; flag nueva
+  `--skip-image-download` para saltearla.
+- `append_jsonl`: `image_local` es sticky (gotcha #25 nueva) — un
+  re-scrape sin descarga no borra el espejo ya existente.
+- Frontend (`web/index.html`): `coverSrc()` (local primero, image_url
+  fallback) + `onCoverError()` (fallback en cascada → placeholder 📚).
+  `build_web.py` y el dedup JS propagan `image_local`.
+- Retrofit nuevo `scripts/retrofit/mirror_images.py` — completa la
+  Fase 1: backfill del corpus histórico (descarga las portadas de los
+  items previos a la Fase 1) + GC mark-and-sweep (saca de
+  `data/images/` los archivos huérfanos a una cuarentena, o
+  `--gc-delete`). Idempotente. Agregado al Panel de Control.
+- Panel de Control: flags `--skip-image-download` (scrape) +
+  script `mirror_images` agregados al registry.
+- Nueva sección "Image storage" documenta Fase 1 (completa: scrape +
+  retrofit) y Fase 2 (subir el espejo a un bucket Cloudflare R2 propio
+  — planeada, reusando el patrón de PandaTrack pero con bucket separado).
+- Tests: 285 passing (+6 — image_store + sticky append_jsonl).
+- Backfill corrido sobre el corpus existente: **4342/4403 items
+  (98.6%)** con espejo local en `data/images/` (4284 archivos — varios
+  items comparten portada). El catálogo (items, series, ediciones) no
+  cambió. Los 61 sin espejo NO son re-descargables (no son fallos
+  transitorios): `image_url` mal extraída por el scraper —
+  `data:` URI placeholder (MangaLine MX), ícono SVG de UI en vez de
+  portada (Sanyodo) — o imágenes 404 muertas (Manga-Sanctuary). Quedan
+  con `image_url` como fallback; arreglarlos requiere mejorar el
+  extractor de imágenes, no es problema del espejo.
+- Fix: race condition en `image_store.download_image` — dos threads
+  bajando el MISMO `image_url` compartían el path `.tmp` (el segundo
+  encontraba el tmp ya renombrado → FileNotFoundError). Ahora el tmp
+  lleva un token uuid único por descarga. El retrofit además dedupea
+  los targets por `image_url` (baja cada portada una sola vez).
+- Fix: el retrofit usaba un User-Agent propio (`manga-watch-mirror/1.0`)
+  que algunas fuentes (Manga-Sanctuary) responden con 404. Ahora usa el
+  MISMO UA que el scraper (`manga-watch-personal/0.2`) — el corpus se
+  scrapeó con él, así que las imágenes hay que pedirlas con el mismo.
+
+Last updated previo: 2026-05-22 (noche, limpieza omnibus/Nueva-Edición) — El owner
+reportó que los tomos "One Piece Omnibus Edition" de VIZ se habían colado al
+catálogo pese a la regla (gotcha #18) de que un omnibus pelado no califica.
+Causa raíz: `_GENERIC_X_EDITION_PATTERN` tenía su lista de exclusión de
+palabras genéricas **solo en inglés**, pero el patrón matchea
+`Edición/Edizione/Édition`. Resultado: **"Nueva Edición"** (= "New Edition",
+reimpresión) disparaba el signal `lore_edition` y rescataba tomos/omnibus
+normales por `is_collectible_edition`. Cambios:
+- **Fix de raíz**: la exclusión ahora cubre los genéricos ES/IT/FR
+  (`Nueva|Nuova|Nouvelle|Primera|Prima|Première|Última|Estándar|...`) — las
+  mismas categorías que ya tenía la lista inglesa. Ver gotcha #24 nueva.
+- **35 items eliminados** de `items.jsonl` (4436 → 4401) vía snippets
+  quirúrgicos (backups `data/items.jsonl.pre-omnibus-cleanup-bak` +
+  `.pre-generic-edition-bak`): 4 One Piece Omnibus VIZ + Ghost in the Shell
+  + 6 omnibus Planeta "Nueva Edición 3 en 1" + Solanin Integral + 21
+  reimpresiones "Nueva Edición" sueltas (primer barrido, 33) + 1 "Segunda
+  Edición" + 1 título-junk "Pika Édition" (segundo barrido tras extender la
+  exclusión a los otros genéricos, 2).
+  NO se corrió `filter_collectible.py` completo a propósito: rechazaba 191
+  items, incluyendo legítimos mal clasificados (ediciones "Colossal",
+  "Limitada" cuyo qualifier se perdió al estandarizar el título). La
+  eliminación usó `signal_types` GUARDADO como autoridad de "tiene qualifier
+  premium" — así "17 Años Integral" (limited), "Death Note Integral"
+  (box_set) y "Tokko Integral" (variant_cover) sobrevivieron correctamente.
+- Tests: +2 (stoplist multilingüe + omnibus "Nueva Edición").
+- Aclaración importante: NO hay un problema de `signal_types` caduco. Una
+  medición inicial sugería ~200 filas con `lore_edition` "stale", pero fue
+  un artefacto: se comparó `signal_types` contra el `title` estandarizado
+  cuando en realidad se deriva de `title_original` (estable). La mayoría de
+  esas filas son ediciones lore reales (Attack on Titan "Colossal Edition",
+  Fullmetal Alchemist "Fullmetal Edition", Witch Hat Atelier "Grimoire
+  Edition"). `signal_types` solo se desactualiza si cambia el código de
+  detectores — y para eso está `rescore.py` en el pipeline nocturno. Ver la
+  "Nota de mantenimiento" en gotcha #24.
+
+Last updated previo: 2026-05-22 (noche, variant signal + preservación de campos
 curados) — Dos cambios encadenados:
 
 1. **Signal `"variant"` solo (sin "cover")** agregado a `KEYWORD_RULES`

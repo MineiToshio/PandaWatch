@@ -348,6 +348,193 @@ Cuándo aplicar este patrón:
 - Las detail pages contienen toda la metadata necesaria (no hace falta
   un segundo crawl).
 
+### JSON-feed wiki (SocialAnime pattern)
+
+Algunas wikis renderizan items en cliente vía AJAX. La página HTML
+inicial es vacía (selectores BS4 devuelven 0 items), pero el frontend
+hace requests XHR a un endpoint interno que devuelve JSON limpio.
+Si encontrás uno así:
+
+1. **Descubrí el endpoint** abriendo DevTools → Network → XHR mientras
+   cargás la página, o leyendo el JS que tira las requests
+   (en SocialAnime fue `store/store.js` y la función
+   `get_endless_manga_data` que hace `GET store/backend/flow_mangafeed.php`).
+2. **Probá el endpoint con `curl` directamente** con `Referer` y
+   `X-Requested-With: XMLHttpRequest` headers para validar que devuelve
+   JSON sin auth.
+3. **Identificá los parámetros relevantes**: tipo de colección, paginación,
+   filtro temporal. En SocialAnime: `type={variant|box}`, `group_no={0,1…}`
+   (25 items por página), `macro_filter={best_of_all|next_from_now|''}`.
+4. **El parser baja JSON puro** y mapea cada entry del array a un Candidate.
+   Mucho más simple que parsear HTML — sin BeautifulSoup, sin selectores
+   frágiles. La fragilidad se traslada al schema del JSON.
+5. **Iterá páginas hasta recibir array vacío** (o página parcial). Capá
+   con `max_pages` defensivo (p.ej. 40) por si el server entra en loop.
+6. **Tratá los links como sus dueños te los dan**: SocialAnime emite
+   URLs Amazon affiliate (`amazon.it/dp/<ASIN>?tag=socianim0c-21`).
+   Canonicalizalas en `normalize_url_for_dedup` para que distintos
+   affiliates del mismo ASIN colapsen al canónico. Para SocialAnime
+   añadimos `linkCode/th/psc/ascsubtag/smid` + path-token stripping
+   `/ref=...` (ver gotcha #26 en CLAUDE.md).
+
+Ejemplo concreto: `scripts/wikis/socialanime.py` cubre las colecciones
+variant + cofanetti del MangaStore de socialanime.it (~840 items raw,
+~640 después de filtros). Una corrida toma ~30-60 segundos porque son
+30-40 GETs JSON, no parsing HTML.
+
+Cuándo aplicar este patrón:
+- La página tira AJAX para llenar contenido (selectores HTML devuelven 0).
+- Inspeccionando el JS encontrás un endpoint que devuelve JSON sin auth.
+- El endpoint pagina deterministicamente y existe un parámetro que baja
+  el "todo histórico" (no solo trending del día).
+
+Trade-off: el endpoint es interno (no documentado), si lo cambian se
+rompe sin aviso. Lo mismo pasa con cualquier scraping no oficial; el
+`source_health.py` audit lo detecta cuando un wiki deja de aportar items.
+
+### Curated-guide-post (BBM pattern)
+
+Algunos blogs comunitarios mantienen **posts-guía únicos curados
+continuamente** que enumeran items con metadata estructurada (imagen,
+editorial, fecha, precio, descripción del extra). El blog actualiza el
+MISMO post con cada nueva entrada notable; no archiva en posts nuevos.
+Para estos casos:
+
+1. **Identificá los posts relevantes**. Suelen estar enlazados desde
+   una categoría o tag (`/category/capas-variantes/`, `/tag/edicao-especial/`).
+2. **Inspeccioná la estructura HTML del post**. WP themes típicos
+   meten cada entry como una secuencia de gallery + título + prose +
+   `<hr>` (Layout A) o `<hr>` + título + `<hr>` + prose + figures
+   (Layout B). Casos extremos: chunks tardíos que agrupan VARIOS entries
+   sin `<hr>` entre ellos (`scripts/wikis/blogbbm.py` lo cubre con un
+   buffer `pending_imgs` que se atan al próximo título).
+3. **Heurística title-driven, no `<hr>`-driven**. Detectar el `<p>`
+   que es el título de cada entry (combinación de: parens-date al final,
+   ficha link cubriendo el texto, volume marker, `<strong>` envolvente).
+   Aplicar rejects por prefijos narrativos largos ("Em janeiro",
+   "A editora", "O volume #") para no agarrar prose como título.
+   Cuidado con prefijos cortos ambiguos como "no " — rompen títulos
+   legítimos como "No Game No Life".
+4. **URL sintética por-entry**. Usá un **query param custom**, NO
+   fragment. `normalize_url_for_dedup` strippea fragments siempre →
+   todos los entries de la misma ficha colapsarían a una sola fila.
+   El param debe NO estar en `TRACKING_PARAMS`. Ej:
+   `?bbm-entry=vol-N-<image-stem>` (ver gotcha #27 en CLAUDE.md).
+5. **`signal_inject`**: como el post entero está dedicado a un tipo de
+   edición (capas variantes / extras), inyectá el keyword equivalente
+   en la descripción de TODOS los items del post para que
+   `detect_signals` levante el signal_type correcto. Esto evita
+   depender del título de cada entry para detectar el signal.
+
+Ejemplo concreto: `scripts/wikis/blogbbm.py` parsea dos posts de
+blogbbm.com (capas variantes + volúmenes especiais) con la misma
+función `parse_post(html, post_meta)`. Los `BBM_POSTS` listan
+`url`/`source_suffix`/`tag`/`signal_inject` por post. Agregar un post
+nuevo cuesta una línea.
+
+Cuándo aplicar este patrón:
+- La fuente es un blog con curación humana (no auto-publicado de un
+  retailer feed).
+- El contenido está concentrado en 1-3 posts URLs que se actualizan
+  continuamente.
+- Cada item del post tiene metadata estructurada (al menos imagen +
+  título + prose corta).
+
+### Per-collection page (listadomanga `coleccion.php?id=N` pattern)
+
+Algunas wikis publican **una página HTML por colección** (= una edición
+concreta de una obra), con todos sus tomos y extras enumerados dentro,
+en lugar de un calendario mensual o un feed JSON. Listadomanga.es es el
+caso paradigmático: `coleccion.php?id=1606` es Norma Editorial Ataque a
+los Titanes, `coleccion.php?id=6242` es Witch Hat Atelier Edición
+Grimorio, etc. Hay ~6500 colecciones distintas.
+
+Estructura típica del HTML:
+
+```html
+<h2>Norma Editorial</h2>
+<h2>Números editados</h2>
+  <table class="ventana_id1" style="width: 184px;">
+    <tr><td class="cen">
+      <img class="portada" src="..." alt="Berserk nº37"/>
+      Berserk nº37<br/>
+      224 páginas en B/N<br/>
+      10,00 €<br/>
+      <a href="novedades.php?mes=6&ano=2017">Junio 2017</a>
+    </td></tr>
+  </table>
+<h2>Números editados (Ediciones Especiales)</h2>
+  <table class="ventana_id1">...</table>
+<h2>Números editados (Portadas alternativas)</h2>
+  ...
+<h2><strong>Cofres de regalo con las primeras ediciones de Berserk</strong></h2>
+  <table width="920" border="0" align="center">
+    <tr>
+      <td width="150" style="text-align: center;">
+        <img src="..."/><br/><br/>
+        Berserk nº17<br/>(1ª Edición)<br/>Cofre para tomos 8 a 17<br/>fecha
+      </td>
+      <td width="150">...</td>
+    </tr>
+  </table>
+<h2>Extras de Berserk (Panini)</h2>
+  ...
+```
+
+**Dos layouts mutuamente excluyentes**:
+- **Layout A** (productos comprables, `Números editados` y sus
+  paréntesis-variantes): `table.ventana_id1` + `img.portada` con `alt` =
+  título canónico.
+- **Layout B** (extras/cofres/regalos): `table[width="920"]` con
+  `td[width="150"]` y texto separado por `<br/>` — la primera línea es
+  `<Serie> nº<N>`, la segunda es marker de edición (`(1ª Edición)` /
+  `Edición Especial Limitada` / `Portada Alternativa`), el resto es
+  descripción y fecha.
+
+**Detección de página entera = edición premium**: en la cabecera hay
+`<b>Formato:</b> <valor>` (NO `<strong>`). Tokens premium a matchear:
+`cartoné`, `tapa dura`, `A5` (148x210 / 150x210), `Tomo doble`,
+`doble sobrecubierta`, `Libro de ilustraciones`, `Kanzenban`. Cuando
+matchea, los items regulares de "Números editados" reciben el signal
+correspondiente sin requerir sección de extras dedicada.
+
+**URL sintética por item**: una URL `coleccion.php?id=N` cubre N tomos
+distintos. Para que `append_jsonl` no los pise, cada item genera
+`coleccion.php?id=N&item=<edition_slug>-<vol>` donde `edition_slug` es
+`regular` / `especial` / `alternativa` / `pack` / `grimorio` / etc.
+**Determinístico** (mismo input → mismo URL) para idempotencia en
+re-scrapes. El param `item` NO está en `TRACKING_PARAMS` → sobrevive
+normalización (gotcha #27 generalizada).
+
+**Vinculación extra→tomo (Fase 2 del parser)**: la sección "Extras de X"
+contiene celdas Layout B que SIEMPRE empiezan con `<Serie> nº<N>` y un
+marker de edición. El parser pre-construye un dict
+`{(edition_kind, vol_n): item}` con los items Layout A, y para cada
+celda Layout B:
+1. Identifica `target_vol` y `target_edition` por el texto estructurado.
+2. Si el target existe → upsert con imagen en `images[]` (carrusel,
+   nuevo campo `images: [{url, local, kind}]`).
+3. Si NO existe (el extra es de un tomo regular que no se listó por ser
+   tomo sin qualifier) → crea el tomo nuevo con la imagen del extra y
+   signal `bonus` — ahora pasa el gate `is_collectible_edition`.
+
+Esto es lo que "abre la puerta" a tomos regulares de 1ª edición que
+trajeron marcapáginas/postales/cofres y que el catálogo no captura hoy.
+
+Ejemplo concreto: `scripts/wikis/listadomanga_collections.py`. Fase 1
+implementa Layout A + Formato premium; Fase 2 (futura) agrega Layout B
+y el merge extra→tomo + schema `images[]` aditivo (`image_url` /
+`image_local` quedan como alias del primer cover para no romper
+consumidores). Discovery por enumeración secuencial id=1..~6500.
+
+Cuándo aplicar este patrón:
+- La fuente tiene **una URL por colección** con todos los tomos y
+  variantes dentro.
+- Las secciones se distinguen por `<h2>` headers consistentes.
+- El total de colecciones es enumerable (rango de ids conocido).
+- Cada tomo tiene una identidad propia que necesita URL única
+  (volumen + edición), aunque vivan todos dentro del mismo HTML.
+
 ## Recipe: Whakoom spider
 
 Whakoom (whakoom.com) tiene **descubrimiento limitado sin login** pero

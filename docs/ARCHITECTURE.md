@@ -64,6 +64,14 @@ Read `CLAUDE.md` first for the high-level orientation.
        │  • seen      → skip                      │
        └──────────────────┬───────────────────────┘
                           │
+                          ▼
+       ┌──────────────────────────────────────────┐
+       │  mirror_candidate_images() ─ Fase 1      │
+       │  download cover → data/images/, set      │
+       │  image_local (image_store.py).           │
+       │  Skipped by --skip-image-download.       │
+       └──────────────────┬───────────────────────┘
+                          │
               ┌───────────┴───────────┐
               ▼                       ▼
       ┌───────────────┐       ┌──────────────────────┐
@@ -210,14 +218,28 @@ Per-source pipeline:
          `--include-seen`).
      - Update state[url] with new snapshot.
 
-7. **Persist.**
+7. **Image mirror** (Image storage Fase 1, on by default,
+   `--skip-image-download` to opt out):
+   - `mirror_candidate_images(reportable, data_dir, session, ...)`
+     downloads the cover of each `new`/`changed` candidate to
+     `data/images/<sha256(image_url)[:16]>.<ext>` and sets
+     `candidate.image_local` to the filename. `image_url` stays as
+     provenance + fallback.
+   - Parallelized with `ThreadPoolExecutor` (same `--workers`).
+     Idempotent: a file already on disk is reused without a request.
+     Magic-byte validation rejects non-image responses (anti-bot HTML).
+   - Pure download primitives live in `scripts/image_store.py`.
+   - See "Image storage" in CLAUDE.md for the full design + Fase 2 (R2).
+
+8. **Persist.**
    - `candidate_to_json(candidate)` builds the row and stamps
      `cluster_key = derive_cluster_key(row)` on every write — so the
      dashboard's grouping logic works without re-parsing titles in JS.
    - `append_jsonl(items_path, new_or_changed)`:
      - Read existing items.jsonl into a dict keyed by
        `normalize_url_for_dedup(url)`.
-     - Upsert each row (last-wins by detected_at).
+     - Upsert each row (last-wins by detected_at). `image_local` is
+       sticky — a re-scrape that did not download keeps the old mirror.
      - Atomic write via `.tmp` + `rename`.
    - `save_state(state_path, state)`.
    - `write_markdown_report(report_path, ...)`.
@@ -389,7 +411,8 @@ Row schema (the fields written by `candidate_to_json`):
   "description":   "extracted description",
   "content_hash":  "sha256 for state-diff",
   "price":         "e.g. '19,99 €' or empty",
-  "image_url":     "absolute or empty",
+  "image_url":     "absolute remote URL or empty (provenance + fallback)",
+  "image_local":   "filename in data/images/ or empty (local mirror, Fase 1)",
   "release_date":  "ISO date or empty",
   "product_type":  "manga | artbook | fanbook | magazine | boxset | ...",
   "author":        "extracted author or empty",
@@ -433,6 +456,25 @@ get populated in **two passes**:
 `title_original` is preserved by both passes: pass 1 writes it equal
 to the cleaned scraped title; pass 2 backs up `title` to `title_original`
 (if empty) before overwriting `title` with the standardized form.
+
+### data/images/ — local cover mirror (Image storage Fase 1)
+
+- Directory under `data/`, gitignored via its own `data/images/`
+  entry in `.gitignore` (`data/` is not ignored wholesale).
+- One file per unique cover image: `<sha256(image_url)[:16]>.<ext>`.
+  Deterministic — a re-scrape of the same image reuses the file.
+- Extension comes from the downloaded bytes' magic signature, not the
+  URL. A non-image response (anti-bot HTML page) is rejected and
+  `image_local` stays empty.
+- Written by `mirror_candidate_images()` (orchestration in
+  `manga_watch.py`) using the primitives in `scripts/image_store.py`.
+- The JSONL stores only the **filename** in `image_local` — the base
+  path is environment config (`../data/images/` locally; a Cloudflare
+  R2 public URL in Fase 2). The row stays deploy-agnostic.
+- Backfilling the historic corpus and a mark-and-sweep GC for orphaned
+  files are handled by the retrofit `scripts/retrofit/mirror_images.py`
+  (backfill downloads covers for pre-Fase-1 items; GC quarantines or
+  deletes files no item references). See CLAUDE.md "Image storage".
 
 ### unmapped_series.jsonl
 
@@ -756,6 +798,47 @@ right module based on the CLI arg.
   `is_likely_manga` / `is_collectible_edition` — la fuente es 100%
   curada de variants por diseño. URLs son referencia, no de tienda
   (ver "URL como referencia" en CLAUDE.md).
+- **blogbbm.py** (BR — Biblioteca Brasileira de Mangás, posts curados).
+  URLs: `/2020/10/09/capas_variantes/` (capas variantes) y
+  `/2024/05/15/guia-volumes-especiais-de-mangas-com-itens-especiais/`
+  (volúmenes con extras/brindes). Ambos posts son **curated guides
+  actualizadas continuamente**: el blog agrega nuevos entries cada vez
+  que el editor encuentra una variant brasileña notable. El parser
+  ignora el rango año/mes — no hay calendario; los posts se relanzan
+  periódicamente. Heurística **title-driven** que soporta dos layouts
+  HTML del mismo blog: Layout A (`/capas_variantes/`) tiene gallery
+  `<div>` antes del título; Layout B (`/volumes-especiais/`) tiene
+  título con parens-date `(MM/YYYY)` y `<figure>` adentro del entry.
+  Las imágenes en `<div>` siempre van a un buffer pre-título; las
+  imágenes en `<figure>` van al entry actual. Detección de título usa
+  combinación de markers: parens-date, ficha link `/manga/<slug>/`
+  cubriendo ≥80%, o (modo lenient cuando hay imgs en buffer) volume
+  marker `#NN` o `<strong>` envolvente. URL por entry usa query param
+  `?bbm-entry=vol-N-<image-stem>` (NO fragment — los fragments se
+  strippean en `normalize_url_for_dedup`; ver gotcha #27). Cubre los
+  publishers BR (Panini, JBC, NewPOP, Pipoca & Nanquim, MPEG, Devir,
+  Conrad) con clasificación EXPLÍCITA de variant/special/bonus que el
+  scrape directo de esas sources no marca.
+- **socialanime.py** (IT — MangaStore variant + cofanetti, JSON feed).
+  URL: `https://socialanime.it/store/manga/variant` (página) y endpoint
+  `flow_mangafeed.php?type={variant|box}&group_no=N&macro_filter=best_of_all`
+  (JSON paginado, 25 items/página). El parser ignora el rango año/mes
+  — el feed no particiona por fecha; el control temporal es el
+  `macro_filter` (`best_of_all` baja todo, `next_from_now` solo upcoming,
+  default = últimos 8 meses). Por cada item del JSON construye un
+  Candidate con `editore` → publisher, `autore` → author, `prezzo` →
+  price EUR, `PublicationDate` (formato "DD MMM YYYY" en inglés) →
+  release_date. **El link es un Amazon affiliate** (`amazon.it/dp/<ASIN>?tag=socianim0c-21`)
+  que se canonicaliza vía `normalize_url_for_dedup` (strip `tag/linkCode/
+  th/psc/ref=...` — ver gotcha #26). El ASIN de libros italianos legacy
+  (prefijo `88…`) es un ISBN-10 válido y se guarda en `isbn`; ASINs
+  Kindle (`B0…`) NO son ISBN. Para type=box (cofanetti) se inyecta
+  "Cofanetto / box set." en la descripción si el título no lo dice,
+  para que `detect_signals` levante el signal `box_set`. Items sin link
+  Amazon (~10% del feed) se descartan: sin URL canónica no se puede
+  dedupar. Cubre publishers italianos chicos que las sources directas
+  no agarran exhaustivamente (Edizioni BD, 001 Edizioni, Goen, Magic
+  Press, Dynit, Coconino, Tora, Dokusho).
 - **whakoom.py** (ES/LatAm — Cloudflare-throttled spider, opt-in).
   3-level BFS: `/newtitles` → `/comics/{shortcode}` →
   `/ediciones/{id}` (which exposes sibling variants — alt covers,
@@ -962,10 +1045,14 @@ python scripts/manga_watch.py
     --sleep-seconds 0.5           (inter-source pause; ignored when
                                    --workers > 1)
     --bootstrap-wiki {listadomanga, listadomanga-blog, manga-sanctuary,
-                      otaku-calendar, manga-mexico, whakoom}
+                      otaku-calendar, manga-mexico, mangavariant,
+                      socialanime, blogbbm, whakoom}
     --wiki-from YYYY-MM
     --wiki-to YYYY-MM
     --sitemap-mining-domain <domain>
+    --skip-image-download         (skip the local cover mirror;
+                                   default OFF = covers are downloaded
+                                   to data/images/, Image storage Fase 1)
     --dry-run
 
 python scripts/build_web.py [--input ...] [--output ...] [--clear]
@@ -984,6 +1071,8 @@ python scripts/retrofit/search_discovery.py [--engines gemini,tavily,ddg]
                                              [--limit N] [--dry-run]
 python scripts/retrofit/wayback_recover.py [--check | --dry-run |
                                             --urls a,b,c]
+python scripts/retrofit/mirror_images.py [--dry-run] [--no-gc | --gc-only]
+                                          [--gc-delete] [--workers N] [--limit N]
 
 # Audit / observability
 python scripts/audit/source_health.py [--last-n 10] [--output md|json]
@@ -1041,6 +1130,9 @@ Run: `.venv/bin/python -m pytest tests/test_extraction.py -q`.
 | trusted_media subset `--workers 6` | 9.5s | 7.5× |
 | `--bootstrap-wiki listadomanga` (12 months) | 3-5 min | |
 | `--bootstrap-wiki listadomanga-blog 2009-11 → 2026-05` | 30-60 min | one-shot historical |
+| `--bootstrap-wiki mangavariant` (full sitemap) | 10-15 min | ~2700 detail HTTPs, parallel |
+| `--bootstrap-wiki socialanime` (variant + box, JSON feed) | 30-60s | 30-40 paginated JSON calls |
+| `--bootstrap-wiki blogbbm` (2 posts curados) | 5-10s | 2 HTML fetches + parsing |
 | `--bootstrap-wiki whakoom` (3-level spider, opt-in) | 25-40 min | ~1500 HTTP, CF-risk |
 | Search discovery (Gemini + Tavily + DDG, 32 queries) | 10-15 min | quota-limited |
 | Wayback recovery `--check` (full corpus HEAD) | ~10 min | mostly anti-bot 403s |
