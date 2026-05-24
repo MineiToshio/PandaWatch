@@ -512,38 +512,32 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | 5905 (post Fase 3 + re-merge focalizado, 2026-05-23) |
-| Items aportados por listadomanga-collections (Fase 1+2+3 + re-merge) | 1405 (+1065 netos en Fase 3 incluido re-proceso quirúrgico de 67 ids con UNKNOWN h2 ahora resueltos: 48 tomos nuevos creados desde Layout B + 3 items existentes enriquecidos con images/extras) |
-| Items aportados por Mangavariant bootstrap | 2625 (de 2679 URLs en sitemap, 54 reasignados) |
-| Items aportados por SocialAnime bootstrap | 638 (263 type=variant + 375 type=box; 466+440 = 906 raw, ~30% descartados por score/gate/sin link) |
-| Items aportados por BBM bootstrap | 34 (24 Capas Variantes + 10 Volumes Especiais; posts curados continuamente actualizados, ~25 covers variants + ~10 ediciones con brindes) |
-| Items aportados por la lista curada usuario (sources `lista curada`) | 63 (9 MX Panini + 8 MX MangaLine + 8 AR Ivrea + 5 AR Panini/OVNI + 14 ES Panini + 4 ES Norma + 5 ES Planeta + 10 ES Distrito/Milky/MangaLine — H×H pack colapsa 2 entradas en 1 URL) |
-| Items movidos a `data/non_manga_blacklist.jsonl` | 94 (cómics occidentales, light novels, posters, figuras, etc.) |
-| Items eliminados como omnibus/reimpresión sin qualifier premium | 35 (4 One Piece Omnibus VIZ + Ghost in the Shell + 6 omnibus Planeta "3 en 1" + Solanin Integral + 21 reimpresiones "Nueva Edición" + 1 "Segunda Edición" + 1 junk "Pika Édition" — ver gotcha #24) |
-| Items deduplicados por (series_key, edition_key, volume) | 690 (+6 más al re-merger 38 items mangadreams contra Kurokawa/Pika/Star Comics existentes) |
-| Distinct `series_key` (filtro por obra) | 1862 (pre-`/standardize-catalog` sobre items SocialAnime) |
-| Distinct `edition_key` (filtro por edición+editorial) | 3127 (pre-standardize sobre SocialAnime) |
-| `data/series_aliases.yml` entries | 106 canonical works (Anilist + manual) |
+| Total unique items (line in items.jsonl) | **5532** (post primera corrida scrape_full + standardize --force-all + cleanup compound slugs, 2026-05-24) |
+| Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 285 (+191 en esta corrida — cómics occidentales Funside, light novels, novelas, news/video, art_supplies, photobooks, etc.) |
+| Items deduplicados por (series_key, edition_key, volume) en esta corrida | 918 (915 en el merge + 3 al cleanup compound slugs) |
+| Distinct `series_key` (filtro por obra) | 1564 |
+| Distinct `edition_key` (filtro por edición+editorial) | 3062 |
+| `data/series_aliases.yml` entries | 261 canonical works (Anilist + manual + auditoría 2026-05-23) |
 | Sources in YAML | 138 |
 | Sources enabled | 121 / 138 (Listado Manga Blog RSS deshabilitado 2026-05-23) |
 | Sources flagged `purity: mixed` | 17 |
 | Bluesky sources (`kind: bluesky`) | 15 |
 | Wikis disponibles (`--bootstrap-wiki`) | 10 (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm, **listadomanga-collections** *Fase 1+2+3 completas*) |
-| `images[]` populated (Fase 2 schema aditivo) | 100% (backfilled desde image_url + Layout B merge sobre listadomanga-collections) |
-| Items con carrusel real (`images.length > 1`) | 86 (36 listadomanga-collections con cover+extras + 50 cross-source multi-cover) |
-| Items con `kind=extra` en images[] | 159 (cofres / marcapáginas / pósters / postales vinculados a tomos vía Layout B) |
-| Items con `extras[]` descriptivo (línea "Incluye: ..." en modal) | 160 |
-| Countries represented | 15 (Japón, Francia, Italia, España, Estados Unidos, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global). Tras SocialAnime: Italia 789→1427 (+638, +81%). Tras BBM: **Brasil 40→74 (+34, +85%)** — sale del último puesto y se acerca a Argentina (40). |
-| Image coverage | 99.2% (5097/5136) |
-| `series_key` coverage | 99.0% (5086/5136 — los 50 sin son items wiki sin standardize aún) |
-| `edition_key` coverage | 99.0% (idem) |
-| `volume` coverage | 78.0% (4005/5136 — sube tras `/standardize-catalog` sobre items SocialAnime+BBM pendientes) |
-| Release date coverage | 86.9% (4464/5136) |
-| ISBN coverage | 40.7% (2088/5136 — sube de 33.2% por SocialAnime ASIN-as-ISBN; BBM no trae ISBN) |
-| Price coverage | 50.7% (2602/5136 — +25 BBM con `R$ XX,XX`) |
-| Author coverage | 40.5% (2078/5136 — BBM no expone autor, no aporta) |
-| `cluster_key` populated | 100% (precomputed by candidate_to_json) |
-| `standardized_at` populated | 86.9% (4464/5136 — los 672 wiki recientes quedan pendientes de `/standardize-catalog` por diseño) |
+| Top sources | Mangavariant 1744, ListadoManga colecciones 1002, Manga-Sanctuary 947, SocialAnime Cofanetti 333, ListadoManga calendario 237, SocialAnime Variant 190, KADOKAWA Store 86, Sanyodo 84, Panini IT EdC 83, Manga Dreams 74 |
+| Image coverage | 99.7% (5517/5532) |
+| `image_local` coverage | 96.7% (5352/5532) |
+| `series_key` / `edition_key` / `standardized_at` coverage | 100% (5532/5532 — force-all reprocesó todo el corpus) |
+| `volume` coverage | 83.2% (4602/5532) |
+| Release date coverage | 86.6% (4792/5532) |
+| ISBN coverage | 35.7% (1976/5532) |
+| Price coverage | 59.3% (3282/5532) |
+| Author coverage | 51.8% (2865/5532) |
+| `cluster_key` populated | 100% (precomputed + backfilled post-cleanup) |
+| Items con `images[]` populated | 5384 (~97%) |
+| Items con carrusel real (`images.length > 1`) | 132 |
+| Items con al menos 1 image `kind=extra` | 133 |
+| Items con `extras[]` descriptivo | 133 |
+| Countries represented | 15 (Japón, Francia, Italia, España, EUA, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global) |
 
 Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
 esperado de añadir 2679 filas curadas que por diseño no tienen esos
@@ -1795,7 +1789,123 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
-Last updated: 2026-05-23 (2 scripts canónicos: scrape_full + scrape_delta;
+Last updated: 2026-05-24 (primera corrida scrape_full completa + standardize
+--force-all + audit exhaustivo del catálogo) — Ejecución end-to-end del nuevo
+modelo "2 scripts canónicos" sobre el catálogo entero, primera vez que
+`lista.php` se recorre completo (3432 colecciones) post-refactor.
+
+**Cifras del corpus (snapshot 2026-05-24)**:
+- Total items: **5532** (5763 → 6669 tras scrape, → 5535 tras standardize+dedup,
+  → 5532 tras cleanup de compound edition_slugs).
+- 100% `standardized_at` (forzado todo el corpus).
+- 1564 distinct series_keys, 3062 distinct edition_keys.
+- Cobertura: image_url 99.7%, image_local 96.7%, volume 83.2%, release_date
+  86.6%, price 59.3%, author 51.8%, isbn 35.7%.
+- Top sources nuevos: Mangavariant 1744 (sitemap completo), ListadoManga
+  colecciones 1002 (lista.php discovery), Manga-Sanctuary 947, SocialAnime
+  Cofanetti 333, ListadoManga calendario 237.
+
+**Pipeline corrido**: `scripts/scrape_full.sh` ~1h 16m (5763 → 6669 items,
++906 netos pre-standardize) seguido de `/standardize-catalog --force-all`
+(45 chunks ~150 items c/u, 7 waves paralelas de subagentes,
+6669 procesados → 5535 final con 915 dedups por (series, edition, vol)
++ 191 non-manga movidos a blacklist + 1 outlier auto-corregido).
+
+**Issues descubiertos en el audit (y arreglados retroactivamente)**:
+
+1. **Compound edition_slugs (50 items)**: a pesar de la regla anti-compound
+   en el skill, los subagentes generaron edition_keys terminadas con dos
+   slugs (ej. `tokyo-ghoul-edizionibd-deluxe-box`, `blame-panini-ultimate-deluxe`).
+   Cleanup determinístico aplicado en items.jsonl:
+   - `collection-box` → `boxset` (20 items)
+   - `collector-box` → `collector` (11)
+   - `ultimate-deluxe` → `ultimate` (8)
+   - `taniguchi-deluxe` → `taniguchi` (5)
+   - `deluxe-box` → `boxset` (4)
+   - `regular-box` → `boxset` (1)
+   - `ultimate-variant` → `variant` (1)
+   - `edition-box` → `boxset` (1)
+
+   3 items mergearon contra existentes después del cleanup (5535 → 5532).
+
+2. **Publisher slug duplicates**: `kimdong` (10 items) → consolidado a
+   `kim-dong` (publisher multi-token canonical); `001` (4) → `001edizioni`.
+   Backfill cluster_key corrido tras el cambio.
+
+3. **Publishers nuevos legítimos no en allowlist del skill**: `edizionibd`
+   (137 items), `kurokawa` (62), `dynit` (35), `shogakukan` (34),
+   `distrito` (30), `jpop` (29), `ichijinsha` (23), `akita` (21),
+   `hakusensha` (20), `noeve` (11), `asciimw` (11), `luckpim` (7),
+   `crunchyroll` (5), `001edizioni` (4), `takeshobo` (4), `goen` (4),
+   `kbooks` (4), `tokuma` (3), `futabasha` (3), `nxb` (3), `yenpress` (3),
+   `gpmanga` (3), `mpeg` (3), `carlsen` (3), `tokyomangasha` (5), `ipm` (5).
+   Todos son publishers reales y consistentes; el skill prompt podría
+   eventualmente agregarlos al allowlist explícito, pero los subagentes
+   ya los usaron coherentemente (no se contaminó con basura).
+
+4. **Funside parser bug**: 42 items Funside con prefix
+   `"Aggiungi al carrello Confrontare "` en `title_original` (capturaba
+   el botón del listing como inicio del title). El `title` ya estaba clean
+   (skill lo sobrescribió), pero futuras corridas iban a volver a meter
+   el prefix. Fix en `scripts/manga_watch.py:443`: agregadas 2 regex
+   anchoradas al INICIO del title (`^Aggiungi\s+al\s+carrello\s+Confrontare\s+`
+   y `^Confrontare\s+`). Tests de regresión:
+   `test_clean_title_strips_funside_cart_prefix`. Total tests: 331/331 verde.
+
+5. **Chunk 10 — bug del subagente**: el LLM truncó 28 URLs Panini IT en
+   `~96` chars (cortando `.html` final). Detectado por mismatch URL en
+   merge. Fix programático: matchear URLs por prefix de 80 chars contra
+   chunk_10.jsonl y restaurar la URL completa. 100% recuperado, no se
+   perdió ningún item.
+
+6. **3 chunks (29, 31, 34) y wave 6+7 (35-44)**: los subagentes 29, 31, 34
+   en wave 5 hit session limit y solo procesaron 149/150 items cada uno
+   antes del cutoff. Wave 6 re-procesó los 7 chunks faltantes (35-41) y
+   wave 7 hizo el retry de 29/31/34 + chunks 42-44. Los 5 items
+   genuinamente missing tras todas las waves se procesaron INLINE
+   (Blue Lock Collector 14, Burn the Witch Limited 1, D.Gray-man Variant,
+   Vanitas Variant 1, Prison School Variant 21).
+
+**Consistency check post-merge**: 1 outlier auto-corregido
+(`our-wild-youth-milkyway-regular` vol 8 → `our-wild-youth-milkyway-limited`
+para alinearse con los hermanos del coleccion_id). Después del merge,
+**0 coleccion_ids con múltiples series_keys** (consistency total).
+
+**Errores conocidos del scrape (no críticos, no afectan datos finales)**:
+- 4 `kind: js` sources hit `greenlet.error: Cannot switch to a different
+  thread` (Crunchyroll Noticias, Kibook Novedades, Seven Seas Box Sets,
+  Meian). El `_js_lock` debería serializar las JS sources pero algo se
+  pisó. No bloqueante — sólo perdieron esas 4 fuentes esa noche; el
+  próximo `scrape_delta` las re-procesará. **Pendiente para investigación**:
+  ver si Playwright async-thread-safety se rompió con los nuevos workers.
+- 1 unknown h2 en listadomanga-collections: "Portadas de Roboco y Yo"
+  (id=4778) — ya documentado como edge case descartable, no aporta items
+  relevantes.
+
+**Backups disponibles** (gitignored, en data/):
+- `items.jsonl.pre-fullrun-bak` — antes del scrape full
+- `items.jsonl.pre-standardize-bak` — después scrape, antes /standardize-catalog
+- `items.jsonl.pre-audit-cleanup-bak` — antes del cleanup compound slugs
+- `items.jsonl.pre-funside-fix-bak` — antes del Funside fix
+- `items.jsonl.pre-cluster-bak` — antes del último backfill_cluster_key
+
+**Mejoras futuras detectadas (no implementadas)**:
+- Skill prompt update: agregar publishers reales (`kurokawa`, `edizionibd`,
+  `dynit`, `shogakukan`, `distrito`, `jpop`, etc.) al allowlist explícito
+  para reducir uso de `unknown`. Hoy los subagentes ya los usan
+  coherentemente, pero un allowlist explícito daría mejor garantía.
+- Skill prompt update: reforzar regla ANTI-COMPOUND con ejemplos
+  específicos de las trampas observadas (`-deluxe-box` no es boxset
+  doble, es `boxset` solo; `-ultimate-deluxe` es `ultimate`, etc.).
+- Robustness del subagente: chunks que hit session limit producen
+  output truncado; agregar verificación de URL count y/o
+  retry-individual-items dentro del skill.
+- Investigación Playwright thread-safety: revisar por qué `_js_lock` no
+  está serializando bien `kind: js` sources bajo workers=8.
+
+---
+
+Last updated previo: 2026-05-23 (2 scripts canónicos: scrape_full + scrape_delta;
 listadomanga-collections discovery via lista.php) — Reorganización
 top-level para clarificar el modelo operativo:
 
