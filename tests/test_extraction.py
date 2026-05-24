@@ -2028,6 +2028,17 @@ def test_clean_title_strips_french_acheter():
         "One Piece 10 [glénat manga] / simple Manga"
 
 
+def test_clean_title_strips_funside_cart_prefix():
+    """Funside.it y similares italianos capturan los botones del listing como
+    PREFIX del título (no suffix). Validar que se limpian."""
+    assert mw.clean_title(
+        "Aggiungi al carrello Confrontare CACCIATORI DI CADAVERI - DELUXE EDITION (VOLL. 1-4) - VARIANT"
+    ) == "CACCIATORI DI CADAVERI - DELUXE EDITION (VOLL. 1-4) - VARIANT"
+    assert mw.clean_title(
+        "Aggiungi al carrello Confrontare AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
+    ) == "AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
+
+
 def test_clean_title_strips_isolated_price():
     assert mw.clean_title("My Manga Volume 1 $19.99") == "My Manga Volume 1"
     assert mw.clean_title("Manga Title 12,35 €") == "Manga Title"

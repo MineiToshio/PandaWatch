@@ -443,6 +443,10 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s+Aggiungi\s+al\s+(?:carrello|confronto|lista).*$", re.IGNORECASE),
     re.compile(r"\s+Aggiungi\s+alla\s+lista.*$", re.IGNORECASE),
     re.compile(r"\s+Rimuovi\s+questo.*$", re.IGNORECASE),
+    # Funside.it y similares italianos: botones "Aggiungi al carrello Confrontare"
+    # capturados como PREFIX del título por el listing extractor genérico.
+    re.compile(r"^Aggiungi\s+al\s+carrello\s+Confrontare\s+", re.IGNORECASE),
+    re.compile(r"^Confrontare\s+", re.IGNORECASE),
     # E-commerce japonés
     re.compile(r"\s+カートに入れる.*$"),
     re.compile(r"\s+ほしい本に追加.*$"),
