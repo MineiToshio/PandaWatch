@@ -586,6 +586,11 @@ attack-on-titan-no-regrets:
 attica:
   aliases: []
   display: Attica
+au:
+  aliases:
+  - AU 画集
+  - AU画集
+  display: AU (Genkosha Artbook)
 ayako:
   aliases:
   - Ayako (Tezuka)
@@ -4782,6 +4787,14 @@ nisekoi:
 niyama-work:
   aliases: []
   display: Niyama Work
+no-5:
+  aliases:
+  - Number Five
+  - Number 5
+  - ナンバーファイブ
+  - ナンバーファイブ 吾
+  - ナンバー吾
+  display: No. 5
 no-game-no-life-please:
   aliases:
   - No Game No Life Please!
@@ -5310,6 +5323,12 @@ pop-team-epic:
 postcard-planet:
   aliases: []
   display: Postcard Planet
+pppppp:
+  aliases:
+  - P6
+  - ピピピピピピ
+  - ピピピ
+  display: PPPPPP
 prefect-secret-garden:
   aliases: []
   display: The Prefect's Secret Garden
