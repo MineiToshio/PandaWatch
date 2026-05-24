@@ -517,7 +517,7 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 | Items deduplicados por (series_key, edition_key, volume) en esta corrida | 918 (915 en el merge + 3 al cleanup compound slugs) |
 | Distinct `series_key` (filtro por obra) | 1564 |
 | Distinct `edition_key` (filtro por edición+editorial) | 3062 |
-| `data/series_aliases.yml` entries | 261 canonical works (Anilist + manual + auditoría 2026-05-23) |
+| `data/series_aliases.yml` entries | **1609** canonical works (post `/enrich-series-aliases` masivo 2026-05-24: 809 → 1609 = +800 net = 19 desde Anilist + 781 entries mínimas para prevenir re-logueo del queue) |
 | Sources in YAML | 138 |
 | Sources enabled | 121 / 138 (Listado Manga Blog RSS deshabilitado 2026-05-23) |
 | Sources flagged `purity: mixed` | 17 |
@@ -1990,12 +1990,15 @@ para alinearse con los hermanos del coleccion_id). Después del merge,
 - `items.jsonl.pre-cluster-bak` — antes del último backfill_cluster_key
 
 **Mejoras futuras pendientes (NO implementadas en este sprint)**:
-- `/enrich-series-aliases` skill: `data/unmapped_series.jsonl` quedó con
-  4446 entries nuevas tras esta corrida (pipeline las loguea cuando
-  encuentra `series_key` no presente en `series_aliases.yml`). Pendiente
-  invocación manual del skill por el usuario para consolidarlas y
-  enriquecer aliases.yml. Muchas son alias multilingües de series ya
-  canonicalizadas (Anilist puede resolver ~80% en batch).
+- ~~`/enrich-series-aliases`~~ ✓ CORRIDO mismo día. 812 candidates únicos
+  procesados (931 items afectados): 3 sub-products merged como aliases
+  (Capa 1), 5 fuzzy auto-aliases (Capa 2), 19 new canonicals desde
+  Anilist + 1 alias confirmado por Anilist (Capa 3), 781 entries
+  mínimas para prevenir re-logueo (Capa 4), 3 garbage skips (`au`,
+  `no-5`, `pppppp`). aliases.yml: 809 → 1609. 55 items remapeados.
+  unmapped_series.jsonl truncado. 332/332 verde. Backups:
+  `series_aliases.yml.pre-enrich-bak`, `items.jsonl.pre-enrich-bak`,
+  `/tmp/unmapped_series.jsonl.bak-20260524`.
 
 ---
 
