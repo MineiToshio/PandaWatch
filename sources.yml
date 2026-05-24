@@ -377,6 +377,24 @@ sources:
     tags: ["calendar", "manga", "spain"]
     notes: "Reemplazado por wiki parser: python scripts/manga_watch.py --bootstrap-wiki listadomanga"
 
+  - name: "ES - Listado Manga (colecciones)"
+    country: "España"
+    language: "Español"
+    publisher: "Varias editoriales"
+    source_class: "trusted_media"
+    kind: "wiki"
+    url: "https://www.listadomanga.es/coleccion.php"
+    enabled: true
+    tags: ["wiki", "manga", "spain", "listadomanga-collections"]
+    notes: |
+      Parser por colección individual (coleccion.php?id=N). Fase 1 ingiere
+      ediciones especiales / portadas alternativas / packs con extras /
+      formato premium (kanzenban, cartoné A5, artbook). Activar con:
+      python scripts/manga_watch.py --bootstrap-wiki listadomanga-collections \
+          --coleccion-from <N> --coleccion-to <M>
+      Ver scripts/wikis/listadomanga_collections.py y docs/SOURCES.md
+      ("Per-collection page pattern") para el detalle.
+
   - name: "ES - Ramen Para Dos Manga"
     country: "España"
     language: "Español"
@@ -1760,20 +1778,19 @@ sources:
     source_class: "trusted_media"
     kind: "rss"
     url: "https://www.listadomanga.es/blog/feed/"
-    enabled: true
-    tags: ["manga", "news", "spain", "rss", "new-source"]
+    enabled: false   # Decisión 2026-05-23: deshabilitado. Son posts de noticias,
+                     # no productos físicos. is_collectible_edition los rechaza al
+                     # 99%+, aportando 0 items reales al catálogo. lista.php +
+                     # calendario.php cubren todo el catálogo de productos.
+                     # El módulo wikis/listadomanga_blog.py sigue disponible si
+                     # en el futuro se le da otro uso (ej. input search_discovery).
+    tags: ["manga", "news", "spain", "rss"]
     notes: |
-      DIFERENCIAL (delta de últimas noticias). Feed WordPress horario con
-      los ~10 posts más recientes. Cross-postea anuncios FB/Threads de
-      Planeta, Milky Way, Ivrea, Norma, Hidra, Pika. Captura "Edición
-      exclusiva Fnac", "Edición Grimorio", marcapáginas/postales/cofres
-      de primera edición. Complemento crítico al calendario.
-
-      Para el HISTÓRICO completo del blog (desde 2009-11), usar:
-        python scripts/manga_watch.py --bootstrap-wiki listadomanga-blog \
-            --wiki-from 2009-11 --wiki-to 2026-05
-      (one-shot, ~30-60 min). Recorre los archivos `/blog/YYYY/MM/page/N/`
-      mes por mes — recupera items históricos que el RSS ya no expone.
+      DESHABILITADO (2026-05-23). Era un feed de noticias del blog de
+      listadomanga, no de productos. El gate is_collectible_edition rechaza
+      todos los posts porque no son items comprables (anuncios de licencias,
+      "Novedades de X editorial para fecha Y", etc.). 0 items netos al
+      catálogo en testing. Removido también de scrape_full.sh.
 
   # ===================================================================
   # Italia — coleccionistas / variant

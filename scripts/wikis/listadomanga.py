@@ -162,9 +162,16 @@ def _extract_items_from_table(
             if "coleccion.php" in (tag.get("href") or ""):
                 break  # llegamos al siguiente manga sin pasar por autor
 
-        # Description: usar todo el bloque de tabla (categoría + título + autor)
-        # para que detect_signals tenga contexto.
-        description = clean_text(f"{publisher} · {category} · {title}")
+        # Description: NO inyectar `category` como keyword en description —
+        # contamina `detect_signals` cuando el `<u>` del HTML pertenece a otro
+        # contexto (autor, sección distinta, item adyacente). Bug real
+        # (2026-05-23): "Ataque a los Titanes: Antes de la caída nº11" se
+        # marcó como signal=artbook + product_type=artbook porque una `<u>`
+        # cercana decía "Artbook" — el item ES un tomo manga regular y no
+        # debería haber entrado a items.jsonl como artbook.
+        # La categoría sigue siendo útil como contexto/tag, pero no como
+        # keyword que detect_signals pueda interpretar como signal premium.
+        description = clean_text(f"{publisher} · {title}")
         if author:
             description += f" · {author}"
 
@@ -245,6 +252,13 @@ def fetch_detail_metadata(
     """Fetch a coleccion.php?id=N y extrae portada + precio + descripción enriquecida.
 
     Devuelve dict con image_url, price, description. Vacíos si no se encuentra.
+
+    NO devolver image_url cuando la página es una colección con múltiples
+    volúmenes — el calendario sabe el título/volumen pero no puede mapear
+    cuál `<img>` de la página corresponde sin reimplementar el parser de
+    listadomanga_collections. Mejor placeholder vacío que cover incorrecto
+    (gotcha #28: el bug histórico era tomar el primer `<img>` que siempre
+    era vol 1 aunque el item del calendario fuera vol 34 Especial).
     """
     result = {"image_url": "", "price": "", "description_extra": ""}
     if not url:
@@ -258,14 +272,18 @@ def fetch_detail_metadata(
     except (requests.RequestException, Exception):
         return result
 
-    # 1) Imagen principal: primer <img> en static.listadomanga.com
-    for img in soup.find_all("img"):
-        src = (img.get("src") or "").strip()
-        if not src:
-            continue
-        if "static.listadomanga.com" in src:
-            result["image_url"] = src
-            break
+    # 1) Imagen principal: SOLO si la página tiene un único item Layout A
+    # (colección de un solo tomo / artbook standalone). Si tiene múltiples
+    # tomos, dejamos image_url vacío para que el dashboard muestre placeholder
+    # — es preferible a un cover wrong. Para enriquecer correctamente el
+    # cover de items del calendario que apuntan a colecciones multi-volumen,
+    # corré `--bootstrap-wiki listadomanga-collections` que parsea por vol+edition.
+    item_imgs = [
+        img for img in soup.find_all("img", class_="portada")
+        if "static.listadomanga.com" in (img.get("src") or "")
+    ]
+    if len(item_imgs) == 1:
+        result["image_url"] = item_imgs[0]["src"].strip()
 
     # 2) Precio: regex en el body buscando "X,YY €"
     body_text = soup.get_text(" ", strip=True)
