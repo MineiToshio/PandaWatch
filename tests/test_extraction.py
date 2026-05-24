@@ -8,6 +8,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from scripts import manga_watch as mw
+from scripts import image_store as imgstore
 
 
 def make_soup(html_text: str) -> BeautifulSoup:
@@ -451,6 +452,39 @@ def test_extract_image_url_ignores_negative_score_only():
     assert mw.extract_image_url(card, "https://example.com/") == ""
 
 
+def test_img_to_url_skips_data_uri():
+    # Lazy-load: src es un placeholder data-URI, la portada real vive en data-src.
+    soup = make_soup('<img src="data:image/svg+xml;base64,PHN2Zz4=" data-src="/img/real.jpg">')
+    img = soup.find("img")
+    assert mw._img_to_url(img, "https://example.com/") == "https://example.com/img/real.jpg"
+
+
+def test_extract_image_url_skips_data_uri_placeholder():
+    # MangaLine MX: <img> lazy-loaded — el src es un SVG data-URI placeholder,
+    # la portada real está en data-src. Antes devolvíamos el data-URI.
+    soup = make_soup(
+        '<div class="product"><img src="data:image/svg+xml;base64,PHN2Zz4="'
+        ' data-src="/wp-content/uploads/cover.jpg" alt="Crayon Shin-chan"></div>'
+    )
+    div = soup.find("div")
+    assert (
+        mw.extract_image_url(div, "https://mangaline.com.mx/")
+        == "https://mangaline.com.mx/wp-content/uploads/cover.jpg"
+    )
+
+
+def test_extract_image_url_rejects_theme_svg_icon():
+    # Sanyodo: el único <img> del card es un ícono de tema (icn_close.svg en
+    # /assets/images/common/). No debe devolverse como portada.
+    soup = make_soup(
+        '<div class="product"><img'
+        ' src="/wp-content/themes/sanyodo/assets/images/common/sp/icn_close.svg">'
+        '<p class="card">特装版</p></div>'
+    )
+    card = soup.find("p", class_="card")
+    assert mw.extract_image_url(card, "https://www.sanyodo.co.jp/") == ""
+
+
 # ---------------------------------------------------------------------------
 # _extract_image_from_detail_soup (página de detalle, vía fetch_metadata)
 # ---------------------------------------------------------------------------
@@ -508,6 +542,37 @@ def test_detail_image_empty_if_nothing_found():
     html = "<html><body><p>solo texto</p></body></html>"
     url = mw._extract_image_from_detail_soup(make_soup(html), "https://example.com/")
     assert url == ""
+
+
+def test_detail_image_rejects_theme_assets_and_finds_cover():
+    # Sanyodo: la página tiene íconos de tema (.svg en /assets/images/common/)
+    # y la portada real (e-hon). Debe ignorar los íconos y rankear la portada.
+    html = """<html><body><main>
+        <img src="/wp-content/themes/sanyodo/assets/images/common/sp/icn_close.svg" alt="menu close">
+        <img src="https://www1.e-hon.ne.jp//content/images/m_978.jpg" alt="薬屋のひとりごと特装版">
+    </main></body></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://www.sanyodo.co.jp/?s=x")
+    assert url == "https://www1.e-hon.ne.jp//content/images/m_978.jpg"
+
+
+def test_detail_image_e_hon_cover_wins_with_short_alt():
+    # e-hon.ne.jp es CDN de portadas (Sanyodo linkea sus covers ahí). Debe
+    # ganar aunque el alt sea corto — sin el boost de host quedaba en score 4.
+    html = """<html><body><main>
+        <img src="/wp-content/themes/sanyodo/assets/images/common/sp/icn_close.svg" alt="x">
+        <img src="https://www1.e-hon.ne.jp//images/syoseki/ac/25/34820125.jpg" alt="鬼の花嫁 8">
+    </main></body></html>"""
+    url = mw._extract_image_from_detail_soup(make_soup(html), "https://www.sanyodo.co.jp/?s=x")
+    assert url == "https://www1.e-hon.ne.jp//images/syoseki/ac/25/34820125.jpg"
+
+
+def test_is_placeholder_image_rejects_svg_and_theme_assets():
+    assert mw._is_placeholder_image("https://x.com/sp/icn_close.svg")
+    assert mw._is_placeholder_image(
+        "https://x.com/wp-content/themes/t/assets/images/common/logo.png"
+    )
+    # Una portada raster normal no es placeholder.
+    assert not mw._is_placeholder_image("https://x.com/uploads/cover.jpg")
 
 
 # ---------------------------------------------------------------------------
@@ -870,17 +935,62 @@ def test_listadomanga_parse_calendar_extracts_items():
     assert items[0].url.startswith("https://www.listadomanga.es/coleccion.php?id=100")
 
 
-def test_listadomanga_detail_extracts_image_and_price():
-    """Test que el extractor de detail page agarra cover + precio sin hacer HTTP real."""
+def test_listadomanga_calendar_does_not_inject_category_into_description():
+    """Bug real (2026-05-23): el parser inyectaba la categoría del `<u>` de
+    la tabla en la `description` del item, contaminando detect_signals.
+    Si el `<u>` decía "Artbook" (categoría de OTRA sección o item adyacente
+    procesado por el iterador de tablas anidadas), TODOS los items de la
+    tabla quedaban marcados con signal=artbook → entraban a items.jsonl
+    como artbooks pese a ser tomos manga regulares.
+
+    Fix: NO incluir `category` en la description (sigue siendo info
+    contextual pero no contamina los signals)."""
     from wikis import listadomanga as lm
-    # Simulamos lo que extract hace internamente: parsear HTML + buscar img + precio.
+    # Tabla con <u>Artbook</u> pero items que NO son artbooks
     html = """<html><body>
-        <img src="https://static.listadomanga.com/abc123.jpg" alt="cover">
+        <h2>Norma Editorial</h2>
+        <h2>Miércoles, 31 Octubre 2018</h2>
+        <table class="ventana_id1">
+            <tr><td class="izq">
+                <b><u>Artbook</u></b><br/>
+                - <a href="coleccion.php?id=1836">Ataque a los Titanes: Antes de la caída (Manga) nº11 (de 17)</a> /
+                  <a href="autor.php?id=1">Hajime Isayama</a><br/>
+            </td></tr>
+        </table>
+    </body></html>"""
+    items = lm.parse_calendar_page(html)
+    assert len(items) == 1
+    c = items[0]
+    # La description NO debe contener "Artbook" inyectado como keyword
+    # (que contaminaría detect_signals).
+    assert "Artbook" not in c.description, (
+        f"description contains 'Artbook' which contaminates signals: {c.description!r}"
+    )
+    # Debe seguir teniendo publisher + title + author
+    assert "Norma Editorial" in c.description
+    assert "Ataque a los Titanes" in c.description
+    assert "Hajime Isayama" in c.description
+
+
+def test_listadomanga_detail_extracts_image_and_price():
+    """Test del extractor de detail. Devuelve image_url SOLO si la colección
+    tiene un único item Layout A (single-volume / artbook standalone), porque
+    si tiene múltiples tomos el calendario no puede mapear cuál `<img>` es
+    el cover del vol/edición específico (bug histórico: tomaba el primer
+    `<img>` del CDN = vol 1 aunque el item del calendario fuera vol 34
+    Especial)."""
+    from wikis import listadomanga as lm
+    # Caso single-item: SÍ devuelve image_url.
+    html = """<html><body>
+        <table class="ventana_id1" style="width: 184px;">
+          <tr><td class="cen">
+            <img class="portada" src="https://static.listadomanga.com/abc123.jpg" alt="cover">
+          </td></tr>
+        </table>
         <p>Editorial: Norma Editorial</p>
         <p>Precio: 9,95 €</p>
         <b>Formato:</b> Tomo A5 rústica con sobrecubierta
     </body></html>"""
-    # Mockeamos session.get para no hacer HTTP real
     class FakeResponse:
         text = html
         encoding = "utf-8"
@@ -893,6 +1003,40 @@ def test_listadomanga_detail_extracts_image_and_price():
     assert meta["image_url"] == "https://static.listadomanga.com/abc123.jpg"
     assert "9,95" in meta["price"]
     assert "Formato" in meta["description_extra"]
+
+
+def test_listadomanga_detail_skips_image_when_multi_volume():
+    """Cuando la colección tiene >1 tomo (multi-volume), NO devolver image_url
+    (preferimos placeholder vacío a cover wrong). Esto es lo que protege
+    contra el bug del calendar que reportó el owner el 2026-05-23: AoT vol 34
+    Especial mostraba la portada del vol 1."""
+    from wikis import listadomanga as lm
+    html = """<html><body>
+        <table class="ventana_id1" style="width: 184px;">
+          <tr><td class="cen">
+            <img class="portada" src="https://static.listadomanga.com/vol1.jpg" alt="Serie nº1">
+          </td></tr>
+        </table>
+        <table class="ventana_id1" style="width: 184px;">
+          <tr><td class="cen">
+            <img class="portada" src="https://static.listadomanga.com/vol2.jpg" alt="Serie nº2">
+          </td></tr>
+        </table>
+        <p>Precio: 9,95 €</p>
+    </body></html>"""
+    class FakeResponse:
+        text = html
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        def raise_for_status(self): pass
+    class FakeSession:
+        def get(self, url, **kw): return FakeResponse()
+
+    meta = lm.fetch_detail_metadata("https://www.listadomanga.es/coleccion.php?id=1", FakeSession())
+    # NO debería devolver imagen — la colección tiene 2 tomos y no sabemos cuál.
+    assert meta["image_url"] == ""
+    # Pero precio sí (es info de la página, no de un item específico).
+    assert "9,95" in meta["price"]
 
 
 def test_listadomanga_detail_empty_when_no_data():
@@ -1979,6 +2123,38 @@ def test_clean_title_strips_norma_descriptive_tail():
         assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
 
 
+def test_clean_title_strips_orphan_volume_markers():
+    """Bug real (2026-05-23): items del calendario para "guías de edición" venían
+    con title tipo "Ataque a los Titanes nº Collector's Edition" — el `nº` huérfano
+    (sin número) confundía al LLM del skill /standardize-catalog, que lo dejaba
+    como "no" residual en title + series_key (`ataque-a-los-titanes-no`),
+    fragmentando el cluster. clean_title ahora strippea markers nº/n°/vol(.)
+    huérfanos (sin número adyacente).
+
+    PRESERVAR cuando el marker SÍ tiene número (es legítimo)."""
+    strip_cases = [
+        ("Ataque a los Titanes nº Collector's Edition", "Ataque a los Titanes Collector's Edition"),
+        ("Mujina into the deep nº Special Edition", "Mujina into the deep Special Edition"),
+        ("Atelier of Witch Hat nº Special Edition", "Atelier of Witch Hat Special Edition"),
+        ("Mazinger Z nº Collector's Edition", "Mazinger Z Collector's Edition"),
+    ]
+    for raw, expected in strip_cases:
+        actual = mw.clean_title(raw)
+        assert actual == expected, f"\n  input:    {raw!r}\n  expected: {expected!r}\n  actual:   {actual!r}"
+
+    preserve_cases = [
+        # Markers con número adyacente: legítimos, NO strippear.
+        "Ataque a los Titanes nº1",
+        "Berserk Vol. 41 Edición Especial",
+        "X-Men Vol. 1",
+        # Palabra "tomo" en title legítimo (NO es marker de volumen):
+        "DNANGEL #10 ¡ÚLTIMO TOMO!",
+    ]
+    for raw in preserve_cases:
+        actual = mw.clean_title(raw)
+        assert actual == raw, f"\n  input:    {raw!r}\n  expected unchanged\n  actual:   {actual!r}"
+
+
 def test_clean_title_strips_trailing_date():
     # Glénat/Pika dejan la fecha de salida pegada al final del título.
     cases = [
@@ -2906,6 +3082,51 @@ def test_is_collectible_edition_x_edition_stoplist():
         assert not ok, f"Stoplist word should not rescue: {title!r} (reason={reason})"
 
 
+def test_is_collectible_edition_x_edition_stoplist_multilingual():
+    """Genéricos en ES/IT/FR también deben estar en la stoplist (gotcha #24).
+
+    El regex matchea Edición/Edizione/Édition, así que "Nueva Edición"
+    (= "New Edition", una reimpresión) NO puede rescatar — antes disparaba
+    lore_edition y colaba tomos/omnibus normales por el gate.
+    """
+    cases = [
+        "Detective Conan Nueva Edición 45",          # ES — reimpresión
+        "Nausicaä del Valle del Viento Nueva Edición 1",
+        "Yu-Gi-Oh! Nueva Edición 1",
+        "Video Girl Ai Nueva Edición 2",
+        "Naruto Nuova Edizione 3",                   # IT
+        "One Piece Nouvelle Édition 5",              # FR
+        "Bleach Primera Edición 10",                 # ES — ordinal
+        "Berserk Última Edición 1",                  # ES — "last"
+    ]
+    for title in cases:
+        ok, reason = mw.is_collectible_edition(title, "", [], "manga")
+        assert not ok, f"Multilingual generic should not rescue: {title!r} (reason={reason})"
+        assert mw._GENERIC_X_EDITION_PATTERN.search(title) is None, \
+            f"_GENERIC_X_EDITION_PATTERN should not match {title!r}"
+
+
+def test_nueva_edicion_omnibus_does_not_slip_through():
+    """Omnibus "Nueva Edición 3 en 1" NO califica como coleccionable.
+
+    Caso real del corpus (Planeta Cómic): "One Piece (Nueva Edición 3 en 1)"
+    colaba porque "Nueva Edición" disparaba lore_edition. Es un omnibus
+    pelado — sin hardcover/deluxe/limited/variant/extras → fuera. Gotcha #24.
+    """
+    omnibus_cases = [
+        "One Piece (Nueva Edición 3 en 1) nº5",
+        "Naruto (Nueva Edición 3 en 1) nº1",
+        "Bastard!! (Nueva Edición 3 en 1) nº3",
+        "Urusei Yatsura (Nueva Edición 2 en 1) nº1",
+    ]
+    for title in omnibus_cases:
+        # Aun pasando los signal_types crudos del scraper, el gate debe rechazar.
+        ok, reason = mw.is_collectible_edition(
+            title, "", ["omnibus"], "manga",
+        )
+        assert not ok, f"Plain 'Nueva Edición' omnibus should be rejected: {title!r} (reason={reason})"
+
+
 def test_derive_product_type_assigns_magazine():
     assert mw.derive_product_type("One Piece Magazine Vol. 17", "", []) == "magazine"
     assert mw.derive_product_type("Captain Tsubasa Magazine 5", "", []) == "magazine"
@@ -3390,6 +3611,74 @@ def test_append_jsonl_does_not_preserve_when_no_standardized_at(tmp_path):
     assert items[0]["series_key"] == "wrong-key-2"
 
 
+def test_append_jsonl_image_local_is_sticky(tmp_path):
+    """Un re-scrape sin image_local (--skip-image-download o fallo de red
+    puntual) NO debe borrar el espejo local ya descargado. Ver "Image
+    storage" en CLAUDE.md."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A",
+        "image_url": "https://cdn.example.com/a.jpg",
+        "image_local": "abc123def4567890.jpg",
+        "detected_at": "2026-01-01",
+    }])
+    # Re-scrape: misma URL, la row nueva NO trae image_local.
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A",
+        "image_url": "https://cdn.example.com/a.jpg",
+        "detected_at": "2026-02-01",
+    }])
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0]["image_local"] == "abc123def4567890.jpg"
+    assert items[0]["detected_at"] == "2026-02-01"
+
+
+# ----- image_store.py (espejo local de portadas, Image storage Fase 1) -----
+
+
+def test_image_store_stem_is_deterministic():
+    url = "https://cdn.example.com/cover/one-piece-100.jpg"
+    assert imgstore.image_stem(url) == imgstore.image_stem(url)
+    assert imgstore.image_stem(url) != imgstore.image_stem(url + "?v=2")
+    assert len(imgstore.image_stem(url)) == 16
+
+
+def test_image_store_extension_from_magic():
+    assert imgstore._extension_from_magic(b"\xff\xd8\xff" + b"\x00" * 16) == ".jpg"
+    assert imgstore._extension_from_magic(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16) == ".png"
+    assert imgstore._extension_from_magic(b"GIF89a" + b"\x00" * 16) == ".gif"
+    assert imgstore._extension_from_magic(b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 8) == ".webp"
+    # Una página HTML de error / anti-bot no es una imagen → "".
+    assert imgstore._extension_from_magic(b"<!DOCTYPE html><html><head>") == ""
+
+
+def test_image_store_download_rejects_non_http(tmp_path):
+    images_dir = tmp_path / "images"
+    assert imgstore.download_image("", images_dir) == ""
+    assert imgstore.download_image("data:image/png;base64,AAAA", images_dir) == ""
+    assert imgstore.download_image("ftp://example.com/x.jpg", images_dir) == ""
+
+
+def test_image_store_download_skips_when_file_exists(tmp_path):
+    """Si ya hay un archivo para el URL, download_image lo reusa sin red.
+    El glob <stem>.* lo encuentra aunque la extensión difiera de la del URL."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    url = "https://cdn.example.com/cover/berserk-1.jpg"
+    existing = images_dir / (imgstore.image_stem(url) + ".png")
+    existing.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    assert imgstore.download_image(url, images_dir) == existing.name
+    assert imgstore.existing_local_image(images_dir, url) == existing.name
+
+
+def test_image_store_existing_local_image_empty_when_absent(tmp_path):
+    images_dir = tmp_path / "images"
+    assert imgstore.existing_local_image(images_dir, "https://x.com/y.jpg") == ""
+
+
 # ----- otaku_calendar.py (wiki EN) -----
 
 def test_otaku_calendar_parse_date_text():
@@ -3814,6 +4103,945 @@ def test_mangavariant_iter_year_months_returns_single_batch():
     para que el dispatcher cuente '1 mes' en el resumen."""
     from wikis import mangavariant as mv
     assert mv.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
+
+
+def test_socialanime_parse_variant_item_basic():
+    """Item canónico de type=variant: Star Comics, link Amazon affiliate,
+    ISBN-10 inferido del ASIN, signal variant_cover desde la palabra
+    'Variant' en el título."""
+    from wikis import socialanime as sa
+    item = {
+        "id": "2255",
+        "img": "https://m.media-amazon.com/images/I/91UJQpcT86L._AC_UL960_FMwebp_QL65_.jpg",
+        "nome": "Mob Psycho 100. Variant (Vol. 1)",
+        "link": "https://www.amazon.it/dp/8822607155?tag=socianim0c-21",
+        "prezzo": "4.9",
+        "PublicationDate": "22 Nov 2017",
+        "trama": "Shigeo, detto Mob, è uno studente.",
+        "editore": "Star Comics",
+        "autore": "One",
+        "extra_class": "variant",
+    }
+    cand = sa.parse_feed_item(item, "variant")
+    assert cand is not None
+    assert cand.title == "Mob Psycho 100. Variant (Vol. 1)"
+    assert cand.url == "https://www.amazon.it/dp/8822607155?tag=socianim0c-21"
+    assert cand.publisher == "Star Comics"
+    assert cand.author == "One"
+    assert cand.price == "4.9"
+    assert cand.country == "Italia"
+    assert cand.language == "Italiano"
+    assert cand.source == "IT - SocialAnime Variant"
+    assert cand.release_date == "2017-11-22"
+    assert cand.isbn == "8822607155"  # Italian books legacy: ASIN == ISBN-10
+    assert "variant_cover" in cand.signal_types
+    assert "sa-class:variant" in cand.tags
+
+
+def test_socialanime_parse_box_injects_cofanetto_hint():
+    """type=box: si el título no menciona 'cofanetto'/'box set'/'boxset',
+    el parser inyecta 'Cofanetto / box set.' en la descripción para que
+    detect_signals levante box_set. Sin esto, items con solo 'Collector's
+    box' en el título caerían fuera del gate is_collectible_edition."""
+    from wikis import socialanime as sa
+    item = {
+        "id": "1", "img": "",
+        "nome": "One piece red. Collector's box. Limited edition",
+        "link": "https://www.amazon.it/dp/8828715189?tag=foo",
+        "prezzo": "24.9", "PublicationDate": "1 Jan 2030",
+        "trama": "", "editore": "Panini Comics", "autore": "Eiichiro Oda",
+        "extra_class": "",
+    }
+    cand = sa.parse_feed_item(item, "box")
+    assert cand is not None
+    assert "Cofanetto / box set." in cand.description
+    assert "box_set" in cand.signal_types
+    # PublicationDate placeholder '1 Jan 2030' debe quedar vacío.
+    assert cand.release_date == ""
+
+
+def test_socialanime_parse_box_skips_hint_when_title_has_cofanetto():
+    """Si el título ya dice 'cofanetto' o 'box set', no duplicamos el hint."""
+    from wikis import socialanime as sa
+    item = {
+        "id": "2", "img": "",
+        "nome": "Berserk Cofanetto Deluxe Vol 1-3",
+        "link": "https://www.amazon.it/dp/8822612345",
+        "prezzo": "39.9", "PublicationDate": "", "trama": "",
+        "editore": "Panini Comics", "autore": "", "extra_class": "",
+    }
+    cand = sa.parse_feed_item(item, "box")
+    assert cand is not None
+    assert cand.description.count("Cofanetto") <= 1
+    assert "box_set" in cand.signal_types
+
+
+def test_socialanime_skips_items_without_link():
+    """Items sin Amazon link no tienen URL canónica → no podemos dedupar.
+    El parser los descarta (~10% del feed son entries delisteadas)."""
+    from wikis import socialanime as sa
+    item = {
+        "id": "3", "nome": "Titolo senza link", "link": "",
+        "editore": "Panini Comics", "extra_class": "variant",
+    }
+    assert sa.parse_feed_item(item, "variant") is None
+
+
+def test_socialanime_skips_items_without_title():
+    from wikis import socialanime as sa
+    item = {"id": "4", "nome": "", "link": "https://www.amazon.it/dp/X"}
+    assert sa.parse_feed_item(item, "variant") is None
+
+
+def test_socialanime_kindle_asin_not_treated_as_isbn():
+    """ASINs Kindle (empiezan con B0) NO son ISBN-10. No los guardamos
+    como isbn — meterlos arruinaría el cluster_key por ISBN del item."""
+    from wikis import socialanime as sa
+    item = {
+        "id": "5", "nome": "Naruto Limited Edition (Vol. 1)",
+        "link": "https://www.amazon.it/dp/B0ABCDEF12?tag=foo",
+        "prezzo": "9.9", "PublicationDate": "1 May 2024",
+        "trama": "", "editore": "Panini Comics", "autore": "",
+        "extra_class": "",
+    }
+    cand = sa.parse_feed_item(item, "variant")
+    assert cand is not None
+    assert cand.isbn == ""
+
+
+def test_socialanime_iter_year_months_returns_single_batch():
+    """SocialAnime no usa calendario (el feed se controla por macro_filter)."""
+    from wikis import socialanime as sa
+    assert sa.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
+
+
+def _bbm_html(layout: str) -> str:
+    """Genera HTML mínimo de un post BBM para tests. Layout A imita
+    /capas_variantes/ (gallery div ANTES del title). Layout B imita
+    /volumes-especiais/ (title primero, figures después)."""
+    if layout == "A":
+        return """
+        <article><div class="entry-content">
+          <p>Intro del post, no es entry.</p>
+          <hr/>
+          <div class="wp-block-gallery">
+            <img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2017/09/genshiken06.jpg?w=401" alt="Genshiken06"/>
+            <img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2017/09/genshiken06b.jpg?w=401" alt="Genshiken06b"/>
+          </div>
+          <p><strong><a href="https://blogbbm.com/manga/genshiken/">Genshiken &#8211; #06</a></strong></p>
+          <p>Em janeiro de 2014, a editora JBC lançou o volume 6 de Genshiken com duas capas. Cada volume custou R$ 11,90.</p>
+          <hr/>
+          <div class="wp-block-gallery">
+            <img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2017/09/re-zero-01.jpg" alt="Re:Zero #01"/>
+            <img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2017/09/re-zero-01-capa-variante.jpg" alt="Re:Zero #01 - Capa Variante"/>
+          </div>
+          <p><strong>Re:Zero #01 (Light Novel)</strong></p>
+          <p>Em outubro de 2017, a editora NewPOP publicou o primeiro volume da light novel Re:Zero. Cada volume custou R$ 26,90.</p>
+        </div></article>
+        """ + "_" * 5000  # padding para pasar el min-length check
+    # Layout B
+    return """
+    <article><div class="entry-content">
+      <p>Intro</p>
+      <hr/>
+      <p>Ataque dos Tit&atilde;s #34 (12/2021)</p>
+      <hr/>
+      <p>O volume final foi lan&ccedil;ado em duas vers&otilde;es pela editora Panini. A vers&atilde;o especial teve uma capa variante e um livreto. R$ 24,90.</p>
+      <figure><img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2022/01/aot34-regular.jpg" alt="Edicao regular"/></figure>
+      <figure><img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2022/01/aot34-especial.jpg" alt="Edicao especial"/></figure>
+      <hr/>
+      <p>Shangri-la Frontier #01 (04/2022)</p>
+      <hr/>
+      <p>Em abril de 2022, a editora Panini lan&ccedil;ou Shangri-la #01 com edi&ccedil;&atilde;o regular e Pass Edition.</p>
+      <figure><img src="https://blogbbm.com/wp-content/uploads/2022/04/slf01-regular.jpg" alt="SLF regular"/></figure>
+      <figure><img src="https://blogbbm.com/wp-content/uploads/2022/04/slf01-passedition.jpg" alt="SLF Pass Edition"/></figure>
+    </div></article>
+    """ + "_" * 5000
+
+
+def test_blogbbm_parses_layout_a_capas_variantes():
+    """Layout A (capas_variantes): gallery div precede al título. Cada entry
+    debe tener su propio par de imágenes y publisher detectado del prose."""
+    from wikis import blogbbm as bbm
+    cands = bbm.parse_post(_bbm_html("A"), {
+        "url": "https://blogbbm.com/2020/10/09/capas_variantes/",
+        "source_suffix": "Capas Variantes",
+        "tag": "capas-variantes",
+        "signal_inject": "Capa variante / variant cover.",
+    })
+    assert len(cands) == 2
+    g, r = cands
+    # Genshiken
+    assert "Genshiken" in g.title
+    assert g.publisher == "JBC"
+    assert g.price.startswith("R$11,90")  # tolera punto final del prose
+    assert g.release_date == "2014-01"
+    assert "genshiken06b" in g.image_url  # variant cover preferida sobre normal
+    assert "variant_cover" in g.signal_types
+    # Re:Zero — sin ficha link, lenient mode lo detecta
+    assert "Re:Zero" in r.title
+    assert r.publisher == "NewPOP"
+    assert "capa-variante" in r.image_url  # alineamiento correcto
+
+
+def test_blogbbm_parses_layout_b_volumes_especiais():
+    """Layout B (volumes-especiais): title con (MM/YYYY) parens, figures después.
+    Cada entry debe tener sus figures correctamente asignados."""
+    from wikis import blogbbm as bbm
+    cands = bbm.parse_post(_bbm_html("B"), {
+        "url": "https://blogbbm.com/2024/05/15/guia-volumes-especiais-de-mangas-com-itens-especiais/",
+        "source_suffix": "Volumes Especiais",
+        "tag": "volumes-especiais",
+        "signal_inject": "Edição especial com brinde / special edition with bonus.",
+    })
+    assert len(cands) == 2
+    aot, slf = cands
+    assert "Ataque dos Tit" in aot.title
+    assert aot.release_date == "2021-12"  # del parens del título
+    assert aot.publisher == "Panini"
+    assert "aot34" in aot.image_url
+    assert "special_edition" in aot.signal_types
+    assert "bonus" in aot.signal_types
+    assert "Shangri" in slf.title
+    assert slf.release_date == "2022-04"
+    assert "slf01" in slf.image_url
+
+
+def test_blogbbm_rejects_narrative_paragraphs_as_titles():
+    """`<p>` que empieza con narrativa ('O volume', 'A editora', 'No Brasil',
+    'Em janeiro') NO debe pasar como título aunque mencione un #vol."""
+    from wikis.blogbbm import _is_title_p
+    from bs4 import BeautifulSoup
+    def mk(html):
+        return BeautifulSoup(html, "html.parser").p
+    assert not _is_title_p(mk("<p>O volume #21 veio com adesivos.</p>"))
+    assert not _is_title_p(mk("<p>A editora Panini publicou em 12/2024 a edição.</p>"))
+    assert not _is_title_p(mk("<p>No Brasil, o volume #34 foi lançado.</p>"))
+    assert not _is_title_p(mk("<p>Em janeiro de 2014 saiu o volume #06.</p>"))
+    # Pero un título legítimo SÍ pasa.
+    assert _is_title_p(mk("<p>Ataque dos Titãs #34 (12/2021)</p>"))
+    # 'No Game No Life' empieza con 'no ' pero NO con 'no brasil'/'no início'.
+    assert _is_title_p(mk("<p>No Game No Life #01 (Light Novel)</p>"), lenient=True)
+
+
+def test_blogbbm_image_strips_wp_proxy_and_query():
+    """URLs de imagen via i0.wp.com/i1.wp.com pasan a blogbbm.com directo
+    para que el espejo local descargue desde el origen, no del proxy."""
+    from wikis.blogbbm import _node_imgs
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup("""
+      <div>
+        <img src="https://i0.wp.com/blogbbm.com/wp-content/uploads/2017/09/test.jpg?w=401&h=609&ssl=1" alt="x"/>
+        <img src="https://i2.wp.com/blogbbm.com/wp-content/uploads/2024/01/other.webp?fit=800" alt="y"/>
+      </div>
+    """, "html.parser")
+    imgs = _node_imgs(soup.div)
+    assert len(imgs) == 2
+    assert imgs[0]["src"] == "https://blogbbm.com/wp-content/uploads/2017/09/test.jpg"
+    assert imgs[1]["src"] == "https://blogbbm.com/wp-content/uploads/2024/01/other.webp"
+
+
+def test_blogbbm_iter_year_months_returns_single_batch():
+    from wikis import blogbbm as bbm
+    assert bbm.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
+
+
+# --- listadomanga_collections (Fase 1) -------------------------------------
+
+def _lmc_html_minimal(*sections_html: str, formato: str = "Tomo (115x175) rústica (tapa blanda) con sobrecubierta", title: str = "Berserk (Panini)", publisher: str = "Panini Manga", author: str = "Kentaro Miura") -> str:
+    """Construye un HTML mínimo de coleccion.php con header + secciones dadas."""
+    header = (
+        f'<h2>{title}\t\t</h2><hr/>'
+        f'<b>T&iacute;tulo original:</b> Test<br/>'
+        f'<b>Guion:</b> <a href="autor.php?id=1">{author}</a><br/>'
+        f'<b>Editorial espa&ntilde;ola:</b> <a href="editorial.php?id=1">{publisher}</a><br/>'
+        f'<b>Formato:</b> {formato}<br/>'
+    )
+    body = ''.join(sections_html)
+    return f'<html><body>{"X" * 1500}{header}{body}</body></html>'
+
+
+def _lmc_section(header: str, *items_html: str) -> str:
+    """Wrappea un header h2 + sus items en la estructura típica."""
+    items = ''.join(items_html)
+    return (
+        f'<table><tr><td><table class="ventana_id1" style="width: 974px">'
+        f'<tr><td class="izq"><h2>{header}</h2></td></tr></table></td></tr></table>'
+        f'<table style="padding: 0px;"><tr style="padding: 0px;">{items}</tr></table>'
+    )
+
+
+def _lmc_item(volume: int, series: str, desc_extra: str = "", price: str = "10,00 €", pages: str = "192 páginas en B/N", day: str = "23", month: str = "Marzo", year: str = "2023", image_id: str = "abc123") -> str:
+    """Una celda Layout A con el formato típico de listadomanga."""
+    desc_line = f'{desc_extra}<br/>' if desc_extra else ''
+    title_line = f'{series} n&ordm;{volume}<br/>' if volume else f'{series}<br/>'
+    return (
+        f'<td><table class="ventana_id1" style="width: 184px;"><tr><td class="cen">'
+        f'<img class="portada" src="https://static.listadomanga.com/{image_id}.jpg" '
+        f'alt="{series} nº{volume}"/>'
+        f'<div style="height: 8px"></div>'
+        f'{title_line}'
+        f'{desc_line}'
+        f'{pages}<br/>'
+        f'{price}<br/>'
+        f'{day} <a href="novedades.php">{month} {year}</a>'
+        f'</td></tr></table></td><td class="separacion"></td>'
+    )
+
+
+def test_lmc_parses_ediciones_especiales_section():
+    """Sección 'Números editados (Ediciones Especiales)' produce items con
+    signal special_edition + descripción del extra preservada."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(41, "Berserk", desc_extra="Edición Especial con logo dorado + Lámina", price="25,00 €"),
+            _lmc_item(42, "Berserk", desc_extra="Edición Especial con logo dorado + 2 mini-pósters + Baraja del tarot", price="35,00 €", image_id="def456"),
+        )
+    )
+    cands = lmc.parse_collection_page(html, 2688)
+    # score_candidate ya corrió en parse_collection_page? No, sólo en fetch.
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 2
+    assert all(c.publisher == "Panini Manga" for c in cands)
+    assert all(c.author == "Kentaro Miura" for c in cands)
+    assert all("especial-" in c.url for c in cands)
+    assert "especial-41" in cands[0].url
+    assert "especial-42" in cands[1].url
+    assert all("special_edition" in c.signal_types for c in cands)
+    assert cands[0].price == "€ 25.00"
+    assert cands[1].price == "€ 35.00"
+    assert cands[0].release_date == "2023-03-23"
+
+
+def test_lmc_parses_portadas_alternativas_with_variant_cover_signal():
+    """Sección Portadas alternativas → signal variant_cover."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Portadas alternativas)",
+            _lmc_item(1, "Centuria", desc_extra="Portada Alternativa + 2 postales + bolígrafo", price="9,00 €", month="Julio", year="2025", day="31"),
+        ),
+        title="Centuria",
+        publisher="Editorial Ivrea",
+    )
+    cands = lmc.parse_collection_page(html, 6090)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1
+    assert "alternativa-1" in cands[0].url
+    assert "variant_cover" in cands[0].signal_types
+    assert cands[0].publisher == "Editorial Ivrea"
+
+
+def test_lmc_regular_tomos_discarded_when_format_not_premium():
+    """Tomos regulares (Números editados sin paréntesis) bajo formato no-premium
+    NO deben generar candidates."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(37, "Berserk", price="10,00 €", month="Junio", year="2017", day=""),
+            _lmc_item(38, "Berserk", price="10,00 €", month="Noviembre", year="2017", day=""),
+        ),
+        # Formato regular (no-premium)
+        formato="Tomo (130x183) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 2688)
+    assert cands == []  # tomos regulares descartados
+
+
+def test_lmc_regular_tomos_kept_when_format_is_kanzenban():
+    """Si Formato es kanzenban-tier (A5 + doble sobrecubierta), TODOS los
+    items de 'Números editados' pasan automáticamente con signal premium.
+    (En la nomenclatura del detector, kanzenban es type=premium_format.)"""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "FullMetal Alchemist", price="12,00 €", month="Enero", year="2014"),
+        ),
+        formato="Tomo A5 (148x210) rústica (tapa blanda) con doble sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 1741)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1
+    assert "regular-1" in cands[0].url
+    # `premium_format` cubre kanzenban / master / library / ultimate / etc.
+    assert "premium_format" in cands[0].signal_types
+
+
+def test_lmc_premium_format_carton_tapa_dura_triggers_hardcover():
+    """Formato 'Tomo doble A5 cartoné (tapa dura)' → hardcover + omnibus."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Atelier of Witch Hat Edición Grimorio", price="24,00 €", month="Noviembre", year="2025", day="27", image_id="grim1"),
+        ),
+        title="Atelier of Witch Hat (Edición Grimorio)",
+        publisher="Milky Way Ediciones",
+        formato="Tomo doble A5 (148x210) cartoné (tapa dura)",
+    )
+    cands = lmc.parse_collection_page(html, 6242)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1
+    sigs = set(cands[0].signal_types)
+    # Cartoné + tapa dura → hardcover; Tomo doble → omnibus; A5 → kanzenban
+    assert "hardcover" in sigs
+    assert "omnibus" in sigs
+
+
+def test_lmc_pack_kept_only_if_description_has_extras():
+    """Packs sin descripción de extras se descartan; con extras se mantienen."""
+    from wikis import listadomanga_collections as lmc
+    # Con extras (postales + bookmark)
+    html_with_extras = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Packs)",
+            _lmc_item(0, "Ataque a los Titanes", desc_extra="Pack iniciación tomos 1 y 2 + postales exclusivas + bookmark magnético", price="16,00 €", month="Octubre", year="2012", day="31"),
+        ),
+        title="Ataque a los Titanes",
+    )
+    cands = lmc.parse_collection_page(html_with_extras, 1606)
+    assert len(cands) == 1
+    assert "pack-0" in cands[0].url
+
+    # Sin extras (solo pack de tomos)
+    html_no_extras = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Packs)",
+            _lmc_item(0, "Some Manga", desc_extra="Pack tomos 1 y 2", price="14,00 €"),
+        ),
+    )
+    cands = lmc.parse_collection_page(html_no_extras, 9999)
+    assert cands == []
+
+
+def test_lmc_synthetic_url_is_deterministic_per_edition_and_volume():
+    """Mismo input → mismo URL (idempotencia para re-scrapes)."""
+    from wikis.listadomanga_collections import _make_synthetic_url
+    u1 = _make_synthetic_url(2688, "especial", "42")
+    u2 = _make_synthetic_url(2688, "especial", "42")
+    assert u1 == u2
+    # Ediciones distintas del mismo tomo → URLs distintas
+    u3 = _make_synthetic_url(2688, "alternativa", "42")
+    assert u1 != u3
+    # Volúmenes distintos en la misma edición → URLs distintas
+    u4 = _make_synthetic_url(2688, "especial", "41")
+    assert u1 != u4
+    # URL bien formada (no `https://...` duplicado ni `//` extra)
+    assert u1.startswith("https://www.listadomanga.es/coleccion.php?id=2688&item=")
+    assert u1.count("https://") == 1
+
+
+def test_lmc_synthetic_url_survives_normalization():
+    """El param `item=...` debe sobrevivir `normalize_url_for_dedup`
+    (no está en TRACKING_PARAMS). Si dos items distintos colapsan al mismo
+    URL post-normalización, el upsert los pisa entre sí."""
+    from wikis.listadomanga_collections import _make_synthetic_url
+    norm = mw.normalize_url_for_dedup
+    u_vol1 = _make_synthetic_url(2688, "especial", "1")
+    u_vol2 = _make_synthetic_url(2688, "especial", "2")
+    u_alt1 = _make_synthetic_url(2688, "alternativa", "1")
+    n1, n2, na = norm(u_vol1), norm(u_vol2), norm(u_alt1)
+    # Los 3 deben ser distintos post-normalización.
+    assert n1 != n2
+    assert n1 != na
+    assert n2 != na
+
+
+def test_lmc_planeta_section_processed_as_regular_with_premium_format():
+    """Regresión: `Números editados (Planeta DeAgostini Cómics)` y
+    `(Planeta Cómic)` se procesaban como DISCARD (perdían ~222 colecciones
+    legítimas premium). Fix 2026-05-23: tratarlas como REGULAR — los items
+    pasan si el Formato de la página es premium, igual que `Números
+    editados` sin paréntesis.
+
+    Caso real id=1832 (Dragon Ball Box Set, Edición de Lujo): 4 items
+    extraídos correctamente, antes 0."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Planeta DeAgostini C&oacute;mics)",
+            _lmc_item(1, "Test Manga", price="20,00 €", image_id="p1"),
+        ),
+        _lmc_section(
+            "N&uacute;meros editados (Planeta C&oacute;mic)",
+            _lmc_item(2, "Test Manga", price="20,00 €", image_id="p2"),
+        ),
+        # Formato premium → todos los items deberían entrar
+        formato="Tomo doble A5 (148x210) cartoné (tapa dura)",
+    )
+    cands = lmc.parse_collection_page(html, 1832)
+    # 2 items (uno de cada sección de editorial)
+    assert len(cands) == 2
+    for c in cands:
+        lmc.score_candidate(c)
+        # Deberían tener signals premium del Formato cartoné A5
+        assert any(s in c.signal_types for s in ["hardcover", "deluxe", "omnibus"])
+
+    # Sin premium → 0 (tomos regulares de re-edición no son coleccionables)
+    html_no_premium = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Planeta C&oacute;mic)",
+            _lmc_item(1, "Test Manga", price="9,00 €", image_id="p1"),
+        ),
+        formato="Tomo (115x175) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands_no_prem = lmc.parse_collection_page(html_no_premium, 9999)
+    assert cands_no_prem == []
+
+
+def test_lmc_discards_edicion_revisada_and_no_editados():
+    """Las secciones 'Edición Revisada' (re-impresión) y 'no editados'
+    (sin precio) se descartan completamente."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Edici&oacute;n Revisada)",
+            _lmc_item(1, "Slam Dunk Revisada", price="15,00 €"),
+        ),
+        _lmc_section(
+            "N&uacute;meros no editados",
+            _lmc_item(20, "Slam Dunk Pendiente", price=""),
+        ),
+        formato="Tomo A5 (150x210) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 342)
+    # La sección "Números editados (Edición Revisada)" se descarta
+    # explícitamente; la "no editados" también. Solo quedarían items si
+    # hubiera una sección procesable.
+    assert cands == []
+
+
+def test_lmc_html_entities_in_section_headers_decoded():
+    """Headers con entities (N&uacute;meros editados, Edici&oacute;n) deben
+    decodificarse antes de matchear los SECTION_RULES."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(1, "Test Manga", desc_extra="Edición Especial Limitada", price="20,00 €"),
+        ),
+    )
+    cands = lmc.parse_collection_page(html, 9999)
+    assert len(cands) == 1
+
+
+def test_lmc_iter_year_months_returns_single_batch():
+    """Esta wiki no usa calendario; iter_year_months es stub."""
+    from wikis import listadomanga_collections as lmc
+    assert lmc.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
+
+
+def test_lmc_bootstrap_signature_accepts_id_kwargs():
+    """El dispatcher pasa id_from/id_to como kwargs; la signature debe aceptarlos."""
+    import inspect
+    from wikis.listadomanga_collections import bootstrap
+    sig = inspect.signature(bootstrap)
+    assert "id_from" in sig.parameters
+    assert "id_to" in sig.parameters
+    # Default sensato para que un usuario lance sin flags y no itere todo el catálogo accidentalmente.
+    assert sig.parameters["id_from"].default == 1
+
+
+def test_lmc_disambiguator_uses_image_id_for_unique_urls_per_product():
+    """Bug real del piloto: id=49 tenía 2 packs Zelda con descripciones que
+    arrancan idénticas ('Pack especial tomos 1 a 5' / 'Pack especial tomos 6 a 10').
+    Cuando el disambiguator se construía del desc_extra truncado a 20 chars,
+    ambos colapsaban a 'pack-especial-tomos-' → MISMA URL → upsert se pisaba
+    entre sí. Fix: usar el image_id (hash del filename del CDN) como
+    disambiguator primario — siempre único por producto distinto, estable
+    en re-scrapes (idempotente)."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Packs)",
+            # 2 packs con misma serie, misma edition_kind, mismo volume (0),
+            # y descripciones que SLUG-WISE coliden si truncamos a 20 chars:
+            _lmc_item(0, "The Legend of Zelda",
+                      desc_extra="Pack especial tomos 1 a 5 + cofre de regalo",
+                      price="37,50 €", image_id="aaaa1111bbbb2222"),
+            _lmc_item(0, "The Legend of Zelda",
+                      desc_extra="Pack especial tomos 6 a 10 + cofre de regalo",
+                      price="37,50 €", image_id="cccc3333dddd4444"),
+        ),
+        title="The Legend of Zelda",
+        publisher="Norma Editorial",
+    )
+    cands = lmc.parse_collection_page(html, 49)
+    assert len(cands) == 2
+    urls = [c.url for c in cands]
+    # URLs sintéticas DEBEN ser distintas (sin esto, el upsert pisa el segundo).
+    assert urls[0] != urls[1]
+    assert "aaaa1111bbbb2222" in urls[0]
+    assert "cccc3333dddd4444" in urls[1]
+    # Y deben sobrevivir la normalización (TRACKING_PARAMS no lleva 'item').
+    assert mw.normalize_url_for_dedup(urls[0]) != mw.normalize_url_for_dedup(urls[1])
+
+
+def _lmc_layout_b_section(header: str, *cells_html: str) -> str:
+    """Wrappea un header h2 + tabla Layout B (width=920) con sus celdas."""
+    cells = ''.join(cells_html)
+    return (
+        f'<table class="ventana_id1" style="width: 974px"><tr><td class="izq">'
+        f'<h2>{header}</h2><hr/>'
+        f'<p style="text-align: center;">'
+        f'<table width="920" border="0" align="center"><tr>{cells}</tr></table>'
+        f'</p></td></tr></table>'
+    )
+
+
+def _lmc_layout_b_cell(series: str, marker: str, descs: list[str], date: str, image_id: str = "ext1") -> str:
+    """Una celda Layout B con la estructura típica: img + br + br + título +
+    marker + descripciones + fecha."""
+    desc_lines = ''.join(f'{d}<br />' for d in descs)
+    return (
+        f'<td width="150" style="text-align: center;">'
+        f'<img src="https://static.listadomanga.com/{image_id}.png" />'
+        f'<br /><br />'
+        f'{series}<br />'
+        f'{marker}<br />'
+        f'{desc_lines}'
+        f'{date}'
+        f'</td>'
+    )
+
+
+def test_lmc_layout_b_parses_extras_and_merges_into_existing_tomo():
+    """Layout B "Extras de X" con marker "(1ª Edición)" mergea la imagen+desc
+    al tomo regular existente en Layout A. El item resultante tiene
+    images[]=[cover, extra] + extras[]=[descripción]."""
+    from wikis import listadomanga_collections as lmc
+    # Layout A: tomo vol 1 regular bajo formato premium (kanzenban) →
+    # entra como item con images=[cover].
+    # Layout B: extra "(1ª Edición) Marcapáginas" para vol 1 → mergea.
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Test Manga", price="20,00 €", image_id="cover1"),
+        ),
+        _lmc_layout_b_section(
+            "Extras de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº1", "(1ª Edición)",
+                               ["Marcapáginas"], "31 Marzo 2024", image_id="bm1"),
+        ),
+        formato="Tomo A5 (148x210) rústica (tapa blanda) con doble sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 9000)
+    assert len(cands) == 1, f"expected 1 merged item, got {len(cands)}"
+    c = cands[0]
+    assert len(c.images) == 2, f"expected cover+extra, got {[im['kind'] for im in c.images]}"
+    assert c.images[0]["kind"] == "cover"
+    assert c.images[0]["url"].endswith("cover1.jpg")
+    assert c.images[1]["kind"] == "extra"
+    assert c.images[1]["url"].endswith("bm1.png")
+    assert len(c.extras) == 1
+    assert "Marcapáginas" in c.extras[0]["description"]
+    assert c.extras[0]["release_date"] == "2024-03-31"
+
+
+def test_lmc_from_extras_captures_cover_from_discard_sections():
+    """Regresión (2026-05-24): cuando un item from_extras refiere a un
+    tomo que aún no salió (está en sección 'Números en preparación' o
+    'Números no editados'), el cover NO se capturaba — esas secciones
+    están en DISCARD y se saltean enteras. Fix: capturar covers de TODAS
+    las secciones con items Layout A, incluso las DISCARD, antes del
+    early-continue.
+
+    Caso real (id=6242 Witch Hat Edición Grimorio): vol 3 está en
+    'Números en preparación' (no editado aún), el extra (marcapáginas)
+    para vol 3 existe en Layout B. Antes del fix: solo foto del extra.
+    Después: cover del tomo regular + foto del marcapáginas."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        # Sección DISCARD con item — antes saltábamos esto sin captura
+        _lmc_section(
+            "N&uacute;meros en preparaci&oacute;n",
+            _lmc_item(3, "Test Manga", price="", image_id="vol3preview"),
+        ),
+        # Layout B referencia vol 3 con extra (1ª Edición)
+        _lmc_layout_b_section(
+            "Extras de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº3", "(1ª Edición)",
+                               ["Marcapáginas"], "28 Mayo 2026",
+                               image_id="bookmark3"),
+        ),
+        formato="Tomo doble A5 (148x210) cartoné (tapa dura)",
+    )
+    cands = lmc.parse_collection_page(html, 9200)
+    from_extras = [c for c in cands if "from_extras" in c.tags]
+    assert len(from_extras) == 1
+    c = from_extras[0]
+    assert len(c.images) == 2, f"expected [cover, extra], got {[im['kind'] for im in c.images]}"
+    assert c.images[0]["kind"] == "cover"
+    assert "vol3preview" in c.images[0]["url"]
+    assert c.images[1]["kind"] == "extra"
+    assert "bookmark3" in c.images[1]["url"]
+
+
+def test_lmc_from_extras_has_cover_and_extra_separate_no_boxset_signal():
+    """Regresión (2026-05-24): items creados from_extras tenían:
+    - product_type=boxset (wrong — son tomos regulares, no box sets)
+    - signal_types=['box_set', 'bonus'] (el 'box_set' por la keyword 'Cofre'
+      inyectada en description)
+    - images con solo kind=extra (foto del cofre como cover principal)
+    Fix: NO inyectar la descripción literal del extra en `description`
+    (evita keyword leak) + capturar cover del tomo regular desde Layout A
+    aunque se descarte por gate."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        # Layout A: tomo regular nº1 (gate lo descartará porque NO premium,
+        # pero su cover debe quedar capturada para items from_extras)
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Test Manga", price="9,00 €", image_id="cover1"),
+        ),
+        # Layout B: cofre para tomos 1 a 7 — crea item from_extras vol 1
+        _lmc_layout_b_section(
+            "Cofres de regalo con las primeras ediciones de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº1", "(1ª Edición)",
+                               ["Cofre para tomos 1 a 7"], "28 Septiembre 2012",
+                               image_id="cofre1"),
+        ),
+        formato="Tomo (115x175) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 9100)
+    assert len(cands) == 1, f"expected 1 item, got {len(cands)}"
+    c = cands[0]
+    assert "from_extras" in c.tags
+    # images[]: primero cover del tomo regular, después extra del cofre
+    assert len(c.images) == 2, f"expected [cover, extra], got {[im['kind'] for im in c.images]}"
+    assert c.images[0]["kind"] == "cover"
+    assert "cover1" in c.images[0]["url"]  # cover del tomo regular
+    assert c.images[1]["kind"] == "extra"
+    assert "cofre1" in c.images[1]["url"]  # foto del cofre
+    # signals: bonus SÍ, box_set NO
+    mw.score_candidate(c)
+    assert "bonus" in c.signal_types
+    assert "box_set" not in c.signal_types, (
+        f"signal box_set should NOT be set for tomo regular con cofre extra; "
+        f"signals={c.signal_types}"
+    )
+    # product_type: manga (NO boxset)
+    assert c.product_type != "boxset", (
+        f"product_type should be 'manga' not 'boxset' for tomo regular; "
+        f"product_type={c.product_type}"
+    )
+
+
+def test_lmc_layout_b_creates_regular_tomo_when_target_missing():
+    """Caso central de Fase 2: un extra "(1ª Edición)" para vol N que NO
+    está en Layout A debe CREAR el tomo regular con la imagen del extra y
+    signal bonus. Esto abre la puerta a tomos regulares de 1ª edición que
+    el catálogo no captura hoy (gate is_collectible_edition los rechaza
+    sin un extra que los justifique)."""
+    from wikis import listadomanga_collections as lmc
+    # Sin sección Layout A — solo extras Layout B.
+    html = _lmc_html_minimal(
+        _lmc_layout_b_section(
+            "Cofres de regalo con las primeras ediciones de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº7", "(1ª Edición)",
+                               ["Cofre para tomos 1 a 7"], "28 Octubre 2020"),
+        ),
+        # Formato regular (no-premium); sin Layout A regular se filtra
+        # toda la sección, pero Layout B debe seguir creando.
+        formato="Tomo (115x175) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 9001)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "Test Manga" in c.title and "7" in c.title
+    assert "from_extras" in c.tags
+    assert len(c.images) == 1
+    assert c.images[0]["kind"] == "extra"
+    assert "Cofre" in c.extras[0]["description"]
+
+
+def test_lmc_layout_b_unknown_marker_is_skipped_not_attached_to_wrong_item():
+    """Si un extra tiene un marker que no reconocemos (ej. "(Edición Aniversario)"),
+    debe saltarse — NO debe attacharse al primer item por accidente."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(1, "Test Manga", desc_extra="Edición Especial Limitada Foo",
+                      price="20,00 €", image_id="cover1"),
+        ),
+        _lmc_layout_b_section(
+            "Extras de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº1", "(Edición Aniversario 30)",
+                               ["Algo raro"], "31 Marzo 2024"),
+        ),
+    )
+    # Reset log para inspeccionar
+    lmc.UNKNOWN_H2_LOG.clear()
+    cands = lmc.parse_collection_page(html, 9002)
+    # El item Layout A debe estar, sin extras merged porque el marker no
+    # matchea ninguna regla LAYOUT_B_MARKERS.
+    assert len(cands) == 1
+    c = cands[0]
+    assert len(c.images) == 1
+    assert c.images[0]["kind"] == "cover"
+    assert len(c.extras) == 0
+
+
+def test_lmc_layout_b_grimorio_pattern_targets_regular_volume():
+    """Caso Grimorio: el extra dice 'Atelier of Witch Hat / Edición Grimorio nº1
+    / Marcapáginas / fecha' — sin paréntesis-marker. Como la página entera
+    ES la edición premium (formato Tomo doble A5 cartoné), el target es
+    'regular' tomo 1."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Atelier of Witch Hat", price="24,00 €", image_id="grim1cover",
+                      day="27", month="Noviembre", year="2025"),
+        ),
+        _lmc_layout_b_section(
+            "Extras de Atelier of Witch Hat (Edición Grimorio)",
+            _lmc_layout_b_cell("Atelier of Witch Hat", "Edición Grimorio nº1",
+                               ["Marcapáginas"], "27 Noviembre 2025", image_id="grim1bm"),
+        ),
+        title="Atelier of Witch Hat (Edición Grimorio)",
+        publisher="Milky Way Ediciones",
+        formato="Tomo doble A5 (148x210) cartoné (tapa dura)",
+    )
+    cands = lmc.parse_collection_page(html, 6242)
+    assert len(cands) == 1, f"expected 1 merged item, got {[(c.title, len(c.images)) for c in cands]}"
+    c = cands[0]
+    assert len(c.images) == 2
+    assert c.images[0]["kind"] == "cover"
+    assert c.images[1]["kind"] == "extra"
+
+
+def test_lmc_layout_b_can_be_disabled():
+    """Flag `enable_layout_b=False` debe saltarse el merge — útil para tests
+    de Fase 1 que no quieren la lógica nueva activa."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(1, "Test", desc_extra="Edición Especial", price="20,00 €", image_id="c1"),
+        ),
+        _lmc_layout_b_section(
+            "Extras de Test",
+            _lmc_layout_b_cell("Test nº1", "Edición Especial Limitada",
+                               ["Postal"], "31 Marzo 2024", image_id="e1"),
+        ),
+    )
+    cands = lmc.parse_collection_page(html, 9003, enable_layout_b=False)
+    assert len(cands) == 1
+    # Sin Layout B, images solo trae la cover (Layout A inicializa images=[cover]).
+    assert len(cands[0].images) == 1
+    assert cands[0].images[0]["kind"] == "cover"
+    assert cands[0].extras == []
+
+
+def test_lmc_append_jsonl_union_merges_images_and_extras(tmp_path):
+    """append_jsonl debe hacer UNION-merge de images[] y extras[] entre old
+    y new: un re-scrape que solo trae la cover no debe borrar los extras
+    que se agregaron en una pasada previa con merge, y viceversa."""
+    import json
+    p = tmp_path / "items.jsonl"
+    # Estado 1: row con cover + 1 extra
+    row_v1 = {
+        "url": "https://example.com/x",
+        "title": "Test",
+        "image_url": "https://example.com/cover.jpg",
+        "images": [
+            {"url": "https://example.com/cover.jpg", "kind": "cover", "local": "", "description": ""},
+            {"url": "https://example.com/extra1.jpg", "kind": "extra", "local": "", "description": "Postal"},
+        ],
+        "extras": [
+            {"description": "Postal", "release_date": "2024-01-01", "source_section": "layout_b"},
+        ],
+        "detected_at": "2024-01-01T00:00:00Z",
+    }
+    mw.append_jsonl(p, [row_v1])
+    # Estado 2: re-scrape que solo trae el cover (no Layout B) — la union
+    # debe preservar el extra previo.
+    row_v2 = {
+        "url": "https://example.com/x",
+        "title": "Test",
+        "image_url": "https://example.com/cover.jpg",
+        "images": [
+            {"url": "https://example.com/cover.jpg", "kind": "cover", "local": "", "description": ""},
+        ],
+        "detected_at": "2024-02-01T00:00:00Z",
+    }
+    mw.append_jsonl(p, [row_v2])
+    # Leer y verificar
+    with open(p) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    assert len(rows) == 1
+    r = rows[0]
+    # images debe tener cover + extra (union, dedupeado por (kind, url))
+    kinds_urls = {(im["kind"], im["url"]) for im in r["images"]}
+    assert ("cover", "https://example.com/cover.jpg") in kinds_urls
+    assert ("extra", "https://example.com/extra1.jpg") in kinds_urls
+    # extras preservado del estado previo
+    assert len(r["extras"]) == 1
+    assert r["extras"][0]["description"] == "Postal"
+
+
+def test_lmc_pack_title_enriched_with_description_for_gate_approval():
+    """Bug real del piloto: id=49 Zelda packs tenían signal box_set pero
+    `is_collectible_edition` los descartaba como 'regular_tomo' porque el
+    title era solo 'The Legend of Zelda' (sin número de volumen ni URL
+    canónica de retailer), así que ninguna prueba de producto pasaba.
+    Fix: para edition_kind=pack específicamente, enriquecer el title con
+    description_extra (que sí lleva la info distintiva del pack:
+    'Pack especial tomos 1 a 5 + cofre de regalo'). El title enriquecido
+    contiene número (1) y la palabra 'pack', habilitando el gate."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Packs)",
+            _lmc_item(0, "The Legend of Zelda",
+                      desc_extra="Pack especial tomos 1 a 5 + cofre de regalo",
+                      price="37,50 €", image_id="zelda1"),
+        ),
+        title="The Legend of Zelda",
+        publisher="Norma Editorial",
+    )
+    cands = lmc.parse_collection_page(html, 49)
+    assert len(cands) == 1
+    c = cands[0]
+    # Title contiene tanto el nombre original como la descripción del pack.
+    assert c.title.startswith("The Legend of Zelda")
+    assert "Pack especial tomos 1 a 5" in c.title
+    # Verifica que el gate de coleccionables apruebe.
+    mw.score_candidate(c)
+    is_coll, reason = mw.is_collectible_edition(
+        c.title, c.description, c.signal_types, c.product_type,
+        tags=c.tags, isbn=c.isbn, url=c.url,
+    )
+    assert is_coll, f"pack debería pasar el gate, got reason={reason!r}"
+
+
+def test_normalize_url_strips_amazon_affiliate_params():
+    """linkCode/th/psc + path token /ref=...: tracking Amazon que debe
+    colapsar al canónico /dp/<ASIN>. Sin esto, dos URLs del mismo ASIN
+    con afiliados/widgets distintos generaban rows duplicadas (extiende
+    gotcha #19)."""
+    norm = mw.normalize_url_for_dedup
+    assert (norm("https://www.amazon.it/dp/8822623649?tag=socianim0c-21&linkCode=ogi&th=1&psc=1")
+            == "https://www.amazon.it/dp/8822623649")
+    assert (norm("https://www.amazon.it/dp/8822623649/ref=cm_sw_r_apa_glt_fabc_xyz")
+            == "https://www.amazon.it/dp/8822623649")
+    assert (norm("https://www.amazon.it/dp/8822623649/ref=foo?tag=bar&linkCode=x")
+            == "https://www.amazon.it/dp/8822623649")
+    assert (norm("https://www.amazon.it/gp/product/8822623649/ref=cm_sw_r")
+            == "https://www.amazon.it/gp/product/8822623649")
+    # Path ref-stripping aplica solo a amazon.* — no toca otros hosts.
+    assert (norm("https://example.com/p/123/ref=foo")
+            == "https://example.com/p/123/ref=foo")
 
 
 def test_extract_volume_patterns():
