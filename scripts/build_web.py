@@ -97,6 +97,7 @@ def _source_entry(item: dict) -> dict:
         "url":          item.get("url", ""),
         "price":        item.get("price", ""),
         "image_url":    item.get("image_url", ""),
+        "image_local":  item.get("image_local", ""),
         "stock_type":   item.get("stock_type", ""),
         "detected_at":  item.get("detected_at", ""),
         "release_date": item.get("release_date", ""),
@@ -117,7 +118,7 @@ def _merged_canonical(group: list[dict], pick) -> dict:
     for item in group[1:]:
         canonical = pick(canonical, item)
     merged = dict(canonical)
-    completable = ("image_url", "author", "price", "release_date",
+    completable = ("image_url", "image_local", "author", "price", "release_date",
                    "description", "isbn", "publisher")
     for field in completable:
         if not merged.get(field):
@@ -125,6 +126,36 @@ def _merged_canonical(group: list[dict], pick) -> dict:
                 if item.get(field):
                     merged[field] = item[field]
                     break
+    # Fase 2 — union de `images[]` y `extras[]` cross-source para el modal
+    # carrusel. Dos fuentes del mismo cluster pueden aportar imágenes
+    # distintas (cover de retailer + extras de 1ª edición de listadomanga).
+    # Dedup por (kind, url) en imgs y por (description, release_date) en extras.
+    seen_img: set[tuple[str, str]] = set()
+    merged_imgs: list[dict] = []
+    for it in group:
+        for im in (it.get("images") or []):
+            if not im or not im.get("url"):
+                continue
+            k = (im.get("kind", ""), im["url"])
+            if k in seen_img:
+                continue
+            seen_img.add(k)
+            merged_imgs.append(im)
+    if merged_imgs:
+        merged["images"] = merged_imgs
+    seen_ex: set[tuple[str, str]] = set()
+    merged_extras: list[dict] = []
+    for it in group:
+        for ex in (it.get("extras") or []):
+            if not ex or not ex.get("description"):
+                continue
+            k = (ex["description"], ex.get("release_date", ""))
+            if k in seen_ex:
+                continue
+            seen_ex.add(k)
+            merged_extras.append(ex)
+    if merged_extras:
+        merged["extras"] = merged_extras
     # Score máximo del grupo (mejor representa el "interés combinado").
     merged["score"] = max((i.get("score") or 0) for i in group)
     # Lista de sources, ordenada: la canónica primero, después por país.

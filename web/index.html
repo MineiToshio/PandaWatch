@@ -335,10 +335,10 @@
               <div @click="ed.tomoCount > 1 ? openEditionByKey(ed.edition_key) : openVolume(ed.leader)"
                    class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
                 <div class="img-wrap relative">
-                  <template x-if="ed.leader.image_url">
-                    <img :src="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+                  <template x-if="ed.leader.image_local || ed.leader.image_url">
+                    <img :src="coverSrc(ed.leader)" :data-fallback="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="onCoverError($event)">
                   </template>
-                  <div class="img-placeholder" :style="ed.leader.image_url ? 'display:none' : ''">📚</div>
+                  <div class="img-placeholder" :style="(ed.leader.image_local || ed.leader.image_url) ? 'display:none' : ''">📚</div>
                   <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
                         :class="scoreClass(ed.leader.score)" x-text="ed.leader.score"></span>
                   <template x-if="ed.tomoCount > 1">
@@ -406,10 +406,10 @@
             <div @click="openVolume(item)"
                  class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
               <div class="img-wrap relative">
-                <template x-if="item.image_url">
-                  <img :src="item.image_url" :alt="item.title" loading="lazy" @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+                <template x-if="item.image_local || item.image_url">
+                  <img :src="coverSrc(item)" :data-fallback="item.image_url" :alt="item.title" loading="lazy" @error="onCoverError($event)">
                 </template>
-                <div class="img-placeholder" :style="item.image_url ? 'display:none' : ''">📚</div>
+                <div class="img-placeholder" :style="(item.image_local || item.image_url) ? 'display:none' : ''">📚</div>
                 <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
                       :class="scoreClass(item.score)" x-text="item.score"></span>
                 <template x-if="item.volume">
@@ -551,10 +551,51 @@
       <!-- Body -->
       <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-[200px_1fr] gap-6">
         <div>
-          <template x-if="selectedItem.image_url">
-            <img :src="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200">
+          <!-- Carrusel: si el item tiene `images[]` con >1 imagen,
+               navegamos entre ellas con flechas y dots. La primera siempre
+               es kind=cover; las siguientes pueden ser extras (marcapáginas,
+               cofres, pósters, etc.) con su descripción opcional. -->
+          <template x-if="itemImages(selectedItem).length > 1">
+            <div class="relative">
+              <img
+                :src="carouselSrc(selectedItem, modalImageIdx)"
+                :data-fallback="itemImages(selectedItem)[modalImageIdx] && itemImages(selectedItem)[modalImageIdx].url"
+                :alt="selectedItem.title"
+                class="w-full rounded-lg border border-gray-200"
+                @error="onCoverError($event)">
+              <!-- Flechas -->
+              <button
+                @click="modalImageIdx = (modalImageIdx - 1 + itemImages(selectedItem).length) % itemImages(selectedItem).length"
+                class="absolute left-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border border-gray-300 text-gray-700 font-bold"
+                aria-label="Imagen anterior">‹</button>
+              <button
+                @click="modalImageIdx = (modalImageIdx + 1) % itemImages(selectedItem).length"
+                class="absolute right-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border border-gray-300 text-gray-700 font-bold"
+                aria-label="Imagen siguiente">›</button>
+              <!-- Dots -->
+              <div class="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+                <template x-for="(img, idx) in itemImages(selectedItem)" :key="idx">
+                  <button
+                    @click="modalImageIdx = idx"
+                    class="w-2 h-2 rounded-full transition-all"
+                    :class="modalImageIdx === idx ? 'bg-white border border-gray-400 w-3 h-3' : 'bg-white/60 border border-gray-300'"
+                    :aria-label="'Ir a imagen ' + (idx+1)"></button>
+                </template>
+              </div>
+              <!-- Etiqueta tipo + descripción -->
+              <div class="mt-2 text-xs text-gray-600 text-center min-h-[1rem]">
+                <span x-show="itemImages(selectedItem)[modalImageIdx] && itemImages(selectedItem)[modalImageIdx].kind && itemImages(selectedItem)[modalImageIdx].kind !== 'cover'"
+                      class="inline-block px-2 py-0.5 bg-pink-50 text-pink-700 rounded-full mr-1"
+                      x-text="(itemImages(selectedItem)[modalImageIdx] || {}).kind"></span>
+                <span x-text="(itemImages(selectedItem)[modalImageIdx] || {}).description || ''"></span>
+              </div>
+            </div>
           </template>
-          <template x-if="!selectedItem.image_url">
+          <!-- Single image (legacy o solo cover): comportamiento previo. -->
+          <template x-if="itemImages(selectedItem).length <= 1 && (selectedItem.image_local || selectedItem.image_url)">
+            <img :src="coverSrc(selectedItem)" :data-fallback="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200" @error="onCoverError($event)">
+          </template>
+          <template x-if="itemImages(selectedItem).length === 0 && !(selectedItem.image_local || selectedItem.image_url)">
             <div class="img-wrap rounded-lg border border-gray-200"><div class="img-placeholder">📚</div></div>
           </template>
           <template x-if="selectedItem.stock_type === 'limited'">
@@ -580,6 +621,24 @@
                   <span class="px-2 py-0.5 bg-accent-soft text-pink-800 rounded-full text-xs" x-text="sig"></span>
                 </template>
               </div>
+            </div>
+          </template>
+
+          <!-- Fase 2 — lista de extras / regalos / cofres vinculados al tomo. -->
+          <template x-if="Array.isArray(selectedItem.extras) && selectedItem.extras.length > 0">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                Incluye / extras de primera edición
+              </span>
+              <ul class="mt-1 text-gray-800 text-sm list-disc list-inside space-y-0.5">
+                <template x-for="ex in selectedItem.extras" :key="(ex.description||'') + (ex.release_date||'')">
+                  <li>
+                    <span x-text="ex.description"></span>
+                    <span x-show="ex.release_date" class="text-xs text-gray-500"
+                          x-text="' (' + ex.release_date + ')'"></span>
+                  </li>
+                </template>
+              </ul>
             </div>
           </template>
 
@@ -679,6 +738,9 @@ function mangaApp() {
     error: null,
     items: [],
     selectedItem: null,
+    // Fase 2 — carrusel: índice de la imagen actual en el modal. Se resetea
+    // a 0 cada vez que se abre un item nuevo (ver openItem / closeModal).
+    modalImageIdx: 0,
 
     // Navegación de vistas: 'catalog' | 'edition' | 'volume'
     view: 'catalog',
@@ -811,6 +873,7 @@ function mangaApp() {
         url:          item.url || "",
         price:        item.price || "",
         image_url:    item.image_url || "",
+        image_local:  item.image_local || "",
         stock_type:   item.stock_type || "",
         detected_at:  item.detected_at || "",
         release_date: item.release_date || "",
@@ -847,8 +910,8 @@ function mangaApp() {
           let canonical = group[0];
           for (const it of group.slice(1)) canonical = pickWinner(canonical, it);
           const merged = { ...canonical };
-          const completable = ["image_url", "author", "price", "release_date",
-                               "description", "isbn", "publisher"];
+          const completable = ["image_url", "image_local", "author", "price",
+                               "release_date", "description", "isbn", "publisher"];
           for (const field of completable) {
             if (!merged[field]) {
               for (const it of group) {
@@ -856,6 +919,37 @@ function mangaApp() {
               }
             }
           }
+          // Fase 2 — union de `images[]` y `extras[]` cross-source. Dos
+          // fuentes del mismo cluster pueden aportar imágenes distintas
+          // (ListadoManga colecciones agrega extras de 1ª edición; Norma
+          // o Mangavariant aportan la cover de catálogo). El carrusel
+          // muestra todas, deduplicadas por (kind, url).
+          const seenImg = new Set();
+          const mergedImages = [];
+          for (const it of group) {
+            const arr = Array.isArray(it.images) ? it.images : [];
+            for (const im of arr) {
+              if (!im || !im.url) continue;
+              const k = `${im.kind || ""}::${im.url}`;
+              if (seenImg.has(k)) continue;
+              seenImg.add(k);
+              mergedImages.push(im);
+            }
+          }
+          if (mergedImages.length) merged.images = mergedImages;
+          const seenEx = new Set();
+          const mergedExtras = [];
+          for (const it of group) {
+            const arr = Array.isArray(it.extras) ? it.extras : [];
+            for (const ex of arr) {
+              if (!ex || !ex.description) continue;
+              const k = `${ex.description}::${ex.release_date || ""}`;
+              if (seenEx.has(k)) continue;
+              seenEx.add(k);
+              mergedExtras.push(ex);
+            }
+          }
+          if (mergedExtras.length) merged.extras = mergedExtras;
           merged.score = group.reduce((m, it) => Math.max(m, it.score || 0), 0);
           merged.sources = group.map(sourceEntry);
           merged.sources.sort((a, b) => {
@@ -955,6 +1049,20 @@ function mangaApp() {
       return m ? parseFloat(m[1]) : Infinity;
     },
 
+    // Display de un grupo: "{series_display} {edition_display}" para que
+    // las cards de edición digan "Blue Lock Coffret (Pika)" y no solo
+    // "Coffret (Pika)". Skip el prefijo si edition_display ya empieza
+    // por la serie (raro, ej. "Real x Vagabond"). Fallback al título.
+    _editionDisplay(leader) {
+      const sd = (leader.series_display || "").trim();
+      const ed = (leader.edition_display || "").trim();
+      if (sd && ed) {
+        if (ed.toLowerCase().startsWith(sd.toLowerCase())) return ed;
+        return `${sd} ${ed}`;
+      }
+      return ed || sd || leader.title || "(sin edición)";
+    },
+
     // Agrupa items.sorted por edition_key. Items sin edition_key son
     // grupos singleton (su propia URL como key). Devuelve un array de
     // grupos { edition_key, display, leader, tomoCount, volumeRange }.
@@ -982,11 +1090,8 @@ function mangaApp() {
           if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
           return (b.detected_at || "").localeCompare(a.detected_at || "");
         })[0];
-        // Display de la edición: edition_display o series_display + edición desde leader.
-        const display = leader.edition_display
-          || leader.series_display
-          || leader.title
-          || "(sin edición)";
+        // Display de la edición: "{series_display} {edition_display}".
+        const display = this._editionDisplay(leader);
         // Rango de tomos: "Vol 1–14" si todos numéricos.
         let volumeRange = "";
         if (g.length > 1) {
@@ -1030,10 +1135,7 @@ function mangaApp() {
         return (a.title || "").localeCompare(b.title || "");
       });
       const leader = sortedByVol[0];
-      const display = leader.edition_display
-        || leader.series_display
-        || leader.title
-        || "(sin edición)";
+      const display = this._editionDisplay(leader);
       return { edition_key: ek, display, items: sortedByVol };
     },
 
@@ -1064,6 +1166,45 @@ function mangaApp() {
       if (score >= 70) return "score-high";
       if (score >= 35) return "score-mid";
       return "score-low";
+    },
+
+    coverSrc(item) {
+      // Espejo local primero (image_local), image_url remoto como fallback.
+      // Ver "Image storage" en CLAUDE.md.
+      if (item && item.image_local) return "../data/images/" + item.image_local;
+      return (item && item.image_url) || "";
+    },
+
+    // Fase 2 — carrusel modal: si el item trae `images[]` poblado con
+    // varias imágenes (cover + extras), se muestra como carrusel en el
+    // modal. Si no, se cae al `image_url/image_local` legacy.
+    itemImages(item) {
+      if (!item) return [];
+      const imgs = Array.isArray(item.images) ? item.images : [];
+      // Filtramos elementos sin url (placeholders del schema).
+      return imgs.filter(im => im && im.url);
+    },
+
+    carouselSrc(item, idx) {
+      const imgs = this.itemImages(item);
+      if (!imgs.length) return this.coverSrc(item);
+      const im = imgs[Math.max(0, Math.min(idx, imgs.length - 1))] || {};
+      if (im.local) return "../data/images/" + im.local;
+      return im.url || "";
+    },
+
+    onCoverError(ev) {
+      // Si la copia local falla, reintenta una vez con el image_url remoto.
+      // Si también falla, oculta el <img> y muestra el placeholder 📚.
+      const img = ev.target;
+      const fallback = img.dataset.fallback || "";
+      if (fallback && !img.dataset.triedFallback && img.src !== fallback) {
+        img.dataset.triedFallback = "1";
+        img.src = fallback;
+        return;
+      }
+      img.style.display = "none";
+      if (img.nextElementSibling) img.nextElementSibling.style.display = "flex";
     },
 
     formatField(item, key) {
@@ -1115,6 +1256,7 @@ function mangaApp() {
       this.view = 'volume';
       this.currentVolumeUrl = item.url || '';
       this.selectedItem = item;
+      this.modalImageIdx = 0;  // reset carrusel al abrir item nuevo
       this.copiedTitle = false;
       this._resetFeedback();
       this._syncStateToUrl({ push: isViewChange });
