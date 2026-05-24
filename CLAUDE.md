@@ -706,10 +706,15 @@ overnight runs). Two safety rails:
   domain. Protects retailers from being hammered by search-template
   expansions of the same source family (e.g. several Panini
   search-keyword children).
-- **`_js_lock`** — `playwright.sync_api` is **not** thread-safe.
-  All `kind: js` sources go through one global lock and run
-  one-at-a-time, while HTTP sources keep parallelizing in the same
-  pool.
+- **Dedicated Playwright worker thread + queue** — `playwright.sync_api`
+  no es thread-safe (greenlets bound al thread inicial). Todos los
+  `kind: js` se despachan vía `fetch_with_playwright()` que pone el job
+  en `_PLAYWRIGHT_QUEUE`; un único thread llamado `playwright-worker`
+  consume la queue y ejecuta el navigate. Los workers HTTP del pool
+  siguen paralelos. Ver gotcha #12 para el detalle del bug que esto
+  arregla (`greenlet.error: Cannot switch to a different thread`
+  observado el 2026-05-24 cuando había un `js_lock` simple que no
+  bastaba).
 
 **`DiagnosticRecorder` is thread-safe**: every `record_*` method
 accepts an explicit `entry` arg so each worker mutates its own dict
@@ -1125,11 +1130,45 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     Edit `data/comics_blacklist.yml` to extend; don't add publishers
     that also publish manga (Panini, Norma, Planeta).
 
-12. **Playwright sync is not thread-safe.** Under `--workers > 1` all
-    `kind: js` sources are serialized through a global `_js_lock` —
-    they coexist in the same pool but never run concurrently with
-    each other. HTTP sources keep parallelizing. If you ever add
-    async-Playwright, lift the lock.
+12. **Playwright sync is not thread-safe — el dedicated worker thread
+    es la única ruta segura.** `sync_playwright().start()` instala
+    greenlets bound al thread donde se llama. Si OTRO thread del pool
+    intenta usar el browser singleton, Playwright tira
+    `greenlet.error: Cannot switch to a different thread`.
+
+    El primer intento (hasta 2026-05-24) usaba un `js_lock` global para
+    serializar los workers, asumiendo que con un thread a la vez no
+    había problema. **No funcionaba**: el lock serializa el acceso pero
+    NO mueve las llamadas al thread dueño del greenlet. Cuando el
+    segundo worker tomaba el lock, fallaba con greenlet.error igual.
+    Observado en scrape_full del 2026-05-24 con workers=8: 4 sources
+    `kind: js` (Crunchyroll Noticias, Kibook Novedades, Seven Seas Box
+    Sets, Meian) fallaron con ese error.
+
+    **Fix (2026-05-24)**: dedicated `_PLAYWRIGHT_WORKER` thread + queue.
+    Todo el trabajo Playwright (`sync_playwright().start()`,
+    `chromium.launch()`, `browser.new_context()`, navigate, content,
+    close) corre en UN SOLO thread llamado `playwright-worker`. Los
+    workers HTTP del ThreadPoolExecutor siguen paralelos; cuando uno
+    necesita Playwright llama a `fetch_with_playwright(url, ...)` que
+    despacha un job al `_PLAYWRIGHT_QUEUE` y bloquea esperando la
+    respuesta vía `queue.Queue` privada. La queue serializa
+    naturalmente — no hace falta lock manual — y greenlets nunca
+    cruzan threads.
+
+    `close_playwright()` envía un sentinel para terminar el worker
+    limpiamente (`browser.close()` + `pw_instance.stop()` corren dentro
+    del MISMO thread donde se crearon). Es idempotente y permite
+    re-init posterior (los wikis Whakoom opt-in pueden levantar el
+    worker, terminarlo, y un retrofit posterior lo re-levanta).
+
+    Tests de regresión: `test_fetch_with_playwright_dispatches_to_worker_thread`
+    verifica con 16 dispatches paralelos desde 8 threads que todos
+    ejecutan en el ÚNICO worker (set == `{'playwright-worker'}`) y que
+    close + re-init funciona.
+
+    Si en el futuro se migra a async-Playwright, todo este andamiaje
+    desaparece — `asyncio` no tiene el problema de greenlet binding.
 
 13. **Wayback recovery treats 403/429 as alive, not dead.**
     `wayback_recover.py` only tries to recover items returning
@@ -1790,9 +1829,70 @@ These came up in conversation but were explicitly deferred:
 ---
 
 Last updated: 2026-05-24 (primera corrida scrape_full completa + standardize
---force-all + audit exhaustivo del catálogo) — Ejecución end-to-end del nuevo
-modelo "2 scripts canónicos" sobre el catálogo entero, primera vez que
-`lista.php` se recorre completo (3432 colecciones) post-refactor.
+--force-all + audit exhaustivo del catálogo + 4 fixes de raíz post-audit) —
+Ejecución end-to-end del nuevo modelo "2 scripts canónicos" sobre el catálogo
+entero, primera vez que `lista.php` se recorre completo (3432 colecciones)
+post-refactor. Después del audit se atacaron 4 mejoras de raíz que la corrida
+expuso (siguientes 4 puntos al final de esta entrada).
+
+**4 fixes de raíz post-audit (mismo día, post-corrida)**:
+
+1. **Skill prompt — publishers allowlist expandido**
+   (`.claude/skills/standardize-catalog.md`): agregados como canónicos
+   los 30+ publishers que los subagentes de la corrida usaron
+   coherentemente pero NO estaban en la lista explícita (cayendo a
+   "unknown" cuando podían haber tenido slug propio): `kurokawa`,
+   `edizionibd`, `dynit`, `jpop`, `shogakukan`, `akita`, `hakusensha`,
+   `ichijinsha`, `futabasha`, `takeshobo`, `tokuma`, `asciimw`,
+   `frontier`, `yenpress`, `carlsen`, `noeve`, `distrito`,
+   `001edizioni`, `goen`, `gpmanga`, `kbooks`, `luckpim`, `ipm`, `isan`,
+   `nxb`, `mpeg`, `tokyomangasha`, `crunchyroll`, + multi-token
+   explícitos `kim-dong`, `panini-mx/es/ar/br`, `pipoca-nanquim`.
+   También `taniguchi` agregado como edition_slug específico (línea
+   Panini IT autor-específica). Próximas corridas usarán los slugs
+   canónicos directamente.
+
+2. **Skill prompt — sección ANTI-COMPOUND reforzada**: agregada
+   subsección "TRAMPAS OBSERVADAS en corridas pasadas" con los 7
+   compounds que aparecieron en la corrida y cómo evitarlos
+   (`-deluxe-box` → `-boxset`, `-ultimate-deluxe` → `-ultimate`,
+   `-collector-box` → `-collector`, `-taniguchi-deluxe` → `-taniguchi`,
+   `-collection-box` → `-boxset`, etc.). Añadida regla general:
+   "formato físico vs nombre de edición → nombre gana, EXCEPTO cuando
+   el producto físico ES una box (entonces `boxset` solo)".
+
+3. **Skill prompt — Step 3.5 nuevo: verificación post-spawn**: snippet
+   Python que post-waves detecta (a) chunks con `result_NN.jsonl`
+   missing/incompleto por session limits, (b) URLs truncadas por el
+   subagente (matching por prefix 80 chars contra el chunk original
+   restaura la URL completa), y (c) items genuinamente faltantes
+   (se quedan en `inline_retry.jsonl` para procesamiento manual por el
+   asistente principal). Sin este step, items perdidos por session
+   limits quedaban en items.jsonl sin `standardized_at` y se
+   re-procesaban en la siguiente corrida (gasto de tokens innecesario,
+   posible inconsistencia si las reglas cambiaron).
+
+4. **Playwright dedicated worker thread** (`scripts/manga_watch.py`):
+   refactor del módulo Playwright para arreglar `greenlet.error: Cannot
+   switch to a different thread`. El `_js_lock` viejo era insuficiente
+   (serializaba pero no movía el greenlet event loop). Reemplazado por
+   `_PLAYWRIGHT_WORKER` thread dedicated + `_PLAYWRIGHT_QUEUE` que
+   recibe jobs `(url, timeout, wait_until, resp_queue)` desde los
+   workers HTTP. El worker thread lazy-launcha Chromium en su primer
+   job y procesa todo el ciclo Playwright (navigate, content, close)
+   en su propio thread — greenlets nunca cruzan threads. `js_lock`
+   eliminado (queue serializa). `close_playwright()` envía sentinel
+   para cleanup limpio + permite re-init. Ver gotcha #12 + design
+   decision #6 (ambos actualizados). Test nuevo:
+   `test_fetch_with_playwright_dispatches_to_worker_thread` (16
+   dispatches paralelos desde 8 threads → todos ejecutan en el ÚNICO
+   `playwright-worker`). Próxima corrida `scrape_full` debería procesar
+   exitosamente las 4 sources JS que fallaron esta vez (Crunchyroll
+   Noticias, Kibook Novedades, Seven Seas Box Sets, Meian).
+
+Total tests: **332** (+1 de Playwright worker). 332/332 verde.
+
+---
 
 **Cifras del corpus (snapshot 2026-05-24)**:
 - Total items: **5532** (5763 → 6669 tras scrape, → 5535 tras standardize+dedup,
@@ -1889,19 +1989,13 @@ para alinearse con los hermanos del coleccion_id). Después del merge,
 - `items.jsonl.pre-funside-fix-bak` — antes del Funside fix
 - `items.jsonl.pre-cluster-bak` — antes del último backfill_cluster_key
 
-**Mejoras futuras detectadas (no implementadas)**:
-- Skill prompt update: agregar publishers reales (`kurokawa`, `edizionibd`,
-  `dynit`, `shogakukan`, `distrito`, `jpop`, etc.) al allowlist explícito
-  para reducir uso de `unknown`. Hoy los subagentes ya los usan
-  coherentemente, pero un allowlist explícito daría mejor garantía.
-- Skill prompt update: reforzar regla ANTI-COMPOUND con ejemplos
-  específicos de las trampas observadas (`-deluxe-box` no es boxset
-  doble, es `boxset` solo; `-ultimate-deluxe` es `ultimate`, etc.).
-- Robustness del subagente: chunks que hit session limit producen
-  output truncado; agregar verificación de URL count y/o
-  retry-individual-items dentro del skill.
-- Investigación Playwright thread-safety: revisar por qué `_js_lock` no
-  está serializando bien `kind: js` sources bajo workers=8.
+**Mejoras futuras pendientes (NO implementadas en este sprint)**:
+- `/enrich-series-aliases` skill: `data/unmapped_series.jsonl` quedó con
+  4446 entries nuevas tras esta corrida (pipeline las loguea cuando
+  encuentra `series_key` no presente en `series_aliases.yml`). Pendiente
+  invocación manual del skill por el usuario para consolidarlas y
+  enriquecer aliases.yml. Muchas son alias multilingües de series ya
+  canonicalizadas (Anilist puede resolver ~80% en batch).
 
 ---
 
