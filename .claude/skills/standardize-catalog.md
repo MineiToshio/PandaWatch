@@ -35,42 +35,100 @@ If `Pendientes < 30` → process them inline (no need for subagents, you can do 
 
 If `Pendientes >= 30` → use the parallel subagent workflow below.
 
-## Step 2 — Partition into chunks
+## Step 2 — Partition into chunks (group siblings together)
+
+**CRITICAL** — items que comparten coleccion/page-id DEBEN ir al MISMO chunk.
+Razón: sin agrupamiento, el LLM clasifica cada item aislado y produce
+edition_keys inconsistentes entre hermanos (Witch Hat vol 3 → "hardcover"
+mientras vols 1/2 → "grimorio"). Con agrupamiento, el LLM ve los hermanos
+y aplica consistencia.
+
+Tipos de agrupamiento (en orden de prioridad):
+1. **Listadomanga collections**: `coleccion.php?id=N` → un id = un grupo.
+2. **URL base**: items con misma path-base (ignorando query) → un grupo.
+3. **Resto**: distribuidos sin agrupar (cada item es su propio grupo).
 
 ```bash
 .venv/bin/python << 'PY'
-import json, os
+import json, re
 from pathlib import Path
+from collections import defaultdict
 
 items = [json.loads(l) for l in open('data/items.jsonl')]
 pending = [it for it in items if not it.get('standardized_at')]
 
-CHUNK_SIZE = 150  # 150-200 per chunk works well; subagent context fits comfortably
+CHUNK_SIZE = 150
 
 def project(it):
     return {
         'url': it.get('url',''),
         'title': it.get('title',''),
+        'title_original': it.get('title_original',''),
         'source': it.get('source',''),
         'publisher': it.get('publisher',''),
         'country': it.get('country',''),
         'language': it.get('language',''),
         'isbn': it.get('isbn',''),
         'signal_types': it.get('signal_types', []),
+        # Hint del scraper para que el LLM tenga punto de partida + contexto
+        # de la colección (clave para detectar nombres de edición específicos
+        # como "Edición Grimorio" en vez de slug genérico "hardcover").
+        'description_excerpt': (it.get('description','') or '')[:200],
+        'scraper_series_key': it.get('series_key',''),
+        'scraper_edition_key': it.get('edition_key',''),
     }
 
+def group_key(it):
+    """Devuelve la clave de grupo: items del mismo grupo van al mismo chunk."""
+    url = it.get('url','')
+    # 1. Listadomanga collections: coleccion.php?id=N
+    m = re.search(r'listadomanga\.es/coleccion\.php\?id=(\d+)', url)
+    if m: return f'lmc:{m.group(1)}'
+    # 2. URL base (sin query): items que comparten path completo
+    m = re.match(r'^(https?://[^?#]+)', url)
+    base = m.group(1) if m else url
+    return f'url:{base}'
+
+# Agrupar pending items
+groups = defaultdict(list)
+for it in pending:
+    groups[group_key(it)].append(it)
+
+print(f"Grupos detectados: {len(groups)}")
+big_groups = [(k, len(v)) for k, v in groups.items() if len(v) >= 5]
+print(f"Grupos con ≥5 items: {len(big_groups)}")
+
+# Empaquetar en chunks respetando los grupos (un grupo NUNCA se parte)
 base = Path('/tmp/manga-standardize-run')
 base.mkdir(parents=True, exist_ok=True)
-# Wipe any previous chunk_/result_ files
 for old in base.glob('chunk_*.jsonl'): old.unlink()
 for old in base.glob('result_*.jsonl'): old.unlink()
 
-chunks = [pending[i:i+CHUNK_SIZE] for i in range(0, len(pending), CHUNK_SIZE)]
+chunks = []
+current_chunk = []
+current_size = 0
+# Ordenar grupos: primero los grandes (para que vayan juntos), luego los chicos
+sorted_groups = sorted(groups.values(), key=len, reverse=True)
+for group in sorted_groups:
+    if len(group) > CHUNK_SIZE:
+        # Grupo gigante: ocupa su propio chunk (puede sobrepasar CHUNK_SIZE)
+        if current_chunk:
+            chunks.append(current_chunk); current_chunk = []; current_size = 0
+        chunks.append(group)
+        continue
+    if current_size + len(group) > CHUNK_SIZE and current_chunk:
+        chunks.append(current_chunk); current_chunk = []; current_size = 0
+    current_chunk.extend(group)
+    current_size += len(group)
+if current_chunk:
+    chunks.append(current_chunk)
+
 for idx, chunk in enumerate(chunks):
     p = base / f'chunk_{idx:02d}.jsonl'
     p.write_text('\n'.join(json.dumps(project(it), ensure_ascii=False) for it in chunk))
 
-print(f'Chunks creados: {len(chunks)} de {CHUNK_SIZE} items c/u (total {len(pending)})')
+print(f'Chunks creados: {len(chunks)}, sizes: {sorted([len(c) for c in chunks], reverse=True)[:5]}...')
+print(f'Total items: {sum(len(c) for c in chunks)} (esperado {len(pending)})')
 PY
 ```
 
@@ -104,7 +162,46 @@ Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized nam
 ### edition_key — `{series}-{publisher_slug}-{edition_slug}`
 publisher_slug: "darkhorse", "glenat", "viz", "panini", "norma", "planeta", "ivrea", "ivrea-ar", "kana", "pika", "kaze", "kioon", "star", "kodansha", "kodansha-us", "shueisha", "squareenix", "kadokawa", "meian", "ecc", "arechi", "delcourt", "tokyopop", "jbc", "devir", "newpop", "pipoca-nanquim", "kamite", "mangaline", "mangadreams", "funside", "milkyway", "dokidoki", "nobinobi", "tomodomo", "fandogamia". Unknown → "unknown".
 
-edition_slug (most distinctive): "deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant", "limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate", "master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine", "steelbox", "slipcase", "prestige", "regular", "special". Compound OK (e.g. "ultra-collector").
+edition_slug (most distinctive): "deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant", "limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate", "master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine", "steelbox", "slipcase", "prestige", "grimorio", "grimoire", "regular", "special".
+
+**REGLA ANTI-COMPOUND** — IMPORTANTE: elegir **UN SOLO** slug, NO componer dos
+edition_slugs juntos. Errores comunes a evitar:
+- ❌ `demon-slayer-norma-special-limited` (compone "special" + "limited")
+- ✅ `demon-slayer-norma-limited` (elegí el más específico: "Especial Limitada"
+  → "limited" porque "limitada" es más distintivo que "especial")
+- ❌ `kingdom-meian-coffret-collector` (compone "coffret" + "collector")
+- ✅ `kingdom-meian-collector` (formato "coffret" se descarta, "collector" es
+  el nombre de la edición)
+- ❌ `kill-la-kill-udon-hardcover-limited`
+- ✅ `kill-la-kill-udon-limited`
+
+Cuando dudás entre dos slugs:
+1. Si UNO es nombre de edición específico (limited/collector/integral/grimorio/
+   anniversary/maximum) y el OTRO es formato físico (hardcover/coffret/kanzenban/
+   boxset) → elegí el nombre de edición específico.
+2. Si AMBOS son nombres de edición (limited vs special) → elegí el MÁS específico:
+   - "Especial Limitada" → "limited" (limitada es más específico)
+   - "Edición Coleccionista Especial" → "collector" (coleccionista es nombre)
+   - "Collector's Variant" → "variant" (variant cover es distintivo)
+3. Excepción permitida (compound real): cuando ambos slugs juntos forman un
+   nombre de edición conocido, ej. "ultra-collector" (Ultra Collector's Edition),
+   "first-print" (First Print). Pero EVITAR a menos que sea inequívoco.
+
+**REGLA DE CONSISTENCIA — IMPORTANTE**:
+- Items que comparten **misma URL base** o **misma `coleccion.php?id=N`** son TOMOS de
+  la MISMA colección. DEBEN compartir el mismo `series_key` + `publisher_slug`.
+  El `edition_slug` también debe ser el mismo a menos que el `title` indique
+  edición claramente distinta (e.g., "Variant Cover" vs "Special Edition" vs
+  "Box Set"). Si tienes duda → asignar el MISMO `edition_slug` a los hermanos.
+- **Preferir nombre de edición ESPECÍFICO sobre slug genérico de formato**.
+  Si `description_excerpt` o `title` mencionan un nombre de edición concreto
+  (ej. "Edición Grimorio", "Edición Coleccionista", "Maximum Edition", "Edición
+  Integral"), usar ese como `edition_slug` ("grimorio", "collector", "maximum",
+  "integral") — NO sustituirlo por el slug del formato físico ("hardcover",
+  "kanzenban"). Ejemplo: "Atelier of Witch Hat Edición Grimorio nº3" en formato
+  cartoné A5 → `edition_slug="grimorio"` (NO "hardcover").
+- Si el `scraper_edition_key` viene populated y matchea el patrón esperado,
+  usarlo como hint (no obligatorio, pero úsalo si parece razonable).
 
 ### edition_display
 "{Edition Name} ({Publisher})". Omit parens if unknown publisher.
@@ -117,11 +214,20 @@ String. Digits only. "1", "100", "1-3" for multi-vol sets, "" if absent (artbook
 
 ## EXECUTION
 1. Read input file with Read tool.
-2. Process EVERY item.
-3. Output line count MUST equal input line count.
-4. Report: total, distinct series_keys, distinct edition_keys, is_manga=false count.
+2. **Pre-pass: detectar grupos de hermanos** — items con misma URL base /
+   coleccion_id están agrupados consecutivamente en el input (este chunker
+   los junta a propósito). Cuando proceses items consecutivos del mismo
+   grupo, **fija** el `series_key`, `publisher_slug` y `edition_slug` que
+   usaste para el primero del grupo y reúsalo en todos los demás, salvo
+   que el title indique edición distinta explícita.
+3. Process EVERY item.
+4. Output line count MUST equal input line count.
+5. Report: total, distinct series_keys, distinct edition_keys, is_manga=false
+   count, y **número de "grupos de hermanos" que asignaste consistentemente**.
 
 CRITICAL: Same series/publisher → same keys consistently across the file.
+DOUBLE CRITICAL: hermanos de la misma colección (misma URL base) DEBEN
+compartir series_key, publisher_slug y (preferentemente) edition_slug.
 ```
 
 Spawn pattern (you can launch 7 at once in a single message):
@@ -218,6 +324,77 @@ for it in items:
     # Mark as standardized
     it['standardized_at'] = now_iso
     final.append(it)
+
+# CONSISTENCY CHECK — corregir outliers automáticamente.
+# Items con misma URL base (= mismo coleccion_id de listadomanga) deberían
+# compartir series_key + edition_key. Cuando hay ≥3 items con un valor y
+# 1-2 outliers, los outliers casi siempre son errores del LLM. Aplicamos
+# el valor dominante automáticamente (con sample report al final).
+import re as _re
+from collections import defaultdict as _dd, Counter as _cnt
+_groups = _dd(list)
+for it in final:
+    if not it.get('standardized_at'): continue
+    url = it.get('url','') or ''
+    m = _re.search(r'listadomanga\.es/coleccion\.php\?id=(\d+)', url)
+    if m:
+        _groups[f'lmc:{m.group(1)}'].append(it)
+    # No agrupamos por URL base no-lmc — esos suelen ser items individuales
+    # de retailers donde la URL ya identifica el producto.
+_outliers_fixed = 0
+_outlier_samples = []
+for gk, grp in _groups.items():
+    if len(grp) < 4: continue  # solo grupos grandes: 3+ items mayoritarios
+    # Series_key consistency
+    sk_counts = _cnt(it.get('series_key','') for it in grp)
+    dom_sk, dom_sk_n = sk_counts.most_common(1)[0]
+    if dom_sk_n >= 3:
+        for it in grp:
+            if it.get('series_key','') and it['series_key'] != dom_sk:
+                old = (it['series_key'], it.get('edition_key',''))
+                # Fix series_key + edition_key prefix
+                old_ek = it.get('edition_key','')
+                if old_ek.startswith(it['series_key'] + '-'):
+                    it['edition_key'] = dom_sk + old_ek[len(it['series_key']):]
+                it['series_key'] = dom_sk
+                dom_sd = next((x.get('series_display','') for x in grp if x.get('series_key')==dom_sk), '')
+                if dom_sd: it['series_display'] = dom_sd
+                _outliers_fixed += 1
+                if len(_outlier_samples) < 5:
+                    _outlier_samples.append(f"  {it.get('title','')[:50]}: {old[0]} → {dom_sk}")
+    # Edition_key consistency dentro del mismo series_key dominante
+    grp_dom = [it for it in grp if it.get('series_key','') == dom_sk]
+    if len(grp_dom) >= 4:
+        ek_counts = _cnt(it.get('edition_key','') for it in grp_dom)
+        dom_ek, dom_ek_n = ek_counts.most_common(1)[0]
+        if dom_ek_n >= 3 and len(ek_counts) <= 3:  # tolerar 1-2 outliers
+            for it in grp_dom:
+                if it.get('edition_key','') and it['edition_key'] != dom_ek:
+                    # Solo fix si la diferencia es solo en edition_slug
+                    # (no en series prefix), para evitar mergear ediciones
+                    # legítimamente distintas (Variant vs Special).
+                    old_ek_parts = it['edition_key'].split('-')
+                    dom_ek_parts = dom_ek.split('-')
+                    if len(old_ek_parts) >= 2 and old_ek_parts[:-1] == dom_ek_parts[:-1]:
+                        # Solo edition_slug difiere — solo fix si el outlier
+                        # es slug genérico de formato (hardcover/kanzenban)
+                        # y el dominante es un nombre específico (grimorio/
+                        # collector/integral).
+                        FORMAT_GENERIC = {'hardcover', 'kanzenban', 'deluxe', 'regular'}
+                        SPECIFIC_NAME = {'grimorio', 'grimoire', 'collector', 'integral',
+                                         'maximum', 'kanzenban', 'perfect', 'master',
+                                         'special', 'limited', 'variant'}
+                        outlier_slug = old_ek_parts[-1]
+                        dom_slug = dom_ek_parts[-1]
+                        if outlier_slug in FORMAT_GENERIC and dom_slug in SPECIFIC_NAME:
+                            if len(_outlier_samples) < 10:
+                                _outlier_samples.append(f"  {it.get('title','')[:50]}: {it['edition_key']} → {dom_ek}")
+                            it['edition_key'] = dom_ek
+                            _outliers_fixed += 1
+
+print(f"\n[CONSISTENCY CHECK] outliers auto-corregidos: {_outliers_fixed}")
+for s in _outlier_samples:
+    print(s)
 
 # Dedup by (series_key, edition_key, volume) across the entire corpus
 def comp(it):
