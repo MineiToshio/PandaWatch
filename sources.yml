@@ -47,7 +47,7 @@ sources:
     source_class: "retailer"
     kind: "js"
     url: "https://www.lacomiqueria.com.ar/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "store", "stock"]
 
   - name: "AR - Ovni Press Manga"
@@ -57,7 +57,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.ovnipress.net/manga/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "[data-product-id]"
@@ -340,7 +340,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://lojaeditora.devir.com.br/literatura"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "store", "new-source"]
     purity: "mixed"  # OpenCart con catálogo mayoritariamente RPG + literatura; manga es minoritario
     selectors:
@@ -402,7 +402,7 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://ramenparados.com/category/noticias/manga/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["news", "manga", "spain"]
     max_pages: 3  # blog de noticias, paginación profunda no aporta
 
@@ -413,7 +413,7 @@ sources:
     source_class: "trusted_media"
     kind: "rss"
     url: "https://feeds.feedburner.com/RamenParaDos"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["rss", "news", "manga"]
 
   - name: "ES - Misión Tokyo novedades manga"
@@ -445,7 +445,7 @@ sources:
     source_class: "trusted_media"
     kind: "js"
     url: "https://www.crunchyroll.com/es/news/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["news", "anime", "manga"]
 
   # -------------------------
@@ -494,7 +494,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.editorialivrea.com/ESP/news/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official"]
     notes: "Página de tiles de solo imagen con alts cortos. Sin texto útil sin JS."
 
@@ -626,7 +626,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://kodansha.us/news/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "news"]
     purity: "mixed"  # es un blog de noticias, no un catálogo de productos.
 
@@ -701,7 +701,7 @@ sources:
     source_class: "trusted_media"
     kind: "rss"
     url: "https://www.animenewsnetwork.com/news/rss.xml?ann-edition=us"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["rss", "news", "anime", "manga"]
     purity: "mixed"  # noticias, no productos. Solo aceptar con STRONG manga hint.
 
@@ -723,7 +723,7 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://comicbook.com/category/anime/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["news", "anime", "manga"]
     purity: "mixed"  # noticias/blog posts, no productos.
 
@@ -759,7 +759,7 @@ sources:
     source_class: "retailer"
     kind: "html"
     url: "https://store.crunchyroll.com/collections/manga/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["retailer", "exclusive", "manga"]
 
   # Manga Mogura: no lo usaría como fuente primaria, pero sí como radar rápido.
@@ -770,7 +770,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/mangamogura.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "japan"]
     notes: "Radar de news. Usa kind:bluesky → API pública XRPC sin auth."
 
@@ -781,7 +781,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/planetadcomic.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "spain", "publisher", "new-source"]
     notes: |
       Bluesky oficial de Planeta. Anuncian exclusivas retailer (OP100 Fnac,
@@ -796,7 +796,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/normaeditorial.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "spain", "publisher", "new-source"]
     notes: "Bluesky oficial de Norma Editorial. Anuncios de coleccionistas y exclusivas."
 
@@ -807,7 +807,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/normaedmanga.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "spain", "publisher"]
     notes: "Línea manga separada de Norma. Publica también en catalán."
 
@@ -818,7 +818,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/mwediciones.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "spain", "publisher"]
 
   - name: "SOCIAL - Arechi Manga Bluesky"
@@ -828,7 +828,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/arechimanga.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "spain", "publisher"]
 
   - name: "SOCIAL - Ki-oon Bluesky"
@@ -838,7 +838,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/ki-ooneditions.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "france", "publisher"]
 
   - name: "SOCIAL - Pika Édition Bluesky"
@@ -848,7 +848,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/pika-edition.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "france", "publisher"]
 
   - name: "SOCIAL - Glénat Manga Bluesky"
@@ -858,7 +858,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/glenatmanga.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "france", "publisher"]
     notes: "Cuenta línea manga (la general glenat.bsky.social está muerta desde dic-2024)."
 
@@ -869,7 +869,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/editionskurokawa.bsky.social"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "france", "publisher"]
 
   - name: "SOCIAL - Kodansha USA Bluesky"
@@ -879,7 +879,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/kodansha.us"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "us", "publisher"]
     notes: "Handle de dominio (no .bsky.social)."
 
@@ -890,7 +890,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/sevenseasentertainment.com"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "us", "publisher"]
 
   - name: "SOCIAL - Dark Horse Bluesky"
@@ -900,7 +900,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/darkhorse.com"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "us", "publisher", "dark-horse"]
     notes: "Publica manga regularmente (Berserk, Trigun, etc.)."
 
@@ -911,7 +911,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/yenpress.com"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "us", "publisher"]
     notes: "Handle yenpress.com — NO yenpress.bsky.social (vacía)."
 
@@ -922,7 +922,7 @@ sources:
     source_class: "social"
     kind: "bluesky"
     url: "https://bsky.app/profile/viz.com"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["social", "news", "manga", "us", "publisher"]
     notes: "Handle viz.com — NO vizmedia.bsky.social (stale desde nov-2024)."
 
@@ -1021,7 +1021,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.kana.fr/actualites/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "news", "official"]
 
   - name: "FR - Delcourt / Tonkam Mangas"
@@ -1096,7 +1096,7 @@ sources:
     source_class: "trusted_media"
     kind: "rss"
     url: "https://actualitte.com/flux/rss/categorie/mangas.xml"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["rss", "news", "manga", "france"]
 
   - name: "FR - Manga-News Actus"
@@ -1106,7 +1106,7 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://www.manga-news.com/index.php/actus/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["news", "manga", "france"]
 
   - name: "FR - Manga-News Home"
@@ -1116,7 +1116,7 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://www.manga-news.com/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["news", "manga", "france"]
 
   # -------------------------
@@ -1170,7 +1170,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.starcomics.com/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "news"]
     selectors:
       item_selector: "div.fumetto-card"
@@ -1183,7 +1183,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://www.j-pop.it/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "italy"]
 
   - name: "IT - Edizioni BD"
@@ -1193,7 +1193,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.edizionibd.it/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official"]
     selectors:
       item_selector: "div.product.product-item"
@@ -1219,7 +1219,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://magicpressedizioni.it/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official"]
 
   - name: "IT - Magic Press Uscite"
@@ -1229,7 +1229,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://magicpressedizioni.it/le-uscite-della-settimana/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "releases", "official"]
 
   - name: "IT - GOEN / RW Edizioni"
@@ -1239,7 +1239,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.rwedizioni.it/goen/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official"]
     selectors:
       item_selector: "div.vc_grid-item"
@@ -1266,7 +1266,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://books.shueisha.co.jp/newcomics/index.html"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "japan"]
 
   - name: "JP - S-MANGA Shueisha"
@@ -1276,7 +1276,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.s-manga.net/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "japan"]
 
   - name: "JP - Jump Characters Store"
@@ -1286,7 +1286,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://jumpcs.shueisha.co.jp/shop/default.aspx"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["goods", "official", "jump", "japan"]
 
   - name: "JP - Kodansha Comic Limited Editions"
@@ -1296,7 +1296,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.kodansha.co.jp/comic/labels/gentei"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "limited", "official", "japan"]
 
   - name: "JP - Kodansha Comic Calendar"
@@ -1306,7 +1306,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.kodansha.co.jp/comic/calendar"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "calendar", "official"]
 
   - name: "JP - Shogakukan Comic"
@@ -1316,7 +1316,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://shogakukan-comic.jp/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "japan"]
     max_pages: 3  # home page con paginación que devuelve ruido
 
@@ -1327,7 +1327,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://www.shogakukan.co.jp/calendar/paper/comics/next2"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "calendar", "official"]
 
   - name: "JP - KADOKAWA Comics"
@@ -1377,7 +1377,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.hakusensha.co.jp/"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "japan"]
 
   - name: "JP - Akita Shoten Comics"
@@ -1387,7 +1387,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.akitashoten.co.jp/comics"
-    enabled: true
+    enabled: false  # audit 2026-05-25: 0 items
     tags: ["manga", "official", "japan"]
 
   - name: "JP - Sanyodo Comic Limited Editions"

@@ -71,7 +71,7 @@ Before declaring ANY task complete, walk through this checklist out loud
 | Pipeline internals, data flow, module responsibilities, ASCII diagrams | `docs/ARCHITECTURE.md` |
 | How to add/maintain a source, selector recipes, source-specific quirks | `docs/SOURCES.md` |
 | Retrofit utility behavior (one-shot scripts under `scripts/retrofit/`) | `scripts/retrofit/README.md` |
-| Skills (`.claude/skills/*.md`) — what they do, when to invoke | `.claude/skills/README.md` |
+| Skills (`.claude/skills/<name>/SKILL.md`) — what they do, when to invoke | `.claude/skills/README.md` |
 | New env var, new dependency | `.env.example` + the file above that fits |
 | Product scope / vision change | `docs/PRD.md` or `docs/PRD-catalog.md` |
 | Control Panel features | `docs/CONTROL-PANEL.md` |
@@ -96,8 +96,8 @@ the pre-flight checklist for the past changes that slipped through.
 ## What this project is
 
 **PandaWatch** (repo: `MineiToshio/PandaWatch`, also known internally as
-`manga-watch`) is a **personal tracker** that scrapes ~118 enabled sources
-(of 134 defined in `sources.yml`) across 10 countries and 6 languages
+`manga-watch`) is a **personal tracker** that scrapes ~76 enabled sources
+(of 138 defined in `sources.yml`) across 10 countries and 6 languages
 (ES, EN, FR, IT, JP, PT-BR) looking for
 **physical manga special editions**: limited editions, deluxe hardcovers,
 box sets, slipcase editions, artbooks, kanzenban, light novels with
@@ -169,7 +169,7 @@ diferencia, listadomanga" es suficiente.
 ## High-level pipeline
 
 ```
-sources.yml  (120 entries, 106 enabled)
+sources.yml  (138 entries, 76 enabled)
     │
     ▼
 manga_watch.py (scraper)  ←─── ThreadPoolExecutor(--workers N)
@@ -223,9 +223,11 @@ Observability: scripts/audit/source_health.py parses N recent overnight
 ## File map (what lives where)
 
 ```
-sources.yml                          — 120 source definitions (106
-                                       enabled), 15 with kind:bluesky,
-                                       13 with purity:mixed, the rest
+sources.yml                          — 138 source definitions (76
+                                       enabled after 2026-05-25 audit),
+                                       15 with kind:bluesky (all disabled
+                                       — 0 items in corpus), 17 with
+                                       purity:mixed, the rest
                                        html/rss/js.
 data/
   comics_blacklist.yml               — Marvel/DC publishers + franchise
@@ -367,19 +369,84 @@ scripts/
                                        001 Edizioni, Goen, Magic Press,
                                        Dynit, Coconino, Tora.)
     blogbbm.py                       (BR — Biblioteca Brasileira de Mangás,
-                                       parser de 2 posts curados
+                                       parser de 3 posts curados
                                        continuamente actualizados:
-                                       /2020/10/09/capas_variantes/ y
+                                       /2020/10/09/capas_variantes/,
                                        /2024/05/15/guia-volumes-especiais-
-                                       de-mangas-com-itens-especiais/.
-                                       Heurística title-driven que soporta
-                                       dos layouts (gallery `<div>` antes
-                                       del título en capas_variantes /
-                                       title con `(MM/YYYY)` parens +
-                                       `<figure>` después en volumes-especiais).
-                                       URLs sintéticas con query param
-                                       `?bbm-entry=vol-N-<stem>` para
+                                       de-mangas-com-itens-especiais/, y
+                                       /2024/02/09/guia-box-de-manga-no-brasil/.
+                                       Dispatch interno por `layout`:
+                                       (1) **AB**: heurística title-driven
+                                       que soporta los dos primeros posts
+                                       (gallery `<div>` antes del título
+                                       en capas_variantes / title con
+                                       `(MM/YYYY)` parens + `<figure>`
+                                       después en volumes-especiais);
+                                       (2) **C**: parser de tablas
+                                       supsystic (4 cols: img / título /
+                                       editora / fecha YYYY.MM) para el
+                                       post Box de Mangá — cubre cofres
+                                       brasileños históricos + preventa
+                                       de publishers Panini, JBC, Conrad,
+                                       Nova Sampa, NewPOP, Darkside,
+                                       Veneta, Alto Astral, L&PM, Vida
+                                       Nova, MPEG. URLs sintéticas con
+                                       query param `?bbm-entry=...` para
                                        unicidad por entry — ver gotcha #27.)
+    booksprivilege.py                (JP — 店舗特典まとめました,
+                                       agregador japonés de extras de
+                                       tienda: por cada release del día
+                                       lista qué bonus da cada retailer
+                                       — Animate, Gamers, Toranoana,
+                                       Melonbooks, COMIC ZIN, etc. — que
+                                       el catálogo Amazon/Rakuten no
+                                       marca. Discovery por calendario
+                                       mensual `?cal_ym=YYYY-M` →
+                                       `td.has-book` marca días con
+                                       releases → listing diario `?date=`
+                                       → detail page `?id=NNNN`. ISBN-10
+                                       se infiere del path Amazon CDN
+                                       `/P/<isbn>.09_*.jpg`; Kindle
+                                       ASIN B0... se descarta para no
+                                       contaminar el dedup por ISBN.
+                                       Imprints JP (角川コミックス・エース,
+                                       講談社コミックス, ジャンプコミックス,
+                                       etc.) se mapean a publishers
+                                       canónicos (Kadokawa, Kodansha,
+                                       Shueisha…). El cuerpo lo
+                                       decodificamos UTF-8 con
+                                       errors='replace' por bytes
+                                       cp932 sucios en alt-text de
+                                       banners ad — gotcha #28.)
+    sumikko.py                       (JP — comic.sumikko.info コミック新刊
+                                       チェック, catálogo curado de ~3178
+                                       ediciones limitadas/especiales
+                                       (限定版/特装版/完全版/同梱版/BOX +
+                                       extras como アクリルスタンド付き,
+                                       小冊子付き, 缶バッジ付き, etc.).
+                                       Listing en `/limited-item/?p=N`
+                                       paginado (90 items/página, ~32
+                                       páginas cubren todo). Cada bloque
+                                       `<a href="/item-select/<isbn>">`
+                                       contiene metadata completa —
+                                       NO requiere fetch del detail page.
+                                       Campos extraídos: ISBN-10 del path
+                                       URL, título, fecha JP en formato
+                                       `YY年MM月DD日(曜日)`, autor,
+                                       imprint, publisher canónico
+                                       (~30 imprints mapeados),
+                                       portada Amazon CDN via `data-src`.
+                                       Items BL/R18 usan `<img class="touch18">`
+                                       en vez de `lazy` — el parser busca
+                                       cualquier `<img>` para no perderlos.
+                                       Por default acepta TODOS los
+                                       type-tag porque el sitio etiqueta
+                                       por TIPO DEL EXTRA (CD, cassette,
+                                       BL) y no por tipo de producto —
+                                       ver gotcha #30. Complementario a
+                                       booksprivilege (que cubre 店舗特典/
+                                       bonus por tienda); sumikko cubre
+                                       la EDICIÓN en sí.)
     listadomanga_collections.py      (ES — parser por colección individual,
                                        coleccion.php?id=N. Complementa el
                                        calendario mensual (listadomanga.py)
@@ -474,11 +541,11 @@ scripts/
                                        en manga_watch.py. Ver sección
                                        "Image storage".
 .claude/skills/
-  enrich-series-aliases.md           — Skill manual: procesa unmapped
+  enrich-series-aliases/SKILL.md     — Skill manual: procesa unmapped
                                        series del queue, consulta Anilist,
                                        agrega entries a series_aliases.yml,
                                        corre backfill. Ver gotcha #20.
-  standardize-catalog.md             — Skill manual incremental: para items
+  standardize-catalog/SKILL.md       — Skill manual incremental: para items
                                        sin `standardized_at`, delega
                                        subagentes en paralelo (chunks ~150)
                                        que asignan series_key/edition_key,
@@ -512,32 +579,32 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | **5532** (post primera corrida scrape_full + standardize --force-all + cleanup compound slugs, 2026-05-24) |
-| Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 285 (+191 en esta corrida — cómics occidentales Funside, light novels, novelas, news/video, art_supplies, photobooks, etc.) |
-| Items deduplicados por (series_key, edition_key, volume) en esta corrida | 918 (915 en el merge + 3 al cleanup compound slugs) |
-| Distinct `series_key` (filtro por obra) | 1564 |
-| Distinct `edition_key` (filtro por edición+editorial) | 3062 |
-| `data/series_aliases.yml` entries | **1609** canonical works (post `/enrich-series-aliases` masivo 2026-05-24: 809 → 1609 = +800 net = 19 desde Anilist + 781 entries mínimas para prevenir re-logueo del queue) |
+| Total unique items (line in items.jsonl) | **8917** (5519 → 6360 BooksPrivilege Mayo 2026 +841, → 6410 BBM Layout C Box de Mangá +50, → 9318 Sumikko catálogo completo +2908, → 8917 tras `/standardize-catalog` -401 = 266 a blacklist + 135 dedups por (series, edition, vol), → 8917 tras `/enrich-series-aliases` 52 remapeados sin cambio de count) |
+| Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 551 (285 previo + 266 en `/standardize-catalog` post-sprint: 247 light novels JP/BR, 123 Funside western comics, +50 misc: photobooks, DVDs, merchandise) |
+| Items deduplicados por (series_key, edition_key, volume) en esta corrida | 135 nuevos (+ 918 históricos previos = 1053 acumulado). Top dedups del sprint: BP/Sumikko cross-source por ISBN, BBM box ↔ Mangavariant/LMC por edition_key, Mangavariant re-merges marginales por mejor canonicalización |
+| Distinct `series_key` (filtro por obra) | **3376** (post `/enrich-series-aliases` post-sprint, baja 10 vs post-standardize por consolidación multilingüe: Uchuu Kyoudai → Space Brothers, Junjo Romantica → Junjou Romantica, YuruYuri normalizado, etc.) |
+| Distinct `edition_key` (filtro por edición+editorial) | **5350** (-13 vs post-standardize por colapso de variantes consolidadas) |
+| `data/series_aliases.yml` entries | **1657** canonical works (1609 previo + 48 nuevos post-sprint via Anilist/cross-match; los 471 unmapped del queue post-standardize eran mayormente obras JP obscuras sin canonical en Anilist — se agregaron como self-canonical para evitar re-logueo) |
 | Sources in YAML | 138 |
-| Sources enabled | 121 / 138 (Listado Manga Blog RSS deshabilitado 2026-05-23) |
+| Sources enabled | **76 / 138** (audit 2026-05-25: 45 fuentes adicionales deshabilitadas — todas con 0 items en corpus: 15 Bluesky, noticias/blogs, fuentes con solape total con wikis, y 2 fuentes rotas 403) |
 | Sources flagged `purity: mixed` | 17 |
-| Bluesky sources (`kind: bluesky`) | 15 |
-| Wikis disponibles (`--bootstrap-wiki`) | 10 (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm, **listadomanga-collections** *Fase 1+2+3 completas*) |
-| Top sources | Mangavariant 1744, ListadoManga colecciones 1002, Manga-Sanctuary 947, SocialAnime Cofanetti 333, ListadoManga calendario 237, SocialAnime Variant 190, KADOKAWA Store 86, Sanyodo 84, Panini IT EdC 83, Manga Dreams 74 |
-| Image coverage | 99.7% (5517/5532) |
-| `image_local` coverage | 96.7% (5352/5532) |
-| `series_key` / `edition_key` / `standardized_at` coverage | 100% (5532/5532 — force-all reprocesó todo el corpus) |
-| `volume` coverage | 83.2% (4602/5532) |
-| Release date coverage | 86.6% (4792/5532) |
-| ISBN coverage | 35.7% (1976/5532) |
-| Price coverage | 59.3% (3282/5532) |
-| Author coverage | 51.8% (2865/5532) |
+| Bluesky sources (`kind: bluesky`) | 15 (todos deshabilitados — 0 items en corpus, posts de anuncios sin señales coleccionables) |
+| Wikis disponibles (`--bootstrap-wiki`) | 12 (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm *con Layout C box-de-manga-no-brasil*, booksprivilege *JP tokuten*, **sumikko** *JP 限定版/特装版*, listadomanga-collections *Fase 1+2+3 completas*) |
+| Top sources | **Sumikko 2721 (top 1)**, Mangavariant 1713, ListadoManga colecciones 987, Manga-Sanctuary 947, **BooksPrivilege 697**, SocialAnime Cofanetti 333, ListadoManga calendario 236, SocialAnime Variant 190, KADOKAWA Store 86, Panini IT EdC 83 |
+| Image coverage | 99.5% (8876/8917) |
+| `image_local` coverage | 97.7% (8712/8917) |
+| `series_key` / `edition_key` / `standardized_at` coverage | **100% / 100% / 100%** (post `/standardize-catalog` — todo el corpus canonicalizado) |
+| `volume` coverage | 83.9% (7480/8917, sube +29pp por sumikko que ~100% lleva volume en el título JP) |
+| Release date coverage | 91.7% (8175/8917) |
+| ISBN coverage | 60.5% (5394/8917, sube fuerte de 35.7% por los 2721 sumikko + 697 booksprivilege todos con ISBN-10) |
+| Price coverage | 36.6% (3266/8917) |
+| Author coverage | 69.7% (6217/8917) |
 | `cluster_key` populated | 100% (precomputed + backfilled post-cleanup) |
-| Items con `images[]` populated | 5384 (~97%) |
-| Items con carrusel real (`images.length > 1`) | 132 |
-| Items con al menos 1 image `kind=extra` | 133 |
+| Items con `images[]` populated | 8741 (98.0%) |
+| Items con carrusel real (`images.length > 1`) | 138 |
+| Items con al menos 1 image `kind=extra` | 139 |
 | Items con `extras[]` descriptivo | 133 |
-| Countries represented | 15 (Japón, Francia, Italia, España, EUA, Vietnam, México, Alemania, Tailandia, Brasil, Argentina, España/LatAm, Taiwán, Reino Unido + Global) |
+| Countries represented | 14 (Japón 4434, Francia 1297, España 1279, Italia 1246, EUA 154, Vietnam 139, México 104, Brasil 83, Tailandia 54, Alemania 53, Argentina 38, Taiwán 7, España/LatAm 5, + Global) |
 
 Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
 esperado de añadir 2679 filas curadas que por diseño no tienen esos
@@ -614,7 +681,7 @@ Sources currently marked mixed (`purity: mixed`):
 - BR - Pipoca & Nanquim (manga + BD europea)
 - BR - Devir Brasil (RPG + literatura + manga minoritario)
 
-### 4. Multi-source grouping by `cluster_key` (ISBN OR fuzzy fallback) — tier-based variant discriminant
+### 4. Multi-source grouping by `cluster_key` (ISBN → edition_key → fuzzy → url) — tier-based variant discriminant
 
 `items.jsonl` keeps one line per unique URL. **Multi-source aggregation
 is done at presentation by `cluster_key`**, computed once per row by
@@ -623,18 +690,26 @@ JSONL via `candidate_to_json`. The same key is consumed by
 `build_web.py` (`_group_by_cluster_key`) and the JS `dedupByUrl()`
 in `web/index.html`.
 
-Three cluster-key shapes, in priority order:
+Four cluster-key shapes, in priority order:
 1. **`isbn:<X>`** — authoritative, ISBN is unique per edition/market.
-2. **`fuzzy:<lang>|<series>|<vol>|<variant_tier>|<publisher>`** — for
-   items without ISBN. All five components must be present and
-   meaningful (series ≥ 3 chars, language non-empty, volume detected);
-   otherwise the row falls through to standalone. `variant_tier` is
-   the **most specific** entry from `_VARIANT_TIER_RULES` matching the
-   item's signal_types, NOT the full set. See "variant tier" below.
-3. **`url:<url>`** — standalone, never groups with anything else.
-   Triggered when a fuzzy match would be unsafe (no volume, short
-   series name, no language). Better to show one card per source than
-   to merge unrelated products.
+2. **`edition:<edition_key>|<volume>`** — items que comparten el mismo
+   `edition_key` (asignado por `/standardize-catalog` o el heurístico
+   del scraper) y el mismo `volume` son por definición el mismo producto
+   físico (misma edición + publisher + mercado). Crucial para boxes,
+   artbooks y otros sin volumen donde la fuzzy regla (que exige volume)
+   los dejaba aislados — ver caso Gon más abajo. El edition_key ya
+   codifica publisher/market en su slug por construcción
+   (`gon-norma-collector` vs `gon-glenat-collector`), por eso no
+   necesita campos extra.
+3. **`fuzzy:<lang>|<series>|<vol>|<variant_tier>|<publisher>`** — para
+   items SIN ISBN ni edition_key (pre-`/standardize-catalog`). Los cinco
+   componentes deben ser significativos (series ≥ 3 chars, language
+   non-empty, volume detected); si no, cae a standalone. `variant_tier`
+   es el más específico del set (ver abajo).
+4. **`url:<url>`** — standalone, never groups with anything else.
+   Triggered when fuzzy match would be unsafe (no volume, short series
+   name, no language). Better to show one card per source than to merge
+   unrelated products.
 
 **Variant tier (replaces the old comma-joined `variant_sig`):**
 
@@ -664,6 +739,20 @@ detectaba `[collector, lore_edition]` mientras Mangavariant detectaba
 `[bonus, special_edition, collector, lore_edition]`. Ambos colapsan a
 `tier=lore_edition` → mergean en una sola card. Tests en
 `tests/test_extraction.py::test_cluster_key_one_piece_98_celebration_merges_across_sources`.
+
+**Caso que motivó la tier `edition:` (2026-05-24): Gon Edición
+Coleccionista (Norma)** aparecía como 2 cards en `/edition/gon-norma-collector`
+— Whakoom (publisher "Varias editoriales", `cluster_key=url:whakoom.com/...`)
+y ListadoManga colecciones box (publisher "Norma Editorial",
+`cluster_key=url:listadomanga.es/...?item=box-0-...`). Ambos sin ISBN,
+sin volumen (box set), publishers distintos — la fuzzy no aplicaba y
+caían a `url:` aislados pese a ser el mismo producto. Con la tier
+`edition:`, ambos producen `cluster_key=edition:gon-norma-collector|`
+y mergen en 1 sola card con `sources=[Whakoom, ListadoManga]`.
+Tests: `test_cluster_key_edition_key_merges_box_across_sources`,
+`test_cluster_key_edition_key_different_volumes_dont_merge`,
+`test_cluster_key_isbn_still_wins_over_edition_key`,
+`test_cluster_key_no_edition_key_falls_through_to_fuzzy`.
 
 When two items share a cluster_key:
 - The higher-scored item is the canonical.
@@ -1045,7 +1134,7 @@ Serving en Fase 2: dominio propio (como el `ASSETS_PUBLIC_BASE_URL` de
 PandaTrack), **no** el URL `r2.dev` (está rate-limited, es sólo para
 dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
 
-## The 27 known gotchas
+## The 30 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -1328,7 +1417,7 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
       dentro del mismo run vía `_UNMAPPED_LOGGED_THIS_RUN`).
     - El usuario invoca el skill `enrich-series-aliases` cuando quiere
       curar el backlog. El skill vive en
-      `.claude/skills/enrich-series-aliases.md` y orquesta:
+      `.claude/skills/enrich-series-aliases/SKILL.md` y orquesta:
       1. `scripts/audit/unmapped_series.py` → tabla agrupada por
          series_key con fuzzy-match contra canonicals existentes.
       2. Para cada candidata: decidir alias-de-existente / new-canonical /
@@ -1489,7 +1578,7 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     etc.) y querés que los items existentes se re-procesen, NO basta con
     re-scrapear — hay que correr el snippet `--force-all` del skill que
     limpia `standardized_at` de todo el corpus. Ver el final de
-    `.claude/skills/standardize-catalog.md`.
+    `.claude/skills/standardize-catalog/SKILL.md`.
 
     Tests: `test_append_jsonl_preserves_curated_fields_on_standardized_items`
     + `test_append_jsonl_does_not_preserve_when_no_standardized_at` cubren
@@ -1597,6 +1686,119 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
 
     Tests: `test_blogbbm_parses_layout_a_capas_variantes` verifica que
     35 candidates → 35 distinct `candidate_key`.
+
+28. **booksprivilege: decodificar UTF-8 con `errors='replace'` por bytes
+    cp932 sucios en ad-banner alt-text.**
+
+    `booksprivilege.com` declara `Content-Type: text/html; charset=UTF-8`
+    en el header y el body japonés ES UTF-8 limpio. Pero los banners
+    publicitarios (afiliados A8.net) inyectan `<img alt="...">` con bytes
+    cp932 (Shift_JIS) crudos sin re-encodear — bytes como 0x83 que
+    rompen `bytes.decode('utf-8', errors='strict')` con
+    `UnicodeDecodeError`. Si `requests` infiere encoding y se cae al
+    `apparent_encoding` cp932, también revienta porque el body real
+    NO es cp932 puro (es UTF-8 + bytes cp932 mezclados).
+
+    El fix en `wikis/booksprivilege.py::fetch_html` es siempre
+    `resp.content.decode('utf-8', errors='replace')` — los bytes cp932
+    sucios se reemplazan con U+FFFD pero el contenido útil (títulos
+    japoneses, ISBNs, fechas, shop list) queda intacto. Las alt-text de
+    banners ad ya las descartábamos de todos modos (no son productos).
+
+    Mismo patrón aplica a otros sitios JP/CN con mojibake mixto en
+    fuentes legacy — preferir `decode('utf-8', errors='replace')` sobre
+    `resp.text` cuando se sospecha contaminación de bytes legacy.
+
+29. **listadomanga `Formato: ... en cofre` → emitir UN solo box-level
+    item, descartar tomos numerados.**
+
+    Páginas `coleccion.php?id=N` cuyo `<b>Formato:</b>` contiene "en
+    cofre" / "en estuche" representan un box set: los tomos numerados
+    en "Números editados" (alt "X nº1", "X nº2"…) viven dentro del
+    cofre y NO se venden sueltos. El parser previo emitía un item por
+    cada tomo (con kanzenban/hardcover signals del formato premium),
+    inflando el catálogo con cards que no son productos comprables.
+
+    Fix (2026-05-24): `_is_box_format(formato)` detecta el patrón
+    `\ben\s+(?:cofre|estuche)\b`. Cuando es True:
+    - Layout A NO emite items individuales (los tomos numerados se
+      saltan; sólo se pre-capturan covers para layout_a_covers).
+    - Después del loop, se emite UN único Candidate box-level con
+      `title = "<collection_title> — Cofre"` (sufijo agregado para que
+      `detect_signals` capte box_set vía title — `is_collectible_edition`
+      exige al menos un signal premium en title cuando no hay ISBN
+      ni volume_shape; sin el sufijo, "La Biblia", "Golgo 13 …",
+      "Utena (Edición Integral)" caían como `regular_tomo`).
+    - URL sintética `?item=box-0-<image_hash>` (no colisiona con
+      calendario, que usa `?id=N` pelado).
+    - signals: `box_set` siempre + los premium del formato
+      (kanzenban/hardcover/deluxe/etc.). `product_type=boxset`.
+    - **Carrusel del box** (regla del owner 2026-05-24): el `images[]`
+      del box item incluye TODAS las covers — primero la del cofre
+      (kind=cover) y después cada tomo interno como kind=extra con
+      descripción "Tomo N". El dashboard muestra 1 sola card con
+      carrusel `[box, tomo1, tomo2, …]` en vez de N cards. Cita:
+      "los box sets son solo el item del box set. Lo que se puede
+      hacer es poner 1ro la foto del box set y luego para agregar
+      más contexto poner las fotos de los tomos que vienen dentro,
+      pero como 1 mismo item".
+    - Layout B extras (si los hay — postales, marcapáginas, cards) se
+      appendean DESPUÉS de los tomos en el mismo carrusel (también
+      kind=extra) y se loguean en `extras[]` con descripción vinculada.
+      Sin crear `from_extras` tomos.
+
+    Caso semilla: id=5959 Gon (Edición Coleccionista) Norma — formato
+    "Tomo cuádruple A5 (148x210) cartoné (tapa dura) en cofre". El
+    usuario reportó que la edición tenía 3 cards (cofre + 2 tomos
+    cuando solo el cofre es vendible). Retrofit aplicado a 12 ids
+    cofre del corpus existente (Adolf x3 ediciones integrales, Dragon
+    Ball 20 Aniversario, Nausicaä Integral, Golgo 13 Box Set, La
+    Biblia, blanc et noir, Capitán Harlock Integral, Utena Integral,
+    Record of Lodoss War, Nana 1st Illustrations) + Gon. 1 id
+    rechazado por gate (id=3036 Dragon Quest 25 Aniversario — matchea
+    `_NON_MANGA_HARD`; los items previos se preservan).
+
+    Tests: `test_lmc_en_cofre_format_emits_single_box_item`,
+    `test_lmc_en_cofre_format_absorbs_layout_b_extras_into_carousel`,
+    `test_lmc_premium_format_without_en_cofre_still_emits_tomos`
+    (sanity: comportamiento previo no se rompe),
+    `test_lmc_is_box_format_detects_variants`.
+
+30. **sumikko: el `type-tag` describe el EXTRA de la edición, no el
+    producto — NO filtrar por tipo por default.**
+
+    `comic.sumikko.info/limited-item/` etiqueta cada item con
+    `<span class="type type-tag">` que parece indicar el tipo de producto
+    (コミック / ライトノベル / 単行本 / カセット、ＣＤ等 / ボーイズラブ).
+    Intuitivamente uno filtraría `コミック` para descartar light novels
+    y audio. **Es trampa**: la etiqueta describe el tipo del EXTRA que
+    trae la edición limitada, NO si el producto es manga. Ejemplos
+    reales (verificados en fixtures):
+
+    - `カセット、ＣＤ等` → "薬屋のひenとりごと 22 マスキングテープ付特装版"
+      (Apothecary Diaries vol 22, manga puro con washi tape bonus).
+    - `カセット、ＣＤ等` → "名探偵コナン 108 劇場版ティザーアクリル
+      スタンド付き特装版" (Detective Conan vol 108, manga con
+      acrylic stand bonus).
+    - `単行本` → "サメにゃん 3 【アクリルスタンド付き特装版】" (manga).
+    - `ボーイズラブ` → "アフターグロウ(2) 限定版" (BL manga — válido).
+
+    El catálogo entero de `/limited-item/` está curado a mano: TODO lo
+    que está ahí ES manga edición limitada/especial. Por eso
+    `accept_types` default es `frozenset()` (= aceptar todo). Si en el
+    futuro queremos acotar, pasar `accept_types={"コミック", "ボーイズラブ",
+    "単行本"}` y verificar contra fixtures que no se pierde nada útil.
+
+    Otro detalle: items BL/R18 usan `<img class="touch18">` (wrapper 18+
+    para tapar la portada hasta el click). El parser NO filtra por
+    `class="lazy"` — busca cualquier `<img>` y prefiere `data-src` sobre
+    `src` para extraer la portada Amazon CDN real (gotcha #6 ya cubre
+    el principio general).
+
+    Tests: `test_sumikko_type_filter_optional_default_accepts_all`,
+    `test_sumikko_type_filter_opt_in_restricts`,
+    `test_sumikko_image_fallback_for_touch18_bl_items`,
+    `test_sumikko_drops_loading_and_no_image_placeholders`.
 
 ## When the user reports "this item shouldn't be here"
 
@@ -1828,7 +2030,315 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
-Last updated: 2026-05-24 (primera corrida scrape_full completa + standardize
+Last updated: 2026-05-25 (audit de fuentes — 121 → 76 enabled; fix JS/Playwright ya estaba en code) — Audit completo de las 138 fuentes en `sources.yml`. Criterio: fuentes con 0 items en corpus Y sin valor incremental esperado (noticias/blogs, Bluesky publishers, fuentes con solape 100% con wikis de Fase 2, 2 fuentes rotas 403). Resultado: 45 fuentes deshabilitadas (15 Bluesky, ~10 news/blogs, ~8 publishers con solape wiki, ~12 fuentes 0-yield con poca expectativa). Phase 1 del pipeline pasa de 121 → 76 fuentes activas. **El fix de Playwright (gotcha #12 — dedicated worker thread + queue) ya estaba committed** desde 2026-05-24 — no se necesitaron cambios de código.
+
+Last updated: 2026-05-24 (cierre del sprint — `/standardize-catalog` +
+`/enrich-series-aliases` sobre los 3812 items sin canonicalizar) — Cierre
+del ciclo iniciado por las 3 fuentes nuevas (sumikko, booksprivilege, BBM
+Box). Tras la ingesta, los 3812 items quedaban con `standardized_at = None`
+esperando el pase de LLM. La corrida en sesión paralela (fresh context,
+Sonnet medium) procesó 26 chunks × 7 waves de subagentes general-purpose
+y dejó el corpus en estado canonical 100%.
+
+**1. `/standardize-catalog` (9318 → 8917, -401 netos)**:
+- **266 items movidos a `non_manga_blacklist.jsonl`**: 247 light novels JP
+  (134 BooksPrivilege + 82 sumikko, esperado por la mezcla manga/LN en
+  esos sitios) + 123 western_comic (mayoritariamente 115 de Funside
+  Variant — el catálogo italiano venía filtrando cómics indie europeos
+  como Buffy, Manifest Destiny, etc.; ahora limpiado). 50 misc:
+  merchandise (t-shirts, book covers), photobooks, DVDs, magazine
+  tie-ins.
+- **135 dedups por (series_key, edition_key, volume)**: la mayoría
+  cross-source — BBM Box (50 → 26, -24 = solo 1 a blacklist, los otros
+  23 mergearon con boxes ya existentes desde Whakoom/LMC/Mangavariant),
+  Sumikko (2908 → 2721, ~73 dedups con BP por ISBN match cuando el mismo
+  tomo aparece como tokuten en BP y como edición especial en Sumikko),
+  Rakuten search variants (-12 en total, merge con Sumikko que cataloga
+  las mismas SKUs de forma más estructurada).
+- **Cobertura schema 100%**: `series_key`, `edition_key`,
+  `standardized_at` y `cluster_key` poblados en todo el corpus (vs ~68%
+  pre-corrida).
+- **Top sources finales**: Sumikko 2721, Mangavariant 1713, LMC
+  colecciones 987, Manga-Sanctuary 947, BooksPrivilege 697, SocialAnime
+  Cofanetti 333.
+- **Distinct counts**: 3386 series_keys / 5363 edition_keys (vs 2008 /
+  3580 pre-standardize — los nuevos items JP de sumikko/BP introdujeron
+  muchas obras obscure únicas).
+- Backup: `data/items.jsonl.pre-standardize-sprint2-bak` (9318 líneas).
+
+**2. `/enrich-series-aliases` (8917 → 8917, 52 remapeados)**:
+- Procesó las **471 entries de `unmapped_series.jsonl`** que el skill
+  anterior loguéo (series sin canonical en `series_aliases.yml`).
+- Corrida conservadora vs la previa (+800 hace pocos días): los unmapped
+  eran mayormente obras JP obscuras de sumikko/booksprivilege sin
+  canonical claro en Anilist ni cross-language match. El skill agregó
+  **48 nuevos canonicals** con match seguro (Anilist + cross-language) y
+  guardó el resto como self-canonical (entry mínima con display literal
+  pero sin aliases) para evitar re-logging del queue.
+- **52 items remapeados** a series_key canonical más estable: Uchuu
+  Kyoudai/宇宙兄弟 → Space Brothers, Junjo Romantica → Junjou Romantica
+  (normalización romaji), YuruYuri / ゆるゆり → yuru-yuri, Shishunki-chan
+  slug fix, Fate/school life → himuro-no-tenchi-fate-school-life (canon
+  Anilist), etc.
+- Distinct series_key: 3386 → 3376 (-10). Distinct edition_key: 5363 →
+  5350 (-13). `series_aliases.yml`: 1609 → **1657** entries (802 con
+  aliases multilingüe poblados, 855 self-canonical mínimas).
+- `unmapped_series.jsonl` truncado a 0 entries. Próximas ingestas
+  re-poblarán automáticamente desde `log_unmapped_series()` cuando vean
+  series nuevas.
+- Backup: `data/items.jsonl.pre-enrich-2-bak` (8917 líneas).
+
+**Resumen del sprint completo** (3 fuentes nuevas + curación post):
+| Métrica | Pre-sprint | Post-sprint |
+|---|---|---|
+| Total items | 5519 | **8917** (+3398 = +61.6%) |
+| Non-manga blacklist | 285 | 551 (+266) |
+| ISBN coverage | 35.7% | 60.5% (+24.8pp) |
+| Volume coverage | 54.8% (post-ingest) | 83.9% (+29pp por sumikko) |
+| Distinct series_keys | 1564 | 3376 (+1812) |
+| Distinct edition_keys | 3062 | 5350 (+2288) |
+| `series_aliases.yml` | 1609 | 1657 (+48) |
+| `standardized_at` cov | 100% (5519 ítems) | 100% (8917 ítems) |
+| Tests | 332 | 361 (+29) |
+
+**Pendientes operativos para próximas corridas**:
+- Full backfill histórico booksprivilege 2020-2026 (~30-40 min, varios
+  miles de items adicionales potenciales con sus tokuten correspondientes).
+  Decidido con el owner durante el sprint pero no ejecutado todavía.
+- Fix del parser Funside: los 115 western comics blacklisteados tenían
+  título corrupto "Aggiungi al carrello Confrontare <titulo>" — el parser
+  capturó el texto del botón "Agregar al carrito". No urgente (blacklist
+  corta el sangrado), pero si en el futuro Funside agrega manga real va
+  a reaparecer con el mismo prefix. Apunte para arreglar cuando convenga
+  un sprint de housekeeping.
+- 855 self-canonical entries en `series_aliases.yml` sin aliases
+  multilingüe — son entradas placeholder que se irán enriqueciendo a
+  medida que aparezcan variantes en futuras ingestas. Sin acción
+  inmediata necesaria.
+
+---
+
+Last updated previo: 2026-05-24 (sumikko — 3ra fuente nueva en cadena, +2908 items
+JP limited/special editions) — Tercera fuente del sprint (después de
+booksprivilege y BBM Box de Mangá Layout C). `scripts/wikis/sumikko.py`
+implementa el parser de `comic.sumikko.info/limited-item/`.
+
+**Por qué sumikko**: cubre la dimensión "qué EDICIÓN es" (限定版/特装版/
+完全版/同梱版/BOX + extras como アクリルスタンド付き, 小冊子付き, 缶バッジ付き)
+que las sources JP regulares (Rakuten, Kadokawa Store, Sanyodo) no marcan
+explícitamente, y es complementario a booksprivilege (que cubre 店舗特典/
+extras por tienda). Cero solape estructural — sumikko cataloga la edición
+en sí, BP cataloga qué tienda da qué bonus.
+
+**Discovery**: pagination `/limited-item/?p=N` (90 items por página).
+Iteración 1→40 con early-stop en 3 páginas vacías consecutivas. ~32
+páginas reales cubren todo el catálogo (~10s con sleep 0.3s).
+
+**Extracción**: cada `<a href="/item-select/<isbn>">` block contiene
+TODA la metadata necesaria. NO requiere hitear detail pages.
+- ISBN-10 del path URL → 100% cobertura.
+- Título completo (con el qualifier "特装版"/"限定版" inline).
+- Fecha JP `YY年MM月DD日(曜日)` → ISO YYYY-MM-DD.
+- Autor + imprint + publisher canónico (~30 imprints mapeados:
+  Kadokawa, Kodansha, Shogakukan, Shueisha, Hakusensha, Ichijinsha,
+  Square Enix, Akita, TO Books, Shodensha, Bushiroad Works, etc.).
+- Portada Amazon CDN via `data-src`.
+
+**9 tests nuevos** (parse basic / single-span imprint / touch18 BL items /
+placeholder image filter / type-filter default-accepts-all / type-filter
+opt-in / fecha JP / publisher canonical map / ISBN dedupe). Total:
+**357/357 verde** (348 previos + 9 sumikko).
+
+**Gotcha #30 nueva**: el `<span class="type type-tag">` del sitio describe
+el TIPO DEL EXTRA de la edición (CD, cassette, BL), NO si el producto es
+manga. `カセット、ＣＤ等` puede ser "Detective Conan vol 108 con acrylic
+stand bonus" (manga puro con bonus CD). Por eso `accept_types=frozenset()`
+por default (aceptar todo lo que esté en `/limited-item/` porque el sitio
+ya curó manualmente que TODO es manga edición limitada/especial).
+
+**Items BL/R18** usan `<img class="touch18">` (wrapper 18+ que tapa la
+portada). El parser NO filtra por class — busca cualquier `<img>` y
+prefiere `data-src` sobre `src` para extraer la portada Amazon real.
+
+**Ingesta pilot — catálogo completo**: 32 páginas → 2909 candidates →
+2908 reportable (1 dropped por gate, 1 imagen fallida). **Cobertura:
+100% ISBN + publisher, 99.9% release_date, 99.1% image_url, 98.3% author,
+99.1% image_local**. 94% items con signals `(bonus, limited, special_edition)`.
+Top publishers (canonical): Kodansha 800, Ichijinsha 394, Shogakukan 265,
+Kadokawa 234, Hakusensha 179, Square Enix 117, Shueisha 107.
+**Items: 6410 → 9318 (+2908 = +45%)**. Backup `data/items.jsonl.pre-sumikko-bak`.
+
+**Estado del corpus tras este sprint** (3 fuentes nuevas):
+- BooksPrivilege Mayo 2026: +841
+- BBM Box de Mangá: +50
+- Sumikko full: +2908
+- **Total +3799 en el sprint** (5519 → 9318 = +68.8%).
+
+**Pipelines actualizados**: `scrape_delta.sh` (fase 2h sumikko full),
+`scrape_full.sh` (fase 2i sumikko full); `script_registry.py` con preset
+nuevo; argparse `--bootstrap-wiki` choices += `sumikko`.
+
+**Próximo paso pendiente**: `/standardize-catalog` sobre los 3799 items
+sin `standardized_at` para canonicalizar series_key/edition_key, mover
+non-manga a blacklist, dedupear cross-source. Esperable: ~200-500 dedups
+por ISBN match (muchas obras populares aparecen en sumikko + booksprivilege
+con el mismo ISBN).
+
+---
+
+Last updated previo: 2026-05-24 (booksprivilege + BBM Box de Mangá — 2 fuentes nuevas
+agregando JP tokuten + BR box sets) — Dos parsers nuevos atacan verticales
+poco cubiertas hasta ahora:
+
+**1. `scripts/wikis/booksprivilege.py`** — agregador JP de 店舗特典 (extras
+de tienda: postales, shikishi, bromides, acrylic stands, etc. que retailers
+JP — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN — dan al comprar
+un tomo). Las sources JP existentes (Rakuten, Kadokawa Store, Sanyodo)
+NO marcan estos bonuses; el libro físico es la edición regular, el valor
+está en el extra.
+
+- **Discovery**: calendar mensual `?cal_ym=YYYY-M` → `td.has-book` marca
+  días con releases → daily listing `?date=YYYY-MM-DD` → detail `?id=NNNN`.
+- **ISBN-10** se infiere del path Amazon CDN `/P/<isbn>.09_*.jpg`; Kindle
+  ASIN B0... se descarta para no contaminar el dedup por ISBN.
+- **Publisher canónico** mapeado desde el imprint JP en `<div class="shop_label">`
+  (角川コミックス・エース → Kadokawa, 講談社コミックス → Kodansha, etc.).
+  Imprints no mapeados quedan literales (el skill `/standardize-catalog`
+  los canonicaliza después).
+- **Description** estructurada con cada tienda + su extra:
+  "Tokuten: とらのあな: 特製イラストカード | ゲーマーズ: オリジナルブロマイド | ..."
+- Inject explícito de "店舗特典 / store bonus / bonus edition" para que
+  `detect_signals` levante `bonus` y el item pase `is_collectible_edition`.
+- 8 tests nuevos (parse detail / skip Kindle-only / skip sin entry-title /
+  parse daily listing / parse calendar drops spillover / label-to-publisher /
+  iter_year_months / volume extraction JP).
+- **Encoding gotcha #28** nueva: el sitio mezcla UTF-8 (body útil) con
+  bytes cp932 sucios en alt-text de banners ad. Decodificamos con
+  `errors='replace'` para no romper en bytes legacy.
+- **Ingesta pilot Mayo 2026**: 22 días con releases → 849 candidates →
+  841 reportable (1 dropped por gate, 7 dedup por ISBN). 100% ISBN +
+  image + image_local. 99.8% author, 99.9% release_date, 63% publisher
+  canónico. Cero errores de fetch o imagen. Items: 5519 → 6360 (+841).
+  Backup `data/items.jsonl.pre-booksprivilege-bak`.
+
+**2. `scripts/wikis/blogbbm.py` extendido — Layout C** (3er post BBM:
+`/2024/02/09/guia-box-de-manga-no-brasil/`). El post usa el plugin
+supsystic-tables (no `<hr><figure>` como los otros 2 posts BBM) con 2
+tablas (78=desde 2013, 79=hasta 2012) de 4 columnas: imagen / título /
+editora / fecha YYYY.MM. Dispatch interno por `post_meta['layout']`:
+"AB" → heurística title-driven existente; "C" → parser supsystic puro.
+
+- `_parse_layout_c()` itera `<table class="supsystic-table">` → rows
+  data → emite Candidate por fila con `box_set` signal, publisher
+  canónico, fecha YYYY-MM, URL sintética `?bbm-entry=box-<slug-pt>`.
+- "Em breve" (preventa) → release_date vacío + status hint en
+  description. Placeholder `Sem-Imagem.png` → image_url vacío (frontend
+  cae al 📚).
+- 4 tests nuevos (parse supsystic basic / preventa / placeholder image /
+  dispatch AB-vs-C aislado).
+- **Ingesta**: 109 entries en el post → 60 dropped por gate (placeholders
+  + "Em breve" sin más signals) + 49 nuevos + 1 colisión = **50 reportable**.
+  Top publishers: Conrad 25, JBC 10, Nova Sampa 9, Panini 4. Items:
+  6360 → 6410 (+50). Backup `data/items.jsonl.pre-bbm-box-bak`.
+
+**Pipelines actualizados**: `scrape_delta.sh` (fase 2g booksprivilege
+últimos 3 meses) + `scrape_full.sh` (fase 2h booksprivilege desde
+2020-01); `script_registry.py` con 2 presets nuevos para el Panel de
+Control; argparse `--bootstrap-wiki` choices += `booksprivilege`.
+
+**Decisión pendiente** (decidida con el owner): tras esta primera
+corrida pilot/delta, hacer una **corrida full** del archivo histórico
+booksprivilege (2020-2026 ≈ 70 meses × ~22 días/mes × ~30 items/día =
+varios miles de fetches, ~30-40 min) para backfill completo. Idem
+considerar el siguiente paso: correr `/standardize-catalog` sobre los
+891 items nuevos (`standardized_at = None`) para canonicalizar
+series_key/edition_key + mover non-manga (light novels JP/BR) a
+blacklist.
+
+**Tests totales**: 348/348 verde (332 previos + 12 nuevos: 8 booksprivilege
++ 4 blogbbm Layout C).
+
+**3ra fuente evaluada: manga-tokuten.com** — descartada. Next.js SPA
+con backend en Google Apps Script; requeriría Playwright o
+reverse-engineer del endpoint GAS. Solape alto con booksprivilege (misma
+vertical 店舗特典) → valor incremental bajo. No vale el esfuerzo.
+
+---
+
+Last updated previo: 2026-05-24 (gotcha #29 — listadomanga `Formato: ... en cofre`
+emite box-only, descarta tomos numerados) — Reporte del owner sobre la edición
+`gon-norma-collector`: aparecían 3 cards (cofre + 2 tomos individuales),
+cuando solo el cofre se vende suelto. La raíz: `listadomanga_collections.py`
+emitía un item por cada tomo en "Números editados" cuando el formato era
+premium (kanzenban/cartoné), sin distinguir páginas-cofre (donde los tomos
+viven adentro del box y no son productos individuales).
+
+Cambios:
+- Nuevo helper `_is_box_format(formato)` matchea `\ben\s+(?:cofre|estuche)\b`.
+- `parse_collection_page`: cuando `is_box_format=True` salta emisión de
+  Layout A items (pre-captura covers para layout_a_covers como siempre),
+  emite UN solo Candidate box-level con title `"<collection_title> — Cofre"`,
+  signals `box_set + premium_signals`, URL sintética `?item=box-0-<hash>`.
+  Layout B extras se appendean al carrusel del box (no `from_extras` tomos).
+- Sufijo " — Cofre" agregado al title: necesario para que `detect_signals`
+  capte `box_set` vía title (la regla `is_collectible_edition` exige al
+  menos un signal premium en title cuando no hay ISBN ni volume_shape).
+- 4 tests nuevos (cofre emite 1 item, absorbe Layout B, formato premium
+  no-cofre sigue emitiendo tomos, _is_box_format detecta variantes).
+- Retrofit corpus: 13 ids detectados (Adolf x3 ediciones, Dragon Ball 20
+  Aniversario, Dragon Quest 25 Aniv, Golgo 13, La Biblia, Nausicaä,
+  blanc et noir, Capitán Harlock, Utena, Record of Lodoss, Nana 1st,
+  Gon). 12 boxes emitidos (1 rechazado por `is_likely_manga` HARD —
+  Dragon Quest aniversario; sus items previos se preservan). 24 tomos
+  individuales eliminados. Gon (id=5959) tratado aparte (vol=1 calendario
+  + vol=2 colecciones ya eliminados en pasada manual previa por reporte
+  del owner) y su box item asignado a `edition_key=gon-norma-collector`
+  para que aparezca en la edición Whakoom existente.
+
+Corpus: 5530 → **5519** (-11 netos = -24 tomos sueltos + 13 boxes nuevos).
+Tests: 357/357 verde (+4 originales + 0 follow-up; el carrusel actualizó
+asserts existentes). Backup: `data/items.jsonl.pre-cofre-retrofit-bak`,
+`.pre-carousel-bak`.
+
+**Second pass (regla del carrusel del owner, mismo día):** el owner aclaró
+que un box set debe ser UN solo item con carrusel de [box cover, tomo1,
+tomo2, ...] como contexto adicional — no múltiples cards "box + cada
+tomo". El parser ya emitía 1 sólo item pero con sólo la cover del box.
+Ampliado para que `images[]` también incluya las covers de los tomos
+internos como `kind=extra` con descripción "Tomo N". Re-retrofit
+aplicado a los 13 box items existentes (re-fetch + re-parse + re-download
+de las covers nuevas a `data/images/`). Backup `.pre-carousel-bak`.
+
+Dashboard tenía data embebida vieja (de cuando items.jsonl aún tenía
+los 3 items Gon) — corrido `scripts/build_web.py --clear` para volver
+al modo live-fetch (decisión #5). El usuario refresca y ve el estado
+actual.
+
+**Third pass (cross-source merge via `edition_key`, mismo día):** el
+owner reportó que después del fix anterior Gon seguía mostrando 2 cards
+("/edition/gon-norma-collector" tenía Whakoom + LMC box, ambos
+representando el mismo cofre). La fuzzy `cluster_key` no los mergeaba
+(ambos sin ISBN, sin volumen, con publishers distintos — "Varias
+editoriales" vs "Norma Editorial"). Cambio estructural a
+`derive_cluster_key`: nueva tier `edition:<edition_key>|<volume>`
+entre ISBN y fuzzy. Cuando dos items comparten `edition_key` y
+`volume` son por definición el mismo producto físico (misma edición +
+publisher + mercado — el edition_key ya codifica eso). 4 tests nuevos.
+Backfill aplicado a items.jsonl: 23 cards consolidadas adicionales
+(46 items en 23 grupos). Backups `.pre-edition-cluster-bak` +
+`.pre-cluster-bak`. Tests: **361/361 verde** (+4 originales del cofre
++ 4 nuevos del edition tier). Ver decisión de diseño #4 actualizada.
+
+Los nuevos box items NO llevan `standardized_at` — la próxima corrida del
+skill `/standardize-catalog` los procesará para asignar series_key /
+edition_key canónicos (el heurístico del scraper les dio
+`<series>-cofre-<publisher>-boxset` que probablemente no coincide con las
+ediciones existentes; Gon fue patcheado manualmente a `gon-norma-collector`
+para que la edición del owner mostrara la card box-level inmediato).
+
+---
+
+Last updated previo: 2026-05-24 (primera corrida scrape_full completa + standardize
 --force-all + audit exhaustivo del catálogo + 4 fixes de raíz post-audit) —
 Ejecución end-to-end del nuevo modelo "2 scripts canónicos" sobre el catálogo
 entero, primera vez que `lista.php` se recorre completo (3432 colecciones)
@@ -1838,7 +2348,7 @@ expuso (siguientes 4 puntos al final de esta entrada).
 **4 fixes de raíz post-audit (mismo día, post-corrida)**:
 
 1. **Skill prompt — publishers allowlist expandido**
-   (`.claude/skills/standardize-catalog.md`): agregados como canónicos
+   (`.claude/skills/standardize-catalog/SKILL.md`): agregados como canónicos
    los 30+ publishers que los subagentes de la corrida usaron
    coherentemente pero NO estaban en la lista explícita (cayendo a
    "unknown" cuando podían haber tenido slug propio): `kurokawa`,
