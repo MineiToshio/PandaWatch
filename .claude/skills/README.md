@@ -1,9 +1,15 @@
 # .claude/skills/
 
 Project-level **skills** (LLM-driven curation routines) versionados con el
-repositorio. Cada `.md` define un skill que Claude Code invoca via
-`/<skill-name>`. La descripción frontmatter del skill decide cuándo el
-modelo lo activa.
+repositorio. Cada skill es un **directorio** `<nombre>/` con un archivo
+`SKILL.md` adentro; Claude Code lo descubre y lo invoca via `/<nombre>`.
+La descripción frontmatter del `SKILL.md` decide cuándo el modelo lo
+activa.
+
+> **Importante (formato)**: Claude Code descubre skills como
+> **directorios** (`<nombre>/SKILL.md`), NO como archivos sueltos
+> `<nombre>.md` en `.claude/skills/`. Si crearas un `.md` plano, no
+> aparecería en el autocompletado de `/`.
 
 Estos skills viven en el proyecto (no en `~/.claude/skills/`) para que
 viajen con git. Cualquier máquina que clone el repo los tiene
@@ -78,6 +84,66 @@ actualizado con traducciones multilingües.
 - Semanal junto con el otro skill.
 - Cuando ves la misma obra con nombres diferentes en el dashboard.
 
+### `/evaluate-sources`
+
+**Propósito**: auditar fuentes candidatas ANTES de implementarlas. Evitar
+incorporar fuentes que no aportan valor real al catálogo (lección: BooksPrivilege
+— 11k items de tomos regulares con postal de regalo, sin foto del extra).
+
+**Input**: lista de URLs o nombres en cualquier formato — una por línea, con
+contexto adicional o sin él.
+
+**Cómo funciona**:
+1. Parsea la lista de candidatas del mensaje del usuario.
+2. Lanza un subagente por fuente en paralelo. Cada subagente:
+   - Fetchea el listing principal y 5 items de detalle.
+   - Evalúa: Content Fit (% ediciones especiales reales), campos mínimos
+     (serie, tipo de edición, editorial, foto de portada), y — **crítico** —
+     si la fuente cubre extras/bonuses, verifica que haya foto del EXTRA en
+     sí (no solo la portada del manga).
+   - Estima escala y factibilidad técnica.
+3. Para fuentes que pasan el filtro básico: cruza muestra con `items.jsonl`
+   para calcular % de overlap con el corpus existente.
+4. Compila reporte: tabla resumen (✅/⚠️/❌) + detalle solo para viables.
+
+**Output** (no implementación):
+- Tabla de viabilidad con veredicto y razón por fuente.
+- Para viables: qué aporta, qué falta, acción recomendada
+  (`Agregar` / `Reemplaza [X]` / `Complementa [X]`).
+
+**Cuándo invocarlo**:
+- Antes de implementar cualquier fuente nueva.
+- Al recibir una lista de sitios a evaluar ("evalúa estas páginas").
+- Cuando una fuente existente parece redundante con una nueva.
+
+### `/review-rejected`
+
+**Propósito**: revisar items que el usuario rechazó via el botón 👎 del
+dashboard (`data/user_rejected.jsonl`), categorizar la causa raíz de
+cada rechazo, y proponer mejoras concretas a los filtros del scraper.
+
+**Cómo funciona**:
+1. Carga y muestra la cola de rechazos (dedupando por `cluster_key`).
+2. Clasifica cada item usando una taxonomía de 10 categorías (A–J):
+   merchandising, trading cards, noticias/blogs, tomos regulares,
+   source ruidosa, western comics, light novels, preferencia personal,
+   falsa señal, selectores demasiado amplios.
+3. Presenta propuestas numeradas al usuario — **espera confirmación**
+   antes de aplicar.
+4. Para cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
+   `sources.yml` + agrega tests en `tests/test_extraction.py`.
+5. Corre pytest (debe quedar verde) y los retrofits correspondientes
+   (`filter_non_manga.py`, `filter_collectible.py`, `rescore.py`).
+6. Trunca `data/user_rejected.jsonl` (solo después de aplicar todos los
+   cambios aprobados).
+7. Actualiza CLAUDE.md "Last updated".
+
+**Cuándo invocarlo**:
+- Cuando `data/user_rejected.jsonl` tiene entradas (el usuario ha
+  clickeado 👎 en el dashboard).
+- Explícitamente al decir "revisar rechazados" o "mejorar los filtros".
+- Periódicamente después de scrapes grandes (antes de commitear).
+
 ## Workflow post-scrape recomendado
 
 ```
@@ -97,7 +163,8 @@ sin cambios en el corpus no rompe nada.
 
 ## Cómo agregar un skill nuevo
 
-1. Crear `.claude/skills/<nombre>.md` con frontmatter:
+1. Crear el directorio `.claude/skills/<nombre>/` y dentro un archivo
+   `SKILL.md` con frontmatter:
    ```yaml
    ---
    name: <nombre>
@@ -105,6 +172,9 @@ sin cambios en el corpus no rompe nada.
                 Claude Code usa esta descripción para decidir activación.
    ---
    ```
+   **NO** crear el skill como `.claude/skills/<nombre>.md` (archivo
+   suelto) — ese formato no lo descubre Claude Code y el skill no
+   aparecerá en el autocompletado de `/`.
 2. Cuerpo en markdown con instrucciones paso-a-paso. Incluye snippets
    de bash/python que el skill debe ejecutar literalmente.
 3. Listar el skill acá en este README + en CLAUDE.md (file map).

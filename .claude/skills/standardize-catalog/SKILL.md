@@ -608,7 +608,21 @@ PY
 .venv/bin/python -m pytest tests/test_extraction.py -q
 ```
 
-## Step 6 — Cleanup + report
+## Step 6 — Generate slugs
+
+Run `generate_slugs.py` to assign `slug` values to the newly standardized items.
+This is the last write to `items.jsonl` before cleanup.
+
+```bash
+.venv/bin/python scripts/retrofit/generate_slugs.py --only-missing --verbose
+```
+
+`--only-missing` skips items that already have a `slug` (idempotent). `--verbose`
+prints each assignment so you can spot unexpected fallback slugs (`item-{sha1}`)
+that indicate items with missing `edition_key` — those may need a follow-up
+`/standardize-catalog` pass.
+
+## Step 7 — Cleanup + report
 
 ```bash
 rm -rf /tmp/manga-standardize-run
@@ -635,8 +649,8 @@ Then report to the user:
 If standardization rules changed significantly and you want to re-process EVERYTHING:
 
 ```bash
-# Backup first!
-cp data/items.jsonl /tmp/items.jsonl.bak-$(date +%Y%m%d)
+# Backup first! (usa backup_and_rotate para respetar la rotación max-3)
+.venv/bin/python -c "from scripts.manga_watch import backup_and_rotate; from pathlib import Path; backup_and_rotate(Path('data/items.jsonl'), 'standardize-force')"
 .venv/bin/python -c "
 import json
 items = [json.loads(l) for l in open('data/items.jsonl')]

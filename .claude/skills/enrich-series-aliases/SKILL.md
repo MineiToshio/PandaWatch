@@ -161,8 +161,8 @@ print(f'After dedup: {len(final)} items')
 Once you've processed the queue, clear it so the next run starts fresh:
 
 ```bash
-# Backup + truncate
-cp data/unmapped_series.jsonl /tmp/unmapped_series.jsonl.bak-$(date +%Y%m%d)
+# Backup + truncate (usa backup_and_rotate para respetar la rotación max-3)
+.venv/bin/python -c "from scripts.manga_watch import backup_and_rotate; from pathlib import Path; backup_and_rotate(Path('data/unmapped_series.jsonl'), 'enrich')"
 : > data/unmapped_series.jsonl
 ```
 
