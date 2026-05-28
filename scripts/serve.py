@@ -4,7 +4,8 @@
 Sirve el catálogo desde la raíz del proyecto y expone únicamente:
 - `GET /`          → 302 a `/web/`
 - archivos estáticos en `/web/`, `/data/`, `/reports/`
-- `POST /api/feedback` → append a data/feedback.jsonl
+- `POST /api/feedback` → elimina el item de items.jsonl y lo mueve a
+  data/user_rejected.jsonl con el motivo.
 
 Este server NO ejecuta scripts — para eso está `scripts/admin_serve.py`,
 que bindea solo a 127.0.0.1 y se mantiene fuera del deploy.
@@ -26,7 +27,73 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-FEEDBACK_PATH = Path("data/feedback.jsonl")
+ITEMS_PATH = Path("data/items.jsonl")
+USER_REJECTED_PATH = Path("data/user_rejected.jsonl")
+
+
+def _remove_from_catalog(url: str, reason: str) -> int:
+    """Remove item(s) from items.jsonl matching url (and same cluster_key).
+
+    Appends every removed row to user_rejected.jsonl with the rejection_reason
+    and rejected_at timestamp.  Returns the number of rows removed.
+    """
+    if not ITEMS_PATH.exists():
+        return 0
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Read everything
+    parsed: list[tuple[dict, str]] = []
+    unparseable: list[str] = []
+    with ITEMS_PATH.open("r", encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.rstrip("\n")
+            if not raw:
+                continue
+            try:
+                parsed.append((json.loads(raw), raw))
+            except json.JSONDecodeError:
+                unparseable.append(raw)
+
+    # Find the cluster_key for this URL (skip url: keys — those are standalone)
+    target_ck: str | None = None
+    for row, _ in parsed:
+        if row.get("url") == url:
+            ck = row.get("cluster_key", "")
+            if ck and not ck.startswith("url:"):
+                target_ck = ck
+            break
+
+    # Partition: remove items that are the target URL or same real cluster
+    kept: list[str] = list(unparseable)
+    removed: list[dict] = []
+    for row, raw in parsed:
+        is_match = row.get("url") == url or (
+            target_ck and row.get("cluster_key") == target_ck
+        )
+        if is_match:
+            removed.append(row)
+        else:
+            kept.append(raw)
+
+    if not removed:
+        return 0
+
+    # Atomic rewrite of items.jsonl
+    tmp = ITEMS_PATH.with_name("items.jsonl.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for raw in kept:
+            fh.write(raw + "\n")
+    tmp.replace(ITEMS_PATH)
+
+    # Append each removed row to user_rejected.jsonl
+    USER_REJECTED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with USER_REJECTED_PATH.open("a", encoding="utf-8") as fh:
+        for row in removed:
+            entry = {**row, "rejection_reason": reason, "rejected_at": now}
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    return len(removed)
 
 
 class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
@@ -64,18 +131,10 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(400, "Missing 'title', 'url' or 'reason'")
             return
 
-        entry = {
-            "title": title,
-            "url": url,
-            "reason": reason,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-        }
+        # Remove from catalog (atomic) and move to user_rejected.jsonl
+        n_removed = _remove_from_catalog(url, reason)
 
-        FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with FEEDBACK_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-        body = json.dumps({"ok": True}).encode("utf-8")
+        body = json.dumps({"ok": True, "removed": n_removed}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
