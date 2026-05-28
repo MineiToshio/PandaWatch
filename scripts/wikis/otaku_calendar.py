@@ -39,7 +39,7 @@ import datetime as dt
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
@@ -251,6 +251,8 @@ def bootstrap(
     min_score: int = 30,
     fetch_details: bool = False,
     allowed_countries: tuple[str, ...] = DEFAULT_COUNTRIES,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Recorre meses [from, to] y devuelve candidates con score >= min_score."""
     import time
@@ -263,6 +265,8 @@ def bootstrap(
         kept = [c for c in cands if c.score >= min_score]
         print(f"    {len(cands)} items totales, {len(kept)} con score >= {min_score}")
         all_candidates.extend(kept)
+        if flush_fn and kept:
+            flush_fn(kept)
         if sleep_seconds > 0 and idx < len(pairs):
             time.sleep(sleep_seconds)
     # fetch_details no aplica: otakucalendar no expone cover/precio/ISBN en

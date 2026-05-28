@@ -64,6 +64,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 import requests
 from bs4 import BeautifulSoup
@@ -100,18 +101,31 @@ BASE_URL = "https://blogbbm.com"
 #    es un special_edition con bonus).
 #  - source_suffix: discrimina el source name en items.jsonl.
 #  - tag: discrimina la categoría en `tags`.
+#  - layout: "AB" (default) usa la heurística title-driven que cubre los
+#    layouts A (gallery div ANTES del título, /capas_variantes/) y B
+#    (título con (MM/YYYY) + figures después, /volumes-especiais/).
+#    "C" usa el parser de tablas supsystic (Layout C, /guia-box-de-manga/).
 BBM_POSTS: tuple[dict[str, str], ...] = (
     {
         "url": f"{BASE_URL}/2020/10/09/capas_variantes/",
         "source_suffix": "Capas Variantes",
         "tag": "capas-variantes",
         "signal_inject": "Capa variante / variant cover.",
+        "layout": "AB",
     },
     {
         "url": f"{BASE_URL}/2024/05/15/guia-volumes-especiais-de-mangas-com-itens-especiais/",
         "source_suffix": "Volumes Especiais",
         "tag": "volumes-especiais",
         "signal_inject": "Edição especial com brinde / special edition with bonus.",
+        "layout": "AB",
+    },
+    {
+        "url": f"{BASE_URL}/2024/02/09/guia-box-de-manga-no-brasil/",
+        "source_suffix": "Box de Mangá",
+        "tag": "box-de-manga",
+        "signal_inject": "Cofre / box set / boxset.",
+        "layout": "C",
     },
 )
 
@@ -362,10 +376,22 @@ def parse_post(
     """Parsea un post-guía de BBM y devuelve un Candidate por entry.
 
     `post_meta` es uno de los dicts de BBM_POSTS (url, source_suffix, tag,
-    signal_inject).
+    signal_inject, layout). Dispatch interno según `layout`:
+    - "AB" (default): heurística title-driven (gallery div / figures /
+      `<hr>` separators).
+    - "C": parser de tablas supsystic (cada `<tr>` = entry; col 0 img,
+      col 1 título, col 2 editora, col 3 fecha YYYY.MM).
     """
     if not html_text or len(html_text) < 5000:
         return []
+    layout = post_meta.get("layout", "AB")
+    if layout == "C":
+        return _parse_layout_c(html_text, post_meta)
+    return _parse_layout_ab(html_text, post_meta)
+
+
+def _parse_layout_ab(html_text: str, post_meta: dict) -> list[Candidate]:
+    """Parser histórico de los posts /capas_variantes/ y /volumes-especiais/."""
     soup = BeautifulSoup(html_text, "html.parser")
     ec = soup.find(class_="entry-content")
     if not ec:
@@ -472,6 +498,146 @@ def parse_post(
     return candidates
 
 
+# --- Layout C (supsystic tables: /guia-box-de-manga-no-brasil/) ----------
+
+# Imagen placeholder de "sin imagen" en BBM box post — el wiki marca rows
+# pendientes con este png. No es portada real.
+_BBM_PLACEHOLDER_PATTERNS: tuple[str, ...] = (
+    "Sem-Imagem",
+    "sem-imagem",
+    "/Sem-Imagem.png",
+)
+
+# Fecha YYYY.MM. "Em breve" / "" → release_date vacío (preventa).
+_LAYOUT_C_DATE_RE = re.compile(r"^\s*(\d{4})\.(\d{1,2})\s*$")
+
+
+def _slugify_pt(text: str) -> str:
+    """Slug minimalista PT-BR: lowercase, ASCII, palabras separadas por '-'.
+    Sirve como disambiguator único en URL sintética por-entry."""
+    if not text:
+        return ""
+    s = text.lower()
+    # Reemplazos manuales para diacríticos PT-BR comunes (sin unicodedata).
+    for src, dst in (
+        ("ã", "a"), ("á", "a"), ("à", "a"), ("â", "a"),
+        ("é", "e"), ("ê", "e"),
+        ("í", "i"),
+        ("ó", "o"), ("ô", "o"), ("õ", "o"),
+        ("ú", "u"), ("ü", "u"),
+        ("ç", "c"),
+        ("ñ", "n"),
+    ):
+        s = s.replace(src, dst)
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s[:80]
+
+
+def _is_placeholder_image(src: str) -> bool:
+    if not src:
+        return True
+    return any(p in src for p in _BBM_PLACEHOLDER_PATTERNS)
+
+
+def _clean_wp_image_url(src: str) -> str:
+    """Quita el proxy i0.wp.com/ y query params (mismo que _node_imgs)."""
+    if not src:
+        return ""
+    src = src.split("?", 1)[0]
+    src = re.sub(r"^https?://i\d+\.wp\.com/", "https://", src)
+    return src
+
+
+def _parse_layout_c(html_text: str, post_meta: dict) -> list[Candidate]:
+    """Parsea el post /guia-box-de-manga-no-brasil/ — 2 tablas supsystic
+    con esquema [imagen, título, editora, fecha YYYY.MM].
+
+    El sitio renderiza ambas tablas (78=desde 2013, 79=hasta 2012) en HTML
+    server-side. Cada `<tr>` data row contiene un Box brasileño con:
+      col 0: <img> de la cover (o 'Sem-Imagem.png' placeholder).
+      col 1: título del manga ("Pink Heart Jam - Deluxe Box").
+      col 2: editora (Panini / JBC / NewPOP / Nova Sampa / Conrad / etc.).
+      col 3: fecha YYYY.MM o "Em breve" (preventa) o vacío.
+
+    URL sintética por entry: `?bbm-entry=box-<slug-from-title>`.
+    Sin imagen real, igualmente generamos candidate (el frontend cae al
+    placeholder 📚). Sin fecha, queda como preventa con release_date="".
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+    ec = soup.find(class_="entry-content")
+    if not ec:
+        return []
+
+    source = _virtual_source(post_meta["source_suffix"], post_meta["tag"])
+    post_url = post_meta["url"]
+    inject = post_meta.get("signal_inject", "")
+
+    candidates: list[Candidate] = []
+    seen_urls: set[str] = set()
+
+    for table in ec.find_all("table", class_="supsystic-table"):
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+        # Skip header (first <tr>). Data rows: 1..N
+        for tr in rows[1:]:
+            cells = tr.find_all(["td", "th"])
+            if len(cells) < 4:
+                continue
+            img = cells[0].find("img")
+            img_src = ""
+            if img:
+                img_src = (img.get("src") or img.get("data-src")
+                           or img.get("data-lazy-src") or "")
+            title = clean_text(cells[1].get_text(" ", strip=True))
+            publisher = clean_text(cells[2].get_text(" ", strip=True))
+            date_raw = clean_text(cells[3].get_text(" ", strip=True))
+            if not title:
+                continue
+            # release_date: YYYY.MM → YYYY-MM; "Em breve" / vacío → "".
+            release_date = ""
+            m = _LAYOUT_C_DATE_RE.match(date_raw)
+            if m:
+                month_num = int(m.group(2))
+                if 1 <= month_num <= 12:
+                    release_date = f"{m.group(1)}-{month_num:02d}"
+            # Image — si es placeholder, no la usamos.
+            image_url = ""
+            if img_src and not _is_placeholder_image(img_src):
+                image_url = _clean_wp_image_url(img_src)
+            # URL sintética por título (no hay ficha link en las tablas).
+            slug = _slugify_pt(title) or "box"
+            sep = "&" if "?" in post_url else "?"
+            url = f"{post_url.rstrip('/')}{sep}bbm-entry=box-{slug}"
+            if url in seen_urls:
+                # Misma fila replicada (raro, pero por las dudas). Skipping.
+                continue
+            seen_urls.add(url)
+            # Description: inject (garantiza box_set signal) + editora + estado
+            descr_parts: list[str] = [inject]
+            if publisher:
+                descr_parts.append(f"Editora: {publisher}.")
+            if date_raw and not release_date:
+                # "Em breve" o similar → preventa
+                descr_parts.append(f"Status: {date_raw}.")
+            description = " ".join(descr_parts).strip()[:2500]
+            if publisher:
+                source.publisher = publisher
+            cand = candidate_from_source(
+                source,
+                title=title,
+                url=url,
+                description=description,
+                published_at=release_date,
+            )
+            cand.image_url = image_url
+            cand.release_date = release_date
+            cand.tags = list(source.tags) + ["bbm-box"]
+            score_candidate(cand)
+            candidates.append(cand)
+    return candidates
+
+
 def _build_candidate(
     entry: dict,
     source: Source,
@@ -537,6 +703,33 @@ def _build_candidate(
         published_at=release_date,
     )
     cand.image_url = image_url
+    # Carrusel multi-imagen: BBM expone gallery con 2+ imgs por entry (normal +
+    # variant cover típicamente). Antes _pick_variant_image() elegía la variant
+    # y descartábamos la regular; ahora preservamos TODAS en images[] con la
+    # variant como cover y las demás como gallery (para mostrar comparación
+    # normal vs variant en el modal del dashboard).
+    if entry["imgs"]:
+        seen_urls: set[str] = set()
+        images_list: list[dict[str, str]] = []
+        # 1) Cover = variant elegida.
+        if image_url and image_url not in seen_urls:
+            images_list.append({
+                "url": image_url, "kind": "cover", "description": ""
+            })
+            seen_urls.add(image_url)
+        # 2) Resto del gallery como entries kind=gallery, en orden BBM.
+        for im in entry["imgs"]:
+            src = im.get("src") or ""
+            if not src or src in seen_urls:
+                continue
+            seen_urls.add(src)
+            alt = (im.get("alt") or "").strip()
+            images_list.append({
+                "url": src, "kind": "gallery",
+                "description": alt[:120],
+            })
+        if len(images_list) > 1:
+            cand.images = images_list
     cand.release_date = release_date
     cand.price = price
     cand.tags = list(source.tags) + [f"bbm-vol:{volume}"] if volume else list(source.tags)
@@ -573,6 +766,8 @@ def bootstrap(
     min_score: int = 0,
     fetch_details: bool = False,  # noqa: ARG001 (no detail-fetch — el post trae todo)
     posts: tuple[dict, ...] = BBM_POSTS,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Descarga los posts BBM configurados y devuelve la lista de Candidates.
 
@@ -591,6 +786,7 @@ def bootstrap(
             continue
         entries = parse_post(html, post_meta)
         print(f"[blogbbm] {len(entries)} entries del post '{post_meta['source_suffix']}'")
+        post_kept: list[Candidate] = []
         for cand in entries:
             if min_score and cand.score < min_score:
                 continue
@@ -598,6 +794,9 @@ def bootstrap(
                 continue
             seen_urls.add(cand.url)
             candidates.append(cand)
+            post_kept.append(cand)
+        if flush_fn and post_kept:
+            flush_fn(post_kept)
     print(f"[blogbbm] terminado: {len(candidates)} candidates con score>={min_score}")
     return candidates
 

@@ -50,7 +50,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from xml.etree import ElementTree as ET
 
 import requests
@@ -64,6 +64,7 @@ try:
     from scripts.manga_watch import (  # type: ignore[import-not-found]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         score_candidate,
@@ -72,6 +73,7 @@ except ImportError:
     from manga_watch import (  # type: ignore[no-redef]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         score_candidate,
@@ -317,6 +319,17 @@ def parse_variant_detail(html_text: str, url: str) -> Candidate | None:
     )
     cand.release_date = release_year
     cand.image_url = image_url
+    # Multi-imagen: las detail pages de mangavariant a veces traen una
+    # mini-galería en `.entry-content img` además de la cover principal
+    # (og:image). Reparsear el HTML con BS4 para usar el extractor común.
+    try:
+        gallery = _extract_images_from_detail_soup(
+            BeautifulSoup(html_text, "html.parser"), url,
+        )
+    except Exception:
+        gallery = []
+    if len(gallery) > 1:
+        cand.images = gallery
     # Tags: combinamos las del source con discriminantes de mangavariant.
     extra_tags: list[str] = []
     if country_slug:
@@ -402,6 +415,8 @@ def bootstrap(
     fetch_details: bool = False,  # noqa: ARG001 (signature compat)
     workers: int = 4,
     max_items: int = 0,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Descarga el catálogo completo de mangavariant.com.
 
@@ -432,6 +447,7 @@ def bootstrap(
             time.sleep(sleep_seconds)
         return cand
 
+    _flush_batch: list[Candidate] = []
     with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for cand in pool.map(task, urls):
             if cand is None:
@@ -439,6 +455,13 @@ def bootstrap(
             if min_score and cand.score < min_score:
                 continue
             results.append(cand)
+            if flush_fn:
+                _flush_batch.append(cand)
+                if len(_flush_batch) >= 100:
+                    flush_fn(_flush_batch)
+                    _flush_batch.clear()
+    if flush_fn and _flush_batch:
+        flush_fn(_flush_batch)
 
     print(f"[mangavariant] terminado: {len(results)}/{len(urls)} candidates con "
           f"score>={min_score}")

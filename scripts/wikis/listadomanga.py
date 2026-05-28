@@ -27,7 +27,7 @@ import datetime as dt
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
@@ -44,6 +44,7 @@ try:
     from scripts.manga_watch import (  # type: ignore[import-not-found]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         score_candidate,
@@ -53,6 +54,7 @@ except ImportError:
     from manga_watch import (  # type: ignore[no-redef]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         score_candidate,
@@ -260,7 +262,9 @@ def fetch_detail_metadata(
     (gotcha #28: el bug histórico era tomar el primer `<img>` que siempre
     era vol 1 aunque el item del calendario fuera vol 34 Especial).
     """
-    result = {"image_url": "", "price": "", "description_extra": ""}
+    result: dict[str, Any] = {
+        "image_url": "", "price": "", "description_extra": "", "images": [],
+    }
     if not url:
         return result
     try:
@@ -284,6 +288,15 @@ def fetch_detail_metadata(
     ]
     if len(item_imgs) == 1:
         result["image_url"] = item_imgs[0]["src"].strip()
+        # Multi-imagen: SOLO cuando es un tomo único (artbook standalone /
+        # colección de un solo volumen). Páginas multi-tomo agruparían
+        # covers de hermanos distintos en una sola card, lo cual es wrong.
+        try:
+            gallery = _extract_images_from_detail_soup(soup, url)
+        except Exception:
+            gallery = []
+        if len(gallery) > 1:
+            result["images"] = gallery
 
     # 2) Precio: regex en el body buscando "X,YY €"
     body_text = soup.get_text(" ", strip=True)
@@ -337,6 +350,8 @@ def bootstrap(
     timeout: tuple[int, int] = (10, 30),
     min_score: int = 30,
     fetch_details: bool = False,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Recorre meses entre [from, to] inclusivo y devuelve candidates scored.
 
@@ -353,6 +368,8 @@ def bootstrap(
         kept = [c for c in cands if c.score >= min_score]
         print(f"    {len(cands)} items totales, {len(kept)} con score >= {min_score}")
         all_candidates.extend(kept)
+        if flush_fn and kept:
+            flush_fn(kept)
         if sleep_seconds > 0 and idx < len(pairs):
             time.sleep(sleep_seconds)
 
@@ -371,6 +388,9 @@ def bootstrap(
                 enriched_price += 1
             if meta["description_extra"]:
                 c.description = f"{c.description} · {meta['description_extra']}"[:2500]
+            meta_images = meta.get("images") or []
+            if len(meta_images) > 1 and not c.images:
+                c.images = meta_images
             if i % 50 == 0:
                 print(f"  [{i}/{len(all_candidates)}] +imgs={enriched_img} +prices={enriched_price}")
             if sleep_seconds > 0 and i < len(all_candidates):

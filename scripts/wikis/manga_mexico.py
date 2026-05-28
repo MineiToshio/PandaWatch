@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 from bs4 import BeautifulSoup
@@ -272,6 +272,8 @@ def bootstrap(
     min_score: int = 30,
     fetch_details: bool = False,
     publishers: tuple[str, ...] = ("panini", "kamite"),
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Recorre las páginas de catálogo (por editorial) y devuelve candidates.
 
@@ -286,6 +288,8 @@ def bootstrap(
         kept = [c for c in cands if c.score >= min_score]
         print(f"    {len(cands)} items totales, {len(kept)} con score >= {min_score}")
         all_candidates.extend(kept)
+        if flush_fn and kept:
+            flush_fn(kept)
         if sleep_seconds > 0 and idx < len(publishers):
             time.sleep(sleep_seconds)
     return all_candidates

@@ -57,6 +57,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Any, Callable
 
 import requests
 
@@ -341,6 +342,8 @@ def bootstrap(
     types: tuple[str, ...] = FEED_TYPES,
     macro_filter: str = DEFAULT_MACRO_FILTER,
     max_pages: int = MAX_PAGES_PER_TYPE,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Descarga las colecciones variant + box del MangaStore de SocialAnime.
 
@@ -362,6 +365,7 @@ def bootstrap(
         )
         print(f"[socialanime] type={type_label}: {len(raw)} items raw")
         kept = 0
+        type_kept: list[Candidate] = []
         for it in raw:
             cand = parse_feed_item(it, type_label)
             if cand is None:
@@ -374,8 +378,11 @@ def bootstrap(
                 continue
             seen_urls.add(cand.url)
             candidates.append(cand)
+            type_kept.append(cand)
             kept += 1
         print(f"[socialanime] type={type_label}: {kept} candidates tras filtro")
+        if flush_fn and type_kept:
+            flush_fn(type_kept)
     print(f"[socialanime] terminado: {len(candidates)} candidates con score>={min_score}")
     return candidates
 

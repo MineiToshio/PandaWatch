@@ -59,7 +59,7 @@ import html as html_lib
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
@@ -144,6 +144,17 @@ def _detect_collection_type_signals(collection_title: str) -> list[str]:
                     seen.add(s)
                     signals.append(s)
     return signals
+
+# Tokens en `Formato` que indican que la página entera ES un cofre/box
+# set. Cuando matchea, los tomos numerados (alt="X nº1", "X nº2"…) que
+# aparecen en `Números editados` NO se venden sueltos — viven dentro del
+# cofre. El parser entonces emite UN único item box-level y descarta los
+# tomos individuales. Ver gotcha #28.
+BOX_FORMAT_PATTERN = re.compile(
+    r"\ben\s+(?:cofre|estuche)\b",
+    re.IGNORECASE,
+)
+
 
 # Tokens en `Formato` que disparan "página entera = edición premium".
 # Cuando matchea, los items de `Números editados` reciben el signal
@@ -352,6 +363,24 @@ def _detect_premium_signals(formato: str) -> list[str]:
                     seen.add(s)
                     signals.append(s)
     return signals
+
+
+def _is_box_format(formato: str) -> bool:
+    """True si el formato indica 'X en cofre' / 'X en estuche'.
+
+    Cuando matchea, la colección entera es un box set: los tomos
+    individuales solo existen dentro del cofre y NO se venden sueltos.
+    El parser entonces emite UN solo item box-level (representando el
+    cofre) y descarta los tomos numerados en `Números editados`.
+
+    Caso semilla: id=5959 "Gon (Edición Coleccionista) (Norma)" — formato
+    "Tomo cuádruple A5 (148x210) cartoné (tapa dura) en cofre" tenía 2
+    tomos numerados que el corpus mostraba como items separados pese a
+    no venderse sueltos.
+    """
+    if not formato:
+        return False
+    return bool(BOX_FORMAT_PATTERN.search(formato))
 
 
 def _virtual_source(publisher_hint: str = "") -> Source:
@@ -805,9 +834,9 @@ def _merge_extras_into_items(
             # "Cofre para tomos 1 a 7" disparaba el signal `box_set` y
             # `product_type=boxset` — pero el item NO es un box set, es
             # un tomo regular CON un cofre como extra de 1ª edición.
-            # Fix 2026-05-24: solo inyectar "1ª Edición con extras" (que
-            # triggea `bonus`, semánticamente correcto). El detalle del
-            # extra se preserva en `extras[]` y `images[]`.
+            # La descripción usa "regalos" y "brindes" (score=20 c/u en
+            # KEYWORD_RULES) para que el score total ≥ 20 y el item sea
+            # visible en el dashboard (minScore default = 20).
             desc_parts = [collection_title, "1ª Edición con extras / regalos / brindes"]
             if formato:
                 desc_parts.append(f"Formato: {formato}")
@@ -927,6 +956,13 @@ def parse_collection_page(
         premium_signals = premium_signals + [
             s for s in collection_type_signals if s not in premium_signals
         ]
+    # Formato "en cofre" → emitimos UN solo item box-level y descartamos
+    # los tomos numerados. Inyectamos box_set explícito al set de signals
+    # premium para que el box item lo lleve (y se siga inyectando vía
+    # keyword_hints en la descripción).
+    is_box_format = _is_box_format(formato)
+    if is_box_format and "box_set" not in premium_signals:
+        premium_signals = premium_signals + ["box_set"]
     publisher = _extract_publisher_from_header(html_text)
     author = _extract_author_from_header(html_text)
 
@@ -998,6 +1034,14 @@ def parse_collection_page(
         # toda la sección (tomos regulares no son coleccionables salvo
         # que la página entera sea formato premium).
         if edition_kind == "regular" and not premium_signals:
+            continue
+
+        # Si el formato es "en cofre", saltamos la emisión de items
+        # individuales — los tomos numerados viven dentro del cofre y
+        # no se venden sueltos. La emisión box-level se hace después
+        # del loop. layout_a_covers ya fue pre-poblado arriba para que
+        # el box item pueda elegir su cover.
+        if is_box_format:
             continue
 
         for item_tbl in _iter_item_tables_after(h2):
@@ -1136,6 +1180,142 @@ def parse_collection_page(
             if idx_key not in layout_a_index:
                 layout_a_index[idx_key] = cand
 
+    # EMISIÓN BOX-LEVEL — solo cuando formato es "en cofre".
+    # Construimos UN único Candidate representando el cofre. Los Layout B
+    # extras (si los hay) se appendean directamente al carrusel del box,
+    # NO se rutean al merge tomo-por-tomo (no hay tomos individuales).
+    if is_box_format:
+        # Cover preferida: la del cofre (alt sin nº → key=("regular", "")).
+        # Fallback: primera cover capturada (cualquier tomo).
+        cover_url = layout_a_covers.get(("regular", ""))
+        if not cover_url:
+            for url in layout_a_covers.values():
+                if url:
+                    cover_url = url
+                    break
+
+        tomo_count = sum(
+            1 for k, v in layout_a_covers.items()
+            if v and k != ("regular", "")
+        )
+
+        desc_parts = [collection_title]
+        if formato:
+            desc_parts.append(f"Formato: {formato}")
+        if tomo_count:
+            desc_parts.append(f"Cofre con {tomo_count} tomos")
+
+        # Inyectar keyword hints para que detect_signals levante box_set +
+        # signals premium en el item box-level.
+        keyword_hints = ["Cofre", "Box Set"]
+        for s in premium_signals:
+            if s == "kanzenban":
+                keyword_hints.append("Kanzenban")
+            elif s == "hardcover":
+                keyword_hints.append("Hardcover Tapa Dura")
+            elif s == "deluxe":
+                keyword_hints.append("edición deluxe")
+            elif s == "omnibus":
+                keyword_hints.append("Omnibus 2-en-1")
+            elif s == "artbook":
+                keyword_hints.append("Artbook")
+        description = " · ".join(desc_parts + keyword_hints)
+
+        disambig = ""
+        if cover_url:
+            fn = cover_url.rsplit("/", 1)[-1]
+            disambig = fn.rsplit(".", 1)[0][:16]
+        synth_url = _make_synthetic_url(
+            coleccion_id, "box", "", disambiguator=disambig,
+        )
+
+        # Enriquecemos el title con "— Cofre" (a menos que ya lo lleve)
+        # para que `detect_signals` sobre el title detecte box_set, y así
+        # `is_collectible_edition` no rechace el item como "regular_tomo"
+        # cuando el collection_title no tiene boxset-word naturalmente
+        # (ej. "La Biblia", "Golgo 13: ...", "Utena (Edición Integral)").
+        box_title = collection_title
+        if not re.search(r"\b(?:cofre|box\s*set|cofanetto|coffret|estuche|slipcase)\b",
+                         box_title, re.IGNORECASE):
+            box_title = f"{collection_title} — Cofre"
+
+        box_cand = candidate_from_source(
+            source,
+            title=box_title[:260],
+            url=synth_url,
+            description=description[:2500],
+            published_at="",
+        )
+        box_cand.publisher = publisher
+        box_cand.author = author
+
+        # Carrusel: box cover primero, luego cada tomo del cofre como
+        # kind=extra (para dar contexto visual sin emitir cards separadas).
+        # Regla del owner (2026-05-24): "los box sets son solo el item del
+        # box set. Lo que se puede hacer es poner 1ro la foto del box set
+        # y luego para agregar más contexto poner las fotos de los tomos
+        # que vienen dentro, pero como 1 mismo item".
+        images_list: list[dict[str, str]] = []
+        if cover_url:
+            box_cand.image_url = cover_url
+            images_list.append({
+                "url": cover_url,
+                "local": "",
+                "kind": "cover",
+                "description": "",
+            })
+
+        # Tomos numerados dentro del cofre (covers capturados en layout_a_covers).
+        # Excluimos la key ("regular", "") que es el cover del cofre y la
+        # cover_url ya appendeada. Ordenamos por volumen ascendente para
+        # un carrusel coherente.
+        def _vol_sort_key(item: tuple[tuple[str, str], str]) -> tuple[int, str]:
+            (_, vol), _ = item
+            try:
+                return (int(vol), vol) if vol else (10**9, "")
+            except (ValueError, TypeError):
+                return (10**9, vol)
+
+        for (kind, vol), url in sorted(layout_a_covers.items(), key=_vol_sort_key):
+            if not url or url == cover_url:
+                continue
+            desc = f"Tomo {vol}" if vol else ""
+            images_list.append({
+                "url": url,
+                "local": "",
+                "kind": "extra",
+                "description": desc,
+            })
+
+        box_cand.images = images_list
+        box_cand.tags = list(source.tags or []) + [
+            "edition:box",
+            f"coleccion:{coleccion_id}",
+        ]
+
+        # Layout B extras (cofres-extra / regalos / cards / marcapáginas) →
+        # también al carrusel del box, después de los tomos.
+        if enable_layout_b and layout_b_headers:
+            for h2 in layout_b_headers:
+                tables = _iter_layout_b_tables_after(h2)
+                for ex in _iter_layout_b_cells(tables):
+                    if not ex.get("image_url"):
+                        continue
+                    box_cand.images.append({
+                        "url": ex["image_url"],
+                        "local": "",
+                        "kind": "extra",
+                        "description": ex.get("description", ""),
+                    })
+                    box_cand.extras.append({
+                        "description": ex.get("description", ""),
+                        "release_date": ex.get("release_date", ""),
+                        "source_section": "layout_b",
+                    })
+
+        candidates.append(box_cand)
+        return candidates
+
     # PASADA 2 — Layout B (extras / cofres / regalos)
     if enable_layout_b and layout_b_headers:
         all_extras: list[dict[str, str]] = []
@@ -1250,6 +1430,7 @@ def bootstrap(
     id_to: int = 6500,
     skip_404_streak: int = 500,
     mode: str = "lista",
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
     **kwargs: Any,
 ) -> list[Candidate]:
     """Recorre las colecciones de listadomanga.es.
@@ -1294,6 +1475,8 @@ def bootstrap(
         cands = fetch_collection(cid, session, timeout=timeout)
         kept = [c for c in cands if c.score >= min_score]
         all_candidates.extend(kept)
+        if flush_fn and kept:
+            flush_fn(kept)
 
         if not cands:
             consecutive_empty += 1

@@ -735,7 +735,8 @@ sources:
     source_class: "retailer"
     kind: "html"
     url: "https://usa.kinokuniya.com/kinokuniya-exclusives"
-    enabled: true
+    enabled: false
+    notes: "Reemplazado por wiki parser scripts/wikis/kinokuniya.py (Squarespace dynamic class names rompían el selector). El wiki parser extrae ISBNs directamente del patrón de URL de producto /bw/{isbn13}."
     tags: ["retailer", "exclusive", "variant", "shikishi"]
     selectors:
       item_selector: "div.margin-wrapper"

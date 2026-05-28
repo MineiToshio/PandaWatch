@@ -60,7 +60,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 import requests
 from bs4 import BeautifulSoup
@@ -73,6 +73,7 @@ try:
     from scripts.manga_watch import (  # type: ignore[import-not-found]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         is_likely_manga,
@@ -82,6 +83,7 @@ except ImportError:
     from manga_watch import (  # type: ignore[no-redef]
         Candidate,
         Source,
+        _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
         is_likely_manga,
@@ -563,6 +565,13 @@ def parse_edition_metadata(html_text: str) -> dict:
 
     image_url = og("og:image")
 
+    # Multi-imagen edición-nivel: páginas /ediciones/ a veces traen thumbnails
+    # de portadas alternativas/back-cover además del og:image principal.
+    try:
+        images = _extract_images_from_detail_soup(soup, BASE_URL)
+    except Exception:
+        images = []
+
     return {
         "title": title,
         "publisher": publisher,
@@ -572,6 +581,7 @@ def parse_edition_metadata(html_text: str) -> dict:
         "author": author,
         "description": description,
         "image_url": image_url,
+        "images": images,
     }
 
 
@@ -688,6 +698,12 @@ def expand_whakoom_edition(
             cand.author = meta["author"]
         # Cover: preferir el del tomo individual; fallback a la portada general.
         cand.image_url = vol.get("image_url", "") or meta.get("image_url", "")
+        # Multi-imagen edición-nivel: si la /ediciones/ page expuso una galería
+        # con portadas alternativas, se hereda a cada tomo (el merge de
+        # candidate_to_json + append_jsonl la deduplica por URL).
+        meta_images = meta.get("images") or []
+        if len(meta_images) > 1:
+            cand.images = list(meta_images)
         candidates.append(cand)
     return candidates
 
@@ -816,6 +832,8 @@ def bootstrap(
     fetch_details: bool = False,  # ignorado — spider ya hace detail-fetch
     max_editions: int = 1500,
     ignore_throttle: bool = False,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    **kwargs: Any,
 ) -> list[Candidate]:
     """Spider Whakoom — descubre ediciones desde /newtitles vía BFS.
 
@@ -841,6 +859,7 @@ def bootstrap(
         return _bootstrap_inner(
             session=session, sleep_seconds=sleep_seconds,
             timeout=timeout, min_score=min_score, max_editions=max_editions,
+            flush_fn=flush_fn,
         )
     except WhakoomBlocked as exc:
         print(f"\n[WHAKOOM] ABORTADO: {exc}")
@@ -856,6 +875,7 @@ def _bootstrap_inner(
     timeout: tuple[int, int],
     min_score: int,
     max_editions: int,
+    flush_fn: "Callable[[list[Candidate]], None] | None" = None,
 ) -> list[Candidate]:
 
     # Nivel 1: /newtitles → comics URLs
@@ -910,13 +930,18 @@ def _bootstrap_inner(
             ed_url, session, timeout=timeout, sleep_seconds=sleep_seconds,
             edition_html=text,  # ya lo tenemos descargado
         )
+        edition_new: list[Candidate] = []
         for cand in expanded:
             is_m, _ = is_likely_manga(
                 cand.title, cand.description,
                 source_purity="mixed", publisher=cand.publisher,
             )
             if is_m:
-                candidates.append(score_candidate(cand))
+                scored = score_candidate(cand)
+                candidates.append(scored)
+                edition_new.append(scored)
+        if flush_fn and edition_new:
+            flush_fn(edition_new)
 
         # Descubrir variantes hermanas (BFS shallow) — desde el HTML principal,
         # no necesitamos refetchearlo.
