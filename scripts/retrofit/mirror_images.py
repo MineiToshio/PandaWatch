@@ -3,17 +3,24 @@
 
 Image storage Fase 1, pasos restantes (ver "Image storage" en CLAUDE.md):
 
-1. BACKFILL — para cada item de items.jsonl con `image_url` y sin
-   `image_local`, descarga la portada a data/images/ y setea
-   `image_local`. El scrape (`manga_watch.py`) ya hace esto para items
-   nuevos; este retrofit cubre el corpus histórico (los items previos
-   a la Fase 1, que tienen `image_local` vacío).
+1. BACKFILL — para cada item de items.jsonl:
+   - **Cover**: si tiene `image_url` y le falta `image_local`, descarga
+     la portada a data/images/ y setea `image_local`.
+   - **Gallery** (multi-imagen, 2026-05-26): para cada entry en
+     `images[]` con `kind != cover` que tenga `url` pero le falte
+     `local`, descarga la imagen y setea `images[i].local`. El scrape
+     (`manga_watch.py::mirror_candidate_images`) ya lo hace para items
+     nuevos; este retrofit cubre el corpus histórico que recién recibió
+     `images[]` poblado por `backfill_metadata.py --only images`.
 
 2. GC mark-and-sweep — busca en data/images/ los archivos que NINGÚN
    item de items.jsonl referencia (orphans, típicamente de items que
-   se quitaron del corpus) y los saca de la carpeta. Por defecto los
-   manda a una cuarentena (data/images/_orphans/) — reversible;
-   `--gc-delete` los borra de verdad.
+   se quitaron del corpus) y los saca de la carpeta. El set de
+   "referenciadas" incluye tanto `image_local` (cover) como cada
+   `images[i].local` (gallery) — si solo mirara cover, los archivos
+   de gallery caerían como orphans. Por defecto los manda a una
+   cuarentena (data/images/_orphans/) — reversible; `--gc-delete` los
+   borra de verdad.
 
 Idempotente: re-correrlo no re-descarga imágenes ya en disco (el nombre
 de archivo es determinístico). Seguro de correr en el overnight.
@@ -42,7 +49,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import make_session  # type: ignore
+from manga_watch import make_session, backup_and_rotate  # type: ignore
 
 # MISMO User-Agent que usa el scraper (`manga_watch.py --user-agent`).
 # Algunas fuentes (Manga-Sanctuary, p.ej.) sirven 404 a UAs desconocidos
@@ -88,42 +95,83 @@ def _run_backfill(
     user_agent: str,
     dry_run: bool,
 ) -> int:
-    """Descarga las portadas faltantes. Devuelve cuántos items se actualizaron."""
-    targets = [
+    """Descarga las portadas + gallery faltantes. Devuelve cuántos items
+    se actualizaron.
+
+    Procesa dos clases de targets:
+    1) **Cover**: items con `image_url` y sin `image_local` (single).
+    2) **Gallery**: items con `images[]` cuyos elementos `kind != cover`
+       tienen `url` pero no `local`. Una imagen gallery = un download.
+    """
+    # 1) Cover targets (comportamiento original).
+    cover_targets = [
         it for it in items
         if "_raw" not in it and it.get("image_url") and not it.get("image_local")
     ]
+    # 2) Gallery targets: por item, recopilo los índices de images[] que
+    # son non-cover y todavía no tienen `local` poblado.
+    gallery_targets: list[tuple[dict, int]] = []
+    for it in items:
+        if "_raw" in it:
+            continue
+        imgs = it.get("images") or []
+        for idx, im in enumerate(imgs):
+            if not isinstance(im, dict):
+                continue
+            if im.get("kind") == "cover":
+                continue
+            if im.get("url") and not im.get("local"):
+                gallery_targets.append((it, idx))
+
     if limit > 0:
-        targets = targets[:limit]
+        # Limit aplica al total de URLs únicas para ser fair entre cover
+        # y gallery (no caemos en un sesgo dispar).
+        cover_targets = cover_targets[:limit]
+        # Si todavía hay capacidad, gallery hasta completar limit.
+        remaining = max(0, limit - len(cover_targets))
+        gallery_targets = gallery_targets[:remaining]
 
-    # Dedup por image_url: muchos items comparten la misma portada (tomos
-    # de una misma edición, mismo cover cross-source). Bajamos cada URL
-    # única una sola vez y mapeamos el filename a todos sus items.
-    by_url: dict[str, list[dict]] = {}
-    for it in targets:
-        by_url.setdefault(it["image_url"], []).append(it)
+    # Dedup por URL: muchos items comparten la misma portada (tomos de
+    # una edición, cross-source). Bajamos cada URL única una sola vez
+    # y mapeamos el filename a todos sus consumers.
+    # consumers: list of either "cover_for(it)" or "gallery_for(it, idx)".
+    by_url: dict[str, list[tuple[str, dict, int]]] = {}
+    for it in cover_targets:
+        by_url.setdefault(it["image_url"], []).append(("cover", it, -1))
+    for it, idx in gallery_targets:
+        url = it["images"][idx]["url"]
+        by_url.setdefault(url, []).append(("gallery", it, idx))
 
-    print(f"[BACKFILL] {len(targets)} items sin image_local "
+    n_cover = len(cover_targets)
+    n_gallery = len(gallery_targets)
+    print(f"[BACKFILL] {n_cover} covers + {n_gallery} gallery sin local "
           f"({len(by_url)} URLs de imagen únicas).")
     if not by_url:
         return 0
     if dry_run:
-        src_counter = Counter(t.get("source", "?") for t in targets)
-        print("[BACKFILL] Top sources pendientes:")
-        for source, n in src_counter.most_common(10):
-            print(f"  {n:5d}  {source}")
+        src_counter = Counter(t.get("source", "?") for t in cover_targets)
+        if src_counter:
+            print("[BACKFILL] Top sources pendientes (covers):")
+            for source, n in src_counter.most_common(10):
+                print(f"  {n:5d}  {source}")
+        if n_gallery:
+            g_counter = Counter(t.get("source", "?") for t, _ in gallery_targets)
+            print("[BACKFILL] Top sources pendientes (gallery):")
+            for source, n in g_counter.most_common(10):
+                print(f"  {n:5d}  {source}")
         print("[DRY-RUN] No se descargó nada.")
         return 0
 
     session = make_session(user_agent)
 
-    def _one(entry: tuple[str, list[dict]]) -> tuple[list[dict], str]:
-        url, group = entry
+    def _one(entry: tuple[str, list[tuple[str, dict, int]]]) -> tuple[list[tuple[str, dict, int]], str]:
+        url, consumers = entry
+        referer = consumers[0][1].get("url", "")
         filename = image_store.download_image(
             url, images_dir, session=session,
-            timeout=timeout, referer=group[0].get("url", ""),
+            timeout=timeout, referer=referer,
         )
-        return group, filename
+        return consumers, filename
 
     updated = 0
     failed_urls = 0
@@ -131,19 +179,28 @@ def _run_backfill(
     total = len(by_url)
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="mirror") as pool:
         for fut in as_completed(pool.submit(_one, e) for e in by_url.items()):
-            group, filename = fut.result()
+            consumers, filename = fut.result()
             done += 1
             if filename:
-                for it in group:
-                    it["image_local"] = filename
-                updated += len(group)
+                for kind, it, idx in consumers:
+                    if kind == "cover":
+                        it["image_local"] = filename
+                        # También sincronizar el primer images[] kind=cover
+                        # si coincide en URL (mantiene paridad con el scrape).
+                        for im in (it.get("images") or []):
+                            if im.get("kind") == "cover" and im.get("url") == it["image_url"]:
+                                im["local"] = filename
+                                break
+                    else:  # gallery
+                        it["images"][idx]["local"] = filename
+                updated += len(consumers)
             else:
                 failed_urls += 1
             if done % 200 == 0:
-                print(f"  [{done}/{total}] URLs procesadas, {updated} items con portada")
+                print(f"  [{done}/{total}] URLs procesadas, {updated} consumers atendidos")
 
-    print(f"[BACKFILL] {updated} items con image_local, {failed_urls} URLs "
-          f"fallidas (esos items quedan con image_url como fallback).")
+    print(f"[BACKFILL] {updated} consumers actualizados, {failed_urls} URLs "
+          f"fallidas (esos items quedan con image_url/images[].url como fallback).")
     return updated
 
 
@@ -161,10 +218,17 @@ def _run_gc(
         print("[GC] data/images/ no existe todavía — nada que limpiar.")
         return 0
 
-    referenced = {
-        it["image_local"] for it in items
-        if "_raw" not in it and it.get("image_local")
-    }
+    # Referenciadas = cover (`image_local`) + cada gallery (`images[i].local`).
+    # Sin la unión, los archivos de gallery quedarían marcados como orphans.
+    referenced: set[str] = set()
+    for it in items:
+        if "_raw" in it:
+            continue
+        if it.get("image_local"):
+            referenced.add(it["image_local"])
+        for im in (it.get("images") or []):
+            if isinstance(im, dict) and im.get("local"):
+                referenced.add(im["local"])
     on_disk = [p for p in images_dir.iterdir() if p.is_file()]
     orphans = [p for p in on_disk if p.name not in referenced]
 
@@ -253,9 +317,8 @@ def main() -> int:
         return 0
 
     dst = Path(args.output)
-    backup = dst.with_suffix(dst.suffix + ".pre-mirror-bak")
     if dst.exists():
-        backup.write_text(dst.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(dst, "mirror")
         print(f"[OK] Backup en {backup}")
     _write_items(dst, items)
     print(f"[OK] Escribí {dst} — {updated} items con image_local nuevo.")

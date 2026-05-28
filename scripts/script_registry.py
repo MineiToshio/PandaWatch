@@ -390,6 +390,186 @@ SCRIPTS: list[dict[str, Any]] = [
                 "values": {"--bootstrap-wiki": "blogbbm"},
             },
             {
+                "id": "booksprivilege_delta",
+                "label": "🇯🇵 BooksPrivilege - 店舗特典 (año en curso)",
+                "desc": (
+                    "Agregador JP de 店舗特典 (extras de tienda) — por cada release "
+                    "lista qué bonus da cada retailer (Animate, Gamers, Toranoana, "
+                    "Melonbooks, COMIC ZIN...). Cubre items que las sources JP "
+                    "directas no marcan. Modo delta: año en curso. Para ventana "
+                    "más fina (mes actual + 2 anteriores) ajustá --wiki-from manual."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "booksprivilege",
+                    "--wiki-from": "2026-01",
+                },
+            },
+            {
+                "id": "booksprivilege_full",
+                "label": "🇯🇵 BooksPrivilege - 店舗特典 (archivo histórico desde 2020)",
+                "desc": (
+                    "Iteración completa del archivo (2020-01 hasta hoy). ~70 meses "
+                    "× ~15-50 items/día con tokuten = varios miles de fetches. "
+                    "Pesado, correr ocasionalmente para backfill."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "booksprivilege",
+                    "--wiki-from": "2020-01",
+                },
+            },
+            {
+                "id": "sumikko",
+                "label": "🇯🇵 Sumikko - 限定版・特装版 (catálogo completo ~3178 items)",
+                "desc": (
+                    "comic.sumikko.info — catálogo JP de ediciones limitadas y "
+                    "especiales (限定版/特装版) con extras (acrylic stand, 小冊子, "
+                    "缶バッジ, BOX, etc.). 100% ISBN-10 + portada Amazon CDN. "
+                    "Iteración de ?p=1..32 cubre todo (~30s). Complementario a "
+                    "booksprivilege que cubre 店舗特典 (extras de tienda) en vez "
+                    "de las ediciones en sí. Ignora el rango de fechas."
+                ),
+                "values": {"--bootstrap-wiki": "sumikko"},
+            },
+            {
+                "id": "mangapassion_delta",
+                "label": "🇩🇪 Manga-Passion - Sonderausgaben + Variants (últimas novedades)",
+                "desc": (
+                    "manga-passion.de API — catálogo de referencia alemán (DACH). "
+                    "Sonderausgaben (Limited/Collector/Premium/Box editions) y "
+                    "Variant-Covers. Modo delta: date[after] basado en --wiki-from. "
+                    "API pública REST JSON-LD, sin auth, sin anti-bot. "
+                    "Incluye ISBN-13, precio, fecha, portada y extras."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "mangapassion",
+                    "--wiki-from": "2026-01",
+                },
+            },
+            {
+                "id": "mangapassion_full",
+                "label": "🇩🇪 Manga-Passion - Sonderausgaben + Variants (catálogo completo)",
+                "desc": (
+                    "Descarga todo el catálogo histórico sin filtro de fecha "
+                    "(year_from=2000 → sin date[after]). Cubre Sonderausgaben "
+                    "desde los orígenes del catálogo. Correr ocasionalmente "
+                    "para backfill; el delta cubre lo nuevo en corridas regulares."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "mangapassion",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
+                "id": "animeclick_delta",
+                "label": "🇮🇹 AnimeClick - Edizioni speciali (últimas novedades)",
+                "desc": (
+                    "animeclick.it — calendario semanal IT. Navega ~3 meses atrás. "
+                    "Cubre Star Comics, Panini Comics, J-POP, MangaYo!, Crunchyroll IT "
+                    "y otros publishers no presentes en SocialAnime. "
+                    "Keyword filter en listing (~20% hit rate). Sin ISBN."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "animeclick",
+                    "--wiki-from": "2026-01",
+                },
+            },
+            {
+                "id": "animeclick_full",
+                "label": "🇮🇹 AnimeClick - Edizioni speciali (catálogo desde 2015)",
+                "desc": (
+                    "Navega el calendario semanal de AnimeClick desde 2015 hasta hoy. "
+                    "~500 semanas × keyword filter (~20%) × fetch detalle. "
+                    "Correr mensualmente para backfill; el delta cubre las novedades."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "animeclick",
+                    "--wiki-from": "2015-01",
+                },
+            },
+            {
+                "id": "prhcomics_delta",
+                "label": "🇺🇸 PRH Comics - hardcovers + box sets EN (últimos 3 meses)",
+                "desc": (
+                    "Descarga la página /manga/ de prhcomics.com (una sola request). "
+                    "Extrae hardcovers, box sets y collector's editions de los publishers "
+                    "distribuidos por PRH: Dark Horse Manga, Kodansha Comics, Seven Seas, "
+                    "Square Enix Manga, TOKYOPOP, Titan, Vertical, Inklore. "
+                    "Filtra por fecha de lanzamiento ≥ wiki-from."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "prhcomics",
+                },
+            },
+            {
+                "id": "prhcomics_full",
+                "label": "🇺🇸 PRH Comics - catálogo completo EN/CA",
+                "desc": (
+                    "Igual que el delta pero sin filtro de fecha — devuelve todo el "
+                    "catálogo activo de PRH Comics (hardcovers + box sets, "
+                    "publishers distribuidos por PRH). Una sola request HTTP."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "prhcomics",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
+                "id": "kinokuniya_delta",
+                "label": "🇺🇸 Kinokuniya USA - exclusivos (catálogo activo)",
+                "desc": (
+                    "Descarga la página kinokuniya-exclusives de Kinokuniya USA. "
+                    "Extrae ISBNs del patrón /bw/{isbn13} en los links de producto. "
+                    "Cubre: variant covers, dust jackets exclusivos, shikishi, ID cards, "
+                    "sticker packs, limited editions con bonus. Una sola request HTTP. "
+                    "El sitio corre sobre Squarespace — CSS class names dinámicos, "
+                    "el parser usa URLs en vez de selectores CSS."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "kinokuniya",
+                },
+            },
+            {
+                "id": "kinokuniya_full",
+                "label": "🇺🇸 Kinokuniya USA - catálogo completo (igual al delta)",
+                "desc": (
+                    "Igual que kinokuniya_delta. La página Kinokuniya Exclusives "
+                    "no tiene paginación histórica — siempre devuelve el catálogo "
+                    "activo completo. Este preset es equivalente al delta."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "kinokuniya",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
+                "id": "yenpress_delta",
+                "label": "🇺🇸 Yen Press Calendar - últimos 3 meses",
+                "desc": (
+                    "Descarga el calendario mensual de yenpress.com/calendar para "
+                    "los últimos ~3 meses. Filtra categorías manga/comics (excluye "
+                    "light novels y audio) y aplica pre-filtro por keywords de "
+                    "edición especial: collector's, deluxe, box set, hardcover, "
+                    "limited edition, artbook, slipcase, numbered. ~3 requests HTTP."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "yenpress",
+                },
+            },
+            {
+                "id": "yenpress_full",
+                "label": "🇺🇸 Yen Press Calendar - catálogo histórico desde 2013",
+                "desc": (
+                    "Descarga el calendario de Yen Press desde 2013-01 hasta hoy. "
+                    "~140 meses × 1 request = ~140 HTTP, ~70s con sleep 0.5s. "
+                    "Cubre toda la historia editorial de Yen Press EN para "
+                    "ediciones especiales (collector's editions, box sets, etc.)."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "yenpress",
+                    "--wiki-from": "2013-01",
+                },
+            },
+            {
                 "id": "listadomanga_collections_piloto",
                 "label": "🇪🇸 Listado Manga - colecciones (piloto Fase 1, primeros 100 ids)",
                 "desc": (
@@ -430,7 +610,9 @@ SCRIPTS: list[dict[str, Any]] = [
                   choices=["listadomanga", "listadomanga-blog", "whakoom",
                            "manga-sanctuary", "otaku-calendar", "manga-mexico",
                            "mangavariant", "socialanime", "blogbbm",
-                           "listadomanga-collections"]),
+                           "booksprivilege", "sumikko",
+                           "listadomanga-collections", "mangapassion",
+                           "animeclick", "prhcomics", "kinokuniya", "yenpress"]),
             _flag("--wiki-from", "Mes inicial (YYYY-MM)",
                   "Desde qué mes traer items. Aplica a wikis basadas en "
                   "calendario (listadomanga, manga-sanctuary, otaku-calendar). "
@@ -586,7 +768,7 @@ SCRIPTS: list[dict[str, Any]] = [
         "what": (
             "Revisa todos los items del catálogo y saca los que ya no "
             "cumplen el filtro de 'esto es manga' (figuras, comics, prints, "
-            "noticias). Los movidos van a data/items.non_manga.jsonl para "
+            "noticias). Los movidos van a data/diagnostics/items.non_manga.jsonl para "
             "que los puedas revisar."
         ),
         "when": (
@@ -623,7 +805,7 @@ SCRIPTS: list[dict[str, Any]] = [
         "tagline": "Saca los tomos regulares — solo queremos ediciones especiales.",
         "what": (
             "Aplica el gate is_collectible_edition. Mueve los 'tomos "
-            "regulares sin nada especial' a data/items.non_collectible.jsonl. "
+            "regulares sin nada especial' a data/diagnostics/items.non_collectible.jsonl. "
             "Solo se conservan ediciones limitadas, deluxe, artbooks, "
             "magazines de serie y tomos con extras de primera edición."
         ),
@@ -764,13 +946,19 @@ SCRIPTS: list[dict[str, Any]] = [
                 "desc": "Sólo image_url. Más rápido.",
                 "values": {"--only": "image_url"},
             },
+            {
+                "id": "only_galleries",
+                "label": "🎞️ Solo carrusel multi-imagen",
+                "desc": "Re-fetchea detail pages para poblar images[] (galería completa: cover + tomas adicionales). Procesa items con < 2 imágenes.",
+                "values": {"--only": "images"},
+            },
         ],
         "flags": [
             _flag("--only", "Solo este campo",
                   "Si querés rellenar solo uno: image_url, author, isbn, "
-                  "release_date o price.",
+                  "release_date, price, o images (carrusel multi-imagen).",
                   type="choice", default="",
-                  choices=["", "image_url", "author", "isbn", "release_date", "price"]),
+                  choices=["", "image_url", "author", "isbn", "release_date", "price", "images"]),
             _flag("--limit", "Máx items a procesar",
                   "0 = sin límite. Útil para probar con --limit 50.",
                   type="int", default=0, placeholder="50"),
@@ -787,6 +975,56 @@ SCRIPTS: list[dict[str, Any]] = [
                   placeholder="darkhorse.com"),
             _flag("--dry-run", "Modo prueba (no fetchea)",
                   "Solo cuenta cuántos serían candidatos.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "backfill_animeclick_details",
+        "category": "Mantenimiento",
+        "icon": "🇮🇹",
+        "name": "Backfill AnimeClick (fecha, precio, descripción)",
+        "tagline": "Rellena release_date / price / description en items AnimeClick que quedaron vacíos.",
+        "what": (
+            "Cuando se ingestaron los items de AnimeClick sin buscar el "
+            "detalle de cada edición, los campos release_date, price y "
+            "description quedaron vacíos. Este script los rellena fetching "
+            "directamente las páginas de detalle — sin re-navegar el "
+            "calendario semana a semana. Con 4 workers tarda ~8 min para "
+            "1400 items."
+        ),
+        "when": (
+            "Una sola vez tras la ingesta inicial de AnimeClick. También "
+            "si aparecen nuevos items sin fecha/precio después de una "
+            "corrida de animeclick."
+        ),
+        "command": [PYTHON, "scripts/retrofit/backfill_animeclick_details.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba (5 items)",
+                "desc": "Muestra qué campos rellenará sin tocar items.jsonl.",
+                "values": {"--dry-run": True, "--limit": 5},
+            },
+            {
+                "id": "full",
+                "label": "🟢 Rellenar todo",
+                "desc": "Backfill completo con 4 workers (~8 min).",
+                "values": {"--workers": 4},
+            },
+        ],
+        "flags": [
+            _flag("--workers", "Workers paralelos",
+                  "Cuántos fetches hacer en paralelo. Default 4.",
+                  type="int", default=4),
+            _flag("--sleep", "Pausa entre requests (seg)",
+                  "Segundos de pausa por worker entre fetches. Default 0.3.",
+                  type="float", default=0.3, advanced=True),
+            _flag("--limit", "Máx items a procesar",
+                  "0 = sin límite. Útil para pruebas.",
+                  type="int", default=0, placeholder="50"),
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los cambios que haría sin tocar items.jsonl.",
                   type="bool", default=False),
         ],
     },
@@ -855,6 +1093,69 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False, advanced=True),
             _flag("--dry-run", "Modo prueba (no baja ni borra)",
                   "Solo reporta qué haría, sin tocar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "translate_descriptions",
+        "category": "Mantenimiento",
+        "icon": "🌐",
+        "name": "Traducir descripciones al español",
+        "tagline": "Traduce las descripciones (DE/FR/IT/JP/VI/TH…) al español.",
+        "what": (
+            "El catálogo tiene items de 13 países en 8 idiomas: japonés, "
+            "alemán, francés, italiano, vietnamita, tailandés… Las descripciones "
+            "vienen en el idioma de la fuente y son ilegibles para un lector en "
+            "español. Este script popula el campo description_es con la "
+            "traducción al español usando DeepL (idiomas europeos + JP) y "
+            "Google Translate (VI, TH). El campo description original no se "
+            "toca — lo sigue usando el sistema de señales internamente."
+        ),
+        "when": (
+            "Después de cada scrape grande que trajo items nuevos con "
+            "descripción en idioma extranjero. Idempotente: solo traduce "
+            "items sin description_es (o todos si usás --force). "
+            "Necesita DEEPL_API_KEY en .env (gratis en deepl.com)."
+        ),
+        "command": [PYTHON, "scripts/retrofit/translate_descriptions.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba (sin traducir)",
+                "desc": "Muestra cuántos items y campos se traducirían. No llama a la API.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "translate_all",
+                "label": "🟢 Traducir pendientes",
+                "desc": "Traduce todos los items sin description_es. Crea backup automático.",
+                "values": {},
+            },
+            {
+                "id": "translate_force",
+                "label": "🔄 Re-traducir todo",
+                "desc": "Re-traduce todos los items aunque ya tengan description_es.",
+                "values": {"--force": True},
+            },
+        ],
+        "flags": [
+            _flag("--workers", "Hilos paralelos",
+                  "Cuántas llamadas a la API hacer en paralelo. Default 4. "
+                  "Subir a 8 si la API responde rápido.",
+                  type="int", default=4),
+            _flag("--limit", "Máx items a traducir",
+                  "0 = sin límite. Útil para probar con --limit 50.",
+                  type="int", default=0, placeholder="50"),
+            _flag("--sleep", "Pausa entre llamadas (seg)",
+                  "Segundos de pausa entre llamadas a la API para evitar "
+                  "rate-limit. Default 0.15.",
+                  type="float", default=0.15, advanced=True),
+            _flag("--force", "Re-traducir existentes",
+                  "Traduce aunque description_es ya esté poblado.",
+                  type="bool", default=False, advanced=True),
+            _flag("--dry-run", "Modo prueba",
+                  "Solo muestra qué se traduciría. No llama a la API.",
                   type="bool", default=False),
         ],
     },
@@ -1007,6 +1308,63 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Default 1.5. Bajar a 0.5 si la corrida es chica; subir "
                   "a 3.0 si una tienda te rate-limita.",
                   type="float", default=1.5, advanced=True),
+        ],
+    },
+
+    {
+        "id": "generate_slugs",
+        "category": "Retrofit",
+        "icon": "🔗",
+        "name": "Generar slugs para el app Next.js",
+        "tagline": "Asigna el campo `slug` a cada item para la ruta /item/[slug] del app.",
+        "what": (
+            "El app Next.js (web-next/) usa URLs del tipo /item/berserk-darkhorse-"
+            "deluxe-42 para las páginas de detalle. Este script genera esas URLs "
+            "y las guarda en el campo `slug` de items.jsonl. Prioridad: si el item "
+            "tiene ISBN en el cluster_key → isbn-{isbn}; si tiene edition_key + "
+            "volumen → {edition_key}-{vol}; si solo edition_key → {edition_key}; "
+            "si tiene isbn en el campo → isbn-{isbn}; sino → item-{hash}. "
+            "Las colisiones se resuelven con sufijos -b/-c (el más antiguo conserva "
+            "el slug limpio). Idempotente: no re-escribe slugs que no cambiaron."
+        ),
+        "when": (
+            "Como último paso del skill /standardize-catalog, después de asignar "
+            "edition_key y volume a los items nuevos. También correrlo una vez "
+            "para generar slugs en todo el corpus existente. No corre "
+            "automáticamente en scrape_delta ni scrape_full."
+        ),
+        "command": [PYTHON, "scripts/retrofit/generate_slugs.py"],
+        "presets": [
+            {
+                "id": "only_missing",
+                "label": "🟢 Solo items sin slug (incremental)",
+                "desc": "Asigna slugs únicamente a los items nuevos. Rápido.",
+                "values": {"--only-missing": True},
+            },
+            {
+                "id": "all",
+                "label": "🔄 Regenerar todos",
+                "desc": "Recomputa slugs en todo el corpus. Actualiza los que cambiaron.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué slugs asignaría sin tocar items.jsonl.",
+                "values": {"--dry-run": True, "--verbose": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los slugs que asignaría sin modificar items.jsonl.",
+                  type="bool", default=False),
+            _flag("--only-missing", "Solo items sin slug",
+                  "Salta los items que ya tienen slug. Ideal para corridas "
+                  "incrementales post-/standardize-catalog.",
+                  type="bool", default=False),
+            _flag("--verbose", "Log de cada asignación",
+                  "Imprime el slug asignado y el título de cada item procesado.",
+                  type="bool", default=False, advanced=True),
         ],
     },
 

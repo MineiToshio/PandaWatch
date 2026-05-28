@@ -23,7 +23,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import derive_cluster_key  # type: ignore
+from manga_watch import derive_cluster_key, backup_and_rotate  # type: ignore
 
 
 def main() -> int:
@@ -98,8 +98,7 @@ def main() -> int:
 
     dst = Path(args.output)
     if dst == src and src.exists():
-        backup = src.with_suffix(src.suffix + ".pre-cluster-bak")
-        backup.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(src, "cluster")
         print(f"[OK] Backup: {backup}")
 
     out_lines: list[str] = []

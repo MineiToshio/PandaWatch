@@ -106,6 +106,8 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "páginas a color", "score": 18, "type": "bonus"},
     {"phrase": "paginas a color", "score": 18, "type": "bonus"},
     {"phrase": "extras", "score": 14, "type": "bonus"},
+    {"phrase": "regalos", "score": 20, "type": "bonus"},
+    {"phrase": "brindes", "score": 20, "type": "bonus"},
     {"phrase": "artbook", "score": 35, "type": "artbook"},
     {"phrase": "libro de arte", "score": 35, "type": "artbook"},
     {"phrase": "libro de ilustraciones", "score": 35, "type": "artbook"},
@@ -1459,23 +1461,185 @@ def _is_placeholder_image(url: str) -> bool:
     return False
 
 
-def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
-    """Extrae URL de portada de una página de detalle, varias estrategias.
+# Selectores CSS comunes para galerías de producto. Cubre los frameworks de
+# e-commerce más usados por las fuentes (Shopify, Tiendanube, WooCommerce,
+# Magento, PrestaShop, Squarespace, custom). El extractor multi-imagen los
+# prueba en cascada después de OG/JSON-LD para complementar la cover con
+# tomas adicionales (vista trasera, contenido, lomo, extras de la edición).
+_GALLERY_CSS_SELECTORS: tuple[str, ...] = (
+    # Shopify
+    ".product__media img",
+    ".product-single__photo img",
+    ".product__photo img",
+    "[data-product-images] img",
+    "[data-product-image] img",
+    "[data-zoom-image]",
+    "[data-product-media] img",
+    ".product-gallery img",
+    ".product-gallery__image img",
+    # Tiendanube
+    ".js-product-slides img",
+    ".js-product-slide img",
+    ".swiper-slide img",
+    "[data-image-id] img",
+    # WooCommerce / Magento / PrestaShop
+    ".woocommerce-product-gallery__image img",
+    ".woocommerce-product-gallery img",
+    ".fotorama__img",
+    ".fotorama img",
+    ".gallery-image",
+    ".product-image-thumbs img",
+    ".product-images img",
+    ".product__images img",
+    ".product_images img",
+    ".product-photo img",
+    "#product-images img",
+    "#product_images img",
+    "#product-gallery img",
+    # Genéricos
+    "[class*='gallery'] img",
+    "[class*='carousel'] img",
+    "[class*='slider'] img",
+    "[class*='thumbs'] img",
+    "[class*='thumbnails'] img",
+    "[class*='additional-images'] img",
+    "[class*='product-photo'] img",
+    "[class*='product-images'] img",
+    "[class*='cover'] img",
+    "[class*='jacket'] img",
+    "[class*='detail'] img",
+    "[id*='product'] img",
+)
 
-    1) JSON-LD schema.org `image` field
-    2) OpenGraph `og:image` / Twitter `twitter:image`
-    3) meta itemprop="image"
-    4) <img> con clases típicas de portada (cover, product-image, etc.)
-    5) Ranking general de <img> tags del body (mismo scoring que el listing).
 
-    Filtra placeholders conocidos via _is_placeholder_image — algunos sites
-    devuelven cover.png / placeholder.jpg en og:image cuando el producto
-    no tiene foto cargada, y queremos devolver "" en ese caso para que el
-    item pueda ser re-fetcheado más tarde.
+def _gallery_url_normalize(url: str) -> str:
+    """Normaliza una URL de gallery para dedup: strippea query params no
+    significativos y upscalea miniaturas conocidas a su tamaño full cuando
+    aplica (Shopify usa `?v=12345` o `_100x100.jpg` para miniaturas, la
+    full sin sufijo es la misma imagen).
     """
-    def _accept(url: str) -> str:
-        """Devuelve url si no es placeholder; "" si lo es."""
-        return "" if _is_placeholder_image(url) else url
+    if not url:
+        return ""
+    # Shopify thumb suffix: `_100x100.jpg`, `_grande.jpg`, `_small.png`, etc.
+    # Strippeamos el sufijo para que el thumb dedupee contra la full.
+    url = re.sub(
+        r"_(?:\d+x\d+|small|medium|grande|large|master|compact|original|x\d+|pico|icon|thumb|mini|crop_center)"
+        r"(?=\.(?:jpe?g|png|webp|gif|avif)(?:\?|$))",
+        "",
+        url,
+        flags=re.IGNORECASE,
+    )
+    # Strip query params irrelevantes para dedup (v, version, _, t).
+    if "?" in url:
+        base, q = url.split("?", 1)
+        keep = []
+        for pair in q.split("&"):
+            k = pair.split("=", 1)[0].lower()
+            if k in {"v", "version", "_", "t", "rev", "cache", "ts"}:
+                continue
+            keep.append(pair)
+        url = base + ("?" + "&".join(keep) if keep else "")
+    return url
+
+
+# Selectores para acotar el extractor a la "zona del producto principal" y
+# evitar absorber thumbnails de carruseles de "productos relacionados",
+# "recently viewed" o sidebars editoriales. Probamos en orden de
+# especificidad. Si ninguno matchea, caemos al soup entero (limit más bajo).
+_PRODUCT_SCOPE_SELECTORS: tuple[str, ...] = (
+    "[itemtype*='schema.org/Product']",
+    "[itemtype*='schema.org/Book']",
+    "[itemtype*='Product']",
+    "[itemtype*='Book']",
+    "#product-detail",
+    "#product_detail",
+    "#product-main",
+    "#product-single",
+    "#product",
+    ".product-detail",
+    ".product-single",
+    ".product-main",
+    ".product-page",
+    ".product-info",
+    ".product__info",
+    ".product-content",
+    ".ficha-producto",
+    ".ficha",
+    "article.product",
+    "main",
+)
+
+
+def _find_product_scope(soup: BeautifulSoup):
+    """Devuelve el contenedor del producto principal o None si no hay match."""
+    for selector in _PRODUCT_SCOPE_SELECTORS:
+        try:
+            node = soup.select_one(selector)
+        except Exception:
+            continue
+        if node:
+            return node
+    return None
+
+
+def _extract_images_from_detail_soup(
+    soup: BeautifulSoup,
+    source_url: str,
+    limit: int = 6,
+) -> list[dict[str, str]]:
+    """Extrae el carrusel/galería de imágenes de una página de detalle.
+
+    Devuelve lista de dicts `{url, kind, description}`. El primer elemento
+    es siempre `kind=cover` (la portada principal del producto); el resto
+    son `kind=gallery` (vistas adicionales: contraportada, lomo, contenido
+    interior, extras de la edición especial cuando el sitio las expone en
+    el carrusel).
+
+    Estrategias en cascada, mergeadas y dedupeadas por URL canónica:
+      1) JSON-LD schema.org `image` (string, dict, lista) — la cover/feed
+         oficial del sitio.
+      2) OpenGraph `og:image` / Twitter `twitter:image` — usualmente la
+         cover; puede repetir JSON-LD pero queda dedupeada.
+      3) `meta itemprop="image"` (Schema.org markup directo).
+      4) Selectores CSS de galería (Shopify/Tiendanube/Magento/WooCommerce
+         + genéricos `[class*='gallery'] img`) — captura el carrusel real
+         del frontend cuando el sitio lo expone.
+      5) Fallback: ranking de `<img>` del body que matcheen
+         IMAGE_URL_GOOD_PATTERNS y tengan alt text largo.
+
+    Best-effort: si el sitio sólo expone una imagen (típico en APIs como
+    mangapassion, catálogos minimalistas como booksprivilege/sumikko/Rakuten),
+    devuelve lista de 1. Si no encuentra nada, devuelve lista vacía.
+
+    Filtra placeholders, íconos UI, SVGs, data: URIs (ver
+    IMAGE_URL_BAD_PATTERNS y _is_placeholder_image).
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(raw_url: str, alt: str = "", kind_hint: str = "") -> None:
+        """Resuelve, valida, dedupea, y appendea. Devuelve sin tocar si limit."""
+        if len(out) >= limit:
+            return
+        if not raw_url:
+            return
+        url = canonicalize_url(source_url, raw_url.strip())
+        if not url or _is_placeholder_image(url):
+            return
+        # _score_image rechaza badges/logos/íconos via IMAGE_URL_BAD_PATTERNS.
+        # En este punto sirve como filtro secundario por si _is_placeholder_image
+        # dejó pasar algo borderline.
+        if _score_image(url, alt) < 0:
+            return
+        norm = _gallery_url_normalize(url)
+        if norm in seen:
+            return
+        seen.add(norm)
+        out.append({
+            "url": url,
+            "kind": "cover" if not out else (kind_hint or "gallery"),
+            "description": (alt or "").strip()[:120],
+        })
 
     # 1) JSON-LD
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
@@ -1491,85 +1655,125 @@ def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str
             if not isinstance(item, dict):
                 continue
             value = item.get("image")
-            if isinstance(value, str) and value.strip():
-                url = _accept(canonicalize_url(source_url, value.strip()))
-                if url:
-                    return url
-            if isinstance(value, dict):
-                v = (value.get("url") or value.get("@id") or "").strip()
-                if v:
-                    url = _accept(canonicalize_url(source_url, v))
-                    if url:
-                        return url
-            if isinstance(value, list) and value:
+            if isinstance(value, str):
+                _add(value)
+            elif isinstance(value, dict):
+                _add(value.get("url") or value.get("@id") or "")
+            elif isinstance(value, list):
                 for v in value:
-                    if isinstance(v, str) and v.strip():
-                        url = _accept(canonicalize_url(source_url, v.strip()))
-                        if url:
-                            return url
-                    if isinstance(v, dict):
-                        s = (v.get("url") or v.get("@id") or "").strip()
-                        if s:
-                            url = _accept(canonicalize_url(source_url, s))
-                            if url:
-                                return url
+                    if isinstance(v, str):
+                        _add(v)
+                    elif isinstance(v, dict):
+                        _add(v.get("url") or v.get("@id") or "")
 
-    # 2) OpenGraph / Twitter
+    # 2) OpenGraph / Twitter (cover canónica para social previews).
     for attrs in (
         {"property": "og:image"},
         {"property": "og:image:url"},
+        {"property": "og:image:secure_url"},
         {"name": "twitter:image"},
         {"name": "twitter:image:src"},
     ):
-        meta = soup.find("meta", attrs=attrs)
-        if meta and meta.get("content"):
-            url = _accept(canonicalize_url(source_url, meta["content"].strip()))
-            if url:
-                return url
+        for meta in soup.find_all("meta", attrs=attrs):
+            if meta.get("content"):
+                _add(meta["content"])
 
     # 3) meta itemprop="image"
-    meta = soup.find("meta", attrs={"itemprop": "image"})
-    if meta and meta.get("content"):
-        url = _accept(canonicalize_url(source_url, meta["content"].strip()))
-        if url:
-            return url
+    for meta in soup.find_all("meta", attrs={"itemprop": "image"}):
+        if meta.get("content"):
+            _add(meta["content"])
 
-    # 4) <img> con clases típicas de portada (Schema.org / E-commerce)
-    for selector in (
-        "img[itemprop='image']",
-        "img.cover",
-        "img.product-image",
-        "img.product-image-photo",
-        "[class*='product-image'] img",
-        "[class*='cover'] img",
-        "[class*='jacket'] img",
-        "[class*='detail'] img",
-        "[id*='product'] img",
-        "main img",
-        "article img",
-    ):
+    # 4) Selectores CSS de galería. Acotamos a la "zona del producto principal"
+    # cuando el soup expone un contenedor identificable
+    # (schema.org/Product/Book, #product-detail, .ficha, <main>, etc.). Sin
+    # este scope, sitios como Norma o retailers Shopify devuelven los
+    # thumbnails de "productos relacionados" / "recently viewed" como si
+    # fueran de la misma galería del producto, contaminando el carrusel.
+    scope = _find_product_scope(soup) or soup
+    for selector in _GALLERY_CSS_SELECTORS:
+        if len(out) >= limit:
+            break
         try:
-            node = soup.select_one(selector)
+            nodes = scope.select(selector)
         except Exception:
             continue
-        if node and node.name == "img":
-            url = _img_to_url(node, source_url)
-            if url and _score_image(url, (node.get("alt") or "").strip()) >= 0:
-                return url
+        for node in nodes:
+            if len(out) >= limit:
+                break
+            if not node:
+                continue
+            if node.name == "img":
+                url = _img_to_url(node, source_url)
+                alt = (node.get("alt") or "").strip()
+            else:
+                # `[data-zoom-image]` y similares: leer el atributo directo.
+                url = ""
+                for attr in ("data-zoom-image", "data-image", "data-src",
+                             "data-original", "href", "src"):
+                    v = node.get(attr)
+                    if v:
+                        url = canonicalize_url(source_url, v.strip())
+                        break
+                alt = (node.get("alt") or node.get("title") or "").strip()
+            _add(url, alt=alt)
 
-    # 5) Fallback: rankear todos los <img> del body.
-    body = soup.body or soup
-    best_url = ""
-    best_score = -1
-    for img in body.find_all("img", limit=30):
-        url = _img_to_url(img, source_url)
-        if not url:
-            continue
-        score = _score_image(url, (img.get("alt") or "").strip())
-        if score > best_score:
-            best_score = score
-            best_url = url
-    return best_url if best_score >= 5 else ""
+    # 5) Ranking fallback (solo si seguimos sin nada útil o muy poco).
+    # También acotado al scope del producto si lo hay — un fallback no debe
+    # contaminar más que los selectores específicos.
+    if len(out) < 2:
+        fallback_scope = _find_product_scope(soup) or soup.body or soup
+        scored: list[tuple[int, str, str]] = []
+        for img in fallback_scope.find_all("img", limit=60):
+            url = _img_to_url(img, source_url)
+            if not url:
+                continue
+            alt = (img.get("alt") or "").strip()
+            score = _score_image(url, alt)
+            if score >= 5:
+                scored.append((score, url, alt))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        for _score, url, alt in scored:
+            _add(url, alt=alt)
+
+    # 6) Filtro de "mismo folder que la cover": cuando el sitio tiene
+    # carruseles de "productos relacionados" dentro del scope del producto
+    # principal (caso real: Norma `<main>` incluye el sidebar de also-buy),
+    # los thumbs de OTROS productos colaban como gallery. Si la cover tiene
+    # un parent path identificable (>=2 segmentos), filtramos las gallery a
+    # las que comparten ese stem. Cover siempre se mantiene.
+    if len(out) >= 2:
+        cover_url = out[0]["url"]
+        try:
+            from urllib.parse import urlparse
+            cp = urlparse(cover_url).path.rstrip("/")
+            # parent path sin el filename final
+            parent = cp.rsplit("/", 1)[0]
+            segments = [s for s in parent.split("/") if s]
+            # Heurística: usar parent path solo si tiene >=2 segmentos
+            # (evita falsos positivos en sites con paths shallow tipo /img/).
+            if len(segments) >= 2:
+                stem = parent  # ej. "/upload/media/albumes/0001/35"
+                filtered = [out[0]]
+                for im in out[1:]:
+                    if stem in im["url"]:
+                        filtered.append(im)
+                # Solo aplicamos el filtro si descartamos >=2 imágenes (señal
+                # de que había contaminación real). Si descartamos <=1, era
+                # un site con paths heterogéneos legítimos — no tocamos.
+                if len(out) - len(filtered) >= 2:
+                    out = filtered
+        except Exception:
+            pass
+
+    return out
+
+
+def _extract_image_from_detail_soup(soup: BeautifulSoup, source_url: str) -> str:
+    """Compatibilidad: devuelve solo la URL de la primera imagen extraída
+    (la cover). Para multi-imagen, usar _extract_images_from_detail_soup.
+    """
+    imgs = _extract_images_from_detail_soup(soup, source_url, limit=1)
+    return imgs[0]["url"] if imgs else ""
 
 
 # Etiquetas conocidas (multilingüe) que aparecen en páginas de detalle como
@@ -1677,17 +1881,25 @@ def fetch_metadata_from_detail(
     url: str,
     session: requests.Session,
     timeout: tuple[int, int],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Fetch HTTP a la URL del producto y extrae todos los metadatos posibles.
 
     Devuelve dict con author / image_url / isbn / name / price / release_date /
-    publisher / description (campos vacíos si no se encuentra). Hace 1 HTTP
-    request opt-in (--fetch-details).
+    publisher / description / images (campos vacíos si no se encuentra). Hace
+    1 HTTP request opt-in (--fetch-details).
+
+    El campo `images` es una lista de dicts `{url, kind, description}`
+    representando el carrusel completo del producto: cover + tomas adicionales
+    (contraportada, lomo, interior, extras de la edición). Cuando el sitio
+    sólo expone una imagen, la lista contiene un único elemento `kind=cover`
+    sincronizado con `image_url`. Los consumidores que ya sólo lean
+    `image_url` siguen funcionando (backwards-compatible).
     """
-    result = {
+    result: dict[str, Any] = {
         "author": "", "image_url": "", "isbn": "",
         "name": "", "price": "", "release_date": "",
         "publisher": "", "description": "",
+        "images": [],
     }
     if not url:
         return result
@@ -1743,9 +1955,29 @@ def fetch_metadata_from_detail(
             author = extract_author(body_text[:3000], soup)
         result["author"] = author
 
-    # === Image (si Schema.org no lo trajo) ===
-    if not result["image_url"]:
-        result["image_url"] = _extract_image_from_detail_soup(soup, url)
+    # === Image + carrusel (multi-image) ===
+    # Extraemos SIEMPRE el carrusel completo (best-effort: si el sitio sólo
+    # expone una imagen, la lista queda con 1 elemento). image_url se setea
+    # con la cover (primer elemento) sólo si Schema.org no lo trajo ya, para
+    # no pisar la cover canónica que el sitio prefiere. El array `images`
+    # SIEMPRE refleja el carrusel detectado en la página, y si trajo una
+    # cover JSON-LD que NO está en el array (raro), la mergemos al frente.
+    gallery = _extract_images_from_detail_soup(soup, url)
+    if result["image_url"]:
+        cover_url = result["image_url"]
+        already_present = any(
+            _gallery_url_normalize(im.get("url", "")) == _gallery_url_normalize(cover_url)
+            for im in gallery
+        )
+        if not already_present:
+            gallery.insert(0, {"url": cover_url, "kind": "cover", "description": ""})
+            # Demote any subsequent kind=cover to gallery so solo el primero quede como cover.
+            for im in gallery[1:]:
+                if im.get("kind") == "cover":
+                    im["kind"] = "gallery"
+    elif gallery:
+        result["image_url"] = gallery[0]["url"]
+    result["images"] = gallery
 
     # === ISBN (si Schema.org no lo trajo) ===
     if not result["isbn"]:
@@ -2725,20 +2957,26 @@ def _variant_tier(signal_types: list[str] | None) -> str:
 def derive_cluster_key(item: dict[str, Any]) -> str:
     """Devuelve la clave de agrupación para deduplicar items entre fuentes.
 
-    Estrategia en cascada:
-    1. Si hay ISBN → "isbn:<isbn>". Esto es autoritativo (ISBN es unique per
-       edición/mercado, así que items con mismo ISBN son el mismo objeto).
-    2. Si NO hay ISBN pero podemos derivar `(language, series, volume)` con
-       una serie de >= 3 caracteres → clave fuzzy combinando esos +
-       variant_tier (un tier único derivado de signal_types) + publisher.
-       Items con misma clave fuzzy son tratados como el mismo producto.
-    3. Cualquier otro caso (sin ISBN y series demasiado corta o sin volumen)
-       → "url:<url>". Esto garantiza standalone — no se agrupa con nada más,
-       evitando falsos positivos.
+    Estrategia en cascada (más autoritativo primero):
+    1. ISBN → "isbn:<isbn>". ISBN es unique per edición/mercado.
+    2. `edition_key` + `volume` → "edition:<edition_key>|<volume>". El
+       edition_key lo asigna `/standardize-catalog` (LLM-verified) o el
+       heurístico del scraper, y representa la misma edición + publisher
+       + mercado. Dos items con el MISMO edition_key + volume son el mismo
+       producto físico aunque vengan de fuentes distintas (Whakoom +
+       ListadoManga + retailer). Crucial para boxes/artbooks sin volumen
+       donde la regla #3 (fuzzy con volume requerido) los dejaba aislados.
+    3. Si NO hay ISBN ni edition_key, pero podemos derivar
+       `(language, series, volume)` con una serie de >= 3 caracteres →
+       fuzzy combinando esos + variant_tier + publisher.
+    4. Cualquier otro caso → "url:<url>" (standalone, no se agrupa).
 
     `variant_tier` y `publisher` son discriminantes para EVITAR juntar
     "OP100 normal" con "OP100 Celebration" (distinto tier) o ediciones de
     publishers distintos. Idioma es discriminante para no mezclar mercados.
+    El edition_key ya incluye publisher+market en su slug por construcción
+    (ej. `gon-norma-collector` vs `gon-glenat-collector`), por eso no
+    necesita campos extra en la tier-2 key.
 
     Antes este campo era `variant_sig = ",".join(sorted(signal_types))`. El
     problema: dos fuentes con descripciones distintas detectan signal_types
@@ -2749,6 +2987,16 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     isbn = (item.get("isbn") or "").strip()
     if isbn:
         return f"isbn:{isbn}"
+
+    # Tier 2: edition_key (set by skill /standardize-catalog o por el
+    # heurístico de candidate_to_json). Cuando dos items comparten
+    # edition_key, son por definición la misma edición/publisher/market.
+    # Volume los distingue (tomo 1 vs tomo 2 de la misma edición).
+    edition_key = (item.get("edition_key") or "").strip()
+    if edition_key:
+        volume = (item.get("volume") or "").strip()
+        return f"edition:{edition_key}|{volume}"
+
     title = item.get("title") or ""
     language = (item.get("language") or "").strip().lower()
     publisher = (item.get("publisher") or "").strip().lower()
@@ -2759,7 +3007,8 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     url = (item.get("url") or "").strip()
 
     # Guardas anti-falso-positivo: series, language y volume son
-    # requeridos para considerar dos items "el mismo producto" sin ISBN.
+    # requeridos para considerar dos items "el mismo producto" sin ISBN
+    # ni edition_key.
     if (not series or len(series) < 3
             or not language
             or not volume):
@@ -3005,6 +3254,25 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def backup_and_rotate(path: Path, label: str, max_keep: int = 3) -> Path:
+    """Crea un backup de `path` en data/backups/<filename>/ y rota los más viejos.
+
+    El backup se guarda como data/backups/<filename>/<filename>.pre-<label>-bak.
+    Si ya hay `max_keep` o más backups en esa carpeta, borra los más viejos
+    hasta dejar exactamente max_keep (incluyendo el recién creado).
+    Crea las carpetas necesarias si no existen. Devuelve el Path del backup creado.
+    """
+    backups_dir = path.parent / "backups" / path.name
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    dest = backups_dir / f"{path.name}.pre-{label}-bak"
+    dest.write_bytes(path.read_bytes())
+    # Rotar: ordenar por mtime, borrar los más viejos
+    family = sorted(backups_dir.iterdir(), key=lambda f: f.stat().st_mtime)
+    for old in family[:-max_keep]:
+        old.unlink()
+    return dest
+
+
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     """Upsert por URL normalizada: una línea por item único en disco.
 
@@ -3063,6 +3331,7 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         "edition_key",
         "edition_display",
         "volume",
+        "description_es",  # traducción al español (translate_descriptions.py)
     )
     for row in rows:
         url = row.get("url", "")
@@ -3076,6 +3345,12 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # espejo local que ya teníamos. Ver "Image storage" en CLAUDE.md.
         if old and old.get("image_local") and not row.get("image_local"):
             row["image_local"] = old["image_local"]
+        # description_es es sticky: un re-scrape no debe borrar las
+        # traducciones escritas por translate_descriptions.py. Las traducciones
+        # también están en _CURATED_FIELDS (para items con standardized_at),
+        # pero el sticky cubre TODOS los items independientemente del flag.
+        if old and old.get("description_es") and not row.get("description_es"):
+            row["description_es"] = old["description_es"]
         # images[] es UNION-MERGE entre old y new (Fase 2 listadomanga-collections):
         # un re-scrape que sólo trae la cover no debe borrar los extras que
         # se agregaron en una pasada previa con merge extra→tomo, y viceversa
@@ -3130,6 +3405,56 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for item in no_url_rows:
             file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
     tmp_path.replace(path)
+
+
+def flush_source_candidates(
+    candidates: list["Candidate"],
+    state: dict[str, Any],
+    items_path: Path,
+    min_score: int,
+    dry_run: bool = False,
+) -> int:
+    """Escribe al JSONL los candidatos new/changed de UNA fuente inmediatamente.
+
+    Se llama después de que cada fuente termina en el loop principal (tanto
+    serial como paralelo). Propósito: si el proceso es matado a mitad del
+    scrape, los items de las fuentes ya completadas no se pierden.
+
+    NO actualiza `state` — eso sigue haciéndolo `process_state` al final del
+    run completo. Consecuencia: si el proceso es interrumpido y relanzado, los
+    items ya escritos aparecerán como "new"/"changed" de nuevo, pero
+    `append_jsonl` los upsertea idempotentemente (sin duplicados en el JSONL).
+
+    Si el run completa normalmente, el `append_jsonl` final sobreescribe estas
+    entradas con datos enriquecidos (detail-fetch), lo cual es correcto.
+
+    Retorna la cantidad de filas escritas.
+    """
+    if dry_run or not candidates:
+        return 0
+    to_write: list[dict[str, Any]] = []
+    for c in candidates:
+        if c.score < min_score:
+            continue
+        if "variant-catalog" not in (c.tags or []):
+            is_coll, _ = is_collectible_edition(
+                c.title, c.description, c.signal_types, c.product_type,
+                tags=c.tags, isbn=c.isbn, url=c.url,
+            )
+            if not is_coll:
+                continue
+        key = candidate_key(c)
+        prev = state.get(key)
+        if prev is None:
+            c.status = "new"
+        elif prev.get("content_hash") != c.content_hash:
+            c.status = "changed"
+        else:
+            continue  # "seen" — ya está en el JSONL sin cambios
+        to_write.append(candidate_to_json(c))
+    if to_write:
+        append_jsonl(items_path, to_write)
+    return len(to_write)
 
 
 class RobotsCache:
@@ -4543,6 +4868,18 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "hakusensha": "hakusensha",
     "gentosha": "gentosha",
     "mag garden": "maggarden",
+    # Publishers alemanes (DACH)
+    "carlsen": "carlsen",
+    "egmont manga": "egmont",
+    "egmont": "egmont",
+    "dokico": "dokico",
+    "papertoons": "papertoons",
+    "cross cult": "crosscult",
+    "manga cult": "mangacult",
+    "loewe manga": "loewe",
+    "loewe": "loewe",
+    "reprodukt": "reprodukt",
+    "altraverse": "altraverse",
 }
 
 
@@ -5490,8 +5827,22 @@ def _run_wiki_bootstrap(
         from wikis.socialanime import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "blogbbm":
         from wikis.blogbbm import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "booksprivilege":
+        from wikis.booksprivilege import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "sumikko":
+        from wikis.sumikko import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "listadomanga-collections":
         from wikis.listadomanga_collections import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "mangapassion":
+        from wikis.mangapassion import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "animeclick":
+        from wikis.animeclick import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "prhcomics":
+        from wikis.prhcomics import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "kinokuniya":
+        from wikis.kinokuniya import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "yenpress":
+        from wikis.yenpress_calendar import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -5504,6 +5855,49 @@ def _run_wiki_bootstrap(
             "id_to": int(getattr(args, "coleccion_to", 6500) or 6500),
             "mode": str(getattr(args, "coleccion_mode", "lista") or "lista"),
         }
+    # animeclick SIEMPRE necesita fetch_details=True — el calendario solo da
+    # título + publisher + imagen; precio, fecha y descripción viven en el
+    # detail page. El flag --fetch-details de la CLI es para el source loop
+    # principal (distinto propósito), no para wiki bootstraps.
+    if args.bootstrap_wiki == "animeclick":
+        extra_kwargs["fetch_details"] = True
+
+    # Evitar argumento duplicado: si extra_kwargs ya setea fetch_details
+    # (ej. animeclick siempre True), no lo pasar también en el kwarg genérico.
+    if "fetch_details" not in extra_kwargs:
+        extra_kwargs["fetch_details"] = bool(args.fetch_details)
+
+    # Pasamos flush_fn a todos los wikis: escribe candidatos a items.jsonl
+    # incrementalmente mientras el bootstrap corre para no perder datos si el
+    # proceso muere a mitad. Cada wiki llama a flush_fn en su unidad natural
+    # (por mes, por página, por edición, etc.). append_jsonl es idempotente,
+    # así que el write final de process_state simplemente actualiza campos.
+    if not args.dry_run:
+        _flush_items_path = items_path  # closure capture
+
+        def _wiki_flush_fn(batch: list) -> None:
+            to_write = []
+            for c in batch:
+                if c.score < args.min_score:
+                    continue
+                if "variant-catalog" not in (c.tags or []):
+                    is_coll, _ = is_collectible_edition(
+                        c.title,
+                        c.description,
+                        c.signal_types,
+                        c.product_type,
+                        tags=c.tags,
+                        isbn=c.isbn,
+                        url=c.url,
+                    )
+                    if not is_coll:
+                        continue
+                to_write.append(candidate_to_json(c))
+            if to_write:
+                append_jsonl(_flush_items_path, to_write)
+                print(f"[FLUSH-WIKI] {len(to_write)} items escritos incrementalmente")
+
+        extra_kwargs["flush_fn"] = _wiki_flush_fn
 
     candidates = wiki_bootstrap(
         yf, mf, yt, mt,
@@ -5511,7 +5905,6 @@ def _run_wiki_bootstrap(
         sleep_seconds=args.sleep_seconds,
         timeout=(args.connect_timeout, args.read_timeout),
         min_score=args.min_score,
-        fetch_details=bool(args.fetch_details),
         **extra_kwargs,
     )
     months = iter_year_months(yf, mf, yt, mt)
@@ -5618,6 +6011,9 @@ def _run_sitemap_mining(
             cand.publisher = md.get("publisher") or source.publisher
             cand.price = md.get("price", "")
             cand.image_url = md.get("image_url", "")
+            md_images = md.get("images") or []
+            if md_images:
+                cand.images = list(md_images)
             cand.release_date = md.get("release_date", "")
             cand.author = md.get("author", "")
             cand.isbn = md.get("isbn", "")
@@ -5992,6 +6388,9 @@ def run(args: argparse.Namespace) -> int:
             "problems": local_problems, "text": text, "entry": entry,
         }
 
+    # Contador para el flush incremental (sólo se muestra si hay algo que escribir).
+    _flushed_total = 0
+
     if workers == 1:
         # Path serial: idéntico al comportamiento histórico.
         for index, source in enumerate(sources, start=1):
@@ -6001,6 +6400,12 @@ def run(args: argparse.Namespace) -> int:
             problems.extend(result["problems"])
             finalized = diagnostic.end(entry=result["entry"])
             diagnostic.maybe_dump_html(finalized, result["text"])
+            # Flush incremental: escribe candidatos new/changed de esta fuente
+            # inmediatamente para no perder datos si el proceso es interrumpido.
+            n = flush_source_candidates(
+                result["candidates"], state, items_path, args.min_score, args.dry_run
+            )
+            _flushed_total += n
             if args.sleep_seconds > 0 and index < len(sources):
                 time.sleep(args.sleep_seconds)
     else:
@@ -6027,6 +6432,15 @@ def run(args: argparse.Namespace) -> int:
                 problems.extend(result["problems"])
                 finalized = diagnostic.end(entry=result["entry"])
                 diagnostic.maybe_dump_html(finalized, result["text"])
+                # Flush incremental: escribe candidatos new/changed de esta fuente
+                # inmediatamente para no perder datos si el proceso es interrumpido.
+                n = flush_source_candidates(
+                    result["candidates"], state, items_path, args.min_score, args.dry_run
+                )
+                _flushed_total += n
+
+    if _flushed_total:
+        _safe_print(f"[FLUSH] {_flushed_total} items escritos incrementalmente al JSONL")
 
     reportable, state = process_state(
         candidates=all_candidates,
@@ -6066,11 +6480,12 @@ def run(args: argparse.Namespace) -> int:
                 )
             return c, metadata
 
-        def _apply_metadata(idx: int, c: Candidate, metadata: dict[str, str]) -> None:
+        def _apply_metadata(idx: int, c: Candidate, metadata: dict[str, Any]) -> None:
             """Aplica metadata al candidate y al state. Llamado SECUENCIALMENTE."""
             nonlocal enriched_author, enriched_image
             new_author = metadata.get("author") or ""
             new_image = metadata.get("image_url") or ""
+            new_images = metadata.get("images") or []
             new_isbn = metadata.get("isbn") or ""
             updates: list[str] = []
             if new_author and not c.author:
@@ -6081,6 +6496,13 @@ def run(args: argparse.Namespace) -> int:
                 c.image_url = new_image
                 enriched_image += 1
                 updates.append(f"img: ✓")
+            # Carrusel multi-imagen: enriquece si el detail page expone galería
+            # y el Candidate todavía no la trajo (típicamente la fuente original
+            # sólo trajo la cover desde el listing).
+            if new_images and len(new_images) > len(getattr(c, "images", []) or []):
+                c.images = list(new_images)
+                if len(new_images) > 1:
+                    updates.append(f"imgs: {len(new_images)}")
             if new_isbn and not c.isbn:
                 c.isbn = new_isbn
                 updates.append(f"isbn: {new_isbn}")
@@ -6299,8 +6721,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "listadomanga-collections"],
-        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress"],
+        help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), booksprivilege (agregador JP de 店舗特典/extras de tienda: por cada release lista los bonus de cada retailer japonés — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN, etc. — que no aparecen en el catálogo regular), sumikko (catálogo curado JP de 限定版/特装版 — ~3178 ediciones limitadas y especiales con ISBN, complementario a booksprivilege que es store-bonus; sumikko se enfoca en la edición en sí: acrylic stand付き, 小冊子付き, 缶バッジ付き, BOX, etc.), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(
         "--wiki-from",

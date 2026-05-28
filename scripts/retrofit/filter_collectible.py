@@ -13,8 +13,8 @@ Uso:
 
 Por defecto:
     - keeps items en data/items.jsonl
-    - rejected items en data/items.non_collectible.jsonl (para revisar)
-    - backup en data/items.jsonl.pre-collectible-bak
+    - rejected items en data/diagnostics/items.non_collectible.jsonl (para revisar)
+    - backup en data/backups/items.jsonl/items.jsonl.pre-collectible-bak (rotación max 3)
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from manga_watch import (  # type: ignore
     is_collectible_edition,
     derive_product_type,
     detect_signals,
+    backup_and_rotate,
 )
 
 
@@ -40,7 +41,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", default="data/items.jsonl")
     parser.add_argument("--kept-output", default="data/items.jsonl")
-    parser.add_argument("--rejected-output", default="data/items.non_collectible.jsonl")
+    parser.add_argument("--rejected-output", default="data/diagnostics/items.non_collectible.jsonl")
     parser.add_argument("--dry-run", action="store_true",
                         help="No escribe nada; solo reporta cuántos se filtrarían.")
     args = parser.parse_args()
@@ -125,8 +126,7 @@ def main() -> int:
     kept_path = Path(args.kept_output)
     rejected_path = Path(args.rejected_output)
     if kept_path.exists() and kept_path == src:
-        backup = kept_path.with_suffix(kept_path.suffix + ".pre-collectible-bak")
-        backup.write_text(kept_path.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(kept_path, "collectible")
         print(f"\n[OK] Backup guardado en {backup}")
 
     kept_path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")

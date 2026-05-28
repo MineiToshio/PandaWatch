@@ -35,6 +35,7 @@ from manga_watch import (  # type: ignore
     Candidate,
     score_candidate,
     candidate_to_json,
+    backup_and_rotate,
 )
 
 
@@ -139,8 +140,7 @@ def main() -> int:
 
     out_path = Path(args.output)
     if out_path == src and out_path.exists():
-        backup = out_path.with_suffix(out_path.suffix + ".pre-rescore-bak")
-        backup.write_text(out_path.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(out_path, "rescore")
         print(f"\n[OK] Backup en {backup}")
 
     out_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")

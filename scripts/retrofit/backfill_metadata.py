@@ -32,7 +32,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import fetch_metadata_from_detail, make_session  # type: ignore
+from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; manga-watch-backfill/1.0; "
@@ -40,7 +40,7 @@ DEFAULT_USER_AGENT = (
 )
 
 # Campos que pueden ser rellenados desde el detail-fetch.
-BACKFILL_FIELDS = ("image_url", "author", "isbn", "release_date", "price")
+BACKFILL_FIELDS = ("image_url", "author", "isbn", "release_date", "price", "images")
 
 
 def main() -> int:
@@ -61,7 +61,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--sleep", type=float, default=0.3,
-        help="Segundos entre requests (default: 0.3)."
+        help="Segundos entre requests (default: 0.3). Aplica entre lotes "
+             "cuando hay --workers > 1."
+    )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Paralelismo HTTP. Default 1 (secuencial). Para corpus grandes "
+             "(--only images) usar 6-8."
+    )
+    parser.add_argument(
+        "--per-host-limit", type=int, default=2,
+        help="Máximo de requests concurrentes al mismo host. Protege a los "
+             "retailers cuando varios items comparten dominio. Default 2."
     )
     parser.add_argument(
         "--connect-timeout", type=int, default=8,
@@ -81,6 +92,13 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true",
                         help="No fetchea ni escribe; solo cuenta candidatos.")
+    parser.add_argument(
+        "--checkpoint-every", type=int, default=500,
+        help="Cada N items procesados, escribe items.jsonl con el progreso "
+             "actual. 0 = solo al final (riesgo de perder todo si killed). "
+             "Default 500. Una corrida killed entre checkpoints solo pierde "
+             "los últimos N items procesados; los anteriores se preservan."
+    )
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     args = parser.parse_args()
 
@@ -103,10 +121,73 @@ def main() -> int:
     # Selección: items con URL y al menos un campo target vacío.
     target_fields = (args.only,) if args.only else BACKFILL_FIELDS
 
+    # URLs no aptas para backfill de gallery: páginas que devuelven
+    # MÚLTIPLES productos juntos (catálogo/índice) o que MÚLTIPLES items
+    # de items.jsonl comparten (URLs sintéticas con query param para
+    # distinguir). Re-fetchear cualquiera de estas con el extractor
+    # genérico mezclaría imágenes de productos hermanos en un solo
+    # item del JSONL.
+    #
+    # Caso "URL sintética": el wiki inventó un query param `?item=` /
+    # `?bbm-entry=` para discriminar tomos hermanos en la misma página
+    # real. Cada parser ya pobla `images[]` con la lógica correcta
+    # por-tomo durante el scrape.
+    #
+    # Caso "URL de catálogo": un wiki guardó la URL del catálogo entero
+    # (no del producto individual) como anclaje del item. Ej: el wiki
+    # del calendario de listadomanga guarda `coleccion.php?id=N` que
+    # lista TODOS los tomos; ahí no podemos disambiguar cuál tomo del
+    # carrusel pertenece al calendario item.
+    SYNTHETIC_URL_MARKERS = (
+        "?item=",       # listadomanga-collections (Fase 2)
+        "&item=",
+        "?bbm-entry=",  # blogbbm Layout A/B/C
+        "&bbm-entry=",
+    )
+    CATALOG_URL_MARKERS = (
+        "listadomanga.es/coleccion.php",  # calendar items apuntan al índice
+        "whakoom.com/ediciones/",         # índice de la edición (todos los tomos)
+        "whakoom.com/publisher/",         # índice del publisher (todas las ediciones)
+        "wwww.whakoom.com/ediciones/",
+        "wwww.whakoom.com/publisher/",
+    )
+
+    def has_synthetic_url(item: dict) -> bool:
+        url = item.get("url") or ""
+        if any(m in url for m in SYNTHETIC_URL_MARKERS):
+            return True
+        if any(m in url for m in CATALOG_URL_MARKERS):
+            return True
+        return False
+
     def needs_backfill(item: dict) -> bool:
         if "_raw" in item or not item.get("url"):
             return False
-        return any(not item.get(f) for f in target_fields)
+        for f in target_fields:
+            if f == "images":
+                # Skip wikis con URL sintética: su `images[]` ya viene poblado
+                # correctamente por el parser y un re-fetch mezclaría imágenes
+                # de items hermanos en la misma página.
+                if has_synthetic_url(item):
+                    continue
+                # Skip items ya procesados en una corrida previa de --only
+                # images (con timestamp en `images_backfilled_at`). Cada item
+                # se intenta exactamente una vez: si el detail-fetch confirmó
+                # que es single-image, no vale la pena re-intentar. Para
+                # forzar re-procesamiento (ej. tras mejoras al extractor),
+                # eliminá el campo manualmente.
+                if item.get("images_backfilled_at"):
+                    continue
+                # images[] cuenta como "necesita backfill" si tiene 0 o 1
+                # entries (single-image que el extractor multi-image podría
+                # expandir a galería completa). Si ya tiene 2+, asumimos
+                # que una pasada previa lo procesó.
+                if len(item.get("images") or []) < 2:
+                    return True
+            else:
+                if not item.get(f):
+                    return True
+        return False
 
     candidates = [i for i in items if needs_backfill(i)]
 
@@ -160,33 +241,127 @@ def main() -> int:
     updated = 0
     fields_filled: Counter[str] = Counter()
     fetch_errors = 0
-    by_index = {id(item): idx for idx, item in enumerate(items)}
 
-    print()
-    for idx, item in enumerate(candidates, start=1):
-        url = item["url"]
-        try:
-            md = fetch_metadata_from_detail(url, session, timeout=timeout)
-        except Exception as e:
-            fetch_errors += 1
-            print(f"  [{idx}/{len(candidates)}] FETCH-ERR: {e!s:.60}  ({url[:70]})")
-            continue
+    # Per-host semáforo: protege a retailers cuando muchos items comparten
+    # dominio (e.g. todas las URLs Amazon de SocialAnime, todas las
+    # Mangavariant, etc.).
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    host_locks: dict[str, threading.Semaphore] = {}
+    host_locks_mu = threading.Lock()
 
-        # Solo rellena campos vacíos del item, no sobreescribe lo ya presente.
+    def _sem_for(url: str) -> threading.Semaphore:
+        host = urlparse(url).netloc.lower()
+        with host_locks_mu:
+            sem = host_locks.get(host)
+            if sem is None:
+                sem = threading.Semaphore(max(1, args.per_host_limit))
+                host_locks[host] = sem
+            return sem
+
+    import datetime as _dt
+
+    def _apply_metadata(item: dict, md: dict) -> bool:
+        """Aplica metadata. Devuelve True si modificó algo. NO thread-safe;
+        debe llamarse desde el thread principal después del fetch."""
+        nonlocal updated
         changed = False
         for field in target_fields:
-            if not item.get(field) and md.get(field):
-                item[field] = md[field]
-                fields_filled[field] += 1
+            if field == "images":
+                new_imgs = md.get("images") or []
+                existing = item.get("images") or []
+                if len(new_imgs) > len(existing) and len(new_imgs) >= 2:
+                    item["images"] = new_imgs
+                    cover_url = new_imgs[0].get("url") if new_imgs else ""
+                    if cover_url and not item.get("image_url"):
+                        item["image_url"] = cover_url
+                    fields_filled[field] += 1
+                    changed = True
+                # SIEMPRE marcamos el item como "ya intentado" (con o sin
+                # ganancia) para no re-procesarlo en futuras corridas. Si
+                # el sitio genuinamente expone una sola imagen, el item no
+                # mejorará y no tiene sentido pegarle de nuevo.
+                item["images_backfilled_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
                 changed = True
-        if changed:
-            updated += 1
+            else:
+                if not item.get(field) and md.get(field):
+                    item[field] = md[field]
+                    fields_filled[field] += 1
+                    changed = True
+        return changed
 
-        if idx % 25 == 0:
-            print(f"  [{idx}/{len(candidates)}] updated={updated}  errors={fetch_errors}")
+    def _fetch_one(item: dict) -> tuple[dict, dict, str]:
+        """Worker thread-safe: solo hace HTTP. Devuelve (item, md, error_str)."""
+        url = item["url"]
+        try:
+            sem = _sem_for(url)
+            with sem:
+                md = fetch_metadata_from_detail(url, session, timeout=timeout)
+            return item, md, ""
+        except Exception as e:
+            return item, {}, str(e)[:80]
 
-        if args.sleep > 0 and idx < len(candidates):
-            time.sleep(args.sleep)
+    dst = Path(args.output)
+
+    def _write_items_jsonl(label: str = "") -> None:
+        """Serializa la lista actual `items` a items.jsonl atómicamente.
+        Llamable en mid-run (checkpoints) o al final."""
+        tmp = dst.with_suffix(dst.suffix + ".tmp")
+        out_lines: list[str] = []
+        for it in items:
+            if "_raw" in it:
+                out_lines.append(it["_raw"])
+            else:
+                out_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True))
+        tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+        tmp.replace(dst)
+        if label:
+            print(f"  [CHECKPOINT] {label} — {len(out_lines)} items escritos a {dst}")
+
+    if dst.exists():
+        backup = backup_and_rotate(dst, "backfill")
+        print(f"[OK] Backup guardado en {backup}")
+    print()
+
+    workers = max(1, int(args.workers))
+    total = len(candidates)
+    ckpt = max(0, int(args.checkpoint_every))
+
+    def _maybe_checkpoint(done_count: int) -> None:
+        if ckpt > 0 and done_count > 0 and done_count % ckpt == 0:
+            _write_items_jsonl(label=f"{done_count}/{total} (updated={updated})")
+
+    if workers == 1:
+        for idx, item in enumerate(candidates, start=1):
+            _, md, err = _fetch_one(item)
+            if err:
+                fetch_errors += 1
+                print(f"  [{idx}/{total}] FETCH-ERR: {err}  ({item['url'][:70]})")
+            else:
+                if _apply_metadata(item, md):
+                    updated += 1
+            if idx % 25 == 0:
+                print(f"  [{idx}/{total}] updated={updated}  errors={fetch_errors}")
+            _maybe_checkpoint(idx)
+            if args.sleep > 0 and idx < total:
+                time.sleep(args.sleep)
+    else:
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="backfill") as pool:
+            futs = {pool.submit(_fetch_one, c): c for c in candidates}
+            for fut in as_completed(futs):
+                item, md, err = fut.result()
+                done += 1
+                if err:
+                    fetch_errors += 1
+                    if fetch_errors <= 50 or fetch_errors % 25 == 0:
+                        print(f"  [{done}/{total}] FETCH-ERR: {err}  ({item['url'][:70]})")
+                else:
+                    if _apply_metadata(item, md):
+                        updated += 1
+                if done % 50 == 0:
+                    print(f"  [{done}/{total}] updated={updated}  errors={fetch_errors}")
+                _maybe_checkpoint(done)
 
     print(f"\n[OK] Procesados: {len(candidates)}")
     print(f"[OK] Items con cambios: {updated}")
@@ -199,20 +374,8 @@ def main() -> int:
         print("\n[OK] Nada que escribir.")
         return 0
 
-    dst = Path(args.output)
-    backup = dst.with_suffix(dst.suffix + ".pre-backfill-bak")
-    if dst.exists():
-        backup.write_text(dst.read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"\n[OK] Backup guardado en {backup}")
-
-    out_lines: list[str] = []
-    for item in items:
-        if "_raw" in item:
-            out_lines.append(item["_raw"])
-        else:
-            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
-    print(f"[OK] Escribí {dst} con {len(out_lines)} items ({updated} con backfill).")
+    _write_items_jsonl()
+    print(f"[OK] Escribí {dst} ({updated} items con backfill).")
     return 0
 
 

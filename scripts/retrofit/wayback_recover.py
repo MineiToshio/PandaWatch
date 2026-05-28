@@ -42,9 +42,9 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 try:
-    from scripts.manga_watch import fetch_metadata_from_detail, make_session  # type: ignore
+    from scripts.manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
 except ImportError:
-    from manga_watch import fetch_metadata_from_detail, make_session  # type: ignore
+    from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
 
 
 WAYBACK_API = "http://archive.org/wayback/available"
@@ -281,8 +281,7 @@ def main() -> int:
     # Persist
     dst = Path(args.output)
     if dst == src and src.exists():
-        backup = src.with_suffix(src.suffix + ".pre-wayback-bak")
-        backup.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(src, "wayback")
         print(f"[OK] Backup: {backup}")
 
     out_lines: list[str] = []

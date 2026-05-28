@@ -24,17 +24,22 @@
 #   1. Scrape principal (sources del YAML, --max-pages 5, --enable-js)
 #   2. Wiki bootstraps FULL:
 #      2a. listadomanga-collections via lista.php (~3432 colecciones)
-#      2b. listadomanga calendario (mes actual)
-#      2c. manga-sanctuary (FR)
-#      2d. otaku-calendar (EN/US)
-#      2e. manga-mexico
-#      2f. mangavariant (~2700 entries, todo el sitemap)
-#      2g. socialanime (IT)
-#      2h. blogbbm (BR)
-#      2i (opt-in). whakoom spider profundo
-#   3. Search discovery (Gemini + DDG, 32 queries)
-#   4. Cleanup retrofits + (opt-in) wayback recovery
-#   5. Build web final
+#      2b. manga-sanctuary (FR)
+#      2c. otaku-calendar (EN/US)
+#      2d. manga-mexico
+#      2e. mangavariant (~2700 entries, todo el sitemap)
+#      2f. socialanime (IT)
+#      2g. blogbbm (BR)
+#      2h. booksprivilege (JP — 店舗特典 desde 2020)
+#      2i. sumikko (JP — 限定版/特装版 catálogo completo)
+#      2j. mangapassion (DE — Sonderausgaben + Variant-Covers)
+#      2k. animeclick (IT — edizioni speciali desde 2015)
+#      2l. prhcomics (EN/US — catálogo completo)
+#      2m. kinokuniya (EN/US — exclusivos Kinokuniya USA)
+#      2n. yenpress (EN/US — calendario histórico desde 2013)
+#      2o (opt-in). whakoom spider profundo
+#   3. Cleanup retrofits + (opt-in) wayback recovery
+#   4. Build web final
 #
 # Tiempo estimado: 1.5-3 horas (vs 30-60 min del delta).
 # NOTE: listadomanga-blog histórico REMOVED del pipeline canónico
@@ -47,9 +52,8 @@
 #
 # Variables opcionales:
 #   INCLUDE_WHAKOOM_SPIDER=1     # añade whakoom (riesgo Cloudflare; default OFF)
-#   INCLUDE_WAYBACK_RECOVERY=1   # añade fase 4f (pesado; default OFF)
-#   SKIP_SCRAPE=1 / SKIP_WIKIS=1 / SKIP_SEARCH=1 / SKIP_CLEANUP=1 / SKIP_BUILD=1
-#   GEMINI_SLEEP=4.5             # default 4.5s (15 RPM safe)
+#   INCLUDE_WAYBACK_RECOVERY=1   # añade fase 3f (pesado; default OFF)
+#   SKIP_SCRAPE=1 / SKIP_WIKIS=1 / SKIP_CLEANUP=1 / SKIP_BUILD=1
 #   SCRAPE_WORKERS=8             # default 8
 #   PER_HOST_LIMIT=2             # default 2
 #   COLECCION_SLEEP=0.3          # sleep entre requests al recorrer las 3432
@@ -77,13 +81,29 @@ INCLUDE_WHAKOOM_SPIDER="${INCLUDE_WHAKOOM_SPIDER:-0}"
 INCLUDE_WAYBACK_RECOVERY="${INCLUDE_WAYBACK_RECOVERY:-0}"
 SKIP_SCRAPE="${SKIP_SCRAPE:-0}"
 SKIP_WIKIS="${SKIP_WIKIS:-0}"
-SKIP_SEARCH="${SKIP_SEARCH:-0}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
-GEMINI_SLEEP="${GEMINI_SLEEP:-4.5}"
 SCRAPE_WORKERS="${SCRAPE_WORKERS:-8}"
 PER_HOST_LIMIT="${PER_HOST_LIMIT:-2}"
 COLECCION_SLEEP="${COLECCION_SLEEP:-0.3}"
+
+# Wrapper portable para ejecutar un comando con timeout.
+# Prueba: macOS nativo 'timeout', luego GNU 'gtimeout' (brew coreutils).
+# Si ninguno está disponible, corre sin timeout (mejor que fallar).
+_run_timed() {
+    local secs=$1; shift
+    if command -v timeout &>/dev/null 2>&1; then
+        timeout "$secs" "$@"
+        return $?
+    elif command -v gtimeout &>/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+        return $?
+    else
+        echo "    [WARN] timeout/gtimeout no disponible — corriendo sin límite de tiempo"
+        "$@"
+        return $?
+    fi
+}
 
 GLOBAL_START=$(date +%s)
 
@@ -97,9 +117,8 @@ echo "Config:"
 echo "  Listadomanga lista.php discovery: ~3432 colecciones, sleep ${COLECCION_SLEEP}s"
 echo "  INCLUDE_WHAKOOM_SPIDER=$INCLUDE_WHAKOOM_SPIDER"
 echo "  INCLUDE_WAYBACK_RECOVERY=$INCLUDE_WAYBACK_RECOVERY"
-echo "  GEMINI_SLEEP=${GEMINI_SLEEP}s"
 echo "  SCRAPE_WORKERS=$SCRAPE_WORKERS (per-host limit=$PER_HOST_LIMIT)"
-echo "  Skips: scrape=$SKIP_SCRAPE wikis=$SKIP_WIKIS search=$SKIP_SEARCH cleanup=$SKIP_CLEANUP build=$SKIP_BUILD"
+echo "  Skips: scrape=$SKIP_SCRAPE wikis=$SKIP_WIKIS cleanup=$SKIP_CLEANUP build=$SKIP_BUILD"
 echo
 
 BEFORE_COUNT=$(wc -l < data/items.jsonl 2>/dev/null | tr -d ' ' || echo 0)
@@ -166,7 +185,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # Tiempo estimado: 30-60 min con sleep 0.3s.
     echo ">>> [2a] listadomanga-collections via lista.php (~3432 colecciones)"
     P2A_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 5400 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki listadomanga-collections \
         --coleccion-mode lista \
         --sleep-seconds "$COLECCION_SLEEP" \
@@ -198,7 +217,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2b. manga-sanctuary
     echo ">>> [2b] manga-sanctuary (FR)"
     P2B_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki manga-sanctuary \
         --sleep-seconds 0.5 \
         --min-score 20 \
@@ -208,7 +227,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2c. otaku-calendar
     echo ">>> [2c] otaku-calendar (EN/US)"
     P2C_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki otaku-calendar \
         --sleep-seconds 0.5 \
         --min-score 20 \
@@ -218,7 +237,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2d. manga-mexico
     echo ">>> [2d] manga-mexico (catálogo)"
     P2D_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki manga-mexico \
         --sleep-seconds 0.5 \
         --min-score 20 \
@@ -228,7 +247,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2e. mangavariant (sitemap completo — solo FULL, no delta)
     echo ">>> [2e] mangavariant (~2700 entries del sitemap completo)"
     P2E_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki mangavariant \
         --sleep-seconds 0.3 \
         --min-score 20 \
@@ -238,7 +257,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2f. socialanime
     echo ">>> [2f] socialanime (IT — variant + cofanetti)"
     P2F_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki socialanime \
         --sleep-seconds 0.3 \
         --min-score 20 \
@@ -248,23 +267,97 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2g. blogbbm
     echo ">>> [2g] blogbbm (BR — capas variantes + volúmenes especiais)"
     P2G_START=$(date +%s)
-    "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
         --bootstrap-wiki blogbbm \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02g-blogbbm.log" 2>&1
     echo "    duración: $(($(date +%s) - P2G_START))s — items: $(count_lines)"
 
-    # 2i (OPT-IN). Whakoom spider (Cloudflare risk)
+    # 2h. booksprivilege — DESHABILITADO (2026-05-26)
+    # Ver comentario en scrape_delta.sh [2g]. Misma razón.
+    # echo ">>> [2h] booksprivilege — DESHABILITADO"
+
+    # 2i. sumikko (JP — 限定版・特装版). El catálogo completo se recorre
+    # en ~30 páginas (~30s con sleep 0.3). Idéntico a delta — el sitio
+    # no expone filtro por fecha.
+    echo ">>> [2i] sumikko (JP — 限定版/特装版 catálogo completo)"
+    P2I_START=$(date +%s)
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki sumikko \
+        --sleep-seconds 0.3 \
+        --min-score 20 \
+        > "$LOG_DIR/02i-sumikko.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2I_START))s — items: $(count_lines)"
+
+    # 2j. mangapassion (DE — catálogo completo histórico). En modo FULL
+    # no aplicamos filtro de fecha (year_from=2000 < 2010 → descarga todo).
+    echo ">>> [2j] mangapassion (DE — Sonderausgaben + Variant-Covers catálogo completo)"
+    P2J_START=$(date +%s)
+    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki mangapassion \
+        --wiki-from 2000-01 \
+        --sleep-seconds 0.3 \
+        --min-score 20 \
+        > "$LOG_DIR/02j-mangapassion.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2J_START))s — items: $(count_lines)"
+
+    # 2k. animeclick (IT — catálogo histórico desde 2015).
+    # Navega el calendario semanal hacia atrás. ~500 semanas × detalle
+    # por ~20% de items = potencialmente miles de HTTP fetches.
+    echo ">>> [2k] animeclick (IT — edizioni speciali desde 2015)"
+    P2K_START=$(date +%s)
+    _run_timed 14400 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki animeclick \
+        --wiki-from 2015-01 \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02k-animeclick.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2K_START))s — items: $(count_lines)"
+
+    # 2l. prhcomics (EN/US — catálogo completo de ediciones especiales inglesas).
+    # Una sola request, timeout muy corto.
+    echo ">>> [2l] prhcomics (US/CA — hardcovers + box sets EN, catálogo completo)"
+    P2L_START=$(date +%s)
+    _run_timed 120 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki prhcomics \
+        --wiki-from 2010-01 \
+        --min-score 20 \
+        > "$LOG_DIR/02l-prhcomics.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2L_START))s — items: $(count_lines)"
+
+    # 2m. kinokuniya (EN/US — exclusivos Kinokuniya USA). Una sola request.
+    echo ">>> [2m] kinokuniya (US — exclusivos Kinokuniya: variant covers + extras)"
+    P2M_START=$(date +%s)
+    _run_timed 120 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki kinokuniya \
+        --min-score 20 \
+        > "$LOG_DIR/02m-kinokuniya.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2M_START))s — items: $(count_lines)"
+
+    # 2n. yenpress (EN/US — calendario histórico Yen Press, ediciones especiales).
+    # Catálogo desde 2013-01 (lanzamiento de Yen Press como sello independiente).
+    # ~140 meses × 0.5s sleep = ~70s. Timeout 600s.
+    echo ">>> [2n] yenpress calendar (US — catálogo histórico collector's/deluxe/box set)"
+    P2N_START=$(date +%s)
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki yenpress \
+        --wiki-from 2013-01 \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02n-yenpress.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
+
+    # 2o (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
-        echo ">>> [2h] whakoom spider (OPT-IN, riesgo Cloudflare)"
-        P2H_START=$(date +%s)
-        "$VENV_PY" scripts/manga_watch.py \
+        echo ">>> [2o] whakoom spider (OPT-IN, riesgo Cloudflare)"
+        P2O_START=$(date +%s)
+        _run_timed 3600 "$VENV_PY" scripts/manga_watch.py \
             --bootstrap-wiki whakoom \
             --sleep-seconds 2.0 \
             --min-score 20 \
-            > "$LOG_DIR/02h-whakoom.log" 2>&1
-        echo "    duración: $(($(date +%s) - P2H_START))s — items: $(count_lines)"
+            > "$LOG_DIR/02o-whakoom.log" 2>&1
+        echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
     else
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"
     fi
@@ -275,27 +368,10 @@ else
 fi
 
 # ============================================================
-# PHASE 3: Search discovery (Gemini + DDG)
-# ============================================================
-if [ "$SKIP_SEARCH" != "1" ]; then
-    phase_header 3 "Search discovery (Gemini + DDG)"
-    P3_START=$(date +%s)
-    "$VENV_PY" scripts/retrofit/search_discovery.py \
-        --sleep-google "$GEMINI_SLEEP" \
-        --sleep-ddg 3.0 \
-        --max-results 10 \
-        > "$LOG_DIR/03-search-discovery.log" 2>&1
-    P3_END=$(date +%s)
-    phase_done 3 $((P3_END - P3_START)) "$(count_lines)"
-else
-    echo "[SKIP] PHASE 3 (search) saltada por SKIP_SEARCH=1"
-fi
-
-# ============================================================
-# PHASE 4: Cleanup retrofits
+# PHASE 3: Cleanup retrofits
 # ============================================================
 if [ "$SKIP_CLEANUP" != "1" ]; then
-    phase_header 4 "Cleanup retrofits"
+    phase_header 3 "Cleanup retrofits"
 
     echo ">>> [4a] rescore"
     "$VENV_PY" scripts/retrofit/rescore.py > "$LOG_DIR/04a-rescore.log" 2>&1
@@ -318,6 +394,16 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04e-backfill-images.log" 2>&1
     echo "    items: $(count_lines)"
 
+    echo ">>> [4e2] backfill_metadata --only images (carrusel multi-imagen)"
+    "$VENV_PY" scripts/retrofit/backfill_metadata.py --only images --sleep 0.5 \
+        > "$LOG_DIR/04e2-backfill-galleries.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    echo ">>> [4e3] mirror_images --no-gc (descarga gallery images al espejo local)"
+    "$VENV_PY" scripts/retrofit/mirror_images.py --no-gc --workers 8 \
+        > "$LOG_DIR/04e3-mirror-galleries.log" 2>&1
+    echo "    items: $(count_lines)"
+
     if [ "$INCLUDE_WAYBACK_RECOVERY" = "1" ]; then
         echo ">>> [4f] wayback_recover (OPT-IN)"
         P4F_START=$(date +%s)
@@ -328,21 +414,21 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
     fi
 
-    echo " ✓ PHASE 4 cleanup done"
+    echo " ✓ PHASE 3 cleanup done"
 else
-    echo "[SKIP] PHASE 4 (cleanup) saltada por SKIP_CLEANUP=1"
+    echo "[SKIP] PHASE 3 (cleanup) saltada por SKIP_CLEANUP=1"
 fi
 
 # ============================================================
-# PHASE 5: Build web
+# PHASE 4: Build web
 # ============================================================
 if [ "$SKIP_BUILD" != "1" ]; then
-    phase_header 5 "Build web"
-    "$VENV_PY" scripts/build_web.py > "$LOG_DIR/05-build-web.log" 2>&1
-    tail -10 "$LOG_DIR/05-build-web.log"
-    echo " ✓ PHASE 5 build done"
+    phase_header 4 "Build web"
+    "$VENV_PY" scripts/build_web.py > "$LOG_DIR/04-build-web.log" 2>&1
+    tail -10 "$LOG_DIR/04-build-web.log"
+    echo " ✓ PHASE 4 build done"
 else
-    echo "[SKIP] PHASE 5 (build) saltada por SKIP_BUILD=1"
+    echo "[SKIP] PHASE 4 (build) saltada por SKIP_BUILD=1"
 fi
 
 # ============================================================

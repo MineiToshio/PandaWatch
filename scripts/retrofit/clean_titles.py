@@ -21,7 +21,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import clean_title  # type: ignore
+from manga_watch import clean_title, backup_and_rotate  # type: ignore
 
 
 def main() -> int:
@@ -77,10 +77,8 @@ def main() -> int:
         print("[OK] Nada que limpiar.")
         return 0
 
-    # Backup defensivo
-    backup = dst.with_suffix(dst.suffix + ".pre-clean-bak")
     if dst.exists():
-        backup.write_text(dst.read_text(encoding="utf-8"), encoding="utf-8")
+        backup = backup_and_rotate(dst, "clean")
         print(f"[OK] Backup guardado en {backup}")
 
     dst.write_text("\n".join(cleaned_lines) + "\n", encoding="utf-8")

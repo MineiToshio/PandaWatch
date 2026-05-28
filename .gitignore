@@ -8,14 +8,13 @@ data/items.jsonl.*
 data/items.non_manga.jsonl
 data/items.non_collectible.jsonl
 data/state.json
+data/state.json
 data/state.json.bak*
-data/feedback.jsonl
+data/user_rejected.jsonl
 data/*.broken.json
 data/images/
+data/backups/
+data/diagnostics/
 reports/
 logs/
-
-# Backups locales de auditorías/migraciones (snapshots de trabajo)
-data/series_aliases.yml.pre-*
-data/unmapped_series.jsonl.pre-*
 .claude/scheduled_tasks.lock
