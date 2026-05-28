@@ -35,7 +35,7 @@ const SIGNAL_META: Record<string, SignalMeta> = {
   deluxe:             { IconComponent: Gem,       label: 'Deluxe',           bg: '#EEF2FF', fg: '#2D52CC' },
   hardcover:          { IconComponent: BookOpen,  label: 'Hardcover',        ...NEUTRAL },
   kanzenban:          { IconComponent: Layers,    label: 'Kanzenban',        bg: '#EEF2FF', fg: '#2D52CC' },
-  lore_edition:       { IconComponent: Sparkles,  label: 'Special Edition',  bg: '#EDFAF3', fg: '#1A8A5A' },
+  lore_edition:       { IconComponent: Sparkles,  label: 'Lore Edition',     bg: '#EDFAF3', fg: '#1A8A5A' },
   omnibus:            { IconComponent: BookOpen,  label: 'Omnibus',          ...NEUTRAL },
   bonus:              { IconComponent: Package,   label: 'With Extra',       bg: '#EDFAF3', fg: '#1A8A5A' },
   retailer_exclusive: { IconComponent: Globe,     label: 'Store Exclusive',  bg: '#FFFBEB', fg: '#9E6C00' },

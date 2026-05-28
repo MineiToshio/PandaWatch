@@ -2,7 +2,7 @@ import { ImageCarousel } from '@/components/item/ImageCarousel'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { CountryFlag } from '@/components/modules/CountryFlag'
-import { formatDate, formatISBN } from '@/lib/format'
+import { formatDate } from '@/lib/format'
 import type { Cluster } from '@/lib/types'
 
 export function ItemHero({ cluster }: { cluster: Cluster }) {
@@ -113,18 +113,18 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             )}
             {canonical.isbn && (
               <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', margin: 0 }}>
-                ISBN: {formatISBN(canonical.isbn)}
+                ISBN: {canonical.isbn}
               </p>
             )}
           </div>
 
-          {/* Description */}
-          {canonical.description_es && (
+          {/* Description — description_es con fallback a description */}
+          {(canonical.description_es || canonical.description) && (
             <p style={{
               fontSize: 14, lineHeight: 1.6,
               color: 'var(--color-text-secondary)', margin: 0,
             }}>
-              {canonical.description_es}
+              {canonical.description_es || canonical.description}
             </p>
           )}
         </div>

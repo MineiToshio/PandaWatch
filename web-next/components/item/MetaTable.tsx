@@ -1,15 +1,6 @@
 import { ScoreBadge } from '@/components/modules/ScoreBadge'
-import { formatDate, formatISBN } from '@/lib/format'
+import { formatDate, PRODUCT_TYPE_LABELS } from '@/lib/format'
 import type { Item } from '@/lib/types'
-
-const PRODUCT_TYPE_LABELS: Record<string, string> = {
-  manga:    'Manga',
-  boxset:   'Cofre / Box Set',
-  artbook:  'Artbook',
-  fanbook:  'Fanbook',
-  magazine: 'Revista',
-  novel:    'Novela',
-}
 
 type Row = {
   label: string
@@ -19,7 +10,7 @@ type Row = {
 
 export function MetaTable({ item }: { item: Item }) {
   const rows: Row[] = [
-    { label: 'ISBN',          value: item.isbn && formatISBN(item.isbn) },
+    { label: 'ISBN',          value: item.isbn },
     { label: 'Precio',        value: item.price },
     { label: 'Lanzamiento',   value: item.release_date && formatDate(item.release_date) },
     { label: 'Autor',         value: item.author },

@@ -1,4 +1,5 @@
 // Server Component — no "use client"
+import Link from 'next/link'
 import { SearchBar } from './SearchBar'
 
 export function Header() {
@@ -19,7 +20,7 @@ export function Header() {
       }}
     >
       {/* Logo: panda mark + wordmark */}
-      <a
+      <Link
         href="/"
         style={{
           display: 'flex',
@@ -47,7 +48,7 @@ export function Header() {
           <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>Panda</span>
           <span style={{ fontWeight: 400, color: 'var(--color-primary)' }}>Watch</span>
         </span>
-      </a>
+      </Link>
 
       {/* Search bar — Client Component for focus state */}
       <SearchBar />

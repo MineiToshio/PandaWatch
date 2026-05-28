@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Image from 'next/image'
 import { ChevronLeft, ChevronRight, BookOpen, X } from 'lucide-react'
 import type { ItemImage } from '@/lib/types'
@@ -57,16 +57,45 @@ const ARROW_BUTTON: React.CSSProperties = {
   flexShrink: 0,
 }
 
+function DotsRow({
+  count, active, onSelect, inactiveColor = 'var(--ink-200)', centered = true,
+}: {
+  count: number
+  active: number
+  onSelect: (i: number) => void
+  inactiveColor?: string
+  centered?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', justifyContent: centered ? 'center' : undefined, gap: 6 }}>
+      {Array.from({ length: count }, (_, i) => (
+        <button
+          key={i}
+          onClick={() => onSelect(i)}
+          aria-label={`Imagen ${i + 1}`}
+          aria-current={i === active ? 'true' : 'false'}
+          style={{
+            width: 8, height: 8, borderRadius: '50%',
+            border: 'none', cursor: 'pointer', padding: 0,
+            background: i === active ? 'var(--bamboo-500)' : inactiveColor,
+            transition: 'background 0.15s',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
 export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[]; alt: string }) {
-  const images = dedupeImages(rawImages)
+  const images = useMemo(() => dedupeImages(rawImages), [rawImages])
   const [idx, setIdx] = useState(0)
   const [src, setSrc] = useState<string | null>(
     images.length ? getInitialSrc(images[0]) : null
   )
   const [lightboxOpen, setLightboxOpen] = useState(false)
 
-  const prev = () => setIdx(i => (i - 1 + images.length) % images.length)
-  const next = () => setIdx(i => (i + 1) % images.length)
+  const prev = useCallback(() => setIdx(i => (i - 1 + images.length) % images.length), [images.length])
+  const next = useCallback(() => setIdx(i => (i + 1) % images.length), [images.length])
 
   // Sync src when navigating to a different image
   useEffect(() => {
@@ -83,7 +112,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [images.length, lightboxOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [images.length, lightboxOpen, prev, next])
 
   // Scroll lock while lightbox is open
   useEffect(() => {
@@ -196,22 +225,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
 
         {/* Dots indicator (2–8 images) */}
         {images.length > 1 && images.length <= 8 && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 6 }}>
-            {images.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setIdx(i)}
-                aria-label={`Imagen ${i + 1}`}
-                aria-current={i === idx ? 'true' : 'false'}
-                style={{
-                  width: 8, height: 8, borderRadius: '50%',
-                  border: 'none', cursor: 'pointer', padding: 0,
-                  background: i === idx ? 'var(--bamboo-500)' : 'var(--ink-200)',
-                  transition: 'background 0.15s',
-                }}
-              />
-            ))}
-          </div>
+          <DotsRow count={images.length} active={idx} onSelect={setIdx} />
         )}
       </div>
 
@@ -317,22 +331,13 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
 
               {/* Dots (2–8 images) */}
               {images.length > 1 && images.length <= 8 && (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {images.map((_, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setIdx(i)}
-                      aria-label={`Imagen ${i + 1}`}
-                      aria-current={i === idx ? 'true' : 'false'}
-                      style={{
-                        width: 8, height: 8, borderRadius: '50%',
-                        border: 'none', cursor: 'pointer', padding: 0,
-                        background: i === idx ? 'var(--bamboo-500)' : 'rgba(255,255,255,0.35)',
-                        transition: 'background 0.15s',
-                      }}
-                    />
-                  ))}
-                </div>
+                <DotsRow
+                  count={images.length}
+                  active={idx}
+                  onSelect={setIdx}
+                  inactiveColor="rgba(255,255,255,0.35)"
+                  centered={false}
+                />
               )}
             </div>
 

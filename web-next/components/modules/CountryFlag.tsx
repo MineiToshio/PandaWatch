@@ -40,7 +40,7 @@ export function CountryFlag({ country, showLabel = false, className }: CountryFl
     <span className={cn('inline-flex items-center gap-1', className)}>
       <span aria-hidden="true">{flag}</span>
       {showLabel && (
-        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
           {country}
         </span>
       )}

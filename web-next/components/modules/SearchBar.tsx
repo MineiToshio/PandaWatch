@@ -77,7 +77,7 @@ export function SearchBar() {
       <input
         ref={inputRef}
         type="search"
-        placeholder="Search by manga, series, publisher, ISBN…"
+        placeholder="Buscar por manga, serie, editorial, ISBN…"
         value={query}
         onChange={(e) => handleChange(e.target.value)}
         onFocus={() => setFocused(true)}

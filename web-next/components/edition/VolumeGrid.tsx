@@ -27,10 +27,6 @@ export function VolumeGrid({ clusters, editionKey }: VolumeGridProps) {
         @media (min-width: 1280px) {
           .volume-grid { grid-template-columns: repeat(5, 1fr); }
         }
-        .item-card:hover {
-          box-shadow: var(--shadow-md);
-          transform: translateY(-2px);
-        }
       `}</style>
       <ul role="list" className="volume-grid">
         {clusters.map(cluster => (

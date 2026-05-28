@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { cn } from '@/lib/styles'
+import { scoreLevel } from '@/lib/format'
 
 type BadgeVariant = 'green' | 'yellow' | 'orange' | 'red' | 'neutral'
 
@@ -11,9 +12,10 @@ export type BadgeProps = {
 }
 
 function deriveVariant(score: number): BadgeVariant {
-  if (score >= 200) return 'green'
-  if (score >= 100) return 'yellow'
-  if (score >= 50)  return 'orange'
+  const level = scoreLevel(score)
+  if (level === 'green')  return 'green'
+  if (level === 'amber')  return 'yellow'
+  if (level === 'orange') return 'orange'
   return 'red'
 }
 

@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { cn } from '@/lib/styles'
+import { scoreLevel } from '@/lib/format'
 
 type ScoreBadgeProps = {
   score: number
@@ -7,28 +8,15 @@ type ScoreBadgeProps = {
   className?: string
 }
 
-// Maps raw scraper score (0–300) to design-system hex colors
+const SCORE_STYLES: Record<ReturnType<typeof scoreLevel>, CSSProperties> = {
+  green:  { background: '#EDFAF3', color: '#1A8A5A', border: '2px solid #A6DFCA' },
+  amber:  { background: '#FFFBEB', color: '#9E6C00', border: '2px solid #FDE68A' },
+  orange: { background: '#FEF3EF', color: '#D93D1A', border: '2px solid #FABEAD' },
+  low:    { background: 'var(--ink-100)', color: 'var(--ink-500)', border: '2px solid var(--ink-200)' },
+}
+
 function scoreStyle(score: number): CSSProperties {
-  if (score >= 200) return {
-    background: '#EDFAF3',
-    color: '#1A8A5A',
-    border: '2px solid #A6DFCA',
-  }
-  if (score >= 100) return {
-    background: '#FFFBEB',
-    color: '#9E6C00',
-    border: '2px solid #FDE68A',
-  }
-  if (score >= 50) return {
-    background: '#FEF3EF',
-    color: '#D93D1A',
-    border: '2px solid #FABEAD',
-  }
-  return {
-    background: 'var(--ink-100)',
-    color: 'var(--ink-500)',
-    border: '2px solid var(--ink-200)',
-  }
+  return SCORE_STYLES[scoreLevel(score)]
 }
 
 export function ScoreBadge({ score, showLabel = false, className }: ScoreBadgeProps) {

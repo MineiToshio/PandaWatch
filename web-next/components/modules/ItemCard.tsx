@@ -3,15 +3,7 @@ import type { Cluster } from '@/lib/types'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { ScoreBadge } from '@/components/modules/ScoreBadge'
-
-function formatDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr + 'T00:00:00')
-    return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
-  } catch {
-    return dateStr
-  }
-}
+import { formatDate } from '@/lib/format'
 
 type ItemCardProps = {
   cluster: Cluster

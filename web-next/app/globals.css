@@ -344,6 +344,11 @@ body {
   box-shadow: var(--shadow-md);
 }
 
+.item-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
 /* Inner card surface — clips image, provides white card background */
 .edition-card-inner {
   border-radius: var(--radius-md);

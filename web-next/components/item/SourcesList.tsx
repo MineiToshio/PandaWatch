@@ -35,7 +35,7 @@ export function SourcesList({ items }: { items: Item[] }) {
           <tbody>
             {items.map((item, i) => (
               <tr
-                key={i}
+                key={item.url}
                 style={{ borderBottom: i < items.length - 1 ? '1px solid var(--color-border-subtle)' : 'none' }}
               >
                 <td style={{ padding: '8px 16px 8px 0' }}>
