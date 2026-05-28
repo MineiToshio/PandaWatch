@@ -133,13 +133,13 @@ export async function generateMetadata({ params }) {
 
 ## Acceptance Criteria
 
-- [ ] `/edition/berserk-darkhorse-deluxe` loads and shows all Berserk Deluxe volumes
-- [ ] Volumes are sorted by volume number ascending
-- [ ] Items without volume numbers appear at the end
-- [ ] Page title is `"Berserk Deluxe Edition — PandaWatch"` (example)
-- [ ] `← Catálogo` navigates back to `/`
-- [ ] Requesting a non-existent edition key returns 404
-- [ ] `generateStaticParams()` generates a route for every edition_key in the corpus
+- [x] `/edition/berserk-darkhorse-deluxe` loads and shows all Berserk Deluxe volumes
+- [x] Volumes are sorted by volume number ascending
+- [x] Items without volume numbers appear at the end
+- [x] Page title is `"Berserk Deluxe Edition — PandaWatch"` (example)
+- [x] `← Catálogo` navigates back to `/`
+- [x] Requesting a non-existent edition key returns 404
+- [x] `generateStaticParams()` generates a route for every edition_key in the corpus
 
 ---
 

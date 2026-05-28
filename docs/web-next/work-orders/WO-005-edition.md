@@ -2,7 +2,7 @@
 
 **Phase:** 3  
 **Effort:** M  
-**Status:** Pending  
+**Status:** Complete  
 **Related:** [FRD-004](../FRD-004-edition-detail.md), [BP-002](../blueprints/BP-002-url-routing.md)  
 **Prerequisites:** WO-004 (catalog page — EditionCard and core components done)
 
@@ -277,11 +277,11 @@ export function BackLink({ href, label }: { href: string; label: string }) {
 
 ## Acceptance Criteria
 
-- [ ] `/edition/berserk-darkhorse-deluxe` loads and shows all Berserk Deluxe volumes
-- [ ] Volumes sorted by volume number ascending; no-volume items at end
-- [ ] Edition header shows series name, edition name, publisher, country, signal chips
-- [ ] `generateStaticParams()` includes routes for all edition_keys in corpus
-- [ ] Non-existent edition key returns 404
-- [ ] Page `<title>` set correctly
-- [ ] `← Catálogo` link navigates to `/`
-- [ ] Each ItemCard links to `/item/[slug]?from=edition:{editionKey}`
+- [x] `/edition/berserk-darkhorse-deluxe` loads and shows all Berserk Deluxe volumes
+- [x] Volumes sorted by volume number ascending; no-volume items at end
+- [x] Edition header shows series name, edition name, publisher, country, signal chips
+- [x] `generateStaticParams()` includes routes for all edition_keys in corpus
+- [x] Non-existent edition key returns 404
+- [x] Page `<title>` set correctly
+- [x] `← Catálogo` link navigates to `/`
+- [x] Each ItemCard links to `/item/[slug]?from=edition:{editionKey}`

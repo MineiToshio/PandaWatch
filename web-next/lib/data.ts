@@ -107,6 +107,54 @@ export function allSlugs(): string[] {
     .filter((s): s is string => Boolean(s))
 }
 
+/**
+ * Collapse clusters that share the same edition_key into a single representative
+ * entry for the catalog home page.
+ *
+ * - Editions with N volumes → one card, volumeCount=N, links to /edition/[editionKey]
+ * - Standalone clusters (no edition_key) → one card each, links to /item/[slug]
+ *
+ * Sort order is preserved: the position of an edition card in the result is
+ * determined by where its first cluster appeared in the (already-sorted) input.
+ */
+export function groupByEdition(clusters: Cluster[]): Cluster[] {
+  const result: Cluster[] = []
+  const editionIndexMap = new Map<string, number>() // editionKey → index in result
+
+  for (const cluster of clusters) {
+    if (!cluster.editionKey) {
+      // Standalone — keep as-is
+      result.push(cluster)
+      continue
+    }
+
+    const idx = editionIndexMap.get(cluster.editionKey)
+    if (idx === undefined) {
+      // First cluster for this edition — insert it (volumeCount = 1 for now)
+      editionIndexMap.set(cluster.editionKey, result.length)
+      result.push({ ...cluster, volumeCount: 1 })
+    } else {
+      // Another volume of the same edition — merge into the existing entry
+      const entry = result[idx]
+      entry.volumeCount += 1
+
+      // Promote to canonical if this cluster's item has a higher score
+      if ((cluster.canonical.score ?? 0) > (entry.canonical.score ?? 0)) {
+        entry.canonical = cluster.canonical
+        entry.slug = cluster.slug
+      }
+
+      // Union all metadata arrays
+      entry.signalTypes = [...new Set([...entry.signalTypes, ...cluster.signalTypes])]
+      entry.countries   = [...new Set([...entry.countries,   ...cluster.countries])]
+      entry.publishers  = [...new Set([...entry.publishers,  ...cluster.publishers])]
+      entry.languages   = [...new Set([...entry.languages,   ...cluster.languages])]
+    }
+  }
+
+  return result
+}
+
 export function buildFacets(clusters: Cluster[]): Facets {
   const count = (values: string[]): { value: string; count: number }[] => {
     const map = new Map<string, number>()
