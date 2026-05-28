@@ -3719,6 +3719,69 @@ def test_append_jsonl_does_not_preserve_when_no_standardized_at(tmp_path):
     assert items[0]["series_key"] == "wrong-key-2"
 
 
+def _make_candidate(**kwargs):
+    """Helper para construir un Candidate de prueba con defaults mínimos."""
+    defaults = dict(
+        title="Berserk Deluxe Edition 1",
+        url="https://darkhorse.com/berserk-deluxe-1",
+        source="Dark Horse",
+        source_url="https://darkhorse.com/manga",
+        country="USA",
+        language="Inglés",
+        publisher="Dark Horse",
+        source_class="official",
+        tags=[],
+        description="Deluxe hardcover edition",
+        score=80,
+        signal_types=["deluxe"],
+        content_hash="abc123",
+    )
+    defaults.update(kwargs)
+    return mw.Candidate(**defaults)
+
+
+def test_flush_source_candidates_writes_new_items(tmp_path):
+    """flush_source_candidates escribe candidatos new/changed al JSONL
+    inmediatamente sin necesitar que el run completo termine."""
+    path = tmp_path / "items.jsonl"
+    cand = _make_candidate()
+    written = mw.flush_source_candidates([cand], {}, path, min_score=20)
+    assert written == 1
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0]["url"] == "https://darkhorse.com/berserk-deluxe-1"
+    assert items[0]["status"] == "new"
+
+
+def test_flush_source_candidates_skips_seen_items(tmp_path):
+    """flush_source_candidates NO re-escribe ítems 'seen' (mismo hash en state)."""
+    path = tmp_path / "items.jsonl"
+    # La key del state es "url:<normalized>" — igual que usa candidate_key().
+    state = {"url:https://darkhorse.com/berserk-deluxe-1": {"content_hash": "abc123"}}
+    cand = _make_candidate()
+    written = mw.flush_source_candidates([cand], state, path, min_score=20)
+    assert written == 0
+    assert not path.exists()
+
+
+def test_flush_source_candidates_skips_below_min_score(tmp_path):
+    """flush_source_candidates descarta candidatos con score bajo."""
+    path = tmp_path / "items.jsonl"
+    cand = _make_candidate(score=5)
+    written = mw.flush_source_candidates([cand], {}, path, min_score=20)
+    assert written == 0
+    assert not path.exists()
+
+
+def test_flush_source_candidates_dry_run_writes_nothing(tmp_path):
+    """flush_source_candidates no escribe nada en dry_run=True."""
+    path = tmp_path / "items.jsonl"
+    cand = _make_candidate()
+    written = mw.flush_source_candidates([cand], {}, path, min_score=20, dry_run=True)
+    assert written == 0
+    assert not path.exists()
+
+
 def test_append_jsonl_image_local_is_sticky(tmp_path):
     """Un re-scrape sin image_local (--skip-image-download o fallo de red
     puntual) NO debe borrar el espejo local ya descargado. Ver "Image
@@ -3966,6 +4029,64 @@ def test_cluster_key_fallback_when_series_too_short():
             "signal_types": ["deluxe"], "url": "http://a"}
     key = mw.derive_cluster_key(item)
     assert key.startswith("url:")
+
+
+def test_cluster_key_edition_key_merges_box_across_sources():
+    """Dos items con el mismo edition_key + volume DEBEN compartir cluster_key
+    aunque vengan de fuentes/publishers distintos. Crucial para box sets
+    sin volumen — la fuzzy key requiere volume y los dejaba aislados.
+
+    Caso semilla: Gon Edición Coleccionista (Norma) aparece como item en
+    Whakoom (publisher "Varias editoriales") y en ListadoManga colecciones
+    (publisher "Norma Editorial"). Ambos tienen edition_key
+    "gon-norma-collector" y volume="" — deben mergear en una sola card.
+    """
+    whakoom = {
+        "edition_key": "gon-norma-collector",
+        "volume": "",
+        "title": "Gon Edición Coleccionista",
+        "language": "Español",
+        "publisher": "Varias editoriales",
+        "signal_types": ["collector"],
+        "url": "https://whakoom.com/comics/k9IBX/gon_edicion_coleccionista",
+    }
+    lmc_box = {
+        "edition_key": "gon-norma-collector",
+        "volume": "",
+        "title": "Gon (Edición Coleccionista) (Norma) — Cofre",
+        "language": "Español",
+        "publisher": "Norma Editorial",
+        "signal_types": ["collector", "box_set", "hardcover"],
+        "url": "https://listadomanga.es/coleccion.php?id=5959&item=box-0-abc",
+    }
+    assert mw.derive_cluster_key(whakoom) == mw.derive_cluster_key(lmc_box)
+    assert mw.derive_cluster_key(whakoom).startswith("edition:gon-norma-collector|")
+
+
+def test_cluster_key_edition_key_different_volumes_dont_merge():
+    """Mismo edition_key pero distinto volumen → cards separadas (es lo
+    correcto: tomo 1 y tomo 2 de la misma edición son productos distintos)."""
+    a = {"edition_key": "berserk-panini-deluxe", "volume": "1",
+         "title": "Berserk Deluxe 1", "url": "http://a"}
+    b = {"edition_key": "berserk-panini-deluxe", "volume": "2",
+         "title": "Berserk Deluxe 2", "url": "http://b"}
+    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+
+
+def test_cluster_key_isbn_still_wins_over_edition_key():
+    """ISBN sigue siendo la clave más autoritativa; edition_key es fallback."""
+    item = {"isbn": "9788822624697", "edition_key": "x-y-z", "volume": "1",
+            "url": "http://a"}
+    assert mw.derive_cluster_key(item) == "isbn:9788822624697"
+
+
+def test_cluster_key_no_edition_key_falls_through_to_fuzzy():
+    """Items sin edition_key (pre-standardize-catalog) usan fuzzy como antes."""
+    item = {"title": "One Piece vol. 100 Celebration", "language": "Italiano",
+            "publisher": "Star Comics", "signal_types": ["lore_edition"],
+            "url": "http://a"}
+    key = mw.derive_cluster_key(item)
+    assert key.startswith("fuzzy:")
 
 
 def test_cluster_key_japanese_preserves_kanji():
@@ -4454,6 +4575,461 @@ def test_blogbbm_iter_year_months_returns_single_batch():
     assert bbm.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
 
 
+def _bbm_layout_c_html(rows: list[tuple[str, str, str, str]]) -> str:
+    """Genera HTML mínimo de un post BBM Layout C (supsystic table).
+    Cada tupla = (img_src, title, publisher, date_raw)."""
+    body_rows = ""
+    for img_src, title, pub, date in rows:
+        img_html = f'<img src="{img_src}"/>' if img_src else ""
+        body_rows += (
+            f"<tr>"
+            f"<td>{img_html}</td>"
+            f"<td>{title}</td>"
+            f"<td>{pub}</td>"
+            f"<td>{date}</td>"
+            f"</tr>"
+        )
+    pad = "X" * 5000  # parse_post requires len(html) >= 5000
+    return f"""<html><body><article><div class="entry-content">
+{pad}
+<table class="supsystic-table" id="supsystic-table-78">
+  <tbody>
+    <tr><th></th><th>TÍTULOS</th><th>EDITORA</th><th>DATA</th></tr>
+    {body_rows}
+  </tbody>
+</table>
+</div></article></body></html>"""
+
+
+def test_blogbbm_layout_c_parses_supsystic_table():
+    """Layout C: 1 row supsystic = 1 candidate con box_set signal,
+    publisher canónico del col 2, fecha YYYY.MM → YYYY-MM."""
+    from wikis import blogbbm as bbm
+    post_meta = next(p for p in bbm.BBM_POSTS if p["layout"] == "C")
+    html = _bbm_layout_c_html([
+        ("https://i0.wp.com/blogbbm.com/wp-content/uploads/2025/12/Pink-Heart-Jam-Deluxe-Box.jpg?resize=810",
+         "Pink Heart Jam - Deluxe Box", "JBC", "2026.01"),
+    ])
+    cands = bbm.parse_post(html, post_meta)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.title == "Pink Heart Jam - Deluxe Box"
+    assert c.publisher == "JBC"
+    assert c.release_date == "2026-01"
+    assert "box_set" in c.signal_types
+    assert c.country == "Brasil"
+    # i0.wp.com proxy debe quitarse del image_url
+    assert c.image_url.startswith("https://blogbbm.com/wp-content/uploads/2025/12/Pink-Heart-Jam-Deluxe-Box.jpg")
+    # URL sintética con slug
+    assert "bbm-entry=box-pink-heart-jam-deluxe-box" in c.url
+    # bbm-box tag
+    assert "bbm-box" in c.tags
+
+
+def test_blogbbm_layout_c_preventa_em_breve_keeps_item_empty_date():
+    """'Em breve' (preventa) → release_date vacío + status hint en description.
+    El item sigue válido (box set anunciado pero sin fecha confirmada)."""
+    from wikis import blogbbm as bbm
+    post_meta = next(p for p in bbm.BBM_POSTS if p["layout"] == "C")
+    html = _bbm_layout_c_html([
+        ("https://i0.wp.com/img.jpg", "Claymore", "Panini", "Em breve"),
+    ])
+    cands = bbm.parse_post(html, post_meta)
+    assert len(cands) == 1
+    assert cands[0].release_date == ""
+    assert "Em breve" in cands[0].description
+    # box_set signal sigue activo (lo levanta el inject)
+    assert "box_set" in cands[0].signal_types
+
+
+def test_blogbbm_layout_c_placeholder_image_yields_empty_image_url():
+    """'Sem-Imagem.png' es el placeholder del wiki para boxes sin cover.
+    Lo descartamos como image_url (frontend usa 📚) pero el item se conserva."""
+    from wikis import blogbbm as bbm
+    post_meta = next(p for p in bbm.BBM_POSTS if p["layout"] == "C")
+    html = _bbm_layout_c_html([
+        ("https://i0.wp.com/blogbbm.com/wp-content/uploads/2024/02/Sem-Imagem.png?resize=247",
+         "Mujirushi", "Panini", "Em breve"),
+    ])
+    cands = bbm.parse_post(html, post_meta)
+    assert len(cands) == 1
+    assert cands[0].image_url == ""
+    assert cands[0].title == "Mujirushi"
+
+
+def test_blogbbm_layout_c_dispatch_isolated_from_ab():
+    """`parse_post` dispatches por `post_meta['layout']`: el post Box NO se
+    parsea con la heurística title-driven de Layout A/B (no tiene <p> de
+    título ni gallery divs) — debe entrar al parser supsystic puro."""
+    from wikis import blogbbm as bbm
+    # Post AB con HTML que NO tiene supsystic: debe usar layout AB.
+    ab_post = next(p for p in bbm.BBM_POSTS if p["layout"] == "AB")
+    html_no_struct = "<html><body>" + ("X" * 6000) + "<article><div class='entry-content'><p>No entries here</p></div></article></body></html>"
+    assert bbm.parse_post(html_no_struct, ab_post) == []
+    # Y un post layout C con tabla supsystic da resultados.
+    c_post = next(p for p in bbm.BBM_POSTS if p["layout"] == "C")
+    html_with_table = _bbm_layout_c_html([("", "X-Series", "JBC", "2026.05")])
+    assert len(bbm.parse_post(html_with_table, c_post)) == 1
+
+
+# --- booksprivilege (JP — 店舗特典) ---------------------------------------
+
+_BP_DETAIL_FIXTURE = """
+<article>
+  <header class="entry-header">
+    <h1 class="entry-title"><a href="?id=99033">陰の実力者になりたくて! (18)</a></h1>
+  </header>
+  <div class="entry-content">
+    <div class="shop_box">
+      <div class="shop_image">
+        <a href="https://www.amazon.co.jp/dp/4041173876?tag=aff&linkCode=ogi" target="_blank">
+          <img src="https://images-fe.ssl-images-amazon.com/images/P/4041173876.09_SL500_.jpg"/>
+        </a>
+      </div>
+      <div class="shop_info">
+        <div class="shop_title">陰の実力者になりたくて! (18) (角川コミックス・エース)</div>
+        <div class="shop_author">坂野 杏梨, 逢沢 大介, 東西</div>
+        <div class="shop_label">角川コミックス・エース</div>
+        <div class="shop_date">2026-05-25</div>
+      </div>
+    </div>
+    <div class="shop_box">
+      <div class="shop_image">
+        <a href="https://www.amazon.co.jp/dp/B0GX3CQB61"><img src="https://images-fe.ssl-images-amazon.com/images/P/B0GX3CQB61.09_SL500_.jpg"/></a>
+      </div>
+      <div class="shop_info">
+        <div class="shop_title">陰の実力者になりたくて! Kindle</div>
+        <div class="shop_label">Kindle</div>
+      </div>
+    </div>
+  </div>
+  <div class="shop-list">
+    <div class="shop-row">
+      <div class="shop-name-col">とらのあな</div>
+      <div class="shop-benefit-col"><a href="https://ex.com">特製イラストカード</a></div>
+    </div>
+    <div class="shop-row">
+      <div class="shop-name-col">ゲーマーズ</div>
+      <div class="shop-benefit-col"><a href="https://ex.com">オリジナルブロマイド</a></div>
+    </div>
+    <div class="shop-row">
+      <div class="shop-name-col">メロンブックス</div>
+      <div class="shop-benefit-col"><a href="https://ex.com">ミニアクリルパネル<br/>イラストカード</a></div>
+    </div>
+  </div>
+</article>
+"""
+
+
+def test_booksprivilege_parses_detail_basic():
+    """Detail page canónica: title + ISBN-10 del path Amazon CDN + publisher
+    canónico del label japonés + autor + fecha + shop bonuses en description."""
+    from wikis import booksprivilege as bp
+    cand = bp.parse_detail_page(_BP_DETAIL_FIXTURE, "https://booksprivilege.com/?id=99033")
+    assert cand is not None
+    assert cand.title == "陰の実力者になりたくて! (18)"
+    assert cand.url == "https://booksprivilege.com/?id=99033"
+    assert cand.isbn == "4041173876"
+    assert cand.image_url == "https://images-fe.ssl-images-amazon.com/images/P/4041173876.09_SL500_.jpg"
+    assert cand.publisher == "Kadokawa"
+    assert cand.author == "坂野 杏梨, 逢沢 大介, 東西"
+    assert cand.release_date == "2026-05-25"
+    assert cand.country == "Japón"
+    assert cand.language == "Japonés"
+    assert cand.source == "JP - BooksPrivilege (店舗特典)"
+    # Cada tienda + extra debe aparecer estructurado en description
+    assert "店舗特典" in cand.description
+    assert "とらのあな" in cand.description and "特製イラストカード" in cand.description
+    assert "ゲーマーズ" in cand.description and "オリジナルブロマイド" in cand.description
+    assert "メロンブックス" in cand.description
+    # Amazon URL debe quedar como referencia de compra
+    assert "amazon.co.jp/dp/4041173876" in cand.description
+    # Volume tag
+    assert "bp-vol:18" in cand.tags
+    # Signal types: el inject de "店舗特典 / store bonus / bonus edition"
+    # más el contexto de tokuten deberían levantar `bonus` al menos
+    assert "bonus" in cand.signal_types
+
+
+def test_booksprivilege_skips_when_only_kindle_asin():
+    """Si solo hay Kindle ASIN (B0...) sin ISBN real, descartar — no podemos
+    dedupar por ISBN y son productos digitales, no físicos."""
+    from wikis import booksprivilege as bp
+    html = """
+    <article>
+      <header class="entry-header"><h1 class="entry-title"><a>Solo Kindle</a></h1></header>
+      <div class="shop_box">
+        <div class="shop_image">
+          <img src="https://images-fe.ssl-images-amazon.com/images/P/B0ABCDEFGH.09_SL500_.jpg"/>
+        </div>
+        <div class="shop_info">
+          <div class="shop_label">Kindle</div>
+        </div>
+      </div>
+    </article>
+    """
+    assert bp.parse_detail_page(html, "https://booksprivilege.com/?id=1") is None
+
+
+def test_booksprivilege_skips_when_no_entry_title():
+    """Page malformada (sin <h1 class=entry-title>) → None, no half-baked candidates."""
+    from wikis import booksprivilege as bp
+    html = """<article><div class="shop_box"><div class="shop_image"><img src="https://images-fe.ssl-images-amazon.com/images/P/4041173876.09_SL500_.jpg"/></div></div></article>"""
+    assert bp.parse_detail_page(html, "https://booksprivilege.com/?id=1") is None
+
+
+def test_booksprivilege_parses_daily_listing():
+    """Listing diario: extrae item ids únicos de los <div class='book-item'>."""
+    from wikis import booksprivilege as bp
+    html = """
+    <main>
+      <div class="book-grid">
+        <div class="book-item"><a href="?id=99033" class="book-item-title">Title A</a></div>
+        <div class="book-item"><a href="?id=99034" class="book-item-title">Title B</a></div>
+        <div class="book-item"><a href="?id=99033" class="book-item-title">Title A dup</a></div>
+      </div>
+    </main>
+    """
+    ids = bp.parse_daily_listing(html)
+    assert ids == [99033, 99034]
+
+
+def test_booksprivilege_parses_calendar_drops_spillover():
+    """El calendario muestra días del mes adyacente en los bordes
+    (ej. días 30/31 abril cuando mostrás mayo). El parser debe descartarlos
+    para evitar duplicados al iterar meses contiguos."""
+    from wikis import booksprivilege as bp
+    import datetime as dt
+    html = """
+    <table class="calendar-table"><tbody>
+      <tr>
+        <td class="has-book"><a href="./?date=2026-04-30">30</a></td>
+        <td class="has-book"><a href="./?date=2026-05-01">1</a></td>
+        <td class="has-book"><a href="./?date=2026-05-05">5</a></td>
+        <td class="empty">&nbsp;</td>
+        <td class="has-book"><a href="./?date=2026-05-25">25</a></td>
+        <td class="has-book"><a href="./?date=2026-06-01">1</a></td>
+      </tr>
+    </tbody></table>
+    """
+    days = bp.parse_calendar_month(html, 2026, 5)
+    assert days == [dt.date(2026, 5, 1), dt.date(2026, 5, 5), dt.date(2026, 5, 25)]
+
+
+def test_booksprivilege_label_to_publisher_canonical():
+    """Imprints japoneses se mapean a publishers canónicos para que el cluster
+    por publisher funcione. Imprints no mapeados quedan literales (el skill
+    /standardize-catalog los normaliza después)."""
+    from wikis.booksprivilege import _publisher_from_label
+    assert _publisher_from_label("角川コミックス・エース") == "Kadokawa"
+    assert _publisher_from_label("講談社コミックス") == "Kodansha"
+    assert _publisher_from_label("ジャンプコミックス（集英社）") == "Shueisha"
+    assert _publisher_from_label("少年サンデーコミックス（小学館）") == "Shogakukan"
+    # Unknown imprint: queda literal, no rompe
+    assert _publisher_from_label("ベリーズファンタジー") == "ベリーズファンタジー"
+    assert _publisher_from_label("") == ""
+
+
+def test_booksprivilege_iter_year_months_inclusive_range():
+    """Iterador de meses inclusive. Mar-2026 → Jun-2026 = 4 meses."""
+    from wikis import booksprivilege as bp
+    assert bp.iter_year_months(2026, 3, 2026, 6) == [
+        (2026, 3), (2026, 4), (2026, 5), (2026, 6),
+    ]
+    # Cross-year boundary
+    assert bp.iter_year_months(2025, 11, 2026, 2) == [
+        (2025, 11), (2025, 12), (2026, 1), (2026, 2),
+    ]
+    # Reverse order gets swapped
+    assert bp.iter_year_months(2026, 6, 2026, 3) == [
+        (2026, 3), (2026, 4), (2026, 5), (2026, 6),
+    ]
+
+
+def test_booksprivilege_volume_extraction_jp_patterns():
+    """Volume del título: '(18)', '第18巻', 'vol. 18'."""
+    from wikis.booksprivilege import _extract_volume
+    assert _extract_volume("陰の実力者になりたくて! (18)") == "18"
+    assert _extract_volume("Title 第5巻") == "5"
+    assert _extract_volume("Title vol. 12") == "12"
+    assert _extract_volume("Standalone") == ""
+
+
+# --- sumikko (JP — 限定版・特装版 / comic.sumikko.info) -------------------
+
+def _sumikko_item_block(
+    isbn: str,
+    title: str,
+    date_jp: str = "26年10月23日(金)",
+    author: str = "久遠まこと",
+    imprint: str = "MFコミックス",
+    publisher: str = "KADOKAWA",
+    type_tag: str = "コミック",
+    img_class: str = "lazy",
+    img_data_src: str | None = None,
+) -> str:
+    """Genera un bloque <a href=/item-select/...> tal como aparece en
+    el listing real de sumikko. `img_data_src=None` deja el default a la
+    URL Amazon CDN derivada del isbn."""
+    if img_data_src is None:
+        img_data_src = f"https://images-na.ssl-images-amazon.com/images/P/{isbn}.09._SY180_SCLZZZZZZZ_.jpg"
+    publisher_span = f'<span>{publisher}</span>' if publisher else ''
+    return (
+        f'<a href="https://comic.sumikko.info/item-select/{isbn}">'
+        f'<div class="Types"><span class="type type-tag">{type_tag}</span></div>'
+        f'<div class="name">{title}</div>'
+        f'<div class="sab"><span>{date_jp}</span><span>{author}</span></div>'
+        f'<div class="sab"><span>{imprint}</span>{publisher_span}</div>'
+        f'<div class="image"><img class="{img_class}" '
+        f'src="https://comic.sumikko.info/web/img/loading/reload200_299.svg?v=1" '
+        f'data-src="{img_data_src}" alt="{title}"/></div>'
+        f'</a>'
+    )
+
+
+def test_sumikko_parses_listing_basic():
+    """Un bloque típico: ISBN-10 desde URL, fecha JP, publisher canonical,
+    imagen Amazon CDN, signal `limited`/`special_edition` por inject."""
+    from wikis import sumikko as sk
+    html = _sumikko_item_block(
+        isbn="4046602074",
+        title="勇者に全部奪われた俺は勇者の母親とパーティを組みました! 8 アクリルスタンド付き特装版",
+    )
+    cands = sk.parse_listing_page(html)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.isbn == "4046602074"
+    assert c.url == "https://comic.sumikko.info/item-select/4046602074"
+    assert c.publisher == "Kadokawa"           # KADOKAWA → canonical
+    assert c.release_date == "2026-10-23"      # 26年10月23日(金) → ISO
+    assert c.author == "久遠まこと"
+    assert c.country == "Japón"
+    assert c.language == "Japonés"
+    assert c.source == "JP - Sumikko (限定版・特装版)"
+    assert c.image_url.endswith("4046602074.09._SY180_SCLZZZZZZZ_.jpg")
+    # Volume extraído del título (entre " 8 " y la palabra 特装版)
+    assert any(t == "sk-vol:8" for t in c.tags)
+    # Signal: el inject "限定版・特装版" debe levantar `limited` y/o `special_edition`
+    assert "limited" in c.signal_types or "special_edition" in c.signal_types
+
+
+def test_sumikko_handles_single_sab_span_imprint_only():
+    """Cuando sab[1] tiene SOLO 1 span (imprint sin parent publisher),
+    el imprint actúa también como publisher (ej. Bushiroad Works)."""
+    from wikis import sumikko as sk
+    html = _sumikko_item_block(
+        isbn="4049211475",
+        title="魔法使いの嫁 25 特装版",
+        imprint="ブシロードワークス",
+        publisher="",                  # NO 2nd span
+    )
+    cands = sk.parse_listing_page(html)
+    assert len(cands) == 1
+    # ブシロード → canonical "Bushiroad Works"
+    assert cands[0].publisher == "Bushiroad Works"
+
+
+def test_sumikko_image_fallback_for_touch18_bl_items():
+    """Items BL/R18 usan <img class='touch18'> (wrapper 18+) en vez de
+    'lazy'. Igual extraemos el data-src real al CDN Amazon (gotcha del
+    parser: NO filtramos por class, sólo buscamos cualquier <img>)."""
+    from wikis import sumikko as sk
+    html = _sumikko_item_block(
+        isbn="4825100694",
+        title="アフターグロウ(2) 限定版",
+        img_class="touch18",
+    )
+    cands = sk.parse_listing_page(html)
+    assert len(cands) == 1
+    assert cands[0].image_url.endswith("4825100694.09._SY180_SCLZZZZZZZ_.jpg")
+
+
+def test_sumikko_drops_loading_and_no_image_placeholders():
+    """Los placeholders `reload200_299.svg`, `no_image200_299_BL.png` y
+    cualquier `/loading/` se descartan como image_url (no son portadas)."""
+    from wikis import sumikko as sk
+    bad_html = _sumikko_item_block(
+        isbn="9784567890123",
+        title="Title placeholder",
+        img_data_src="https://comic.sumikko.info/web/img/list/no_image200_299_BL.png",
+    )
+    cands = sk.parse_listing_page(bad_html)
+    assert len(cands) == 1
+    assert cands[0].image_url == ""
+
+
+def test_sumikko_type_filter_optional_default_accepts_all():
+    """Por default, accept_types está vacío → aceptamos cualquier type_tag
+    (el `type-tag` describe el extra de la edición, no el producto).
+    Verificado con un item etiquetado `カセット、ＣＤ等` (es un manga con
+    CD bonus, NO una cassette de audio)."""
+    from wikis import sumikko as sk
+    html = _sumikko_item_block(
+        isbn="4091236189",
+        title="名探偵コナン 108 劇場版ティザーアクリルスタンド付き特装版",
+        type_tag="カセット、ＣＤ等",
+        imprint="少年サンデーコミックス",
+        publisher="小学館",
+    )
+    cands = sk.parse_listing_page(html)
+    assert len(cands) == 1
+    assert cands[0].title.startswith("名探偵コナン")
+    assert cands[0].publisher == "Shogakukan"
+
+
+def test_sumikko_type_filter_opt_in_restricts():
+    """Si pasás `accept_types={'コミック'}` explícitamente, descartamos
+    todo lo que no sea コミック (filtrado opt-in)."""
+    from wikis import sumikko as sk
+    html = _sumikko_item_block(
+        isbn="4091236189",
+        title="Some Item",
+        type_tag="ライトノベル",                # NOT コミック
+    )
+    cands = sk.parse_listing_page(html, accept_types=frozenset({"コミック"}))
+    assert cands == []
+
+
+def test_sumikko_parses_date_jp_format():
+    """`_parse_jp_date` soporta '26年10月23日(金)' y variantes sin
+    weekday. Año asumido como 20XX."""
+    from wikis.sumikko import _parse_jp_date
+    assert _parse_jp_date("26年10月23日(金)") == "2026-10-23"
+    assert _parse_jp_date("24年1月3日(水)") == "2024-01-03"
+    # Sin weekday
+    assert _parse_jp_date("26年12月31日") == "2026-12-31"
+    # Inválido
+    assert _parse_jp_date("hoy") == ""
+    assert _parse_jp_date("") == ""
+
+
+def test_sumikko_publisher_canonical_map():
+    """Mapeo de publishers JP a canonical (Kadokawa, Kodansha, Shogakukan,
+    Shueisha, etc.). Publishers no mapeados quedan literales."""
+    from wikis.sumikko import _publisher_canonical
+    assert _publisher_canonical("KADOKAWA") == "Kadokawa"
+    assert _publisher_canonical("講談社") == "Kodansha"
+    assert _publisher_canonical("小学館") == "Shogakukan"
+    assert _publisher_canonical("集英社") == "Shueisha"
+    assert _publisher_canonical("祥伝社") == "Shodensha"
+    assert _publisher_canonical("TOブックス") == "TO Books"
+    assert _publisher_canonical("ブシロードワークス") == "Bushiroad Works"
+    # Unknown publisher: literal
+    assert _publisher_canonical("XYZ未知出版") == "XYZ未知出版"
+    assert _publisher_canonical("") == ""
+
+
+def test_sumikko_dedupe_by_isbn_within_page():
+    """Si la misma ISBN aparece duplicada en un listing (raro pero por
+    las dudas), sólo se conserva la primera ocurrencia."""
+    from wikis import sumikko as sk
+    block_a = _sumikko_item_block(isbn="4046602074", title="Title A")
+    block_b = _sumikko_item_block(isbn="4046602074", title="Title B (dup ISBN)")
+    cands = sk.parse_listing_page(block_a + block_b)
+    assert len(cands) == 1
+    assert cands[0].title == "Title A"
+
+
 # --- listadomanga_collections (Fase 1) -------------------------------------
 
 def _lmc_html_minimal(*sections_html: str, formato: str = "Tomo (115x175) rústica (tapa blanda) con sobrecubierta", title: str = "Berserk (Panini)", publisher: str = "Panini Manga", author: str = "Kentaro Miura") -> str:
@@ -4727,6 +5303,146 @@ def test_lmc_discards_edicion_revisada_and_no_editados():
     assert cands == []
 
 
+def test_lmc_en_cofre_format_emits_single_box_item():
+    """Formato 'X en cofre' → la página entera ES un cofre/box set.
+    El parser debe emitir UN solo item box-level y descartar los tomos
+    numerados (que solo existen dentro del cofre y no se venden sueltos).
+
+    Caso semilla: id=5959 Gon (Edición Coleccionista) Norma — formato
+    "Tomo cuádruple A5 (148x210) cartoné (tapa dura) en cofre" tenía 2
+    tomos que aparecían como cards separadas pese a ser parte del cofre.
+    Ver gotcha #28.
+    """
+    from wikis import listadomanga_collections as lmc
+    # Cofre cover item (alt sin nº) — el real listadomanga la pone como
+    # primer portada del bloque "Números editados".
+    cofre_item = (
+        '<td><table class="ventana_id1" style="width: 184px;"><tr><td class="cen">'
+        '<img class="portada" src="https://static.listadomanga.com/boxcover.png" alt="Gon"/>'
+        '<div style="height: 8px"></div>'
+        'Gon<br/>'
+        '</td></tr></table></td><td class="separacion"></td>'
+    )
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            cofre_item,
+            _lmc_item(1, "Gon", image_id="tomo1"),
+            _lmc_item(2, "Gon", image_id="tomo2"),
+        ),
+        formato="Tomo cu&aacute;druple A5 (148x210) carton&eacute; (tapa dura) en cofre",
+        title="Gon (Edici&oacute;n Coleccionista) (Norma)",
+        publisher="Norma Editorial",
+        author="Masashi Tanaka",
+    )
+    cands = lmc.parse_collection_page(html, 5959)
+    assert len(cands) == 1, f"Expected 1 box item, got {len(cands)}"
+    box = cands[0]
+    # El title lleva sufijo " — Cofre" para que detect_signals capte
+    # box_set vía title (el gate is_collectible_edition exige al menos
+    # un signal premium en title cuando no hay ISBN ni volume_shape).
+    assert box.title == "Gon (Edición Coleccionista) (Norma) — Cofre"
+    assert "edition:box" in box.tags
+    assert "&item=box-" in box.url
+    # Cover: la primera del cofre (alt sin nº → key=("regular", ""))
+    assert "boxcover" in box.image_url
+    # Signals: el item box-level debe disparar box_set + signals premium
+    lmc.score_candidate(box)
+    assert "box_set" in box.signal_types
+    assert any(s in box.signal_types for s in ["hardcover", "deluxe", "kanzenban"])
+    # Descripción incluye el formato + conteo de tomos (2, excluyendo el cofre)
+    assert "en cofre" in box.description.lower()
+    assert "2 tomos" in box.description
+    # Carrusel: cover del box + cada tomo dentro como kind=extra.
+    # Regla del owner (2026-05-24): "los box sets son solo el item del box
+    # set. Lo que se puede hacer es poner 1ro la foto del box set y luego
+    # para agregar más contexto poner las fotos de los tomos que vienen
+    # dentro, pero como 1 mismo item".
+    assert len(box.images) == 3
+    assert box.images[0]["kind"] == "cover"
+    assert "boxcover" in box.images[0]["url"]
+    extras = [im for im in box.images if im["kind"] == "extra"]
+    assert len(extras) == 2
+    assert {im["description"] for im in extras} == {"Tomo 1", "Tomo 2"}
+
+
+def test_lmc_en_cofre_format_absorbs_layout_b_extras_into_carousel():
+    """Cuando la página es 'en cofre' y hay extras Layout B, esos extras
+    se appendean al carrusel del box item (no se crean from_extras tomos)."""
+    from wikis import listadomanga_collections as lmc
+    layout_b_section = (
+        '<table><tr><td><table class="ventana_id1" style="width: 974px">'
+        '<tr><td class="izq"><h2>Regalos con la primera edici&oacute;n de Test</h2></td></tr>'
+        '</table></td></tr></table>'
+        '<table width="920" border="0" align="center">'
+        '<tr><td width="150">'
+        '<img src="https://static.listadomanga.com/postal_extra.jpg"/><br/><br/>'
+        'Test n&ordm;1<br/>(1&ordf; Edici&oacute;n)<br/>Postal de regalo<br/>'
+        '15 <a href="novedades.php">Marzo 2024</a>'
+        '</td></tr></table>'
+    )
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(0, "Test", image_id="boxcover", price=""),
+            _lmc_item(1, "Test", image_id="tomo1"),
+        ),
+        layout_b_section,
+        formato="Tomo doble A5 carton&eacute; en cofre",
+        title="Test Box",
+    )
+    cands = lmc.parse_collection_page(html, 9100)
+    assert len(cands) == 1  # solo el box, NO from_extras tomos
+    box = cands[0]
+    # El carrusel del box tiene: cover + tomo nº1 (kind=extra Tomo 1) +
+    # postal Layout B (kind=extra, descripción "Postal de regalo").
+    extra_imgs = [img for img in box.images if img.get("kind") == "extra"]
+    assert len(extra_imgs) == 2
+    extra_urls = {im["url"] for im in extra_imgs}
+    assert any("postal_extra" in u for u in extra_urls)
+    assert any("tomo1" in u for u in extra_urls)
+    # extras[] descriptivo solo carga los Layout B (extras "vinculados"),
+    # no los tomos del Layout A — esos viven en images[] como contexto visual.
+    assert len(box.extras) == 1
+    assert box.extras[0]["description"] == "Postal de regalo"
+
+
+def test_lmc_premium_format_without_en_cofre_still_emits_tomos():
+    """Sanity: el comportamiento previo (formato premium sin 'en cofre' →
+    emite los tomos numerados como items separados) NO se rompe con el fix."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Test", image_id="t1"),
+            _lmc_item(2, "Test", image_id="t2"),
+        ),
+        # Formato premium pero SIN "en cofre" → comportamiento clásico
+        formato="Tomo A5 (150x210) carton&eacute; (tapa dura) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 9101)
+    # 2 tomos, no 1 box
+    assert len(cands) == 2
+    assert all("edition:box" not in c.tags for c in cands)
+
+
+def test_lmc_is_box_format_detects_variants():
+    """_is_box_format() detecta 'en cofre' / 'en estuche' con variantes
+    de mayúsculas; NO matchea 'cofre' como sustantivo aislado del producto
+    (ej. la palabra suelta sin 'en' antes — un tomo con un cofre de regalo
+    NO es un box-format page)."""
+    from wikis.listadomanga_collections import _is_box_format
+    assert _is_box_format("Tomo A5 cartoné en cofre")
+    assert _is_box_format("Tomo A5 cartoné EN COFRE")
+    assert _is_box_format("Tomo A5 cartoné en estuche")
+    assert _is_box_format("Tomo cuádruple A5 (148x210) cartoné (tapa dura) en cofre")
+    # No matches: la palabra "cofre" sola NO es signal de page-wide box
+    # (es un extra que vino con un tomo, no que la página entera ES un cofre)
+    assert not _is_box_format("Tomo A5 cartoné con cofre de regalo")
+    assert not _is_box_format("Tomo A5 cartoné")
+    assert not _is_box_format("")
+
+
 def test_lmc_html_entities_in_section_headers_decoded():
     """Headers con entities (N&uacute;meros editados, Edici&oacute;n) deben
     decodificarse antes de matchear los SECTION_RULES."""
@@ -4941,6 +5657,58 @@ def test_lmc_from_extras_has_cover_and_extra_separate_no_boxset_signal():
         f"product_type should be 'manga' not 'boxset' for tomo regular; "
         f"product_type={c.product_type}"
     )
+
+
+def test_lmc_from_extras_cofre_score_above_dashboard_threshold():
+    """Regresión: items from_extras (tomos de 1ª edición con cofres/extras)
+    deben tener score >= 20 para aparecer en el dashboard (minScore = 20).
+    Bug: la descripción solo contenía 'extras' (score=14 < 20) → invisible.
+    Fix: se añadieron 'regalos' (score=20) y 'brindes' (score=20) a
+    KEYWORD_RULES; la descripción los incluye → score total = 54."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_layout_b_section(
+            "Cofres de regalo con las primeras ediciones de Bakuman",
+            _lmc_layout_b_cell("Bakuman nº1", "(1ª Edición)",
+                               ["Cofre para tomos 1 a 8"], "29 Octubre 2010",
+                               image_id="cofre_bakuman"),
+        ),
+        formato="Tomo (115x175) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 1338)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "from_extras" in c.tags
+    mw.score_candidate(c)
+    assert c.score >= 20, (
+        f"from_extras con cofre debe tener score>=20 (minScore dashboard=20); "
+        f"score={c.score}, signal_types={c.signal_types}"
+    )
+    assert "bonus" in c.signal_types
+    assert "box_set" not in c.signal_types
+
+
+def test_lmc_from_extras_non_cofre_has_bonus_signal():
+    """from_extras items con extras que NO son cofres (ej. postal)
+    también deben tener signal bonus y score>=20 gracias a 'regalos'."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_layout_b_section(
+            "Regalos con las primeras ediciones de Test Manga",
+            _lmc_layout_b_cell("Test Manga nº3", "(1ª Edición)",
+                               ["Postal de regalo exclusiva"], "15 Mayo 2015",
+                               image_id="postal_img"),
+        ),
+        formato="Tomo (115x175) rústica (tapa blanda)",
+    )
+    cands = lmc.parse_collection_page(html, 9999)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "from_extras" in c.tags
+    mw.score_candidate(c)
+    assert "bonus" in c.signal_types
+    assert "box_set" not in c.signal_types
+    assert c.score >= 20
 
 
 def test_lmc_layout_b_creates_regular_tomo_when_target_missing():
@@ -5164,3 +5932,1129 @@ def test_extract_volume_patterns():
     assert mw._extract_volume("転生したらスライムだった件（15）限定版") == "15"
     assert mw._extract_volume("Some Title (10)") == "10"
     assert mw._extract_volume("Random title without volume") == ""
+
+
+# ---------------------------------------------------------------------------
+# manga-passion.de — Sonderausgaben DE
+# ---------------------------------------------------------------------------
+
+def _mp_volume(overrides: dict | None = None) -> dict:
+    """Fixture de un volumen de manga-passion.de API."""
+    base = {
+        "id": 18905,
+        "type": 3,
+        "specialType": 0,
+        "title": "Limited Edition",
+        "numberDisplay": "1",
+        "number": 1,
+        "price": 1900,
+        "year": 2025, "month": 1, "day": 7,
+        "isbn13": "978-3-98745-044-0",
+        "isbn10": None,
+        "cover": "https://media.manga-passion.de/volume/cover/test.jpg",
+        "description": None,
+        "tags": [
+            {"tag": {"id": 189, "name": "Anhänger", "type": 3}, "description": "Acryl-Schlüsselanhänger"}
+        ],
+        "contributors": [{"contributor": {"name": "Misogu Rin"}, "role": "Zeichner"}],
+        "edition": {
+            "id": 3116,
+            "title": "My Tiny Senpai",
+            "publishers": [{"id": 186, "name": "Dokico"}],
+            "sources": [{"country": "JP"}],
+        },
+    }
+    if overrides:
+        base.update(overrides)
+    return base
+
+
+def test_mangapassion_parse_volume_basic():
+    from wikis.mangapassion import parse_volume
+    cand = parse_volume(_mp_volume())
+    assert cand is not None
+    assert cand.title == "My Tiny Senpai Band 1 – Limited Edition"
+    assert cand.publisher == "Dokico"
+    assert cand.price == "19.00 €"
+    assert cand.release_date == "2025-01-07"
+    assert cand.isbn == "9783987450440"
+    assert cand.image_url == "https://media.manga-passion.de/volume/cover/test.jpg"
+    assert cand.author == "Misogu Rin"
+    assert cand.url == "https://api.manga-passion.de/volumes/18905"
+    assert cand.country == "Alemania"
+    assert cand.score > 0
+
+
+def test_mangapassion_parse_volume_title_without_qualifier():
+    """Volumen sin qualifier de edición (title vacío) → título solo con serie+Band."""
+    from wikis.mangapassion import parse_volume
+    vol = _mp_volume({"title": ""})
+    cand = parse_volume(vol)
+    assert cand is not None
+    assert cand.title == "My Tiny Senpai Band 1"
+
+
+def test_mangapassion_parse_volume_sammelschuber_injects_boxset_hint():
+    """specialType=1 (Sammelschuber) inyecta 'Box Set' en descripción."""
+    from wikis.mangapassion import parse_volume
+    vol = _mp_volume({"specialType": 1, "title": "Sammelschuber"})
+    cand = parse_volume(vol)
+    assert cand is not None
+    assert "box" in cand.description.lower() or "set" in cand.description.lower()
+    # box_set signal debe estar presente
+    assert "box_set" in (cand.signal_types or [])
+
+
+def test_mangapassion_parse_volume_price_zero_gives_empty_price():
+    """Precio 0 o negativo → campo price vacío."""
+    from wikis.mangapassion import parse_volume
+    cand = parse_volume(_mp_volume({"price": 0}))
+    assert cand is not None
+    assert cand.price == ""
+
+
+def test_mangapassion_parse_volume_skips_without_series_title():
+    """Volumen sin edition.title → None (no se puede construir título)."""
+    from wikis.mangapassion import parse_volume
+    vol = _mp_volume()
+    vol["edition"]["title"] = ""
+    assert parse_volume(vol) is None
+
+
+def test_mangapassion_parse_volume_skips_without_id():
+    """Volumen sin id → None."""
+    from wikis.mangapassion import parse_volume
+    vol = _mp_volume({"id": None})
+    assert parse_volume(vol) is None
+
+
+def test_mangapassion_variant_query_injects_variant_hint():
+    """type_label='variant' + sin 'Variant' en qualifier → inject hint en desc."""
+    from wikis.mangapassion import parse_volume
+    vol = _mp_volume({"title": "Spezialausgabe"})  # no contiene "Variant"
+    cand = parse_volume(vol, type_label="variant")
+    assert cand is not None
+    assert "variant" in cand.description.lower()
+
+
+def test_mangapassion_iter_year_months_returns_single_batch():
+    from wikis.mangapassion import iter_year_months
+    result = iter_year_months(2024, 3, 2026, 12)
+    assert result == [(2024, 3)]
+
+
+# ── AnimeClick (IT) ─────────────────────────────────────────────────────────
+
+# HTML fragment as returned in the AJAX response data.html
+_AC_CALENDAR_HTML = """
+<div id="main-row-loop">
+  <div class="date-separator">
+    <div class="date">14</div><div class="month">maggio</div>
+    <div class="day">mercoledì</div>
+  </div>
+  <div class="panel-evento-calendario edizione">
+    <a href="/edizione/3110494/100-metres-hyakuemu-variant-mangayo">
+      <img class="img-evento"
+           data-original="https://www.animeclick.it/immagini/manga/100-Metres/copertine/cover.jpg"
+           src="/placeholder.gif">
+    </a>
+    <a href="/edizione/3110494/100-metres-hyakuemu-variant-mangayo">
+      <h3>100 Metres - Hyakuemu Variant MangaYo! 1</h3>
+    </a>
+    <h4 class="edizione">MangaYo!</h4>
+    <h5>100 Metres</h5>
+  </div>
+  <div class="panel-evento-calendario edizione">
+    <a href="/edizione/9999/one-piece-vol-107">
+      <img class="img-evento" src="/placeholder.gif">
+    </a>
+    <a href="/edizione/9999/one-piece-vol-107">
+      <h3>One Piece 107</h3>
+    </a>
+    <h4 class="edizione">Star Comics</h4>
+    <h5>One Piece</h5>
+  </div>
+  <div class="panel-evento-calendario edizione">
+    <a href="/edizione/4444/noblesse-cofanetto-stagione-6">
+      <img class="img-evento"
+           data-original="https://www.animeclick.it/immagini/manga/Noblesse/copertine/cofanetto.jpg"
+           src="/placeholder.gif">
+    </a>
+    <a href="/edizione/4444/noblesse-cofanetto-stagione-6">
+      <h3>Noblesse Cofanetto Stagione 6</h3>
+    </a>
+    <h4 class="edizione">Star Comics</h4>
+    <h5>Noblesse</h5>
+  </div>
+</div>
+"""
+
+_AC_DETAIL_HTML = """<!DOCTYPE html>
+<html><head><title>100 Metres Variant</title></head>
+<body>
+<h1 itemprop="name">100 Metres - Hyakuemu Variant MangaYo! 1</h1>
+<img itemprop="image"
+     src="/immagini/manga/Hyaku_M/edizioni/100-Metres-Variant-edizione-3110494.jpg">
+<p itemprop="description">La storia di un velocista alle Olimpiadi,
+edizione Variant esclusiva MangaYo!.</p>
+<meta itemprop="datePublished" content="2025-05-14">
+<div class="scheda-dettagli">
+  <p><strong>Editore:</strong> MangaYo!</p>
+  <p><strong>Prezzo:</strong> 5,99 €</p>
+</div>
+</body></html>"""
+
+_AC_INITIAL_PAGE = """<!DOCTYPE html>
+<html><body>
+<div id="calendario-pagination-div"
+     data-current-day="25"
+     data-current-month="05"
+     data-current-year="2026">
+</div>
+<div id="calendario-days-thumbs">
+  <div class="panel-evento-calendario edizione">
+    <a href="/edizione/5555/berserk-deluxe-vol-1">
+      <img class="img-evento"
+           data-original="https://www.animeclick.it/immagini/manga/Berserk/copertine/berserk-deluxe.jpg"
+           src="/placeholder.gif">
+    </a>
+    <a href="/edizione/5555/berserk-deluxe-vol-1">
+      <h3>Berserk Deluxe 1</h3>
+    </a>
+    <h4 class="edizione">Panini Comics</h4>
+    <h5>Berserk</h5>
+  </div>
+</div>
+</body></html>"""
+
+
+def test_animeclick_parse_calendar_html_returns_all_cards():
+    from wikis.animeclick import parse_calendar_html
+    cards = parse_calendar_html(_AC_CALENDAR_HTML)
+    assert len(cards) == 3
+
+
+def test_animeclick_parse_calendar_html_extracts_title_publisher_url():
+    from wikis.animeclick import parse_calendar_html
+    cards = parse_calendar_html(_AC_CALENDAR_HTML)
+    variant = next(c for c in cards if "3110494" in c["url"])
+    assert "Variant" in variant["title"]
+    assert variant["publisher"] == "MangaYo!"
+    assert variant["url"] == (
+        "https://www.animeclick.it/edizione/3110494/100-metres-hyakuemu-variant-mangayo"
+    )
+
+
+def test_animeclick_parse_calendar_html_prefers_data_original_for_image():
+    from wikis.animeclick import parse_calendar_html
+    cards = parse_calendar_html(_AC_CALENDAR_HTML)
+    variant = next(c for c in cards if "3110494" in c["url"])
+    assert variant["image_url"].startswith("https://www.animeclick.it")
+    assert "cover.jpg" in variant["image_url"]
+
+
+def test_animeclick_parse_calendar_html_no_image_for_placeholder_only():
+    """Cards with no data-original (only internal placeholder path) get empty image_url."""
+    from wikis.animeclick import parse_calendar_html
+    cards = parse_calendar_html(_AC_CALENDAR_HTML)
+    regular = next(c for c in cards if "9999" in c["url"])
+    assert regular["image_url"] == ""
+
+
+def test_animeclick_is_collector_edition_detects_keywords():
+    from wikis.animeclick import is_collector_edition
+    assert is_collector_edition("My Hero Academia Vol.35 - Variant") is True
+    assert is_collector_edition("Noblesse Cofanetto Stagione 6") is True
+    assert is_collector_edition("Naruto 1 Edizione Limitata") is True
+    assert is_collector_edition("Berserk Deluxe Vol. 1") is True
+    assert is_collector_edition("Death Note Ultimate Edition 1") is True
+    assert is_collector_edition("One Piece 107") is False
+    assert is_collector_edition("Dragon Ball Z 1") is False
+    assert is_collector_edition("Naruto 1") is False
+
+
+def test_animeclick_parse_detail_page_extracts_all_fields():
+    from wikis.animeclick import parse_detail_page
+    result = parse_detail_page(
+        _AC_DETAIL_HTML,
+        "https://www.animeclick.it/edizione/3110494/100-metres-variant-mangayo",
+    )
+    assert result["title"] == "100 Metres - Hyakuemu Variant MangaYo! 1"
+    assert result["release_date"] == "2025-05-14"
+    assert result["publisher"] == "MangaYo!"
+    assert "5,99" in result["price"]
+    assert "velocista" in result["description"]
+
+
+def test_animeclick_parse_detail_page_image_url_is_absolute():
+    from wikis.animeclick import parse_detail_page
+    result = parse_detail_page(
+        _AC_DETAIL_HTML,
+        "https://www.animeclick.it/edizione/3110494/100-metres-variant-mangayo",
+    )
+    assert result["image_url"].startswith("https://www.animeclick.it")
+    assert "edizione-3110494" in result["image_url"]
+
+
+def test_animeclick_inject_collector_hints_cofanetto():
+    from wikis.animeclick import _inject_collector_hints
+    desc = _inject_collector_hints("Noblesse Cofanetto Stagione 6", "")
+    assert "Box Set" in desc
+
+
+def test_animeclick_inject_collector_hints_integrale():
+    from wikis.animeclick import _inject_collector_hints
+    desc = _inject_collector_hints("Dragon Ball Integrale", "Edizione completa.")
+    assert "integral" in desc.lower()
+    assert "Edizione completa" in desc
+
+
+def test_animeclick_inject_collector_hints_no_match_unchanged():
+    from wikis.animeclick import _inject_collector_hints
+    desc = _inject_collector_hints("Berserk Deluxe 1", "Original description.")
+    assert desc == "Original description."
+
+
+def test_animeclick_get_calendar_state_reads_data_attributes():
+    from wikis.animeclick import _get_calendar_state
+    day, month, year = _get_calendar_state(_AC_INITIAL_PAGE)
+    assert day == 25
+    assert month == 5
+    assert year == 2026
+
+
+def test_animeclick_iter_year_months_returns_single_batch():
+    from wikis.animeclick import iter_year_months
+    result = iter_year_months(2026, 3, 2026, 5)
+    assert result == [(2026, 3)]
+
+
+# ---------------------------------------------------------------------------
+# _extract_images_from_detail_soup — multi-imagen / carrusel
+# ---------------------------------------------------------------------------
+
+def test_extract_images_jsonld_array_returns_all():
+    """JSON-LD `image` como array → cada elemento se vuelve una entrada
+    en images[], primero como cover, resto como gallery."""
+    html_text = """
+    <html><body>
+    <script type="application/ld+json">
+    {"@type": "Product", "image": [
+        "https://cdn.example.com/products/123-cover.jpg",
+        "https://cdn.example.com/products/123-back.jpg",
+        "https://cdn.example.com/products/123-spine.jpg"
+    ]}
+    </script>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p/123")
+    assert len(images) == 3
+    assert images[0]["kind"] == "cover"
+    assert images[0]["url"].endswith("123-cover.jpg")
+    assert images[1]["kind"] == "gallery"
+    assert images[2]["kind"] == "gallery"
+
+
+def test_extract_images_shopify_product_media_gallery():
+    """Shopify `.product__media img` selector captura toda la galería."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/products/cover.jpg">
+    <div class="product__media">
+        <img src="https://cdn.example.com/products/cover.jpg" alt="Vol 1 cover">
+    </div>
+    <div class="product__media">
+        <img src="https://cdn.example.com/products/cover-2.jpg" alt="Vol 1 back">
+    </div>
+    <div class="product__media">
+        <img src="https://cdn.example.com/products/cover-3.jpg" alt="Vol 1 interior">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p/x")
+    urls = [im["url"] for im in images]
+    assert "https://cdn.example.com/products/cover.jpg" in urls
+    assert "https://cdn.example.com/products/cover-2.jpg" in urls
+    assert "https://cdn.example.com/products/cover-3.jpg" in urls
+    assert images[0]["kind"] == "cover"
+
+
+def test_extract_images_tiendanube_swiper_gallery():
+    """Tiendanube/Swiper genérico: `.swiper-slide img` captura la galería."""
+    html_text = """
+    <html><body>
+    <div class="swiper-container">
+      <div class="swiper-slide"><img src="https://cdn.example.com/img/a.jpg" alt="A"></div>
+      <div class="swiper-slide"><img src="https://cdn.example.com/img/b.jpg" alt="B"></div>
+      <div class="swiper-slide"><img src="https://cdn.example.com/img/c.jpg" alt="C"></div>
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p")
+    assert len(images) >= 3
+
+
+def test_extract_images_dedups_thumbnail_vs_fullsize_shopify():
+    """Shopify thumb suffix `_100x100.jpg` se normaliza al fullsize y dedupea
+    contra la full version. _grande, _small, _master también."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/files/cover.jpg">
+    <div class="product__media">
+        <img src="https://cdn.example.com/files/cover_100x100.jpg" alt="thumb">
+        <img src="https://cdn.example.com/files/cover_grande.jpg" alt="grande">
+        <img src="https://cdn.example.com/files/cover.jpg" alt="full">
+        <img src="https://cdn.example.com/files/another.jpg" alt="other">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p")
+    # cover.jpg (en sus variantes) cuenta como uno; another.jpg como dos.
+    urls_norm = {mw._gallery_url_normalize(im["url"]) for im in images}
+    assert len(urls_norm) == 2
+
+
+def test_extract_images_skips_data_uris():
+    """Lazy-loaded imgs con `src=data:image/...` no entran al gallery."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/cover.jpg">
+    <div class="product-gallery">
+      <img src="data:image/gif;base64,R0lGODlh" data-src="https://cdn.example.com/real.jpg" alt="real">
+      <img src="data:image/png;base64,iVBORw0KGg" alt="placeholder">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p")
+    urls = [im["url"] for im in images]
+    # data: URIs no aparecen.
+    assert all(not u.startswith("data:") for u in urls)
+    # real.jpg sí aparece (via data-src fallback).
+    assert "https://cdn.example.com/real.jpg" in urls
+
+
+def test_extract_images_filters_bad_patterns():
+    """Iconos, placeholders, SVG no se incluyen ni siquiera en gallery."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/cover.jpg">
+    <div class="product-gallery">
+      <img src="https://cdn.example.com/icon/cart.svg" alt="cart">
+      <img src="https://cdn.example.com/placeholders/no_image.png" alt="placeholder">
+      <img src="https://cdn.example.com/products/page2.jpg" alt="page2">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p")
+    urls = [im["url"] for im in images]
+    assert "https://cdn.example.com/cover.jpg" in urls
+    assert "https://cdn.example.com/products/page2.jpg" in urls
+    assert not any("cart.svg" in u for u in urls)
+    assert not any("no_image.png" in u for u in urls)
+
+
+def test_extract_images_first_is_cover_rest_gallery():
+    """Garantiza el labeling: kind=cover solo en el primer elemento."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/a.jpg">
+    <div class="product-gallery">
+      <img src="https://cdn.example.com/b.jpg" alt="back">
+      <img src="https://cdn.example.com/c.jpg" alt="spine">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://example.com/p")
+    assert images[0]["kind"] == "cover"
+    for im in images[1:]:
+        assert im["kind"] == "gallery"
+
+
+def test_extract_image_backwards_compat_wrapper_returns_first():
+    """_extract_image_from_detail_soup (legacy) sigue devolviendo solo
+    el primer URL como string — para que callers viejos no rompan."""
+    html_text = """
+    <html><body>
+    <meta property="og:image" content="https://cdn.example.com/cover.jpg">
+    <div class="product-gallery">
+      <img src="https://cdn.example.com/back.jpg">
+    </div>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    url = mw._extract_image_from_detail_soup(soup, "https://example.com/p")
+    assert url == "https://cdn.example.com/cover.jpg"
+
+
+def test_extract_image_returns_empty_when_no_valid_images():
+    """Si no hay imagen válida en la página (placeholders, no images, no soup),
+    devuelve string vacío."""
+    html_text = "<html><body><p>No products here</p></body></html>"
+    soup = make_soup(html_text)
+    url = mw._extract_image_from_detail_soup(soup, "https://example.com/empty")
+    assert url == ""
+
+
+def test_fetch_metadata_returns_images_list():
+    """fetch_metadata_from_detail siempre incluye `images` en el dict de
+    retorno (puede ser lista vacía pero no None / KeyError)."""
+    import requests
+    sess = requests.Session()
+    result = mw.fetch_metadata_from_detail("", sess, timeout=(1, 1))
+    assert "images" in result
+    assert isinstance(result["images"], list)
+
+
+def test_extract_images_scope_filters_related_products():
+    """Cuando el `<main>` contiene un sidebar de productos relacionados,
+    el filtro de stem-folder descarta las URLs de OTROS productos. La cover
+    + las gallery del MISMO folder se conservan."""
+    html_text = """
+    <html><body>
+    <main>
+      <article itemtype="https://schema.org/Product">
+        <meta property="og:image" content="https://cdn.example.com/img/albums/0001/35/cover.jpg">
+        <div class="product-gallery">
+          <img src="https://cdn.example.com/img/albums/0001/35/cover.jpg" alt="cover">
+          <img src="https://cdn.example.com/img/albums/0001/35/back.jpg" alt="back">
+        </div>
+      </article>
+      <aside class="related-products">
+        <img src="https://cdn.example.com/img/albums/0001/44/other1.jpg" alt="related 1">
+        <img src="https://cdn.example.com/img/albums/0001/40/other2.jpg" alt="related 2">
+        <img src="https://cdn.example.com/img/albums/0001/38/other3.jpg" alt="related 3">
+      </aside>
+    </main>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://cdn.example.com/p")
+    urls = [im["url"] for im in images]
+    assert "https://cdn.example.com/img/albums/0001/35/cover.jpg" in urls
+    assert "https://cdn.example.com/img/albums/0001/35/back.jpg" in urls
+    # Los productos relacionados de folders distintos quedan fuera.
+    assert not any("/0001/44/" in u for u in urls)
+    assert not any("/0001/40/" in u for u in urls)
+
+
+def test_extract_images_respects_limit():
+    """Cap a 6 imágenes por defecto (productos reales raramente tienen más
+    fotos legítimas)."""
+    imgs_html = "\n".join(
+        f'<img src="https://cdn.example.com/img/p/123/v{i}.jpg" alt="view {i}">'
+        for i in range(20)
+    )
+    html_text = f"""
+    <html><body>
+    <article itemtype="https://schema.org/Product">
+      <meta property="og:image" content="https://cdn.example.com/img/p/123/cover.jpg">
+      <div class="product-gallery">
+        {imgs_html}
+      </div>
+    </article>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://cdn.example.com")
+    assert len(images) <= 6
+
+
+def test_backfill_images_skips_synthetic_urls():
+    """Items con URLs sintéticas (listadomanga-collections `?item=`,
+    blogbbm `?bbm-entry=`) NO son candidatos a backfill --only images:
+    re-fetchear esa URL devuelve la página COMPARTIDA con varios items
+    hermanos, y el extractor genérico mezclaría imágenes entre ellos.
+    El parser del wiki ya pobló `images[]` por su cuenta con la lógica
+    correcta por tomo / por entry."""
+    import subprocess, json, tempfile, os
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        # 2 items con URL sintética (un solo image_url, len(images)<2 — calzaría
+        # como candidato si no fuera por el skip de sintéticas).
+        f.write(json.dumps({
+            "title": "Death Note Black Edition 1",
+            "url": "https://www.listadomanga.es/coleccion.php?id=5959&item=especial-1",
+            "source": "ES - ListadoManga (colecciones)",
+            "image_url": "https://example.com/c.jpg",
+            "images": [{"url": "https://example.com/c.jpg", "kind": "cover", "description": ""}],
+        }) + "\n")
+        f.write(json.dumps({
+            "title": "BBM Genshiken Variant",
+            "url": "https://blogbbm.com/manga/genshiken/?bbm-entry=vol-1-genshiken01b",
+            "source": "BR - Biblioteca Brasileira de Mangás",
+            "image_url": "https://example.com/g.jpg",
+            "images": [{"url": "https://example.com/g.jpg", "kind": "cover", "description": ""}],
+        }) + "\n")
+        # ListadoManga calendar item: URL apunta al catálogo entero
+        # (`coleccion.php?id=N` sin `?item=`). Re-fetch mezclaría imágenes
+        # de tomos hermanos — DEBE saltarse igual que las sintéticas.
+        f.write(json.dumps({
+            "title": "Death Note Black Edition 1",
+            "url": "https://www.listadomanga.es/coleccion.php?id=1234",
+            "source": "ListadoManga (calendario)",
+            "image_url": "https://example.com/dn.jpg",
+            "images": [{"url": "https://example.com/dn.jpg", "kind": "cover", "description": ""}],
+        }) + "\n")
+        # Whakoom /ediciones/ — índice de todos los tomos, mismo caso.
+        f.write(json.dumps({
+            "title": "Berserk Deluxe (Whakoom edition index)",
+            "url": "https://whakoom.com/ediciones/12345/berserk-deluxe",
+            "source": "Whakoom",
+            "image_url": "https://example.com/wh.jpg",
+            "images": [{"url": "https://example.com/wh.jpg", "kind": "cover", "description": ""}],
+        }) + "\n")
+        # 1 item con URL normal (single-image, sí candidato).
+        f.write(json.dumps({
+            "title": "Berserk Deluxe 1",
+            "url": "https://shop.example.com/p/berserk-deluxe-1",
+            "source": "Generic Shop",
+            "image_url": "https://example.com/b.jpg",
+            "images": [{"url": "https://example.com/b.jpg", "kind": "cover", "description": ""}],
+        }) + "\n")
+        tmppath = f.name
+    try:
+        result = subprocess.run(
+            [".venv/bin/python", "scripts/retrofit/backfill_metadata.py",
+             "--input", tmppath, "--only", "images", "--dry-run"],
+            capture_output=True, text=True, timeout=30,
+        )
+        out = result.stdout
+        # 1 candidato (el Generic Shop), no 3. Las URLs sintéticas se saltan.
+        assert "1 candidatos a backfill" in out, f"Expected 1 candidate, got: {out}"
+    finally:
+        os.unlink(tmppath)
+
+
+def test_mirror_images_gc_treats_gallery_local_as_referenced():
+    """El GC del retrofit `mirror_images.py` arma el set de archivos
+    referenciados desde `image_local` (cover) Y `images[i].local`
+    (gallery). Si solo mirara cover, los archivos de gallery caerían
+    como orphans y los mandaría a cuarentena.
+
+    Test directo del set de referenciadas (sin tocar disco)."""
+    items = [
+        {
+            "url": "https://example.com/p/1",
+            "image_url": "https://example.com/c1.jpg",
+            "image_local": "aaaa.jpg",
+            "images": [
+                {"url": "https://example.com/c1.jpg", "kind": "cover", "local": "aaaa.jpg"},
+                {"url": "https://example.com/g1a.jpg", "kind": "gallery", "local": "bbbb.jpg"},
+                {"url": "https://example.com/g1b.jpg", "kind": "gallery", "local": "cccc.jpg"},
+            ],
+        },
+        {
+            "url": "https://example.com/p/2",
+            "image_url": "https://example.com/c2.jpg",
+            "image_local": "dddd.jpg",
+            "images": [
+                {"url": "https://example.com/c2.jpg", "kind": "cover", "local": "dddd.jpg"},
+            ],
+        },
+    ]
+    # Replica la lógica del GC: ver scripts/retrofit/mirror_images.py::_run_gc
+    referenced: set[str] = set()
+    for it in items:
+        if "_raw" in it:
+            continue
+        if it.get("image_local"):
+            referenced.add(it["image_local"])
+        for im in (it.get("images") or []):
+            if isinstance(im, dict) and im.get("local"):
+                referenced.add(im["local"])
+    assert referenced == {"aaaa.jpg", "bbbb.jpg", "cccc.jpg", "dddd.jpg"}
+
+
+def test_extract_images_no_filter_when_paths_shallow():
+    """Sites con paths shallow (1 segmento) no aplican el filtro de stem
+    (sería demasiado agresivo y filtraría imágenes legítimas)."""
+    html_text = """
+    <html><body>
+    <article itemtype="https://schema.org/Product">
+      <meta property="og:image" content="https://cdn.example.com/cover.jpg">
+      <div class="product-gallery">
+        <img src="https://cdn.example.com/back.jpg" alt="back">
+        <img src="https://cdn.example.com/spine.jpg" alt="spine">
+      </div>
+    </article>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(soup, "https://cdn.example.com")
+    # En este caso no hay stem que matchear, así que el filtro NO se aplica;
+    # las tres imágenes sobreviven.
+    assert len(images) == 3
+
+
+# ---------------------------------------------------------------------------
+# PRH Comics parser
+# ---------------------------------------------------------------------------
+
+_PRH_LI_HARDCOVER = """
+<li class="toast-anchor" tabindex="-1">
+  <div class="carousel-book">
+    <a class="analytics-event" href="https://prhcomics.com/book/?isbn=9798888776346">
+      <img alt="Mushishi Collector's Edition 1"
+           src="https://images.penguinrandomhouse.com/cover/9798888776346?width=180">
+    </a>
+  </div>
+  <div class="carousel-meta" data-component="carousel-meta">
+    <div class="carousel-meta-title" data-component="carousel-meta-title">
+      <a href="https://prhcomics.com/book/?isbn=9798888776346">Mushishi Collector's Edition 1</a>
+    </div>
+    <div class="carousel-meta-author" data-component="carousel-meta-author">
+      <a href="/search/?contributor=Yuki+Urushibara">Yuki Urushibara</a>
+    </div>
+    <div class="carousel-meta-isbn" data-component="carousel-meta-isbn">9798888776346</div>
+    <div class="carousel-meta-price" data-component="carousel-meta-price">
+      <span class="price-usa bridge-metadata">$34.99 US</span>
+      <span class="price-can bridge-metadata hidden">| $45.99 CAN</span>
+    </div>
+    <div class="carousel-meta-format" data-component="carousel-meta-format">Hardcover</div>
+    <div class="carousel-meta-division" data-component="carousel-meta-division">Kodansha Comics</div>
+    <div class="carousel-meta-on-sale-date" data-component="carousel-meta-on-sale-date"> On sale May 19, 2026</div>
+    <div class="carousel-meta-foc-date" data-component="carousel-meta-foc-date">FOC Mar 23, 2026</div>
+  </div>
+</li>
+"""
+
+_PRH_LI_BOXSET = """
+<li class="toast-anchor" tabindex="-1">
+  <div class="carousel-book">
+    <a class="analytics-event" href="https://prhcomics.com/book/?isbn=9798888774359">
+      <img alt="Attack on Titan: The Final Season Box Set"
+           src="https://images.penguinrandomhouse.com/cover/9798888774359?width=180">
+    </a>
+  </div>
+  <div class="carousel-meta" data-component="carousel-meta">
+    <div class="carousel-meta-title" data-component="carousel-meta-title">
+      <a href="https://prhcomics.com/book/?isbn=9798888774359">Attack on Titan: The Final Season Box Set</a>
+    </div>
+    <div class="carousel-meta-author" data-component="carousel-meta-author">
+      <a href="/search/?contributor=Hajime+Isayama">Hajime Isayama</a>
+    </div>
+    <div class="carousel-meta-isbn" data-component="carousel-meta-isbn">9798888774359</div>
+    <div class="carousel-meta-price" data-component="carousel-meta-price">
+      <span class="price-usa bridge-metadata">$249.99 US</span>
+    </div>
+    <div class="carousel-meta-format" data-component="carousel-meta-format">Boxed Set(Hardcover)</div>
+    <div class="carousel-meta-division" data-component="carousel-meta-division">Kodansha Comics</div>
+    <div class="carousel-meta-on-sale-date" data-component="carousel-meta-on-sale-date">On sale November 5, 2024</div>
+  </div>
+</li>
+"""
+
+_PRH_LI_PAPERBACK_REGULAR = """
+<li class="toast-anchor" tabindex="-1">
+  <div class="carousel-meta" data-component="carousel-meta">
+    <div class="carousel-meta-title" data-component="carousel-meta-title">
+      <a href="https://prhcomics.com/book/?isbn=9781646519781">Vinland Saga 1</a>
+    </div>
+    <div class="carousel-meta-isbn" data-component="carousel-meta-isbn">9781646519781</div>
+    <div class="carousel-meta-format" data-component="carousel-meta-format">Trade Paperback</div>
+    <div class="carousel-meta-division" data-component="carousel-meta-division">Kodansha Comics</div>
+    <div class="carousel-meta-on-sale-date" data-component="carousel-meta-on-sale-date">On sale Jan 1, 2020</div>
+  </div>
+</li>
+"""
+
+
+def test_prhcomics_parse_hardcover_collector():
+    from wikis.prhcomics import parse_item
+    soup = BeautifulSoup(_PRH_LI_HARDCOVER, "html.parser")
+    li = soup.find("li")
+    cand = parse_item(li)
+    assert cand is not None
+    assert "Mushishi" in cand.title
+    assert cand.isbn == "9798888776346"
+    assert cand.price == "$34.99 US"
+    assert cand.author == "Yuki Urushibara"
+    assert cand.release_date == "2026-05-19"
+    assert cand.image_url == "https://images.penguinrandomhouse.com/cover/9798888776346"
+    assert cand.url == "https://prhcomics.com/book/?isbn=9798888776346"
+    assert "Kodansha Comics" in cand.description
+    assert cand.score > 0
+
+
+def test_prhcomics_parse_boxset_injects_box_set_hint():
+    from wikis.prhcomics import parse_item
+    soup = BeautifulSoup(_PRH_LI_BOXSET, "html.parser")
+    li = soup.find("li")
+    cand = parse_item(li)
+    assert cand is not None
+    assert "Box Set" in cand.description
+    assert cand.isbn == "9798888774359"
+    assert cand.release_date == "2024-11-05"
+    assert cand.price == "$249.99 US"
+
+
+def test_prhcomics_parse_regular_paperback_returns_none():
+    from wikis.prhcomics import parse_item
+    soup = BeautifulSoup(_PRH_LI_PAPERBACK_REGULAR, "html.parser")
+    li = soup.find("li")
+    cand = parse_item(li)
+    assert cand is None
+
+
+def test_prhcomics_parse_release_date_variants():
+    from wikis.prhcomics import _parse_release_date
+    assert _parse_release_date("On sale May 19, 2026") == "2026-05-19"
+    assert _parse_release_date("On sale November 5, 2024") == "2024-11-05"
+    assert _parse_release_date("On sale January 1, 2020") == "2020-01-01"
+    assert _parse_release_date("") == ""
+    assert _parse_release_date("Spring 2025") == ""
+
+
+def test_prhcomics_iter_year_months_returns_single_batch():
+    from wikis.prhcomics import iter_year_months
+    result = iter_year_months(2025, 1, 2025, 12)
+    assert result == [(2025, 1)]
+
+
+# ---------------------------------------------------------------------------
+# Kinokuniya USA Exclusives wiki parser
+# ---------------------------------------------------------------------------
+
+_KINO_LISTING_HTML = """
+<html><body>
+<a href="https://united-states.kinokuniya.com/bw/9780316471510">
+  <img alt="Jujutsu Kaisen Vol. 20 Kinokuniya Exclusive" src="cover1.jpg"/>
+</a>
+<a href="https://united-states.kinokuniya.com/bw/9781974740307">
+  <img alt="My Hero Academia Vol. 37 Limited Edition" src="cover2.jpg"/>
+</a>
+<a href="https://united-states.kinokuniya.com/bw/9780316471510">
+  <img alt="Jujutsu Kaisen Vol. 20 Kinokuniya Exclusive" src="cover1.jpg"/>
+</a>
+<a href="/about">About us</a>
+<a href="https://united-states.kinokuniya.com/bw/9781974740307?variant=abc">
+  <img alt="My Hero Academia Vol. 37 Limited Edition" src="cover2.jpg"/>
+</a>
+</body></html>
+"""
+
+
+def test_kinokuniya_parse_listing_extracts_candidates():
+    from wikis.kinokuniya import parse_listing
+    cands = parse_listing(_KINO_LISTING_HTML)
+    assert len(cands) == 2
+    isbns = {c.isbn for c in cands}
+    assert isbns == {"9780316471510", "9781974740307"}
+
+
+def test_kinokuniya_parse_listing_deduplicates_by_isbn():
+    from wikis.kinokuniya import parse_listing
+    cands = parse_listing(_KINO_LISTING_HTML)
+    # 9780316471510 appears twice in the HTML; must appear once in output
+    assert sum(1 for c in cands if c.isbn == "9780316471510") == 1
+
+
+def test_kinokuniya_candidate_has_correct_url_and_image():
+    from wikis.kinokuniya import parse_listing
+    cands = parse_listing(_KINO_LISTING_HTML)
+    c = next(c for c in cands if c.isbn == "9780316471510")
+    assert c.url == "https://united-states.kinokuniya.com/bw/9780316471510"
+    assert c.image_url == "https://images.penguinrandomhouse.com/cover/9780316471510"
+
+
+def test_kinokuniya_candidate_has_retailer_exclusive_signal():
+    from wikis.kinokuniya import parse_listing
+    cands = parse_listing(_KINO_LISTING_HTML)
+    for c in cands:
+        assert "retailer_exclusive" in c.signal_types, (
+            f"Expected retailer_exclusive in {c.signal_types}"
+        )
+
+
+def test_kinokuniya_strips_asterisk_markers_from_alt():
+    """Squarespace usa '*' al inicio/final del alt como marcador de estado."""
+    from wikis.kinokuniya import parse_listing
+    html = """<html><body>
+    <a href="https://united-states.kinokuniya.com/bw/9780316471510">
+      <img alt="*Jujutsu Kaisen Vol. 20 Kinokuniya Exclusive**"/>
+    </a>
+    </body></html>"""
+    cands = parse_listing(html)
+    assert len(cands) == 1
+    assert not cands[0].title.startswith("*")
+
+
+def test_kinokuniya_skips_non_isbn13_codes():
+    """UPC/EAN codes (no comienzan con 978/979) se filtran."""
+    from wikis.kinokuniya import parse_listing
+    html = """<html><body>
+    <a href="https://united-states.kinokuniya.com/bw/0810034314109">
+      <img alt="Gift Card"/>
+    </a>
+    <a href="https://united-states.kinokuniya.com/bw/9780316471510">
+      <img alt="Jujutsu Kaisen Vol. 20"/>
+    </a>
+    </body></html>"""
+    cands = parse_listing(html)
+    assert len(cands) == 1
+    assert cands[0].isbn == "9780316471510"
+
+
+def test_kinokuniya_skips_anchors_with_short_alt():
+    from wikis.kinokuniya import parse_listing
+    html = """<html><body>
+    <a href="https://united-states.kinokuniya.com/bw/9780316471510">
+      <img alt="X"/>
+    </a>
+    <a href="https://united-states.kinokuniya.com/bw/9781974740307">
+      <img alt="Jujutsu Kaisen Vol. 20"/>
+    </a>
+    </body></html>"""
+    cands = parse_listing(html)
+    # "X" is too short (< 3 chars after strip), only the second anchor should produce a candidate
+    assert len(cands) == 1
+    assert cands[0].isbn == "9781974740307"
+
+
+def test_kinokuniya_skips_non_product_links():
+    from wikis.kinokuniya import parse_listing
+    html = """<html><body>
+    <a href="/about">About</a>
+    <a href="https://usa.kinokuniya.com/current-promotions">Promotions</a>
+    <a href="https://united-states.kinokuniya.com/bw/9780316471510">
+      <img alt="Jujutsu Kaisen Vol. 20"/>
+    </a>
+    </body></html>"""
+    cands = parse_listing(html)
+    assert len(cands) == 1
+
+
+def test_kinokuniya_iter_year_months_returns_single_batch():
+    from wikis.kinokuniya import iter_year_months
+    result = iter_year_months(2000, 1, 2030, 12)
+    assert result == [(2000, 1)]
+
+
+# ---------------------------------------------------------------------------
+# Yen Press Calendar
+# ---------------------------------------------------------------------------
+
+# HTML fixture reflecting the real structure verified on 2026-05-27:
+# Each card is an outer <a href="/titles/{isbn}-{slug}"> containing a div.book-box.
+# Category is in <span class="white-label {cat} upper"> (light novel = "light-novels").
+# Title is in <h3 class="heading small-h1"> inside div.genre-col-txt (no inner <a>).
+# Date is in <p class="label-date upper">DD<span class="month">Mon</span></p>.
+# No price element exists on the calendar page.
+_YENPRESS_CALENDAR_HTML = """<html><body>
+<div class="releases-box book-section">
+<a href="/titles/9781975360542-jujutsu-kaisen-vol-30-collectors-edition">
+  <div class="inline_block col-d-25 col-t-50 col-m-100 released-box book-box">
+    <div class="released-covers-wrapper flex-center prel">
+      <span class="white-label manga upper">Manga</span>
+      <div class="calendar-books-wrapper">
+        <div class="prel">
+          <p class="label-date upper">06
+            <span class="month">Jun</span>
+          </p>
+          <img class="genre-col-img"
+               src="https://images.yenpress.com/imgs/9781975360542.jpg?w=171&h=257&type=books">
+        </div>
+      </div>
+      <div class="genre-col-txt">
+        <h3 class="heading small-h1">Jujutsu Kaisen, Vol. 30 (Collector's Edition)</h3>
+      </div>
+    </div>
+  </div>
+</a>
+<a href="/titles/9781975312343-sword-art-online-progressive-vol-10">
+  <div class="inline_block col-d-25 col-t-50 col-m-100 released-box book-box">
+    <div class="released-covers-wrapper flex-center prel">
+      <span class="white-label light-novels upper">Novels</span>
+      <div class="calendar-books-wrapper">
+        <div class="prel">
+          <p class="label-date upper">06
+            <span class="month">Jun</span>
+          </p>
+          <img class="genre-col-img"
+               src="https://images.yenpress.com/imgs/9781975312343.jpg?w=171&h=257&type=books">
+        </div>
+      </div>
+      <div class="genre-col-txt">
+        <h3 class="heading small-h1">Sword Art Online Progressive, Vol. 10</h3>
+      </div>
+    </div>
+  </div>
+</a>
+<a href="/titles/9781975399801-dungeon-meshi-vol-14">
+  <div class="inline_block col-d-25 col-t-50 col-m-100 released-box book-box">
+    <div class="released-covers-wrapper flex-center prel">
+      <span class="white-label manga upper">Manga</span>
+      <div class="calendar-books-wrapper">
+        <div class="prel">
+          <p class="label-date upper">06
+            <span class="month">Jun</span>
+          </p>
+          <img class="genre-col-img"
+               src="https://images.yenpress.com/imgs/9781975399801.jpg?w=171&h=257&type=books">
+        </div>
+      </div>
+      <div class="genre-col-txt">
+        <h3 class="heading small-h1">Dungeon Meshi, Vol. 14</h3>
+      </div>
+    </div>
+  </div>
+</a>
+<a href="/titles/9781975398765-overlord-box-set-complete">
+  <div class="inline_block col-d-25 col-t-50 col-m-100 released-box book-box">
+    <div class="released-covers-wrapper flex-center prel">
+      <span class="white-label manga upper">Manga</span>
+      <div class="calendar-books-wrapper">
+        <div class="prel">
+          <p class="label-date upper">15
+            <span class="month">Jun</span>
+          </p>
+          <img class="genre-col-img"
+               src="https://images.yenpress.com/imgs/9781975398765.jpg?w=171&h=257&type=books">
+        </div>
+      </div>
+      <div class="genre-col-txt">
+        <h3 class="heading small-h1">Overlord Complete Box Set</h3>
+      </div>
+    </div>
+  </div>
+</a>
+</div>
+</body></html>"""
+
+
+def test_yenpress_parse_filters_manga_only_special_editions():
+    """Filtra por categoría (manga, excluye LN) y por keywords de edición especial."""
+    from wikis.yenpress_calendar import parse_calendar_page
+    cands = parse_calendar_page(_YENPRESS_CALENDAR_HTML, 2025, 6)
+    # LN SAO → excluido por categoría "light-novels"
+    # Dungeon Meshi regular → excluido por falta de keyword premium
+    # JJK Collector's + Overlord Box Set → aceptados
+    assert len(cands) == 2
+    isbns = {c.isbn for c in cands}
+    assert isbns == {"9781975360542", "9781975398765"}
+
+
+def test_yenpress_candidate_has_correct_url_and_image():
+    from wikis.yenpress_calendar import parse_calendar_page
+    cands = parse_calendar_page(_YENPRESS_CALENDAR_HTML, 2025, 6)
+    c = next(c for c in cands if c.isbn == "9781975360542")
+    assert "yenpress.com/titles/9781975360542" in c.url
+    assert c.image_url == "https://images.yenpress.com/imgs/9781975360542.jpg?w=285&h=422&type=books"
+
+
+def test_yenpress_parse_date_from_card():
+    from wikis.yenpress_calendar import parse_calendar_page
+    cands = parse_calendar_page(_YENPRESS_CALENDAR_HTML, 2025, 6)
+    jjk = next(c for c in cands if c.isbn == "9781975360542")
+    assert jjk.release_date == "2025-06-06"
+    overlord = next(c for c in cands if c.isbn == "9781975398765")
+    assert overlord.release_date == "2025-06-15"
+
+
+def test_yenpress_parse_price():
+    """El calendario de Yen Press no expone precios — price debe ser vacío."""
+    from wikis.yenpress_calendar import parse_calendar_page
+    cands = parse_calendar_page(_YENPRESS_CALENDAR_HTML, 2025, 6)
+    jjk = next(c for c in cands if c.isbn == "9781975360542")
+    assert jjk.price == ""  # no hay <p class="label-price"> en la página real
+
+
+def test_yenpress_deduplicates_by_isbn():
+    """Mismo ISBN dos veces → solo un candidato."""
+    from wikis.yenpress_calendar import parse_calendar_page
+    html = """<html><body>
+    <a href="/titles/9781975360542-jujutsu-kaisen-collector-a">
+      <div class="book-box">
+        <div class="released-covers-wrapper prel">
+          <span class="white-label manga upper">Manga</span>
+          <div class="calendar-books-wrapper"><div class="prel">
+            <p class="label-date upper">06<span class="month">Jun</span></p>
+            <img class="genre-col-img" src="">
+          </div></div>
+          <div class="genre-col-txt">
+            <h3 class="heading small-h1">Jujutsu Kaisen, Vol. 30 (Collector's Edition)</h3>
+          </div>
+        </div>
+      </div>
+    </a>
+    <a href="/titles/9781975360542-jujutsu-kaisen-collector-b">
+      <div class="book-box">
+        <div class="released-covers-wrapper prel">
+          <span class="white-label manga upper">Manga</span>
+          <div class="calendar-books-wrapper"><div class="prel">
+            <p class="label-date upper">06<span class="month">Jun</span></p>
+            <img class="genre-col-img" src="">
+          </div></div>
+          <div class="genre-col-txt">
+            <h3 class="heading small-h1">Jujutsu Kaisen, Vol. 30 (Collector's Edition)</h3>
+          </div>
+        </div>
+      </div>
+    </a>
+    </body></html>"""
+    cands = parse_calendar_page(html, 2025, 6)
+    assert len(cands) == 1
+
+
+def test_yenpress_skips_light_novel_category():
+    """Categoría 'light-novels' se excluye aunque el título tenga keywords."""
+    from wikis.yenpress_calendar import parse_calendar_page
+    html = """<html><body>
+    <a href="/titles/9781975312343-sword-art-online-collector-edition">
+      <div class="book-box">
+        <div class="released-covers-wrapper prel">
+          <span class="white-label light-novels upper">Novels</span>
+          <div class="calendar-books-wrapper"><div class="prel">
+            <p class="label-date upper">06<span class="month">Jun</span></p>
+            <img class="genre-col-img" src="">
+          </div></div>
+          <div class="genre-col-txt">
+            <h3 class="heading small-h1">Sword Art Online: Collector's Edition</h3>
+          </div>
+        </div>
+      </div>
+    </a>
+    </body></html>"""
+    cands = parse_calendar_page(html, 2025, 6)
+    assert len(cands) == 0
+
+
+def test_yenpress_iter_year_months_generates_range():
+    from wikis.yenpress_calendar import iter_year_months
+    result = iter_year_months(2025, 11, 2026, 2)
+    assert result == [(2025, 11), (2025, 12), (2026, 1), (2026, 2)]
+
+
+def test_yenpress_iter_year_months_single_month():
+    from wikis.yenpress_calendar import iter_year_months
+    result = iter_year_months(2025, 6, 2025, 6)
+    assert result == [(2025, 6)]
+
+
+def test_yenpress_skips_regular_manga_without_keywords():
+    """Título de manga sin keywords de edición especial → excluido."""
+    from wikis.yenpress_calendar import parse_calendar_page
+    html = """<html><body>
+    <a href="/titles/9781975399801-dungeon-meshi-vol-14">
+      <div class="book-box">
+        <div class="released-covers-wrapper prel">
+          <span class="white-label manga upper">Manga</span>
+          <div class="calendar-books-wrapper"><div class="prel">
+            <p class="label-date upper">06<span class="month">Jun</span></p>
+            <img class="genre-col-img" src="">
+          </div></div>
+          <div class="genre-col-txt">
+            <h3 class="heading small-h1">Dungeon Meshi, Vol. 14</h3>
+          </div>
+        </div>
+      </div>
+    </a>
+    </body></html>"""
+    cands = parse_calendar_page(html, 2025, 6)
+    assert len(cands) == 0

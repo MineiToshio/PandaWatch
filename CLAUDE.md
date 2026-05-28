@@ -5,6 +5,20 @@
 > conventions, and the gotchas that are not obvious from the code.
 > The goal is that a new conversation can resume work with full context.
 
+## ⚠️ Skills invocation policy — READ BEFORE RUNNING SKILLS
+
+**NEVER invoke `/standardize-catalog` or `/enrich-series-aliases` automatically.**
+These skills consume significant tokens (subagents × chunks × LLM calls) and the
+owner (sergiomineiro) wants to decide consciously when to run them. After any
+scrape or data ingestion, **leave items.jsonl in raw state** (without `standardized_at`).
+Only invoke a skill when the user explicitly types the skill name or asks for
+standardization/enrichment by name.
+
+Same rule applies to all skills under `.claude/skills/`: only run them on
+explicit request.
+
+---
+
 ## ⚠️ Documentation policy — READ BEFORE TOUCHING CODE
 
 **Every meaningful change to this repo MUST update the relevant docs in
@@ -15,15 +29,20 @@ happen again.
 ### MANDATORY pre-flight checklist (run this BEFORE saying "done")
 
 Before declaring ANY task complete, walk through this checklist out loud
-(in your response or thinking):
+(in your response or thinking). The checklist is organized by component —
+only run the sections that apply to what you changed.
 
-1. **Schema?** Did `items.jsonl`, `state.json`, `feedback.jsonl`,
-   `unmapped_series.jsonl`, `non_manga_blacklist.jsonl`, or a new YAML/JSON
-   file change shape? → Update CLAUDE.md schema docs + ARCHITECTURE.md
-   data-flow section.
+---
+
+#### 🔧 Scraper (`scripts/`, `sources.yml`, `data/`)
+
+1. **Schema?** Did `items.jsonl`, `state.json`, `user_rejected.jsonl`,
+   `unmapped_series.jsonl`, `non_manga_blacklist.jsonl`,
+   or a new YAML/JSON file change shape? → Update CLAUDE.md schema docs +
+   `docs/scraper/ARCHITECTURE.md` data-flow section.
 2. **Sources?** Did `sources.yml` gain/lose entries, or a source's
    `purity`/`kind`/`selectors`/`enabled` change? → Update CLAUDE.md
-   counters (corpus state table, sources count) + docs/SOURCES.md.
+   counters (corpus state table, sources count) + `docs/scraper/SOURCES.md`.
 3. **Filters / signals / scoring?** Changes to `is_likely_manga`,
    `is_collectible_edition`, `is_comic_not_manga`, `is_pure_novel`,
    `detect_signals`, `COLLECTIBLE_EDITION_SIGNAL_TYPES`,
@@ -31,8 +50,8 @@ Before declaring ANY task complete, walk through this checklist out loud
    gotcha if relevant.
 4. **New module under `scripts/`?** Wiki parser, retrofit, audit,
    skill helper? → Add to CLAUDE.md "File map" + appropriate doc
-   (scripts/retrofit/README.md for retrofits, docs/SOURCES.md for wikis,
-   etc.).
+   (`scripts/retrofit/README.md` for retrofits, `docs/scraper/SOURCES.md`
+   for wikis, etc.).
 5. **New skill under `.claude/skills/`?** → Add entry to file map +
    `.claude/skills/README.md` (skills index).
 6. **New gotcha?** Mojibake variant, parser quirk, anti-bot bypass,
@@ -42,20 +61,68 @@ Before declaring ANY task complete, walk through this checklist out loud
    update the "Current corpus state" table.
 8. **New CLI flag, env var, dependency, external service?** → CLAUDE.md
    + `.env.example` if applicable + the doc that owns it.
-9. **Did a multi-turn task accumulate? Bump "Last updated"** with a
-   one-paragraph summary of what changed across the turns — even if
-   each turn updated docs incrementally. The summary helps future
-   readers understand the WHY.
+9. **Scraper roadmap changed?** New wiki added, phase completed, new
+   item in "Next things on the radar"? → Update `docs/scraper/PRD.md`
+   (corpus state, wikis list, roadmap).
+
+---
+
+#### 🌐 Dashboard HTML (`web/`, `scripts/serve.py`)
+
+10. **New feature o cambio de comportamiento en `web/index.html`?**
+    Nuevo filtro, nueva acción en el modal, cambio de UX, nuevo endpoint
+    en `serve.py`? → Update `docs/web-html/PRD.md`: mover el feature de
+    "planificado" a "actual" si ya está implementado, o agregar a la lista
+    de planificados si es nuevo scope.
+11. **Cambio al flujo de curación** (botón 👎, `user_rejected.jsonl`,
+    `/api/feedback`)? → Update `docs/web-html/PRD.md` sección "Curación
+    de datos" + CLAUDE.md sección "Feedback de mala elección".
+
+---
+
+#### ⚙️ Admin / Panel de Control (`admin/`, `scripts/admin_serve.py`, `scripts/script_registry.py`)
+
+12. **New script en `script_registry.py`**, nuevo flag, nuevo preset,
+    o cambio en la API HTTP del admin? → Update `docs/admin/README.md`.
+
+---
+
+#### ⚡ Next.js app (`web-next/`)
+
+13. **Nuevo componente, nueva ruta, cambio de data layer o design system?**
+    → Update el FRD correspondiente en `docs/web-next/`:
+    - Data layer (`lib/`) → `FRD-001-data-layer.md`
+    - Design system (tokens, componentes core) → `FRD-002-design-system.md`
+    - Catálogo (filtros, cards, paginación) → `FRD-003-catalog.md`
+    - Edition detail → `FRD-004-edition-detail.md`
+    - Item detail → `FRD-005-item-detail.md`
+    - Slug generation → `FRD-006-slug-generation.md`
+14. **Decisión de arquitectura nueva** (nueva ruta, cambio de rendering
+    strategy, nueva dependencia)? → Update el blueprint correspondiente
+    en `docs/web-next/blueprints/`.
+
+---
+
+#### 📋 Siempre (cualquier componente)
+
+15. **Did a multi-turn task accumulate? Bump "Last updated"** with a
+    one-paragraph summary of what changed across the turns — even if
+    each turn updated docs incrementally. The summary helps future
+    readers understand the WHY.
+
+---
 
 **What counts as "meaningful"** (any one of these triggers the checklist):
-- New scraper feature, pipeline stage, CLI flag, endpoint in serve.py.
-- Change to filters / scoring that shifts behavior.
-- Source added/removed/reconfigured.
-- New wiki/retrofit/audit script, new skill, new pipeline helper.
-- Schema change to any data file in `data/`.
-- New gotcha discovered.
-- Corpus numbers shift >2 percentage points.
-- New env var, new dependency, new external service (Anilist, Wikidata, etc.).
+
+| Componente | Trigger |
+|---|---|
+| Scraper | Nueva feature de pipeline, filtro, fuente, wiki, retrofit, skill, o cambio de schema |
+| Scraper | Corpus numbers shift >2pp, nueva dependencia, nuevo env var |
+| Web HTML | Nueva feature implementada, cambio de UX, nuevo endpoint en serve.py |
+| Web HTML | Feature movida de "planificada" a "actual" |
+| Admin | Nuevo script en registry, nuevo flag/preset, cambio en API o modelo de seguridad |
+| Next.js | Nuevo componente, nueva ruta, cambio de data layer, ADR de arquitectura |
+| Cualquiera | Bug fix que cambia comportamiento documentado (el doc estaba mal) |
 
 **What does NOT need docs** (only these — be strict):
 - Bug fixes that restore documented behavior (the doc was already right).
@@ -68,23 +135,29 @@ Before declaring ANY task complete, walk through this checklist out loud
 | Change type | File to update |
 |---|---|
 | Design intent, conventions, gotchas, corpus state, schema reference | `CLAUDE.md` (this file) |
-| Pipeline internals, data flow, module responsibilities, ASCII diagrams | `docs/ARCHITECTURE.md` |
-| How to add/maintain a source, selector recipes, source-specific quirks | `docs/SOURCES.md` |
-| Retrofit utility behavior (one-shot scripts under `scripts/retrofit/`) | `scripts/retrofit/README.md` |
-| Skills (`.claude/skills/<name>/SKILL.md`) — what they do, when to invoke | `.claude/skills/README.md` |
-| New env var, new dependency | `.env.example` + the file above that fits |
-| Product scope / vision change | `docs/PRD.md` or `docs/PRD-catalog.md` |
-| Control Panel features | `docs/CONTROL-PANEL.md` |
+| **Scraper** — pipeline internals, data flow, concurrency, cluster_key | `docs/scraper/ARCHITECTURE.md` |
+| **Scraper** — cómo agregar/mantener fuentes, recetas, gotchas por fuente | `docs/scraper/SOURCES.md` |
+| **Scraper** — roadmap, corpus state, wikis activos, no-goals | `docs/scraper/PRD.md` |
+| **Scraper** — retrofit utilities | `scripts/retrofit/README.md` |
+| **Scraper** — skills de curación | `.claude/skills/README.md` |
+| **Web HTML** — features actuales o planificadas, UX, curación | `docs/web-html/PRD.md` |
+| **Admin** — Panel de Control: UI, API, registry, seguridad, deploy | `docs/admin/README.md` |
+| **Next.js** — feature requirements por área | `docs/web-next/FRD-00X-*.md` |
+| **Next.js** — decisiones de arquitectura | `docs/web-next/blueprints/BP-00X-*.md` |
+| **Next.js** — tareas de implementación | `docs/web-next/work-orders/WO-00X-*.md` |
+| New env var, new dependency | `.env.example` + el doc del componente afectado |
 
 **Anti-patterns** (these violate the policy):
 
 - ❌ "Lo documento después en otro commit". No — same turn, same commit.
 - ❌ "Solo agregué un retrofit chiquito". Same rule — `scripts/retrofit/README.md`
   needs the entry.
+- ❌ Hacer un cambio en `web/index.html` sin actualizar `docs/web-html/PRD.md`.
+- ❌ Agregar un script al registry sin actualizar `docs/admin/README.md`.
 - ❌ Updating only the "Last updated" line without filling in details.
 - ❌ Bumping gotcha count but forgetting to update the heading.
 - ❌ Adding a new field to items.jsonl without documenting it in CLAUDE.md
-  + ARCHITECTURE.md.
+  + `docs/scraper/ARCHITECTURE.md`.
 - ❌ Creating a new file (skill, doc, script) without referencing it from
   the file map in CLAUDE.md.
 
@@ -133,10 +206,9 @@ listadomanga (decisión 2026-05-23):
 Ambos corren las mismas fases:
 1. Scrape sources del YAML (`manga_watch.py` con `--workers 8`)
 2. Wiki bootstraps (los wikis que aplican según modo)
-3. Search discovery (Gemini + DDG)
-4. Cleanup retrofits (rescore → filter_non_manga → filter_collectible →
+3. Cleanup retrofits (rescore → filter_non_manga → filter_collectible →
    clean_titles → backfill_metadata)
-5. Build web
+4. Build web
 
 `scripts/overnight_run.sh` queda como alias deprecated de `scrape_delta.sh`
 (retrocompat con cron jobs antiguos).
@@ -207,10 +279,10 @@ http://localhost:8000/ (via scripts/serve.py — PUBLIC, deployable)
 Operación: scripts/admin_serve.py (127.0.0.1:8001, LOCAL, no deployable)
   + admin/index.html → Panel de Control web. Lee scripts/script_registry.py
   y permite ejecutar cualquier script del repo desde una UI con
-  toggles + presets + logs en vivo (SSE). Detalle en docs/CONTROL-PANEL.md.
+  toggles + presets + logs en vivo (SSE). Detalle en docs/admin/README.md.
 
 Orchestration: scripts/overnight_run.sh chains
-  scrape (parallel) → wiki bootstraps → search discovery →
+  scrape (parallel) → wiki bootstraps →
   cleanup retrofits (rescore, filter_non_manga, filter_collectible,
   clean_titles, backfill_metadata, [wayback_recover]) →
   build_web.
@@ -242,8 +314,21 @@ data/
                                        discovery, with engine priority
                                        per query (gemini/tavily/ddg).
   items.jsonl                        — gitignored. Upsert table; every
-                                       row carries cluster_key.
-  state.json, feedback.jsonl         — gitignored.
+                                       row carries cluster_key. Also
+                                       carries `slug` (URL-safe unique
+                                       key for /item/[slug] route in
+                                       web-next — generated by
+                                       scripts/retrofit/generate_slugs.py).
+  state.json                          — gitignored.
+  user_rejected.jsonl                — gitignored. Items que el usuario
+                                       rechazó explícitamente vía el botón
+                                       👎 del dashboard. Contiene todos los
+                                       campos del item original +
+                                       `rejection_reason` + `rejected_at`.
+                                       Una línea por fila de items.jsonl
+                                       removida (N líneas si el cluster
+                                       tenía N fuentes). Ver sección
+                                       "Feedback de mala elección".
   images/                            — gitignored. Espejo local de
                                        portadas (Image storage Fase 1):
                                        1 archivo por imagen, nombre
@@ -251,6 +336,28 @@ data/
                                        Lo llena el scrape; el JSONL
                                        referencia el filename en el
                                        campo `image_local`.
+  backups/                           — gitignored. Backups rotativos
+                                       (máx 3 por familia) creados por
+                                       los retrofit scripts antes de
+                                       cualquier escritura destructiva.
+                                       Organizados por subcarpeta según
+                                       el archivo que respaldan:
+                                         backups/items.jsonl/
+                                         backups/series_aliases.yml/
+                                         backups/unmapped_series.jsonl/
+                                         backups/state.json/
+                                       Creados con `backup_and_rotate()`
+                                       en manga_watch.py — NUNCA a mano
+                                       ni en /tmp/. Al llegar al límite
+                                       de 3, el más viejo se borra solo.
+  diagnostics/                       — gitignored. Outputs de debugging
+                                       de los retrofits de filtrado.
+                                       Se sobreescriben en cada corrida;
+                                       NO son datos permanentes.
+                                         diagnostics/items.non_manga.jsonl
+                                           ← qué rechazó filter_non_manga
+                                         diagnostics/items.non_collectible.jsonl
+                                           ← qué rechazó filter_collectible
   unmapped_series.jsonl              — **FUENTE ÚNICA DE VERDAD para cualquier
                                        registro de items.jsonl que no estemos
                                        seguros cómo clasificar** (serie,
@@ -303,7 +410,9 @@ scripts/
                                        so the dashboard fetches live).
   serve.py                           — PUBLIC HTTP server. Sirve web/
                                        + data/ + redirige / → /web/ +
-                                       POST /api/feedback → feedback.jsonl.
+                                       POST /api/feedback → elimina item
+                                       de items.jsonl + mueve a
+                                       user_rejected.jsonl.
                                        Bindea 0.0.0.0:8000. ES lo que se
                                        despliega.
   admin_serve.py                     — ADMIN HTTP server del Panel de
@@ -447,6 +556,114 @@ scripts/
                                        booksprivilege (que cubre 店舗特典/
                                        bonus por tienda); sumikko cubre
                                        la EDICIÓN en sí.)
+    mangapassion.py                  (DE — manga-passion.de vía API
+                                       pública REST/JSON-LD (Symfony API
+                                       Platform, `api.manga-passion.de`).
+                                       Dos queries: `type[]=3` (Sonder-
+                                       ausgabe = ediciones especiales:
+                                       Limited, Collector's, Premium,
+                                       Box) + `type[]=0 & tags.tag.id=200`
+                                       (Variant-Covers). `specialType=1`
+                                       → Sammelschuber (caja/estuche);
+                                       se inyecta hint "Box Set" para
+                                       que `detect_signals` lo levante.
+                                       Precio en centavos (1900 → 19.00€).
+                                       URL canónica: `api.manga-passion.de
+                                       /volumes/{id}`. En modo delta
+                                       aplica `date[after]` filtro; en
+                                       full `year_from < 2010` descarga
+                                       catálogo histórico completo.
+                                       Publishers DE mapeados: Carlsen,
+                                       Egmont, Dokico, Papertoons,
+                                       Cross Cult, Manga Cult, Loewe,
+                                       Reprodukt, Altraverse, Universe.)
+    prhcomics.py                     (US/CA — prhcomics.com/manga/,
+                                       catálogo estático de hardcovers +
+                                       box sets + collector's editions en
+                                       inglés distribuidos por Penguin
+                                       Random House. Cubre: Dark Horse
+                                       Manga, Kodansha Comics, Seven Seas,
+                                       Square Enix Manga, TOKYOPOP, Titan,
+                                       Vertical, Inklore. NO cubre VIZ
+                                       Media ni Yen Press. Una sola página
+                                       sin paginación ni JS. ISBN-13
+                                       determinístico en URL de producto
+                                       y cover. Filtro formato+título para
+                                       excluir paperbacks regulares. Denylist
+                                       de publishers no-manga (DK, Golden
+                                       Books, Prestel, Pantheon). Dedup por
+                                       ISBN dentro del run (mismo tomo puede
+                                       aparecer en múltiples carruseles).
+                                       93 items en catálogo completo (mayo
+                                       2026). URL: prhcomics.com/book/?isbn=)
+    kinokuniya.py                    (US — usa.kinokuniya.com/kinokuniya-
+                                       exclusives, página curada de
+                                       exclusivos Kinokuniya USA: variant
+                                       covers, dust jackets exclusivos,
+                                       shikishi, ID cards, sticker packs,
+                                       limited editions con bonus. Parser
+                                       URL-based: Squarespace usa class
+                                       names dinámicos que cambian con
+                                       cada redeploy — el único selector
+                                       estable es el patrón de URL de
+                                       producto `/bw/{isbn13}`. ISBN-13
+                                       extraído con regex del href de cada
+                                       anchor. Título en `<img alt>` (no
+                                       en anchor.get_text() — Squarespace
+                                       renderiza bloques imagen-link).
+                                       Asteriscos en alt son marcadores
+                                       de estado de Squarespace ("*coming
+                                       soon*") — se descartan. Cover URL
+                                       determinístico via PRH CDN. Inyecta
+                                       "Kinokuniya Exclusive" en
+                                       description → signal
+                                       `retailer_exclusive` (score=45).
+                                       Una sola request sin paginación.
+                                       ~39 items en catálogo activo (mayo
+                                       2026). URL: united-states.kinokuniya
+                                       .com/bw/{isbn13})
+    yenpress_calendar.py             (US — yenpress.com/calendar, calendario
+                                       mensual de lanzamientos de Yen Press
+                                       USA. Filtro de categoría: solo
+                                       manga + comics (excluye light novels
+                                       y audio via `white-label {cat}` span
+                                       class). Pre-filtro por keywords:
+                                       collector's, deluxe, box set, boxed
+                                       set, limited edition, special edition,
+                                       complete box/collection, numbered,
+                                       slipcase, artbook, hardcover.
+                                       ISBN-13 del path de producto
+                                       `/titles/(\d{13})-`. Cover URL
+                                       determinístico `images.yenpress.com/
+                                       imgs/{isbn13}.jpg`. Iteración mensual
+                                       real (como manga_sanctuary) con
+                                       `iter_year_months`. Delta: últimos
+                                       3 meses. Full: desde 2013-01
+                                       (lanzamiento del sello EN).
+                                       URL: yenpress.com/calendar)
+    animeclick.py                    (IT — animeclick.it, calendario
+                                       semanal de edizioni speciali IT.
+                                       Navegación AJAX via
+                                       `?paging=prev-week&day=DD&month=MM
+                                       &year=YYYY` con header
+                                       `X-Requested-With: XMLHttpRequest`.
+                                       Keyword filter (`_COLLECTOR_RE`)
+                                       en cards del calendario antes de
+                                       hitear detail pages (~20% hit rate).
+                                       Detail: schema.org Book markup
+                                       (itemprop name/image/description/
+                                       datePublished) + "Editore:"/"Prezzo:"
+                                       labels en <strong>. Sin ISBN.
+                                       Inyecta hints "Cofanetto Box Set" /
+                                       "Complete edition integral" para
+                                       que `detect_signals` levante
+                                       `box_set`/omnibus desde términos IT.
+                                       Cubre Star Comics, Panini Comics,
+                                       J-POP, MangaYo!, Crunchyroll IT —
+                                       publishers NO presentes en
+                                       SocialAnime. Complementario a
+                                       socialanime.it (que tiene ISBN pero
+                                       no estos publishers).)
     listadomanga_collections.py      (ES — parser por colección individual,
                                        coleccion.php?id=N. Complementa el
                                        calendario mensual (listadomanga.py)
@@ -515,6 +732,29 @@ scripts/
                                        (saca los archivos huérfanos a una
                                        cuarentena, o --gc-delete). Ver
                                        sección "Image storage".
+    generate_slugs.py                — genera el campo `slug` en items.jsonl
+                                       para la ruta /item/[slug] del app
+                                       Next.js. Prioridad: isbn cluster_key
+                                       → edition_key+volume → edition_key
+                                       solo → isbn field → sha1(url)[:12]
+                                       fallback. Resuelve colisiones con
+                                       sufijos -b/-c (el más antiguo conserva
+                                       el slug limpio). Flags: --dry-run,
+                                       --only-missing, --verbose. Corre como
+                                       último paso del skill
+                                       `/standardize-catalog` (no en los
+                                       pipelines scrape_delta/scrape_full).
+                                       Ver docs/web-next/FRD-006-slug-generation.md.
+    translate_descriptions.py        — traduce description → description_es
+                                       y extras[].description →
+                                       extras[].description_es usando
+                                       Google Translate (primario, gratis,
+                                       sin API key) + DeepL (opcional,
+                                       mejor calidad si DEEPL_API_KEY
+                                       está en .env con crédito disponible).
+                                       Requiere pip install deep-translator
+                                       langdetect. Opcional: pip install
+                                       deepl.
   audit/
     source_health.py                 — parses N recent overnight logs
                                        and classifies sources as
@@ -553,24 +793,129 @@ scripts/
                                        a blacklist, deduplican. Solo procesa
                                        items nuevos — los antiguos llevan
                                        timestamp y se saltean. Ver gotcha #21.
+  evaluate-sources/SKILL.md          — Skill manual: evalúa fuentes candidatas
+                                       ANTES de implementarlas. Input: lista de
+                                       URLs en cualquier formato. Evalúa content
+                                       fit, campos mínimos (incl. foto del extra
+                                       para fuentes de bonuses — lección
+                                       BooksPrivilege), escala, overlap vs corpus
+                                       existente y factibilidad técnica. Output:
+                                       tabla viabilidad (✅/⚠️/❌) sin implementar.
+  review-rejected/SKILL.md           — Skill manual: lee data/user_rejected.jsonl
+                                       (items rechazados via 👎 del dashboard),
+                                       categoriza causa raíz (A–J: merch,
+                                       trading cards, noticias, tomo regular,
+                                       source ruidosa, western comic, LN,
+                                       preferencia personal, falsa señal,
+                                       selector demasiado amplio), presenta
+                                       propuestas al usuario, aplica los
+                                       cambios aprobados con tests + retrofits,
+                                       y trunca la queue.
 web/
   index.html                         — Alpine.js dashboard (PÚBLICO,
                                        deployable). Consume data/items.jsonl
                                        y POST /api/feedback.
   serve.sh                           — convenience wrapper for serve.py.
+web-next/                            — Next.js 16 + Tailwind v4 app (NUEVO).
+                                       Reemplazo del Alpine.js dashboard con
+                                       arquitectura Server Components, rutas
+                                       estáticas generadas, diseño PandaTrack
+                                       portado con acento rosa (OKLCH). Ver
+                                       docs/web-next/ para FRDs, blueprints y
+                                       work orders.
+  app/                               — App Router (Server Components por
+                                       defecto). Páginas: / (catálogo),
+                                       /edition/[editionKey], /item/[slug].
+  components/core/                   — Componentes base reutilizables:
+                                       Button (CVA), Chip, Badge, Heading,
+                                       Typography, Icon.
+  components/modules/                — Módulos reutilizables: SignalChip,
+                                       ScoreBadge, CountryFlag, CoverImage,
+                                       Header, ThemeToggle, BackLink, ItemCard.
+  components/catalog/                — Componentes del catálogo: EditionCard,
+                                       CatalogGrid, SidebarFilters, SortBar,
+                                       Pagination, EmptyState, CatalogControls
+                                       (Client wrapper que gestiona drawerOpen
+                                       compartido entre SortBar y SidebarFilters).
+  components/edition/                — Componentes de edition detail:
+                                       EditionHeader, VolumeGrid.
+  components/item/                   — Componentes de item detail:
+                                       ItemHero, ImageCarousel, MetaTable,
+                                       ExtrasSection, SourcesList.
+  lib/types.ts                       — TypeScript types: Item, Cluster,
+                                       Facets, FilterParams, SortKey.
+  lib/data.ts                        — Carga y agrupación: loadClusters(),
+                                       loadEditionClusters(), clusterBySlug(),
+                                       allEditionKeys(), allSlugs().
+  lib/filters.ts                     — Filtrado + sorting + paginación:
+                                       filterClusters(), sortClusters(),
+                                       paginate(), buildFacets().
+  lib/styles.ts                      — cn() utility (clsx + tailwind-merge).
+  public/images → ../../data/images/ — Symlink. Las imágenes del espejo
+                                       local se sirven estáticamente sin
+                                       copiar ni cambiar el pipeline Python.
 admin/
   index.html                         — Panel de Control Alpine.js (LOCAL,
                                        no deployable). Consume /api/scripts,
                                        /api/run, /api/jobs/*/stream del
                                        admin_serve.py.
-tests/test_extraction.py             — pytest suite (227 tests, <1s).
+tests/test_extraction.py             — pytest suite (398 tests, <2s).
 docs/
-  CLAUDE.md                          — THIS FILE
-  ARCHITECTURE.md                    — deep dive into the pipeline
-  CONTROL-PANEL.md                   — panel admin: UI, API, registry,
+  README.md                          — Índice maestro: qué está en cada
+                                       carpeta, tabla de componentes.
+  scraper/
+    ARCHITECTURE.md                  — deep dive into the pipeline
+    SOURCES.md                       — how to add/maintain sources
+    PRD.md                           — qué es el scraper, corpus actual,
+                                       wikis activos, roadmap, no-goals
+  web-html/
+    PRD.md                           — features del dashboard HTML personal,
+                                       roadmap, propósito vs Next.js
+  admin/
+    README.md                        — panel admin: UI, API, registry,
                                        seguridad, deploy, troubleshooting
-  SOURCES.md                         — how to add/maintain sources
-  PRD.md / PRD-catalog.md            — original product specs (historical)
+  web-next/                          — Documentación del app Next.js
+                                       (metodología 80/90.AI simplificada).
+    README.md                        — Índice, tech stack, constraints,
+                                       folder structure target.
+    FRD-001-data-layer.md            — Data layer: types, loading,
+                                       filtering, pagination, facets.
+    FRD-002-design-system.md         — Design system: tokens OKLCH,
+                                       componentes core + módulos.
+    FRD-003-catalog.md               — Catálogo: layout, EditionCard,
+                                       filtros, sort, paginación.
+    FRD-004-edition-detail.md        — Edition detail: header, VolumeGrid,
+                                       SSG, back navigation.
+    FRD-005-item-detail.md           — Item detail: ImageCarousel, MetaTable,
+                                       SourcesList, back navigation.
+    FRD-006-slug-generation.md       — Slug generation: reglas, colisiones,
+                                       CLI, pipeline integration.
+    blueprints/
+      BP-001-architecture.md         — ADRs: Server Components, no API
+                                       routes, URL state, SSG, symlink,
+                                       Tailwind v4.
+      BP-002-url-routing.md          — Route table, URL design principles,
+                                       slug format, ?from= navigation.
+      BP-003-data-flow.md            — Data flow stages, full lib/data.ts
+                                       + lib/filters.ts code, TypeScript
+                                       types, caching strategy.
+      BP-004-component-hierarchy.md  — Server/Client boundary, component
+                                       trees, props, SIGNAL_META map.
+    work-orders/
+      WO-001-project-scaffold.md     — create-next-app, deps, next.config,
+                                       folder structure, symlink.
+      WO-002-design-system.md        — globals.css port, layout, core
+                                       components, dark mode.
+      WO-003-data-layer.md           — lib/types.ts, lib/data.ts,
+                                       lib/filters.ts, tests.
+      WO-004-catalog.md              — app/page.tsx, EditionCard,
+                                       CatalogGrid, SidebarFilters,
+                                       SortBar, Pagination, CoverImage.
+      WO-005-edition.md              — edition/[editionKey]/page.tsx,
+                                       EditionHeader, VolumeGrid, ItemCard,
+                                       BackLink.
+      WO-006-item-detail.md          — item/[slug]/page.tsx, ImageCarousel,
+                                       MetaTable, ExtrasSection, SourcesList.
 ```
 
 ## Current corpus state
@@ -579,32 +924,32 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | **8917** (5519 → 6360 BooksPrivilege Mayo 2026 +841, → 6410 BBM Layout C Box de Mangá +50, → 9318 Sumikko catálogo completo +2908, → 8917 tras `/standardize-catalog` -401 = 266 a blacklist + 135 dedups por (series, edition, vol), → 8917 tras `/enrich-series-aliases` 52 remapeados sin cambio de count) |
-| Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 551 (285 previo + 266 en `/standardize-catalog` post-sprint: 247 light novels JP/BR, 123 Funside western comics, +50 misc: photobooks, DVDs, merchandise) |
-| Items deduplicados por (series_key, edition_key, volume) en esta corrida | 135 nuevos (+ 918 históricos previos = 1053 acumulado). Top dedups del sprint: BP/Sumikko cross-source por ISBN, BBM box ↔ Mangavariant/LMC por edition_key, Mangavariant re-merges marginales por mejor canonicalización |
-| Distinct `series_key` (filtro por obra) | **3376** (post `/enrich-series-aliases` post-sprint, baja 10 vs post-standardize por consolidación multilingüe: Uchuu Kyoudai → Space Brothers, Junjo Romantica → Junjou Romantica, YuruYuri normalizado, etc.) |
-| Distinct `edition_key` (filtro por edición+editorial) | **5350** (-13 vs post-standardize por colapso de variantes consolidadas) |
-| `data/series_aliases.yml` entries | **1657** canonical works (1609 previo + 48 nuevos post-sprint via Anilist/cross-match; los 471 unmapped del queue post-standardize eran mayormente obras JP obscuras sin canonical en Anilist — se agregaron como self-canonical para evitar re-logueo) |
+| Total unique items (line in items.jsonl) | **10103** (9846 post-AnimeClick sprint → +741 Manga-Passion full → -665 BooksPrivilege cleanup → +93 PRH Comics → +38 Kinokuniya USA → +6 VIZ Collector's Guide → +45 Yen Press Calendar full histórico 2013-2026 = 10103 — neto; 45 YP items pendientes de `/standardize-catalog`) |
+| Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 574 |
+| `data/series_aliases.yml` entries | **2844** canonical works; 896 entries (31.5%) con aliases multilingüe poblados, el resto self-canonical mínimo |
 | Sources in YAML | 138 |
 | Sources enabled | **76 / 138** (audit 2026-05-25: 45 fuentes adicionales deshabilitadas — todas con 0 items en corpus: 15 Bluesky, noticias/blogs, fuentes con solape total con wikis, y 2 fuentes rotas 403) |
 | Sources flagged `purity: mixed` | 17 |
 | Bluesky sources (`kind: bluesky`) | 15 (todos deshabilitados — 0 items en corpus, posts de anuncios sin señales coleccionables) |
-| Wikis disponibles (`--bootstrap-wiki`) | 12 (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm *con Layout C box-de-manga-no-brasil*, booksprivilege *JP tokuten*, **sumikko** *JP 限定版/特装版*, listadomanga-collections *Fase 1+2+3 completas*) |
-| Top sources | **Sumikko 2721 (top 1)**, Mangavariant 1713, ListadoManga colecciones 987, Manga-Sanctuary 947, **BooksPrivilege 697**, SocialAnime Cofanetti 333, ListadoManga calendario 236, SocialAnime Variant 190, KADOKAWA Store 86, Panini IT EdC 83 |
-| Image coverage | 99.5% (8876/8917) |
-| `image_local` coverage | 97.7% (8712/8917) |
-| `series_key` / `edition_key` / `standardized_at` coverage | **100% / 100% / 100%** (post `/standardize-catalog` — todo el corpus canonicalizado) |
-| `volume` coverage | 83.9% (7480/8917, sube +29pp por sumikko que ~100% lleva volume en el título JP) |
-| Release date coverage | 91.7% (8175/8917) |
-| ISBN coverage | 60.5% (5394/8917, sube fuerte de 35.7% por los 2721 sumikko + 697 booksprivilege todos con ISBN-10) |
-| Price coverage | 36.6% (3266/8917) |
-| Author coverage | 69.7% (6217/8917) |
+| Wikis disponibles (`--bootstrap-wiki`) | **17** (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm *con Layout C box-de-manga-no-brasil*, booksprivilege *JP tokuten*, **sumikko** *JP 限定版/特装版*, listadomanga-collections *Fase 1+2+3 completas*, **mangapassion** *DE Sonderausgaben + Variants*, **animeclick** *IT edizioni speciali*, **prhcomics** *US/CA hardcovers + box sets EN*, **kinokuniya** *US exclusivos Kinokuniya USA: variant covers + shikishi + extras*, **yenpress** *US calendario mensual collector's + box sets + hardcovers EN*) |
+| Top sources | **Sumikko 2717 (top 1)**, Mangavariant 1606, **AnimeClick IT 1037**, ListadoManga colecciones 987, Manga-Sanctuary 947, **Manga-Passion DE 793**, SocialAnime Cofanetti 333, ListadoManga calendario 236, SocialAnime Variant 190, **PRH Comics 89**, KADOKAWA Store 86, Sanyodo 83, **Kinokuniya USA 39**, **Yen Press Calendar 45**, **VIZ Collector's Guide 6** |
+| Image coverage | 99.9% (~10062/10070) |
+| `image_local` coverage | ~99.8% (~10049/10070) |
+| `series_key` / `edition_key` / `standardized_at` coverage | ~99% / ~99% / **~99.6%** (45 YP Calendar items pendientes de `/standardize-catalog`) |
+| `slug` coverage | **100%** (10103/10103 — generado por `generate_slugs.py` 2026-05-27; 0 colisiones cross-cluster; 1 colisión resuelta con sufijo `-b` por ISBN duplicado con/sin guiones) |
+| `volume` coverage | ~84.0% (~8456/10070) |
+| Release date coverage | ~90.7% (~9138/10070) |
+| ISBN coverage | ~48.3% (~4862/10070) |
+| Price coverage | ~51.4% (~5173/10070) |
+| Author coverage | ~55.6% (~5601/10070) |
 | `cluster_key` populated | 100% (precomputed + backfilled post-cleanup) |
-| Items con `images[]` populated | 8741 (98.0%) |
-| Items con carrusel real (`images.length > 1`) | 138 |
+| Items con `images[]` populated | 9877 (98.1%) |
+| Items con carrusel real (`images.length > 1`) | **2623 (26.0%)** |
+| Total URLs de imagen en `images[]` | 17710 |
+| Imágenes con `local` descargado al espejo | ~10049 — 20444+ archivos en `data/images/` |
 | Items con al menos 1 image `kind=extra` | 139 |
 | Items con `extras[]` descriptivo | 133 |
-| Countries represented | 14 (Japón 4434, Francia 1297, España 1279, Italia 1246, EUA 154, Vietnam 139, México 104, Brasil 83, Tailandia 54, Alemania 53, Argentina 38, Taiwán 7, España/LatAm 5, + Global) |
+| Countries represented | 13 (Japón 3758, **Italia 2182**, Francia 1295, España 1279, **Alemania 841**, **Estados Unidos 295** ↑ por PRH Comics + Kinokuniya + VIZ + **Yen Press Calendar full (+45)**, Vietnam 139, México 103, Brasil 83, Tailandia 54, Argentina 38, Taiwán 7, España/LatAm 5) |
 
 Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
 esperado de añadir 2679 filas curadas que por diseño no tienen esos
@@ -831,13 +1176,11 @@ via `SKIP_*` env vars, opt-ins via `INCLUDE_*`. The phases:
 2. **wikis** — `listadomanga` (calendar + blog historical),
    `manga-sanctuary`, `otaku-calendar`, `manga-mexico`. Optional:
    `whakoom` (Cloudflare-risk, opt-in).
-3. **search** — `scripts/retrofit/search_discovery.py` runs Gemini +
-   Tavily + DDG queries from `data/search_queries.yml`.
-4. **cleanup retrofits** — `rescore` → `filter_non_manga` →
+3. **cleanup retrofits** — `rescore` → `filter_non_manga` →
    `filter_collectible` → `clean_titles` → `backfill_metadata`
    (`--only image_url`). Optional: `wayback_recover` for 404 items
    (opt-in, ~30-60 min, run weekly).
-5. **build_web** — embed final items.jsonl into the dashboard.
+4. **build_web** — embed final items.jsonl into the dashboard.
 
 `scripts/audit/source_health.py` parses the last N overnight log
 directories and reports source-by-source classification
@@ -853,35 +1196,50 @@ without re-scraping everything.
 
 El dashboard tiene un botón **👎** en el footer del modal de detalle.
 Al clickearlo se abre un textarea pidiendo el motivo por el que el item
-NO debería estar en el catálogo. Al enviar:
+NO debería estar en el catálogo. Al enviar, el item se **borra del
+catálogo inmediatamente** y el modal regresa a la vista anterior.
+
+**Flujo completo:**
 
 1. JS hace `POST /api/feedback` con `{title, url, reason}`.
-2. `scripts/serve.py.do_POST()` valida el body y hace append a
-   `data/feedback.jsonl` con la línea:
+2. `scripts/serve.py::_remove_from_catalog(url, reason)`:
+   - Busca en `data/items.jsonl` la fila con ese URL.
+   - Identifica su `cluster_key` (si no es del tipo `url:` — que es
+     standalone). Remueve TODAS las filas del mismo cluster (todas las
+     fuentes del mismo producto físico).
+   - Reescribe `items.jsonl` atómicamente (tmp + rename).
+   - Appenda cada fila removida + `{rejection_reason, rejected_at}` a
+     `data/user_rejected.jsonl`.
+3. Devuelve `{"ok": true, "removed": N}` al JS.
+4. JS filtra el item de `this.items` en memoria (la card desaparece
+   sin recargar la página) y navega de vuelta (a la edición si quedan
+   hermanos, al catálogo si no).
 
-   ```json
-   {"title": "...", "url": "...", "reason": "...", "submitted_at": "<ISO 8601 UTC>"}
-   ```
+**`data/user_rejected.jsonl`** — schema (append-only):
+- Todos los campos del item original de `items.jsonl` se preservan.
+- `rejection_reason` (str): el motivo que escribió el usuario.
+- `rejected_at` (ISO UTC): timestamp del rechazo.
+- Un item rechazado puede tener N líneas si tenía N fuentes en el
+  cluster (una fila por fuente).
 
-**Propósito.** Este archivo es la entrada para una pasada de revisión
-con IA: el dueño marca items que se colaron pese a los filtros, escribe
-por qué, y luego se le pasa el JSONL al asistente para que sugiera qué
-patrón añadir (`_NON_MANGA_HARD` / `_NON_MANGA_SOFT` / `purity: mixed`
-del source / regla nueva en `is_collectible_edition`, etc.).
+**Propósito de `user_rejected.jsonl`**: es la entrada para una pasada
+de revisión con IA (skill `/review-rejected`): el dueño rechaza items
+que se colaron pese a los filtros, escribe por qué, y el asistente
+sugiere qué patrón añadir (`_NON_MANGA_HARD` / `_NON_MANGA_SOFT` /
+`purity: mixed` del source / regla nueva en `is_collectible_edition`,
+etc.). Al terminar la pasada, el skill hace backup con
+`backup_and_rotate` y trunca la queue.
 
 **Diseño.**
-- **No incluye ISBN** intencionalmente — muchos items JP no lo tienen
-  y el ID práctico es la URL (ya es única en `items.jsonl`).
+- **No incluye ISBN** en el POST intencionalmente — el ID práctico es la
+  URL (única en `items.jsonl`). El item completo (con ISBN si lo tiene)
+  queda en `user_rejected.jsonl`.
 - **Sin auth ni rate-limit.** Single-user, server local. El POST está
   capado a 100 kB de body y exige los 3 campos no vacíos.
-- **JSONL append-only** (a diferencia de `items.jsonl` que es upsert).
-  Cada 👎 es un evento histórico — si el mismo item se marca dos veces
-  con motivos distintos, ambas líneas se conservan.
-- El archivo es gitignored junto con el resto de `data/`.
+- Archivo gitignored.
 
-**No modificar el formato** sin actualizar el handler en `serve.py` y
-el `submitFeedback()` en `web/index.html` a la vez. La IA que lee el
-archivo asume las 4 claves de arriba.
+**No modificar el comportamiento** sin actualizar el handler en
+`serve.py` y el `submitFeedback()` en `web/index.html` a la vez.
 
 ## Conventions for code changes
 
@@ -908,7 +1266,7 @@ Workflow when changing any of them:
    (`test_is_likely_manga_rejects_*`, `test_is_pure_novel_*`,
    `test_is_comic_not_manga_*`, `test_is_collectible_edition_*`).
 3. **Run `pytest tests/test_extraction.py -q`** — must stay green
-   (currently 227 tests).
+   (currently 398 tests).
 4. **Retrofit the corpus** with the right script:
    - `is_likely_manga` / `is_comic_not_manga` change → `filter_non_manga.py`
    - `is_pure_novel` change → `filter_non_manga.py` (covers novels too)
@@ -922,7 +1280,7 @@ Workflow when changing any of them:
 
 ### When you add a new source
 
-See `docs/SOURCES.md` for the complete recipe. Quick version:
+See `docs/scraper/SOURCES.md` for the complete recipe. Quick version:
 - `kind: "html"` for normal sites, `"rss"` for feeds, `"bluesky"` for
   publisher Bluesky profiles (no auth, uses public.api.bsky.app),
   `"js"` for JS-only pages (rare, requires Playwright via
@@ -1021,7 +1379,7 @@ registry y el argparse divergen, el panel devuelve errores 400
 ("flag desconocido para X: --foo") en lugar de ejecutar comandos
 inválidos.
 
-Ver **`docs/CONTROL-PANEL.md`** para la API completa, el modelo de
+Ver **`docs/admin/README.md`** para la API completa, el modelo de
 seguridad (bind 127.0.0.1, no shell, allowlist), qué incluir/excluir
 del deploy, y troubleshooting.
 
@@ -1068,11 +1426,27 @@ propia de cada portada) y **dónde se sirven** (carpeta local vs
 Cloudflare R2). La Fase 1 resuelve lo primero; la Fase 2 mueve el
 serving a R2 al desplegar.
 
-### Fase 1 — espejo local `data/images/` (IMPLEMENTADA)
+### Fase 1 — espejo local `data/images/` (IMPLEMENTADA) + carrusel multi-imagen (2026-05-26)
 
 - El scrape descarga la portada de cada item nuevo/cambiado a
   `data/images/<sha256(image_url)[:16]>.<ext>` y guarda el **filename**
   (no la URL completa) en el campo `image_local`.
+- **Carrusel multi-imagen** (2026-05-26): el extractor de detail pages
+  ahora trae TODO el carrusel del producto, no sólo la cover. Cada item
+  popula `images[]` con `[{url, kind, description}]` — primer elemento
+  `kind=cover`, el resto `kind=gallery` (vistas adicionales, contraportada,
+  lomo, interior). Cuando el sitio sólo expone una imagen, queda lista
+  de 1 (comportamiento anterior, backwards-compatible). El extractor
+  vive en `_extract_images_from_detail_soup(soup, source_url, limit=6)`
+  y combina: JSON-LD `image` array, og:image / twitter:image, selectores
+  CSS de galería (Shopify `.product__media`, Tiendanube `.swiper-slide`,
+  WooCommerce `.fotorama`, Magento `.product-image-thumbs`, `[data-zoom-image]`,
+  + genéricos `[class*='gallery'] img`), con fallback de ranking. **Acotado
+  al contenedor del producto principal** vía `_find_product_scope` para
+  no contaminar el carrusel con thumbs de "productos relacionados" del
+  sidebar. Filtro adicional: las URLs gallery que no comparten el folder
+  de la cover se descartan cuando se detecta contaminación (>=2 outliers).
+  Ver gotcha #31.
 - `image_url` queda intacto como **provenance + fallback**: si el
   espejo local no existe o falla al cargar, el dashboard cae al
   `image_url` remoto, y si ese también falla muestra el placeholder 📚.
@@ -1093,6 +1467,22 @@ serving a R2 al desplegar.
 - **Esquema deploy-agnóstico**: como el JSONL guarda sólo el filename,
   la misma fila sirve local o desde R2 — sólo cambia la base de la URL
   (`../data/images/` en el dashboard hoy; un dominio R2 en Fase 2).
+
+**Backfill multi-imagen del corpus existente** — retrofit
+`scripts/retrofit/backfill_metadata.py --only images`:
+- Re-fetchea el detail page de items con `len(images) < 2` (single-image)
+  y los re-procesa con el nuevo extractor multi-imagen. Si el sitio
+  expone galería, el item se actualiza con `images[]` completo + sincroniza
+  `image_url`. Idempotente: items con carrusel ya poblado (len >= 2)
+  no se tocan.
+- Integrado como fase `[4e2]` en `scrape_full.sh` (no en `scrape_delta.sh`
+  — es lento, mejor mensual con el full).
+- Disponible en el Panel de Control vía preset "🎞️ Solo carrusel
+  multi-imagen" del script `backfill_metadata`.
+- El espejo local (`mirror_images.py`) descarga automáticamente las
+  imágenes nuevas porque `mirror_candidate_images()` ya recorre
+  `images[]` con `kind != cover` (ver código original Fase 2 de
+  listadomanga-collections, ya generalizable).
 
 **Backfill + GC del corpus existente** — retrofit
 `scripts/retrofit/mirror_images.py`:
@@ -1134,7 +1524,7 @@ Serving en Fase 2: dominio propio (como el `ASSETS_PUBLIC_BASE_URL` de
 PandaTrack), **no** el URL `r2.dev` (está rate-limited, es sólo para
 dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
 
-## The 30 known gotchas
+## The 33 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -1800,6 +2190,158 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     `test_sumikko_image_fallback_for_touch18_bl_items`,
     `test_sumikko_drops_loading_and_no_image_placeholders`.
 
+31. **Multi-imagen: acotar al scope del producto + filtro de stem-folder
+    para no absorber thumbs de "related products".**
+
+    El extractor `_extract_images_from_detail_soup` agrega los selectores
+    `<class*='gallery'> img`, `.swiper-slide img`, `.product__media img`,
+    etc. Aplicado sin scope, en sitios donde el `<main>` o el `<article>`
+    contienen el sidebar de "productos relacionados" / "también te puede
+    interesar" / "recently viewed", los thumbs de OTROS productos entran
+    al carrusel del item principal. Caso real: Norma Editorial
+    `/ficha/...` devolvía cover + 5 gallery, donde 4 eran productos
+    distintos (folders `/0001/44/`, `/0001/40/`, `/0001/38/`, `/0001/36/`
+    en vez del `/0001/35/` del item activo).
+
+    Fix (2026-05-26) en dos capas:
+    - `_find_product_scope(soup)` busca un contenedor del producto
+      principal (`[itemtype*='Product']`, `[itemtype*='Book']`,
+      `#product-detail`, `.product-detail`, `.product-single`, `.ficha`,
+      `<main>`, `<article.product>`) y restringe los selectores de
+      gallery a ese subtree.
+    - Filtro post-extracción de "mismo folder que la cover": si la cover
+      tiene un parent path con >=2 segmentos, las URLs gallery que NO
+      contienen ese stem se descartan SOLO cuando se detectan >=2
+      outliers (señal de contaminación real). Si hay <=1 outlier, se
+      asume site con paths heterogéneos legítimos y no se filtra.
+    - Cap default en 6 imágenes (raro un producto real con más fotos
+      distintas; protege contra explosión de un site mal estructurado).
+
+    **Edge case: wikis con URLs sintéticas** (`listadomanga-collections`
+    con `?item=`, `blogbbm` con `?bbm-entry=`). Estos wikis emiten
+    MÚLTIPLES items desde UNA misma página de catálogo: cada tomo /
+    edición especial / box / extra es un Candidate separado con URL
+    sintética que les inventamos para discriminar. La página real
+    devuelve TODOS los items hermanos juntos. Cada parser ya popula
+    `images[]` por su cuenta con la lógica correcta por tomo / por
+    entry (Fase 2 listadomanga-collections para covers de tomos +
+    extras vinculados; BBM para variant + regular). El retrofit
+    `backfill_metadata.py --only images` **SKIPEA** estos items
+    (helper `has_synthetic_url`), porque re-fetchear la URL sintética
+    devuelve la página compartida y el extractor genérico mezclaría
+    imágenes entre items hermanos. Si agregás un wiki nuevo con URLs
+    sintéticas, agregá su marker al set `SYNTHETIC_URL_MARKERS` en
+    `scripts/retrofit/backfill_metadata.py`.
+
+    Tests: `test_extract_images_scope_filters_related_products`,
+    `test_extract_images_respects_limit`,
+    `test_extract_images_no_filter_when_paths_shallow`,
+    `test_backfill_images_skips_synthetic_urls`.
+
+32. **`flush_source_candidates()` — escritura incremental para sobrevivir
+    kills mid-run.**
+
+    Históricamente el loop principal de `manga_watch.py` acumulaba TODOS
+    los candidatos de TODAS las fuentes en `all_candidates` y hacía un
+    único `append_jsonl()` al final del run. Si el proceso era matado a
+    mitad (OOM, SIGKILL, SIGTERM por timeout del sistema, etc.), se
+    perdía todo lo scrapeado — era necesario volver a empezar desde cero.
+
+    Fix (2026-05-26): `flush_source_candidates(candidates, state, items_path,
+    min_score, dry_run)` — llamada desde el loop principal justo después
+    de que CADA fuente termina (tanto en la variante serial `workers=1`
+    como en `as_completed()` del pool paralelo). Aplica el mismo gate
+    `is_collectible_edition` que `process_state()` y usa `state` para
+    distinguir new/changed vs seen, pero **NO actualiza `state`** (eso
+    lo sigue haciendo `process_state()` al final del run completo).
+
+    Consecuencias:
+    - Si el proceso muere a mitad, todo lo scrapeado HASTA ESE PUNTO ya
+      está en `items.jsonl`. El próximo run solo reprocesa las fuentes
+      restantes (el state ya las marca como seen).
+    - La escritura incremental es básica (sin enriquecimiento de detail
+      pages). El run completo re-hace upsert con los datos enrichidos al
+      final — `append_jsonl` es idempotente, el segundo write solo
+      actualiza los campos que el detail-fetch trajo.
+    - Un item que ya estaba en state con el MISMO `content_hash` se
+      saltea (no re-escribe innecesariamente).
+    - `dry_run=True` deshabilita la escritura (igual que el resto del
+      pipeline).
+
+    La key de estado que usa `flush_source_candidates` es
+    `"url:<normalized_url>"` — el mismo formato que `candidate_key()`.
+    Si alguna vez cambias el formato de `candidate_key()`, actualiza
+    también el lookup en esta función.
+
+    Tests: `test_flush_source_candidates_writes_new_items`,
+    `test_flush_source_candidates_skips_seen_items`,
+    `test_flush_source_candidates_skips_below_min_score`,
+    `test_flush_source_candidates_dry_run_writes_nothing`.
+
+33. **Shell scripts — timeouts portables en wiki subprocesos para evitar
+    hangs indefinidos.**
+
+    Los scripts canónicos (`scrape_delta.sh`, `scrape_full.sh`) invocan
+    cada wiki como un subproceso Python separado sin timeout. Un wiki que
+    se cuelga (conexión TCP que nunca cierra, redirect loop, anti-bot
+    que devuelve 200 + HTML infinito) bloquea TODO el pipeline hasta que
+    alguien lo mata manualmente. AnimeClick es especialmente arriesgado
+    en modo full (2015 → hoy, ~500 semanas × detalle HTTP = horas de
+    fetches).
+
+    Fix (2026-05-26): helper `_run_timed <secs> <cmd>` en ambos scripts.
+    Prueba: macOS nativo `timeout` → GNU `gtimeout` (brew coreutils) →
+    sin timeout (mejor que romper el script en máquinas sin ninguno).
+
+    Timeouts per-wiki en **`scrape_delta.sh`**:
+
+    | Wiki | Timeout |
+    |---|---|
+    | listadomanga calendario | 900s (15 min) |
+    | manga-sanctuary | 600s (10 min) |
+    | otaku-calendar | 300s (5 min) |
+    | manga-mexico | 300s |
+    | socialanime | 600s |
+    | blogbbm | 300s |
+    | booksprivilege (3 meses) | 1800s (30 min) |
+    | sumikko | 600s |
+    | mangapassion | 600s |
+    | animeclick (3 meses) | 2700s (45 min) |
+    | prhcomics | 120s (2 min) |
+    | kinokuniya | 120s (2 min) |
+    | yenpress (3 meses) | 300s (5 min) |
+    | whakoom opt-in | 3600s (1 hora) |
+
+    Timeouts per-wiki en **`scrape_full.sh`** (más largos, catálogo completo):
+
+    | Wiki | Timeout |
+    |---|---|
+    | listadomanga-collections (lista.php) | 5400s (90 min) |
+    | manga-sanctuary | 600s |
+    | otaku-calendar | 300s |
+    | manga-mexico | 300s |
+    | mangavariant (sitemap completo) | 1800s (30 min) |
+    | socialanime | 600s |
+    | blogbbm | 300s |
+    | booksprivilege (desde 2020) | 7200s (2 horas) |
+    | sumikko | 600s |
+    | mangapassion (histórico) | 1800s (30 min) |
+    | animeclick (desde 2015) | 14400s (4 horas) |
+    | prhcomics | 120s (2 min) |
+    | kinokuniya | 120s (2 min) |
+    | yenpress (desde 2013) | 600s (10 min) |
+    | whakoom opt-in | 3600s (1 hora) |
+
+    Si un wiki hace timeout, su subproceso retorna exit code 124 (GNU
+    timeout), el pipeline loguea la duración y continúa con el siguiente
+    wiki. Los datos escritos incrementalmente por `flush_source_candidates`
+    (gotcha #32) del Phase 1 se preservan — solo se pierde lo que ese
+    wiki hubiera aportado en esa corrida.
+
+    Si el timeout dispara con frecuencia en un wiki, investigar: ¿creció
+    el catálogo del sitio? ¿hay anti-bot nuevo? ¿hay una request hung?
+    Luego ajustar el timeout o añadir sleeps al parser.
+
 ## When the user reports "this item shouldn't be here"
 
 1. Look up the item in `data/items.jsonl` to see its actual source,
@@ -1873,7 +2415,7 @@ Useful to skim with `git log --oneline` if you want full chronology.
 ## Quick sanity check before committing
 
 ```bash
-.venv/bin/python -m pytest tests/test_extraction.py -q    # must be green (227)
+.venv/bin/python -m pytest tests/test_extraction.py -q    # must be green (398)
 .venv/bin/python scripts/retrofit/filter_non_manga.py --dry-run   # expect 0 rejections if patterns are stable
 # If you touched filters:
 .venv/bin/python scripts/retrofit/filter_non_manga.py
@@ -2030,6 +2572,252 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
+Last updated: 2026-05-27 (reorganización docs/ por componente) — Reestructuración completa de `docs/` en 4 carpetas por componente: `docs/scraper/` (ARCHITECTURE.md, SOURCES.md, PRD.md nuevo), `docs/web-html/` (PRD.md nuevo), `docs/admin/` (README.md ← CONTROL-PANEL.md), `docs/web-next/` (← docs/app/, sin cambios de contenido). Nuevo `docs/README.md` como índice maestro. PRD-catalog.md reescrito como `docs/scraper/PRD.md` con estado actual del corpus (10.103 items, 17 wikis, 4 fases completadas) y roadmap futuro. PRD.md original reescrito como `docs/web-html/PRD.md` enfocado en producto: features actuales del dashboard personal (filtros, 👎 curación, carrusel) + features planificadas (edición inline, merge manual, re-run retrofits). Todos los paths en CLAUDE.md actualizados.
+
+---
+
+Last updated: 2026-05-27 (generate_slugs.py — campo `slug` implementado en items.jsonl) — Implementación de `scripts/retrofit/generate_slugs.py` y registro en el Panel de Control (`generate_slugs`, categoría Retrofit, 3 presets). El script genera slugs URL-safe para todos los items siguiendo la prioridad: `isbn:{X}` cluster_key → `{edition_key}-{vol}` → `{edition_key}` solo → `isbn-{isbn}` field → `item-{sha1}` fallback. Colisiones resueltas con sufijos `-b`/`-c` (oldest keeps clean). Idempotente: no re-escribe slugs sin cambios. Primera corrida sobre el corpus completo: **10103/10103 slugs generados** (100% coverage), 0 colisiones cross-cluster, 1 colisión resuelta (ISBN duplicado con/sin guiones). Tests: 425/425 verde.
+
+---
+
+Last updated: 2026-05-27 (plan de migración Next.js — docs/web-next/ + campo `slug` en items.jsonl) — Documentación completa del plan de migración del Alpine.js dashboard a una app Next.js 16 + Tailwind v4, usando la metodología 80/90.AI simplificada. Sin cambios a código ni corpus todavía — solo documentación y diseño.
+
+**Nuevos documentos en `docs/web-next/`** (18 archivos):
+- **FRDs**: FRD-001 (data layer), FRD-002 (design system), FRD-003 (catálogo), FRD-004 (edition detail), FRD-005 (item detail), FRD-006 (slug generation).
+- **Blueprints**: BP-001 (ADRs de arquitectura: Server Components, no API routes, URL state, SSG, symlink, Tailwind v4), BP-002 (URL routing + slug format + `?from=` navigation), BP-003 (data flow stages + TypeScript types completos), BP-004 (component hierarchy + SIGNAL_META map + Server/Client boundary).
+- **Work Orders**: WO-001 (project scaffold), WO-002 (design system port), WO-003 (data layer), WO-004 (catalog page), WO-005 (edition detail), WO-006 (item detail). *(WO-002-slug-script eliminado: generate_slugs.py corre desde el skill `/standardize-catalog`, no tiene WO propio.)*
+
+**Nuevo campo `slug` diseñado para items.jsonl**: URL-safe unique key para la ruta `/item/[slug]` del app Next.js. Generado por `scripts/retrofit/generate_slugs.py` como último paso del skill `/standardize-catalog`. Prioridad: `isbn:{isbn13}` cluster_key → `{edition_key}-{volume}` → `{edition_key}` solo → `isbn-{isbn}` field → `item-{sha1(url)[:12]}` fallback. Colisiones resueltas con sufijos `-b`/`-c` (el más antiguo conserva el slug limpio). Idempotente: solo re-genera si `slug` vacío o `edition_key`/`volume` cambió.
+
+**Decisiones de arquitectura clave**: App Router only (no Pages), máximo Server Components (`"use client"` solo para interacción), `fs.readFileSync` directo en Server Components (no API routes), filter state en URL search params (`?q=&country=&sort=`), SSG para edition y item pages via `generateStaticParams()`, imágenes via symlink `web-next/public/images → ../../data/images/` (pipeline Python sin cambios), diseño PandaTrack portado con acento rosa OKLCH (`oklch(52% 0.22 0)` en light mode).
+
+**File map de CLAUDE.md actualizado** con `web-next/` (estructura completa del app) + `docs/web-next/` (18 documentos) + `generate_slugs.py` en el listado de retrofits + nueva fila en la tabla "Where each kind of change goes" para Next.js app.
+
+---
+
+Last updated: 2026-05-27 (Yen Press Calendar — scrape histórico completo 2013-2026; política de no auto-invocar skills) — Dos cambios en esta sesión:
+
+**1. Política de skills documentada**: agregada sección "⚠️ Skills invocation policy" al inicio de CLAUDE.md. Regla: NUNCA invocar `/standardize-catalog` ni `/enrich-series-aliases` automáticamente — el owner quiere decidir cuándo correrlos por el costo de tokens. Solo invocar cuando el usuario los pida explícitamente.
+
+**2. Scrape histórico completo Yen Press Calendar**: la sesión anterior solo había corrido 17 meses (Ene 2025 – May 2026, 12 items). Esta sesión corrió el histórico completo 2013-01 → 2026-05 (161 meses): 79 candidates, 34 descartados por gate, **45 items** en el corpus. Los 45 quedan raw sin `standardized_at`.
+
+**Items YP en el corpus (2013-2026)**: Fruits Basket Collector's Edition vols 1-12 × 2 prints (2016-2017 + reimpresión 2019) = 24 items; Berrybrook Middle School Box Set; Nightschool Collector's Edition vols 1-2; Overlord Complete Anime Artbook (+ II III); PandoraBox Limited PandoraHearts Collection; Horimiya Vol.17 Special; Delicious in Dungeon Complete Box Set; Übel Blatt Deluxe vols 1-5; Battle Royale Deluxe Vol.1; Horror Collector; Spice and Wolf Collector's vols 1-2; CLAMP COLOR KURO Artbook; Fruits Basket Complete Box Set; Guy She Was Interested In Numbered Vol.1; Vanitas Vol.11 Special Edition.
+
+**Corpus**: 10058 → **10103** (+45). **Estados Unidos**: ~262 → **295** (+45 YP). Tests: 425/425.
+
+---
+
+Last updated: 2026-05-27 (primera ingesta Yen Press Calendar — 12 items + fix HTML selectors + corrección parser) — Primera corrida real del parser `yenpress_calendar.py` reveló que la estructura HTML del sitio difería de lo asumido. Fix y primeros datos:
+
+**Bug descubierto**: la primera corrida devolvió 0 candidates. El parser asumía `div.genre-col` como card root con el ISBN en un `<a>` anidado. La estructura real: cada card es directamente la `<a href="/titles/{isbn13}-{slug}">` (que actúa como wrapper), con `span.white-label light-novels upper` (no `light` como asumíamos), título en `h3.heading.small-h1` dentro de `div.genre-col-txt` (sin `<a>` interior), y sin precios en el calendario. Fix: card selector ahora busca `a[href=~_ISBN_PATH_RE]` con `img.genre-col-img` dentro; categoría de la `span.white-label` descartando clases auxiliares. 9 tests actualizados para reflejar el HTML real. **425/425 verde** (sin cambio de count — mismos tests, fixture actualizada).
+
+**Primera corrida (Ene 2025 – May 2026, 17 meses)**: 17 candidates → 5 filtrados por gate (omnibus sin qualifier premium) → **12 nuevos items**:
+- *Übel Blatt Deluxe* vols 2-5 (Yen Press deluxe)
+- *Spice and Wolf Collector's Edition* vols 1-2
+- *The Case Study of Vanitas* Vol. 11 Special Edition
+- *Battle Royale Deluxe Edition* Vol. 1
+- *Fruits Basket: The Complete Box Set*
+- *CLAMP Official Artbook: COLOR KURO*
+- *The Guy She Was Interested In Wasn't a Guy at All* Vol. 1 Numbered Edition
+- *Horror Collector* Vol. 1 (manga de terror Yen Press)
+
+**Standardización inline**: 12 items procesados con `/standardize-catalog` inline (sin subagentes — chunk pequeño). Todos con `publisher=yenpress`, `series_key`/`edition_key` canónicos (ej. `ubel-blatt-yenpress-deluxe`, `spice-and-wolf-yenpress-collector`, `fruits-basket-yenpress-boxset`), `standardized_at` seteado. 100% `standardized_at` en el corpus.
+
+**Corpus**: 10058 → **10070** (+12). **Estados Unidos**: 250 → **262** (+12). Tests: 425/425.
+
+---
+
+Last updated: 2026-05-27 (nueva fuente US — Yen Press Calendar + ingesta manual VIZ Collector's Guide) — Dos adiciones al corpus US en la misma sesión:
+
+**1. `scripts/wikis/yenpress_calendar.py`** — Parser del calendario mensual de `yenpress.com/calendar`. Filtra categorías manga/comics (excluye light novels por `white-label light-novels` span class) y aplica pre-filtro de keywords premium (collector's, deluxe, box set, hardcover, limited edition, artbook, slipcase, numbered). ISBN-13 del path `/titles/(\d{13})-`. Cover URL determinístico `images.yenpress.com/imgs/{isbn13}.jpg?w=285&h=422&type=books`. Iteración mensual real (igual que manga_sanctuary — `iter_year_months` genera rango de meses), a diferencia de prhcomics/kinokuniya que son single-batch. Típicamente ~2-5 items por mes en el calendario activo. Fuente que complementa prhcomics (Yen Press tiene distribución propia, NO aparece en PRH Comics).
+
+**Wiring**: `scrape_delta.sh` fase 2m (timeout 300s, últimos 3 meses), `scrape_full.sh` fase 2n (timeout 600s, histórico desde 2013-01), whakoom movido a 2n/2o respectivamente. `script_registry.py` 2 presets (`yenpress_delta`/`yenpress_full`). Argparse choices += `yenpress`. **9 tests nuevos** (425/425 verde): filtra manga-only special editions, URL/image correctos, parse date from card, parse price, dedup por ISBN, skip light novel category, iter_year_months range/single, skip regular manga sin keywords. Wikis count: 16 → **17**.
+
+**2. 6 items VIZ Collector's Guide** importados manualmente — retailer exclusives anunciados en el VIZ blog (no automatable: solo 2 posts en toda la historia):
+- *Jujutsu Kaisen Vol. 30* (lanzamiento final): B&N/Waterstones (ISBN 9781974765980), Walmart/Kmart (9781974765997), Books-A-Million/Indigo (9781974766000), Crunchyroll Store (9781974766017)
+- *My Hero Academia Vol. 42* (lanzamiento final): B&N/Waterstones (9781974762194), Books-A-Million/Indigo (9781974762200)
+- Source: `US - VIZ Collector's Guide`. signal_types: `["retailer_exclusive", "variant_cover"]`, score: 75. Covers via PRH CDN. 100% image_local.
+
+**Corpus**: 10052 → **10058** (+6 VIZ). **Estados Unidos**: +6 neto. Yen Press calendar requiere `/standardize-catalog` tras primera corrida real (se ejecutó en la sesión siguiente).
+
+---
+
+Last updated: 2026-05-27 (implementación translate_descriptions.py — Google Translate primario, DeepL opcional) — Implementación del retrofit de traducción con prioridad de servicios invertida respecto al diseño inicial.
+
+**Campos implementados**:
+- `description_es` — traducción al español del campo `description` existente.
+- `extras[].description_es` — traducción al español de cada `extras[].description`.
+- Convención `description_{iso_639_1}`: lista para multiidioma futuro (`description_en`, `description_fr`, etc.) sin cambios de schema.
+- `description` (original) nunca se modifica: lo usa `detect_signals` y cambiar su contenido invalidaría los `signal_types` almacenados.
+
+**Servicios (orden real de prioridad)**:
+- **Google Translate via `deep-translator`** (PRIMARIO): sin API key, sin límites, gratuito para siempre. Cubre el 100% del corpus incluyendo VI, TH y cualquier idioma no soportado por DeepL. Dependencias: `pip install deep-translator langdetect`.
+- **DeepL Free API** (OPCIONAL, upgrade de calidad): si `DEEPL_API_KEY` está en `.env` y hay crédito disponible, se usa primero para idiomas soportados (mejor calidad en DE/FR/IT/JP). El plan gratuito de DeepL otorga un **crédito único de 1M caracteres** (no se renueva). Cuando se agota, el script sigue funcionando via Google sin ningún cambio. Dependencia opcional: `pip install deepl`.
+
+**Comportamiento del script**: el script funciona **sin ninguna API key** desde el primer día. `DEEPL_API_KEY` es un upgrade opcional, no un requisito. `description_es` protegida en `_CURATED_FIELDS` (re-scrapes no borran traducciones) y en la lógica sticky de `append_jsonl` para items no-standardizados. Ver diseño completo en `docs/scraper/ARCHITECTURE.md` sección "Translation layer".
+
+Last updated: 2026-05-26 (nueva fuente US — Kinokuniya USA Exclusives wiki parser) — Parser `scripts/wikis/kinokuniya.py` implementado para `usa.kinokuniya.com/kinokuniya-exclusives`, la página curada de exclusivos físicos de Kinokuniya USA.
+
+**Cobertura**: variant covers, dust jackets exclusivos, shikishi/art boards, ID cards, sticker packs, limited editions con bonus. Publishers: Kodansha, Seven Seas, Square Enix, Yen Press, VIZ, TOKYOPOP y otros según campaña. NO tiene historial — muestra solo el catálogo activo en el momento del scrape.
+
+**Implementación**: el sitio corre sobre Squarespace cuyos class names son dinámicos (cambian con cada redeploy → selector CSS `div.margin-wrapper` estaba muerto). Fix: extracción por **URL pattern** `_ISBN_URL_RE = r"/bw/(\d{13})(?:[/?#]|$)"` — el path `/bw/{isbn13}` es estable. Títulos en `<img alt>` del anchor (NO en anchor.get_text() — Squarespace renderiza bloques imagen-link sin texto). Asteriscos en alt (`*Coming Soon*`) son marcadores de estado de Squarespace → `raw_alt.strip("*").strip()`. Validación ISBN-13: must start `978` or `979` (filtrar UPC/EAN de gift cards como `0810034314109`). Cover URL determinístico `images.penguinrandomhouse.com/cover/{isbn13}`. Inyecta `"Kinokuniya Exclusive. ISBN: {isbn}."` en description → KEYWORD_RULES detecta signal `retailer_exclusive` (score=45), garantizando el gate `is_collectible_edition`. Una sola request, sin paginación histórica. `iter_year_months` devuelve siempre un único batch.
+
+**Wiring**: `scrape_delta.sh` fase 2l (timeout 120s), `scrape_full.sh` fase 2m (timeout 120s), whakoom movido a 2m/2n respectivamente. `script_registry.py` 2 presets (`kinokuniya_delta`/`kinokuniya_full`). Argparse choices += `kinokuniya`. Fuente YAML `US - Kinokuniya Exclusives` (con selector muerto) deshabilitada y documentada como reemplazada por el wiki parser. **9 tests nuevos** (416/416 verde): extracts candidates, dedup por ISBN, url/image_url correctos, signal retailer_exclusive, strip asterisk markers, skip non-ISBN-13 codes, skip alt < 3 chars, skip non-product links, iter_year_months single batch. Wikis count: 15 → **16**.
+
+**Bug descubierto en debug**: la primera corrida devolvió 0 candidates. Diagnóstico: `anchor.get_text()` retorna `""` en Squarespace porque los anchors contienen solo `<noscript>` e `<img>` — sin text nodes. Fix: `img = anchor.find("img")` + `img.get("alt", "")`. También UPC code `0810034314109` (gift card EAN) pasaba el patrón de 13 dígitos → filtro `isbn.startswith("978") or isbn.startswith("979")`.
+
+**Ingesta completa (catálogo activo)**: 39 candidates → 38 nuevos (1 ya existía en corpus como URL standalone) → **38 items nuevos**, todos con `retailer_exclusive` signal, ISBN, image_local. 100% cover coverage via PRH CDN. `standardized_at` seteado el 2026-05-27 para los 33 items del wiki parser (27 con publisher real asignado: yenpress, viz, kodansha-us, sevenseas, tokyopop, darkhorse, crunchyroll, titan, randomhouse; los 27 items preexistentes de la fuente YAML ya estaban standardizados). Items total: 10014 → **10052**. Estados Unidos: 244 → **283** (+39).
+
+---
+
+Last updated previo: 2026-05-26 (nueva fuente US/CA — PRH Comics hardcovers + box sets EN) — Parser `scripts/wikis/prhcomics.py` implementado para `prhcomics.com/manga/`, el catálogo editorial de Penguin Random House para manga en inglés.
+
+**Cobertura**: Dark Horse Manga, Kodansha Comics, Seven Seas, Square Enix Manga, TOKYOPOP, Titan, Vertical, Inklore. NO cubre VIZ Media ni Yen Press (tienen distribución propia). Foco en ediciones especiales físicas: hardcovers, box sets, collector's editions, deluxe editions, slipcase editions.
+
+**Implementación**: página HTML estática única (`/manga/`), sin paginación ni JS. Items en `<li class="toast-anchor">` con `data-component="carousel-meta-*"` divs. ISBN-13 en el HTML → cover URL determinístico `images.penguinrandomhouse.com/cover/{isbn13}` y product URL `prhcomics.com/book/?isbn={isbn13}` — NO requiere hitear detail pages. Filtro por formato (`hardcover`, `boxed set`, `slipcase`) o keywords en title (`collector`, `deluxe`, `artbook`, `limited edition`, etc.). Denylist de publishers no-manga (`DK Children`, `DK`, `Golden Books`, `Random House Books for Young Readers`, `Prestel`, `Pantheon`). Dedup por ISBN dentro del run (mismo tomo puede aparecer en múltiples carruseles de la página). Signal hints: inyecta `"Hardcover"` o `"Box Set"` en description para que `detect_signals` levante las señales correctas.
+
+**Descubrimiento de bug post-ingesta**: primera corrida produjo 9 items de publishers no-manga (DK Children ×4, Golden Books, Random House Books for Young Readers, Prestel, Pantheon) — publicaciones infantiles, enciclopedias, graphic memoir que aparecen en `/manga/` por tener licencias de franquicias manga. Fix: `_NON_MANGA_PUBLISHERS` frozenset en `parse_item()` elimina estos antes de evaluar `_is_collectible()`. Corpus restaurado desde backup + re-ingesta con el parser corregido.
+
+**5 tests nuevos** (407/407 verde): hardcover HC / box set hint injection / paperback regular → None / date format variants / iter_year_months single batch. **Pipeline actualizado**: `scrape_delta.sh` fase 2k, `scrape_full.sh` fase 2l, `script_registry.py` 2 presets (`prhcomics_delta`/`prhcomics_full`), argparse choices += `prhcomics`. Wikis count: 14 → **15**.
+
+**Ingesta completa (catálogo entero)**: 790 `<li>` items en el HTML → 93 candidates (descartados 586 por formato paperback + 9 publishers non-manga, 0 por fecha). 100% ISBN, image_local, price coverage. US/CA items: 154 → **247** (+93). Items total: 9846 → **10060** (neto combinado con Manga-Passion full ingestion +741 y BooksPrivilege cleanup -665 que ocurrieron entre el sprint AnimeClick y esta sesión).
+
+---
+
+Last updated: 2026-05-26 (reorganización data/ — backups rotativos + diagnostics/) — Limpieza estructural de la carpeta `data/`:
+
+**Problema:** 50+ archivos de backup acumulados directamente en `data/` (~1.1 GB), mezclados con los archivos vivos. Convenciones de nombres inconsistentes (`.bak-before-X`, `.pre-X-bak`, `.bak.X`). Archivos de diagnóstico (`items.non_manga.jsonl`, `items.non_collectible.jsonl`) indistinguibles de datos permanentes.
+
+**Cambios:**
+- **Nueva función `backup_and_rotate(path, label, max_keep=3)`** en `manga_watch.py`: crea el backup en `data/backups/<filename>/`, luego borra los más viejos dejando exactamente `max_keep` (default 3). Todos los 8 retrofit scripts migrados a usarla (`rescore`, `filter_non_manga`, `filter_collectible`, `clean_titles`, `backfill_metadata`, `backfill_cluster_key`, `mirror_images`, `wayback_recover`).
+- **`data/backups/`** (gitignored): subcarpeta por tipo de archivo (`items.jsonl/`, `series_aliases.yml/`, `unmapped_series.jsonl/`, `state.json/`). Rotación max-3 automática. De 1.1 GB → 79 MB conservando solo los 3 backups más recientes por familia.
+- **`data/diagnostics/`** (gitignored): outputs de debugging de los filtros retrofit (`items.non_manga.jsonl` ← filter_non_manga, `items.non_collectible.jsonl` ← filter_collectible). Se sobreescriben en cada corrida, no son datos permanentes. Default de `--rejected-output` actualizado en ambos scripts y en `script_registry.py`.
+- **Skills actualizados**: `standardize-catalog/SKILL.md` y `enrich-series-aliases/SKILL.md` usan `backup_and_rotate()` en sus snippets de backup en vez de `cp ... /tmp/`.
+- **`.gitignore` limpiado**: reemplazadas las líneas sueltas `data/series_aliases.yml.pre-*` / `data/state.json.bak*` por las entradas genéricas `data/backups/` y `data/diagnostics/`.
+- **File map actualizado** en este CLAUDE.md con las dos nuevas carpetas documentadas.
+
+**Regla permanente:** los backups se crean SIEMPRE con `backup_and_rotate()`. NUNCA a mano (`cp file file.bak`) ni en `/tmp/`. Así la rotación automática previene acumulación futura.
+
+---
+
+Last updated: 2026-05-26 (resilience: flush incremental + timeouts en wiki subprocesos) — Dos mejoras de robustez para el pipeline de scraping:
+
+**1. `flush_source_candidates()` — escritura incremental (no más pérdida de datos si el proceso muere):**
+Antes el loop principal acumulaba todos los candidatos en memoria y escribía a `items.jsonl` solo AL FINAL del run completo. Si el proceso era matado a mitad (OOM, timeout de sistema, etc.) se perdía todo. Ahora se llama `flush_source_candidates(candidates, state, items_path, min_score)` justo después de que CADA fuente termina — tanto en la variante serial (workers=1) como en `as_completed()` del pool paralelo. La función aplica el mismo gate `is_collectible_edition` que `process_state()` pero NO actualiza `state`. Como `append_jsonl` es idempotente (upsert by URL), el write final del run completo simplemente actualiza los campos enrichidos sin crear duplicados. 4 tests nuevos (402/402 verde). Ver gotcha #32.
+
+**2. `_run_timed()` — timeouts portables en wiki subprocesos para evitar hangs:**
+Los scripts `scrape_delta.sh` y `scrape_full.sh` llamaban wikis sin ningún timeout. Un wiki colgado (AnimeClick fetching detail pages por horas, listadomanga-collections recorriendo 3432 colecciones) bloqueaba TODO el pipeline indefinidamente. Nuevo helper `_run_timed <secs> <cmd>` en ambos scripts: intenta `timeout` (macOS nativo) → `gtimeout` (brew GNU coreutils) → sin timeout (mejor que romper). Todos los 11 wikis del delta y 12 del full ahora tienen límites explícitos (desde 300s para wikis livianos hasta 14400s/4h para AnimeClick full histórico). Ver gotcha #33. Gotchas count: 31 → **33**.
+
+Last updated: 2026-05-27 (WO-004 catálogo Next.js — página principal + todos los componentes del catálogo) — Implementación completa del catálogo en `web-next/`, reemplazando el showcase de design-system con la página real de ediciones.
+
+**Nuevos archivos creados:**
+- `web-next/app/page.tsx` — Server Component asíncrono con `export const dynamic = 'force-dynamic'` para renderizado dinámico; carga clusters, facets, filtra, ordena y pagina en el servidor; pasa children a `CatalogControls`.
+- `web-next/components/catalog/CatalogControls.tsx` — Client Component que resuelve el problema de estado compartido entre `SortBar` (botón "Filtros") y `SidebarFilters` (drawer); mantiene `drawerOpen` state y recibe `CatalogGrid`+`Pagination` como `children` via slot composition pattern (Server/Client boundary sin bloquear SSR).
+- `web-next/components/catalog/EditionCard.tsx` — card de manga: href apunta a `/item/${slug}` si hay slug, si no a `/edition/${editionKey}`; `data-leaves` 1/2/3 para el CSS de stack; CoverImage, ScoreBadge, CountryFlag, hasta 2 SignalChips + overflow "+N".
+- `web-next/components/catalog/CatalogGrid.tsx` — grid responsivo 2→3→3→4→5 cols via `<style>` tag; primeros 10 items con `priority` para LCP; devuelve `<EmptyState />` con 0 resultados.
+- `web-next/components/catalog/SidebarFilters.tsx` — Client Component con filtros en URL (no React state): búsqueda debounced 300ms, checkbox solo-limitadas, chips de signal_types, checkboxes por país/idioma/publisher. Desktop: sticky sidebar. Mobile: drawer fixed con backdrop y botón "Limpiar todo" cuando hay filtros activos.
+- `web-next/components/catalog/SortBar.tsx` — Client Component con 6 opciones de orden; botón "Filtros" visible solo en móvil (SlidersHorizontal Lucide).
+- `web-next/components/catalog/Pagination.tsx` — Client Component con ventana de páginas `[1, '...', lo..hi, '...', total]`; `window.scrollTo` al cambiar página. **Bug TypeScript corregido**: variable local renombrada de `window` a `pageWindow` para evitar colisión con el global `window.scrollTo`.
+- `web-next/components/catalog/EmptyState.tsx` — SearchX Lucide icon + "Sin resultados" + Link a `/`.
+- `web-next/components/modules/CoverImage.tsx` — Client Component con cadena de 3 fallbacks: `/images/${imageLocal}` (Next.js `<Image>`) → `imageUrl` (plain `<img>` — evita `remotePatterns` para ~76 dominios de scrape) → placeholder BookOpen Lucide.
+
+**Bug corregido en CountryFlag**: el componente solo tenía nombres ingleses (`Japan`, `France`, etc.) pero `items.jsonl` almacena los países en español (`Japón`, `Francia`, `Alemania`, `Italia`, `Brasil`, `Tailandia`, `Taiwán`, `Estados Unidos`, `Canadá`, `México`, `Argentina`, `Vietnam`). Agregados todos los nombres en español al mapa `COUNTRY_FLAGS`.
+
+**Decisión arquitectural documentada en WO-004**: `CatalogControls.tsx` no estaba en el spec original — el spec asumía que `SortBar` y `SidebarFilters` podían ser Server Components independientes. En la práctica, compartir `drawerOpen` state entre hermanos requiere un Client Component padre. La solución con `children` slot preserva el Server Component rendering de `CatalogGrid` y `Pagination`.
+
+**Verificación**: `npm run type-check` = 0 errores. Preview en puerto 3001: catálogo muestra 10.038 ediciones, 168 páginas, covers reales desde espejo local, signal chips con Lucide icons, banderas de país. Filtro "Con Extra" confirmado funcionando (4.019 ediciones). Sin errores en consola.
+
+Last updated previo: 2026-05-26 (botón 👎 delete-from-catalog + skill `/review-rejected`) — Dos cambios complementarios para el flujo de curación manual: (1) el botón 👎 del dashboard ahora **elimina el item del catálogo** (`data/items.jsonl`) en lugar de solo loguearlo. `scripts/serve.py` recibió la nueva función `_remove_from_catalog(url, reason)` que hace rewrite atómico de items.jsonl (tmp + rename) borrando el item clickeado y TODOS los rows con el mismo `cluster_key` (excepto standalone `url:` keys, que son aislados) — así todas las fuentes del mismo producto físico desaparecen juntas. Los rows removidos se mueven a `data/user_rejected.jsonl` con su data completa + `rejection_reason` + `rejected_at`. `data/feedback.jsonl` sigue como log histórico append-only. El frontend (`web/index.html`) filtra `this.items` inmediatamente en memoria tras el `POST /api/feedback` exitoso, navegando con `goBack()` a la edición (si quedan hermanos) o al catálogo — sin reload. (2) Nuevo skill `.claude/skills/review-rejected/SKILL.md` que orquesta la revisión de la queue: carga los rechazos, los clasifica por causa raíz (taxonomía A–J: merch, trading cards, noticias, tomo regular, source ruidosa, western comic, LN, preferencia personal, falsa señal, selector amplio), presenta propuestas numeradas al usuario esperando confirmación, aplica los cambios aprobados (manga_watch.py / comics_blacklist.yml / sources.yml), agrega tests, corre pytest + retrofits con --dry-run, y trunca user_rejected.jsonl al terminar. `data/user_rejected.jsonl` agregado a .gitignore + schema documentado en file map + sección "Feedback" reescrita en este archivo. Skills count: 2 → **3**.
+
+Last updated previo: 2026-05-26 (carrusel multi-imagen — scraping de galería en todas las fuentes + retrofit) — Cambio estructural en el extractor de detail pages: ahora trae TODO el carrusel del producto, no sólo la cover. Antes el corpus tenía sólo 138/9846 items (1.4%) con `images.length > 1` — todos del parser de listadomanga-collections que tiene su propia lógica Fase 2. Después de este sprint todas las fuentes con detail-page fetching contribuyen imágenes gallery cuando el sitio las expone.
+
+**Cambios de código:**
+- **Nuevo extractor** `_extract_images_from_detail_soup(soup, source_url, limit=6)` en `scripts/manga_watch.py` que devuelve `[{url, kind, description}]`. Combina JSON-LD `image` array + og:image / twitter:image + selectores CSS de galería (Shopify `.product__media`, Tiendanube `.swiper-slide`, WooCommerce `.fotorama`, Magento `.product-image-thumbs`, `[data-zoom-image]`, + genéricos `[class*='gallery'] img`) + ranking fallback. Primer elemento `kind=cover`, resto `kind=gallery`. `_extract_image_from_detail_soup` (legacy) ahora es un thin wrapper que devuelve la primera URL para backwards-compat.
+- **Scope al producto principal** vía `_find_product_scope(soup)`: prueba `[itemtype*='Product']`, `[itemtype*='Book']`, `#product-detail`, `.product-detail`, `.product-single`, `.ficha`, `<main>`, `<article.product>` para acotar la búsqueda y no absorber thumbs de "productos relacionados" del sidebar (caso real: Norma Editorial). Filtro adicional de "mismo folder que la cover" descarta outliers cuando se detectan >=2 (típico contaminación de sidebar).
+- **`fetch_metadata_from_detail` propaga `images`** en su dict de retorno; los callers (sitemap mining, fetch-details enrichment) lo asignan a `cand.images` cuando viene con len > 1. Pipeline completo (`candidate_to_json`, `append_jsonl` union-merge, `mirror_candidate_images`) ya soportaba multi-image — sin cambios ahí.
+- **5 wikis actualizadas** con extracción multi-image específica: `manga_sanctuary.py`, `mangavariant.py`, `whakoom.py` (gallery a nivel edición, heredada por todos los tomos), `animeclick.py`, `listadomanga.py` (solo cuando la página es de tomo único, no colección).
+- **`blogbbm.py` Layout AB** ahora preserva TODAS las imágenes del entry en `images[]` en vez de descartar la "no-variant" — los entries de BBM exponen típicamente cover regular + cover variant; antes el parser elegía la variant y descartaba la regular, ahora las preservamos en carrusel (variant primero como cover, regular después como gallery).
+- **Wikis no tocadas**: `socialanime`, `sumikko`, `mangapassion`, `booksprivilege` (API-only o single-image catalogs sin galería disponible), `listadomanga_collections` (ya implementaba multi-image desde Fase 2), `otaku_calendar`, `manga_mexico`, `listadomanga_blog` (single-image detail pages, sin valor incremental).
+
+**Retrofit del corpus existente:**
+- `scripts/retrofit/backfill_metadata.py` extendido con `--only images`: re-fetchea detail pages de items con `len(images) < 2` y popula el carrusel. Idempotente — items ya multi-image no se tocan. Sincroniza `image_url` con la cover.
+- Integrado como fase `[4e2]` en `scrape_full.sh` (NO en `scrape_delta.sh` — es lento). En el `scrape_full` mensual el corpus histórico se va enriqueciendo orgánicamente.
+- `script_registry.py` con preset nuevo "🎞️ Solo carrusel multi-imagen" en el script `backfill_metadata` del Panel de Control + opción `images` en el choice del flag `--only`.
+
+**Smoke tests reales** (durante development):
+- Norma Editorial `/ficha/manga/deadrock/...`: 2 imgs (cover + 1 gallery del mismo álbum `/0001/35/`) — el filtro de stem-folder descartó 4 thumbs de productos relacionados que el `<main>` exponía.
+- Dark Horse `/Books/.../Berserk-Deluxe-Edition`: 1 img (solo cover — el sitio no expone gallery, comportamiento esperado).
+
+**Pipeline ya soporta todo lo siguiente sin cambios:**
+- `mirror_candidate_images` descarga AUTOMÁTICAMENTE las imágenes gallery a `data/images/` (siempre lo hizo desde Fase 2 listadomanga-collections, ahora se ejercita en muchas más fuentes).
+- `append_jsonl` union-mergea `images[]` por `(kind, url)` — un re-scrape que sólo trae la cover no borra las gallery previas.
+- `image_local` es sticky en upsert (gotcha #25).
+- Frontend (`web/index.html`) ya renderiza carrusel con flechas + dots cuando `images.length > 1` (desde Fase 2 listadomanga-collections).
+
+**Tests:** 383 → **396** (+13 nuevos: 10 del extractor base — JSON-LD array, Shopify gallery, Tiendanube Swiper, thumb dedup, data URI skip, bad patterns filter, kind labels, backwards-compat wrapper, empty result, metadata dict shape — más 3 del scope/filtro — related products filter, limit cap, no-filter cuando paths shallow). Todos los wikis upgradados pasaron sin romper tests existentes.
+
+**Gotcha #31 nueva** documenta el scope + stem-folder filter. Sección "Image storage" actualizada con la subsección multi-imagen + retrofit. Gotchas count: 30 → **31**.
+
+Last updated previo: 2026-05-25 (cierre sprint AnimeClick IT — `/standardize-catalog` + `/enrich-series-aliases` sobre 1406 items recién scrapeados) — Tras la ingesta de AnimeClick IT (1406 items), corrida completa de los dos skills de curación en cadena para canonicalizar el corpus al estado deploy-ready.
+
+**1. `/standardize-catalog` (10323 → 9851, -472 netos)**:
+- **1406 items pending** (todo el scrape de AnimeClick sin `standardized_at`).
+- Particionado en **10 chunks de ~150** items agrupados por URL base (AnimeClick no tiene coleccion_id estructural, cada item es página única).
+- **2 waves de subagentes general-purpose** (7+3 paralelos): wave 1 corrió chunks 00-06, wave 2 chunks 07-09. Cada subagente: ~150 items × 4 min ≈ Sonnet medium, ~180k tokens/chunk.
+- **Verificación Step 3.5 detectó 2 items missing** (1 chunk 01 + 1 chunk 03, ambos por session limit del subagente cerca del final del chunk). Procesados inline por el orchestrator (1 light novel Dokusho IT → blacklist, 1 Dragon Ball Star Ultimate → standardized).
+- **23 items movidos a `non_manga_blacklist.jsonl`**: 15 light novels Dokusho Edizioni IT (chunk 01: Classroom of the Elite LN, 86 Eighty-Six LN, Mushoku Tensei LN, Slime LN, NGNL, Apothecary Diaries LN, Quattro Stagioni), 5 western comics (chunk 07: Zombies Assemble Marvel, Miraculous Ladybug, Star Wars Mandalorian, Tron Legacy, Valmont BD), 1 Sergio Bonelli Attica (chunk 08), 2 LN sueltos. La heurística del subagente identificó correctamente "Dokusho Edizioni" como editorial específica de light novels.
+- **449 dedups por (series_key, edition_key, volume)**: las edizioni IT que AnimeClick cataloga ya estaban en muchos casos en SocialAnime / Star Comics / Panini IT / Mangadreams; el dedup canónico las colapsa. Muchas son volúmenes de líneas standard (Berserk Panini Deluxe, Naruto Gold Deluxe, Vagabond Panini Deluxe, etc.) que ahora aparecen también desde AnimeClick.
+- Anti-compound rules respetadas en los 10 chunks (verificado en samples): `*-deluxe-box` → `*-boxset`, `*-ultimate-deluxe` → `*-ultimate`, `*-collector-box` → `*-collector`. El subagente aplicó los ejemplos del SKILL prompt correctamente.
+- **0 outliers de consistencia auto-corregidos** (AnimeClick no tiene listadomanga-style coleccion_id, así que el consistency check de la skill no aplica a estos items).
+- Backup `data/items.jsonl.pre-standardize-bak` (10323 líneas).
+
+**2. `/enrich-series-aliases` (9851 → 9846, 157 remapped + 5 dedups)**:
+- Estado inicial: `unmapped_series.jsonl` con **2101 entries** acumuladas (logger del scraper de AnimeClick + residuales de sprints previos).
+- Distribución de los 2053 distinct series_keys unmapped: **1758 count=1** (85.6%), 182 count=2, 100 count=3-4, 13 count=5-9.
+- **Subagente top 100 candidates**: el audit `unmapped_series.py --max-suggestions 100` cubrió 368 de 2529 items unmapped (los más prioritarios por count). Delegado a un general-purpose subagent con WebFetch + Anilist GraphQL. Output: `/tmp/enrich_decisions.json` con 86 new-canonical + 14 merge-to-existing + 0 skip.
+- **86 new canonicals con multilingüe** vía Anilist: Violence Jack (ヴァイオレンスジャック), World God Only Knows (神のみぞ知るセカイ, Kami Nomi zo Shiru Sekai, TWGOK), In/Spectre (Kyokou Suiri / 虚構推理), We Never Learn (Bokutachi wa Benkyou ga Dekinai), Sweetness and Lightning (Amaama to Inazuma), Anonymous Noise (Fukumenkei Noise), Squid Girl (Shinryaku! Ika Musume), Goodnight Punpun (Oyasumi Punpun), Boarding School Juliet (Kishuku Gakkou no Juliet), Sacrificial Princess and the King of Beasts (Niehime to Kemono no Ou), School Babysitters (Gakuen Babysitters), Sekaiichi Hatsukoi (世界一初恋), Devils' Line, Daiya no Ace Act II / Ace of Diamond Act II, Maria Holic, Ultraman (manga), Puchimas! / Puchim@s!, Shoujo Fight, etc.
+- **14 merges a canonicals existentes** (rescatan IT/JP variants de obras ya en YAML): `la-volpe-e-il-piccolo-tanuki` → `the-fox-and-little-tanuki`, `youkai-apato-no-yuuga-na-nichijou` → `youkai-apartment-no-yuuga-na-nichijou`, `tendo-ke-monogatari` → `tendou-ke-monogatari`, `bakemonogatari-manga` → `bakemonogatari`, varios romaji-variant fixes (`hypnosismic-*`, `dedkin-no-mogura`/`deiden-no-mogura` → `dekin-no-mogura`).
+- **False-positives correctamente evitados** por el subagente (la fuzzy guess sugería merge pero el subagente verificó vía Anilist y rechazó): Violence Jack ≠ Shin Violence Jack (sequel), Ultraman ≠ Ultra Maniac (franquicia distinta), Maria Holic ≠ Marriage Toxin, Killing Bites ≠ Killing Stalking, Kodomo no Jikan ≠ Kodomo no Omocha, Ningyou no Kuni ≠ Ni No Kuni, Aho-Girl ≠ Ghost Girl, Code:Breaker ≠ Chrome Breaker.
+- **1101 self-canonicals mínimos** agregados para la cola larga (count=1 mayoritariamente — JP obscure works de sumikko/booksprivilege residuales + IT one-shots de AnimeClick). Sin aliases multilingüe; función principal: prevenir re-logueo en próximos scrapes. La diferencia vs los 1986 self-canonicals "naive" del primer intento (que metió duplicados-de-aliases): la segunda pasada hace **alias-aware dedup** — antes de crear un self-canonical, normaliza el series_key (slugify + sin diacríticos) y verifica que no esté ya cubierto como display o alias de OTRO canonical. Esto evitó 885 entries duplicadas que habrían roto el lookup table.
+- **157 items remapped** + 5 dedups adicionales por (series, edition, vol) cross-source post-remap (algunos AnimeClick + Star/Panini que ahora comparten series_key canonical EN).
+- `unmapped_series.jsonl` truncado a 0 entries (backup `/tmp/unmapped_series.jsonl.bak-20260525` con 2101 líneas).
+- Backups: `data/items.jsonl.pre-enrich-bak` (9851), `data/series_aliases.yml.pre-enrich-bak` (1657 entries / 8122 líneas).
+
+**Resumen del sprint AnimeClick end-to-end**:
+| Fase | Items | Resultado |
+|---|---|---|
+| Scrape inicial (AnimeClick) | 8917 → 10323 | +1406 nuevos sin standardizar |
+| `/standardize-catalog` | 10323 → 9851 | -23 non-manga, -449 dedups cross-source |
+| `/enrich-series-aliases` | 9851 → 9846 | -5 dedups, +157 remapped, queue truncada |
+| **Total neto** | **8917 → 9846** | **+929 items (+10.4%)** |
+
+| Métrica | Pre-sprint | Post-sprint |
+|---|---|---|
+| Total items | 8917 | **9846** (+929) |
+| Italia (país) | 1246 | **2183** (+937 = +75%) |
+| Distinct series_keys | 3376 | **3618** (+242) |
+| Distinct edition_keys | 5350 | **5838** (+488) |
+| `series_aliases.yml` entries | 1657 | **2844** (+1187) |
+| Aliases entries con multilingüe poblado | 802 | **896** (+94) |
+| `image_local` coverage | 97.7% | **99.7%** (+2pp) |
+| Price coverage | 36.6% | **43.7%** (+7.1pp — AnimeClick incluye precio EUR) |
+| ISBN coverage | 60.5% | **54.8%** (-5.7pp esperado — AnimeClick no expone ISBN, gotcha "URL como referencia") |
+| Tests | 383 | **383** (sin cambios — solo curación, no código) |
+
+**Issue de permisos descubierto**: la corrida del merge necesitó intervención del owner para correr `sudo chmod -R g+w /Users/Shared/Proyectos/manga-watch/` porque el subdirectorio `data/` se había creado con perms `drwxr-xr-x` (sin group-write) pese a que `/Users/Shared/Proyectos` tiene `drwxrwsr-x` (setgid + group-write). Resultado: el user `Trabajo` no podía escribir aunque está en el grupo `staff`. Fix permanente sugerido: configurar el `umask` del shell de `sergio` a `002` para que archivos/dirs nuevos sean group-writable por default.
+
+**Pendientes operativos para próximas corridas**:
+- 1948 series_keys self-canonicales sin multilingüe — se irán enriqueciendo orgánicamente cuando aparezcan en próximos scrapes con más volume y el audit las suba al top-100.
+- AnimeClick delta corre semanalmente; espera ~50-100 items/semana, manejable inline sin necesidad de subagentes.
+
+---
+
+Last updated previo: 2026-05-25 (nueva fuente IT — animeclick.it calendario semanal edizioni speciali) — Parser `scripts/wikis/animeclick.py` implementado para animeclick.it. Navegación AJAX semanal via `GET /calendario-manga?paging=prev-week&day=DD&month=MM&year=YYYY` con header `X-Requested-With: XMLHttpRequest`; la respuesta JSON incluye el fragmento HTML del calendario y la nueva fecha de referencia. Keyword filter `_COLLECTOR_RE` sobre los títulos de las cards antes de fetchar detail pages (~20% hit rate esperado, ahorro de HTTP). Detail pages usan schema.org Book markup (`itemprop name/image/description/datePublished`) + labels `Editore:`/`Prezzo:` en `<strong>`. Sin ISBN disponible en ningún endpoint. Injección de hints "Cofanetto Box Set" / "Complete edition integral" para que `detect_signals` levante `box_set`/omnibus desde términos italianos. Cubre Star Comics, Panini Comics, J-POP, MangaYo!, Crunchyroll IT — publishers NO presentes en SocialAnime (complementario: SocialAnime tiene ISBN y precios, AnimeClick tiene publishers distintos). 12 tests nuevos (383/383 verde). Pipeline actualizado: `scrape_delta.sh` fase 2j, `scrape_full.sh` fase 2k, `script_registry.py` 2 presets nuevos (`animeclick_delta`/`animeclick_full`), argparse choices += `animeclick`. Wikis count: 13 → 14.
+
+Last updated: 2026-05-25 (nueva fuente DE — manga-passion.de vía API pública REST) — Parser `scripts/wikis/mangapassion.py` implementado para manga-passion.de, el catálogo alemán de ediciones especiales (Sonderausgaben) y variant covers. La API pública `api.manga-passion.de` (Symfony API Platform / JSON-LD / Hydra) expone los datos sin auth. Dos queries: `type[]=3` (Sonderausgaben: Limited, Collector's, Premium, Box) + `type[]=0 & tags.tag.id=200` (Variant-Covers). `specialType=1` → Sammelschuber (Schuber/estuche); se inyecta hint "Box Set" para que `detect_signals` levante `box_set`. Precio en centavos (1900 → "19.00 €"). URL canónica: `api.manga-passion.de/volumes/{id}`. En modo delta aplica `date[after]` filtro (últimos meses); en full `year_from < 2010` descarga catálogo histórico completo. Publishers DE mapeados en `_PUBLISHER_SLUG_MAP` (carlsen, egmont, dokico, papertoons, crosscult, mangacult, loewe, reprodukt, altraverse). 8 tests nuevos (371/371 verde). Pipeline actualizado: `scrape_delta.sh` fase 2i, `scrape_full.sh` fase 2j, `script_registry.py` 2 presets nuevos, argparse choices += `mangapassion`. Wikis count: 12 → 13.
+
+Last updated: 2026-05-25 (bugfix scoring: from_extras items (tomos de 1ª edición con cofres) eran invisibles en el dashboard) — 107 items LMC `from_extras` tenían `score=14` (solo la keyword `"extras"` matcheaba, con score=14 < `minScore=20` del dashboard). Causa raíz: `"regalos"` y `"brindes"` — palabras explícitas en la descripción inyectada por el parser — no estaban en `KEYWORD_RULES`. Fix: agregadas ambas con `score=20, type=bonus`. Retrofix aplicado con `rescore.py` — los 107 items LMC subieron a score≈89. Tests: 363/363 verde (+2: `test_lmc_from_extras_cofre_score_above_dashboard_threshold`, `test_lmc_from_extras_non_cofre_has_bonus_signal`). Backup: `data/items.jsonl.pre-rescore-bak`.
+
 Last updated: 2026-05-25 (audit de fuentes — 121 → 76 enabled; fix JS/Playwright ya estaba en code) — Audit completo de las 138 fuentes en `sources.yml`. Criterio: fuentes con 0 items en corpus Y sin valor incremental esperado (noticias/blogs, Bluesky publishers, fuentes con solape 100% con wikis de Fase 2, 2 fuentes rotas 403). Resultado: 45 fuentes deshabilitadas (15 Bluesky, ~10 news/blogs, ~8 publishers con solape wiki, ~12 fuentes 0-yield con poca expectativa). Phase 1 del pipeline pasa de 121 → 76 fuentes activas. **El fix de Playwright (gotcha #12 — dedicated worker thread + queue) ya estaba committed** desde 2026-05-24 — no se necesitaron cambios de código.
 
 Last updated: 2026-05-24 (cierre del sprint — `/standardize-catalog` +
@@ -2099,7 +2887,7 @@ y dejó el corpus en estado canonical 100%.
 | Distinct edition_keys | 3062 | 5350 (+2288) |
 | `series_aliases.yml` | 1609 | 1657 (+48) |
 | `standardized_at` cov | 100% (5519 ítems) | 100% (8917 ítems) |
-| Tests | 332 | 361 (+29) |
+| Tests | 332 | 383 (+51) |
 
 **Pendientes operativos para próximas corridas**:
 - Full backfill histórico booksprivilege 2020-2026 (~30-40 min, varios
@@ -3391,7 +4179,7 @@ sincronizada con todo el trabajo de Sprint 4.z + 5.a:
 - **Reforzada la política de docs** con checklist pre-flight obligatorio
   y lista de anti-patterns. Si la política se viola, fixarlo es una
   prioridad inmediata.
-- **`docs/ARCHITECTURE.md`** ampliado con:
+- **`docs/scraper/ARCHITECTURE.md`** ampliado con:
   - Schema completo de `items.jsonl` (campos nuevos series_key,
     edition_key, volume, standardized_at, title_original).
   - Schemas de `unmapped_series.jsonl`, `non_manga_blacklist.jsonl`,
@@ -3399,7 +4187,7 @@ sincronizada con todo el trabajo de Sprint 4.z + 5.a:
   - Sección nueva "Two-pass standardization" (gotcha #21).
   - Sección nueva "Curation skills" al final, describiendo
     `/standardize-catalog` y `/enrich-series-aliases`.
-- **`docs/SOURCES.md`** ampliado con:
+- **`docs/scraper/SOURCES.md`** ampliado con:
   - Whakoom URL types (`/comics/` vs `/ediciones/` vs `/publisher/`).
   - Whakoom Brotli/CF detection gotchas.
   - Shopify variants multi-tomo (Dark Horse pattern).
@@ -3623,7 +4411,7 @@ overnight pipeline + source-health audit, Wayback recovery, scrape
 parallelization, cluster_key grouping. **+ Panel de Control web local
 (admin/, scripts/admin_serve.py, scripts/script_registry.py,
 scripts/run_local.sh) — server admin separado del público, bind a
-127.0.0.1, no deployable. Ver `docs/CONTROL-PANEL.md`.** **+ Expansión
+127.0.0.1, no deployable. Ver `docs/admin/README.md`.** **+ Expansión
 de fuentes a Brasil (Panini BR Planet Manga, Editora JBC, NewPOP,
 Pipoca & Nanquim, Devir + Panini BR search) y nuevas fuentes con
 variantes/alternativas en MX (MangaLine México) y ES (ECC Manga
