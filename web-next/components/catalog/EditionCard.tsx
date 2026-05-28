@@ -13,8 +13,11 @@ export function EditionCard({ cluster }: EditionCardProps) {
   const { canonical, signalTypes, volumeCount, countries, slug } = cluster
   const leaves = Math.min(volumeCount, 3) as 1 | 2 | 3
 
-  // Editions → /edition/[editionKey]; standalone items → /item/[slug]  (FRD-003)
-  const href = cluster.editionKey ? `/edition/${cluster.editionKey}` : (slug ? `/item/${slug}` : '#')
+  // Multi-volume editions → /edition/[editionKey]
+  // Single-volume editions + standalone items → /item/[slug]  (FRD-003)
+  const href = (cluster.editionKey && volumeCount > 1)
+    ? `/edition/${cluster.editionKey}`
+    : (slug ? `/item/${slug}` : '#')
 
   // Show at most 2 signal chips to keep card compact
   const visibleSignals = signalTypes.slice(0, 2)

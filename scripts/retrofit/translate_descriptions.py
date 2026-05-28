@@ -99,6 +99,45 @@ _deepl_lock = threading.Lock()
 _google_lock = threading.Lock()
 
 
+# ---------------------------------------------------------------------------
+# Limpieza de junk pre-traducción (UI-chrome capturado por el scraper)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+# Prefijos de UI de tiendas italianas (Panini IT, ~128 items)
+_IT_JUNK_PREFIX = _re.compile(
+    r'^(?:Aggiungi alla lista desideri\s*|Aggiungi al carrello Confrontare\s*)',
+    _re.IGNORECASE,
+)
+# Sufijos de botones de carrito italianos
+_IT_JUNK_SUFFIX = _re.compile(
+    r'\s*Aggiungi\s+Aggiungi al Carrello.*$',
+    _re.IGNORECASE | _re.DOTALL,
+)
+_IT_JUNK_SUFFIX2 = _re.compile(
+    r'\s*Aggiungi al Carrello.*$',
+    _re.IGNORECASE | _re.DOTALL,
+)
+# Prefijo de UI de Meian FR (~16 items): "EN SAVOIR PLUS"
+_FR_JUNK_PREFIX = _re.compile(r'^EN SAVOIR PLUS\s*', _re.IGNORECASE)
+
+
+def _clean_description_for_translation(text: str) -> str:
+    """Elimina chrome de UI de la tienda antes de enviar a la API de traducción.
+
+    No modifica el campo `description` original — sólo limpia la cadena
+    en memoria para que la traducción resultante sea más limpia.
+    Los prefijos/sufijos que limpiamos son artefactos del scraper (botones
+    'Aggiungi al Carrello', 'EN SAVOIR PLUS') que no aportan contenido.
+    """
+    t = _IT_JUNK_PREFIX.sub("", text)
+    t = _IT_JUNK_SUFFIX.sub("", t)
+    t = _IT_JUNK_SUFFIX2.sub("", t)
+    t = _FR_JUNK_PREFIX.sub("", t)
+    return t.strip()
+
+
 def _translate_deepl(text: str, translator) -> str:
     """Traduce con DeepL. Retorna "" si falla."""
     try:
@@ -139,6 +178,11 @@ def translate_to_es(
     if not text or not text.strip():
         return ""
 
+    # Limpiar chrome de UI de la tienda antes de detectar idioma y traducir
+    text = _clean_description_for_translation(text)
+    if not text:
+        return ""
+
     from langdetect import detect, LangDetectException  # type: ignore
 
     try:
@@ -172,11 +216,23 @@ def translate_to_es(
 # ---------------------------------------------------------------------------
 
 def _needs_translation(item: dict, force: bool) -> bool:
-    """¿Tiene el item al menos un campo pendiente de traducción?"""
-    if item.get("description") and (force or not item.get("description_es")):
+    """¿Tiene el item al menos un campo pendiente de traducción?
+
+    Usa presencia de la KEY (no el valor) como sentinel de "ya procesado".
+    - `"description_es" not in item` → pendiente (nunca procesado).
+    - `"description_es" in item` → procesado: puede ser texto traducido ("…")
+      o string vacío ("") que indica "descripción original ya era español /
+      sin contenido traducible". En ambos casos se salta salvo --force.
+
+    Esto evita que items con descripciones ya en español queden eternamente
+    en la cola de "pendientes" (el caso clásico: ListadoManga con metadatos
+    "Norma · Kanzenban · Manga · Berserk 1" — langdetect → "es" → translate
+    retorna "" → sin este fix, el item se re-procesa en cada corrida).
+    """
+    if item.get("description") and (force or "description_es" not in item):
         return True
     for ex in item.get("extras") or []:
-        if ex.get("description") and (force or not ex.get("description_es")):
+        if ex.get("description") and (force or "description_es" not in ex):
             return True
     return False
 
@@ -190,16 +246,20 @@ def translate_item(
     """Traduce todos los campos traducibles del item.
 
     Retorna (item_actualizado, cantidad_de_campos_traducidos).
+    Siempre escribe `description_es` (con el texto traducido o con "" si ya
+    era español / sin contenido traducible) para marcar el campo como
+    procesado y no re-procesarlo en corridas futuras.
     """
     translated = 0
     result = dict(item)
 
     # description → description_es
     desc = item.get("description", "")
-    if desc and (force or not item.get("description_es")):
+    if desc and (force or "description_es" not in item):
         translated_text = translate_to_es(desc, deepl_translator, sleep_secs)
+        # Siempre escribe la key — "" marca "procesado, sin traducción necesaria"
+        result["description_es"] = translated_text
         if translated_text:
-            result["description_es"] = translated_text
             translated += 1
 
     # extras[].description → extras[].description_es
@@ -209,10 +269,11 @@ def translate_item(
         for ex in extras:
             ex_copy = dict(ex)
             ex_desc = ex.get("description", "")
-            if ex_desc and (force or not ex.get("description_es")):
+            if ex_desc and (force or "description_es" not in ex):
                 translated_text = translate_to_es(ex_desc, deepl_translator, sleep_secs)
+                # Siempre escribe la key
+                ex_copy["description_es"] = translated_text
                 if translated_text:
-                    ex_copy["description_es"] = translated_text
                     translated += 1
             new_extras.append(ex_copy)
         result["extras"] = new_extras

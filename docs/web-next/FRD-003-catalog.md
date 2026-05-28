@@ -68,19 +68,39 @@ Display `Cluster[]` as a responsive grid:
 
 Each card shows:
 - **Cover image** — `image_local` via `/images/{filename}` → `image_url` remote
-  fallback → 📚 emoji placeholder
-- **Stack effect** — CSS leaves behind the card: 1 leaf if 1 item, 2 leaves if 2–4
-  items, 3 leaves if 5+ items in the cluster
+  fallback → 📚 emoji placeholder. The remote `<img>` fallback uses
+  `position:absolute; inset:0` when `fill` so it fills the container like the
+  Next.js `<Image>` it replaces.
+- **Stack effect** — driven by `data-leaves="1|2|3"` on `.edition-card`
+  (1 leaf if 1 item, 2 if 2–4, 3 if 5+). Rendered with CSS `box-shadow`
+  (NOT `::before`/`::after` pseudo-elements). Box-shadows follow the card's
+  `border-radius` automatically and **do not affect layout size**, so a
+  stacked card occupies the same grid cell as a single card — see the
+  uniform-height note below.
 - **Title** — `canonical.series_display` or `canonical.title`
 - **Edition label** — `canonical.edition_display`
 - **Volume count badge** — "3 tomos" if more than 1 volume
 - **Country flag** emoji + publisher name
 - **Score badge** — color-coded
-- **Signal type chips** — up to 3, overflow as "+N más"
+- **Signal type chips** — up to 2 (`signalTypes.slice(0, 2)`), single row
+  (`flex-wrap: nowrap` + `overflow: hidden`); remaining count rendered as
+  "+N". Single-row clip is intentional to preserve uniform card height.
 - **Hover state** — slight lift (`-translate-y-1`) + shadow elevation change
 
-Clicking a card navigates to `/edition/[editionKey]` if the cluster has an
-`edition_key`, or `/item/[slug]` directly if it's a standalone item (no edition).
+> **Uniform card height:** every card (single or stacked) is exactly the same
+> size. The cover is a fixed `aspect-ratio: 2/3` and the info block below it has
+> a **fixed height of 96px** with three reserved slots: series name (14px, always
+> reserved even when empty), title (34px = up to 2 clamped lines), and a chip row
+> anchored to the bottom via `margin-top: auto`. `overflow: hidden` on the info
+> block guarantees nothing spills past 96px. This decouples card height from
+> content length — shorter content leaves empty space at the bottom instead of
+> shrinking the card. The 24px grid `gap` keeps the max box-shadow offset
+> (10px×12px for `leaves=3`) comfortably within the gutter, so stacked cards
+> never visually touch their neighbours.
+
+Clicking a card navigates to `/edition/[editionKey]` only when the cluster has
+an `edition_key` **and** `volumeCount > 1` (a real multi-volume edition).
+Single-volume editions and standalone items go to `/item/[slug]` directly.
 
 ### FR-3: Sidebar filters
 

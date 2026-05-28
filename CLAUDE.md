@@ -2572,6 +2572,20 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
+Last updated: 2026-05-28 (catálogo Next.js — altura uniforme de EditionCard + spacing + fixes search/cover) — Pasada de pulido visual sobre la home del catálogo `web-next/`:
+
+- **EditionCard altura uniforme** (`components/catalog/EditionCard.tsx`): toda card (single o stacked) mide exactamente igual. El bloque de info bajo la portada pasa a **altura fija 96px** con tres slots reservados — nombre de serie (14px, reservado aunque esté vacío), título (34px = hasta 2 líneas clamp), y fila de chips anclada abajo via `margin-top:auto` — más `overflow:hidden`. Antes la info crecía/encogía según el contenido (serie condicional, título 1-2 líneas, chips condicionales) → alturas distintas. La correlación "single vs stacked" que reportó el owner era coincidencia del contenido, no del stack.
+- **Stack via box-shadow, no pseudo-elementos** (`app/globals.css`): `.edition-card[data-leaves="2|3"]` usa `box-shadow` (sigue el `border-radius` automáticamente, no afecta el layout). Reemplaza el `::before`/`::after` con `transform:translate` que extendía la card FUERA de su celda del grid haciéndola visualmente más grande.
+- **Chips en una sola fila** (`flex-wrap:nowrap` + `overflow:hidden`): el caso Oshi no Ko ("Artbook + Limited Edition + 6") hacía wrap a 2 filas desbordando los 96px. Trade-off: chips de etiqueta larga se recortan para mantener fila única.
+- **Grid gap 16px → 24px** (`.catalog-grid-inner`): más aire entre filas y columnas. El offset máximo del box-shadow (10×12px para leaves=3) queda holgado dentro del gutter de 24px, así las stacked nunca tocan vecinas.
+- **SearchBar conectado al URL** (`components/modules/SearchBar.tsx`): el search del header había dejado de funcionar — estaba desconectado del estado de URL. Reescrito con `useSearchParams`/`useRouter`/`usePathname` + debounce 300ms (mismo patrón que `SidebarFilters`).
+- **CoverImage fallback remoto** (`components/modules/CoverImage.tsx`): el `<img>` de fallback para URLs remotas no tenía `position:absolute; inset:0` con `fill`, renderizaba en flujo normal → portada descuadrada. Fix con estilos condicionales.
+- **Routing de la card** (cambio del owner, preservado): multi-volume (`editionKey && volumeCount > 1`) → `/edition/[editionKey]`; single-volume + standalone → `/item/[slug]`.
+
+Doc actualizado: `docs/web-next/FRD-003-catalog.md` (sección de EditionCard reescrita con la nota de altura uniforme, stack box-shadow, chips single-row, routing). Sin cambios a código Python ni corpus.
+
+---
+
 Last updated: 2026-05-27 (reorganización docs/ por componente) — Reestructuración completa de `docs/` en 4 carpetas por componente: `docs/scraper/` (ARCHITECTURE.md, SOURCES.md, PRD.md nuevo), `docs/web-html/` (PRD.md nuevo), `docs/admin/` (README.md ← CONTROL-PANEL.md), `docs/web-next/` (← docs/app/, sin cambios de contenido). Nuevo `docs/README.md` como índice maestro. PRD-catalog.md reescrito como `docs/scraper/PRD.md` con estado actual del corpus (10.103 items, 17 wikis, 4 fases completadas) y roadmap futuro. PRD.md original reescrito como `docs/web-html/PRD.md` enfocado en producto: features actuales del dashboard personal (filtros, 👎 curación, carrusel) + features planificadas (edición inline, merge manual, re-run retrofits). Todos los paths en CLAUDE.md actualizados.
 
 ---
@@ -2707,6 +2721,26 @@ Antes el loop principal acumulaba todos los candidatos en memoria y escribía a 
 
 **2. `_run_timed()` — timeouts portables en wiki subprocesos para evitar hangs:**
 Los scripts `scrape_delta.sh` y `scrape_full.sh` llamaban wikis sin ningún timeout. Un wiki colgado (AnimeClick fetching detail pages por horas, listadomanga-collections recorriendo 3432 colecciones) bloqueaba TODO el pipeline indefinidamente. Nuevo helper `_run_timed <secs> <cmd>` en ambos scripts: intenta `timeout` (macOS nativo) → `gtimeout` (brew GNU coreutils) → sin timeout (mejor que romper). Todos los 11 wikis del delta y 12 del full ahora tienen límites explícitos (desde 300s para wikis livianos hasta 14400s/4h para AnimeClick full histórico). Ver gotcha #33. Gotchas count: 31 → **33**.
+
+Last updated: 2026-05-28 (WO-007 image lightbox — modal de galería en ImageCarousel) — Lightbox añadido a `web-next/components/item/ImageCarousel.tsx` (único archivo modificado). Al hacer clic en la imagen principal del carrusel se abre un modal `position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.92)`. La imagen se muestra con `<img>` (no `next/image`) con `max-width:80vw; max-height:75vh; width:auto; height:auto` — se ve a su tamaño natural acotado al viewport, sin upscaling forzado. Controles: botón ✕ (`position:fixed` top-right), flechas ‹ › a los lados del bloque imagen, kind badge (bottom-left), contador N/total (bottom-right), descripción y dots bajo la imagen. Teclado: `←`/`→` navegan (con `preventDefault` cuando el lightbox está abierto), `Escape` cierra. `document.body.style.overflow='hidden'` mientras el lightbox está abierto (cleanup en useEffect). Estado `idx` y `src` compartidos entre el carrusel thumbnail y el lightbox — no hace falta estado extra salvo `lightboxOpen: boolean`. `e.stopPropagation()` en las flechas del thumbnail evita abrir el lightbox al navegar. WO-007 creado y marcado Done. FRD-005 ya estaba actualizado.
+
+Last updated: 2026-05-28 (WO-006 item detail Next.js — /item/[slug] completo) — Implementación de la página de detalle de item en `web-next/`.
+
+**Nuevos archivos creados:**
+- `web-next/app/item/[slug]/page.tsx` — Server Component con `generateStaticParams()` (todos los slugs del corpus), `generateMetadata()` (title = item title + " — PandaWatch", openGraph type=book), `notFound()`, back navigation via `?from=edition:<editionKey>`.
+- `web-next/components/item/ItemHero.tsx` — layout dos columnas (280px carousel / 1fr metadata) via `<style>` + media query ≥640px. Muestra: series eyebrow, h1 title, original title en itálica (原題:), country flag + publisher + language, ScoreBadge + SignalChips, precio en vermillion-500, fecha, ISBN, description_es.
+- `web-next/components/item/ImageCarousel.tsx` — `"use client"`. useState + useEffect para índice y src. Kind badge (Portada/Galería/Extra/Portada Alternativa/Contraportada). Flechas izq/der cuando >1 imagen. Dots cuando 2–8 imágenes. Teclado ArrowLeft/ArrowRight. Fallback chain: `/images/${local}` → remote URL → BookOpen placeholder. Local images via `next/image`, remotas via `<img>` (evita remotePatterns para ~76 dominios de scrape).
+- `web-next/components/item/MetaTable.tsx` — Server Component, `<dl>` con filas: ISBN, Precio, Lanzamiento, Autor, Editorial, País, Idioma, Tipo (con PRODUCT_TYPE_LABELS), Puntuación (con ScoreBadge render), Detectado, Estandarizado (date o "Pendiente"). Filtra filas null/undefined/empty.
+- `web-next/components/item/ExtrasSection.tsx` — Server Component, lista con `<Gift>` Lucide icon (bamboo-500), muestra `description_es` o `description`, fecha formateada si existe.
+- `web-next/components/item/SourcesList.tsx` — Server Component, tabla con columnas Fuente (link externo + ExternalLink icon), Precio, Fecha, Stock. Solo renderiza cuando `items.length > 1`.
+- `web-next/lib/format.ts` — utilidades compartidas `formatDate` (Intl.DateTimeFormat es-ES) y `formatISBN` usadas por 4+ componentes.
+
+**Extensiones de tipos:**
+- `web-next/lib/types.ts` — añadidos `detected_at?: string` y `stock_type?: string` a `Item`.
+
+**Verificación** (puerto 3001): `/item/kobato-norma-regular-6` muestra carousel con arrows/dots, extras section "Cofre para tomos 1 a 6" con Gift icon, MetaTable completo. `/item/isbn-9784301004899` muestra FUENTES (2) con JP - Sanyodo + JP - Square Enix. 0 errores consola. `npm run type-check` = 0 errores. 404 en slug inexistente.
+
+**Deltas respecto al spec:** inline styles en vez de Tailwind classes (convención del proyecto); CSS vars corregidas (`--color-text-*` en vez de `--text-*`, `--bamboo-500` en vez de `--accent`); `<Gift>` Lucide en vez de emoji 🎁 (regla no-emojis); `lib/format.ts` extraído; `detected_at` y `stock_type` añadidos a types.
 
 Last updated: 2026-05-27 (WO-005 edition detail Next.js — /edition/[editionKey] completo) — Implementación de la página de detalle de edición en `web-next/`.
 
