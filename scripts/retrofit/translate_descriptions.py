@@ -10,6 +10,10 @@ Popula `description_es` y `extras[].description_es` en items.jsonl usando:
 Los campos originales (`description`, `extras[].description`) NO se modifican
 — detect_signals() los sigue usando intactos para calcular signal_types.
 
+Flush incremental: el progreso se guarda a disco cada --flush-every items (default 50).
+Si el proceso es interrumpido, los items ya traducidos no se pierden — el próximo run
+los detecta como completos (idempotente) y sólo procesa los pendientes.
+
 Prerequisitos obligatorios:
     pip install deep-translator langdetect
 
@@ -24,6 +28,7 @@ Uso:
     python scripts/retrofit/translate_descriptions.py
     python scripts/retrofit/translate_descriptions.py --force
     python scripts/retrofit/translate_descriptions.py --workers 4
+    python scripts/retrofit/translate_descriptions.py --flush-every 100
 """
 from __future__ import annotations
 
@@ -216,6 +221,28 @@ def translate_item(
 
 
 # ---------------------------------------------------------------------------
+# Escritura incremental — sin backup extra, solo tmp+rename
+# ---------------------------------------------------------------------------
+
+def _write_items_atomic(items: list[dict], dst: Path) -> None:
+    """Escribe todos los items a disco de forma atómica (tmp + rename).
+
+    No crea backups — eso lo hace el caller una sola vez al inicio.
+    Si el proceso muere durante el write, el tmp queda huérfano y dst
+    intacto (la operación no es parcial).
+    """
+    out_lines: list[str] = []
+    for item in items:
+        if "_raw" in item:
+            out_lines.append(item["_raw"])
+        else:
+            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
+    tmp = dst.with_suffix(".jsonl.translate-tmp")
+    tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    tmp.replace(dst)  # atómico en el mismo filesystem
+
+
+# ---------------------------------------------------------------------------
 # Inicialización de DeepL (opcional)
 # ---------------------------------------------------------------------------
 
@@ -250,7 +277,8 @@ def _init_deepl(deepl_key: str):
         print(
             "[WARN] DEEPL_API_KEY encontrada pero el paquete 'deepl' no está instalado.\n"
             "       Para instalarlo: pip install deepl\n"
-            "       Continuando solo con Google Translate."
+            "       Continuando solo con Google Translate.",
+            flush=True,
         )
         return None
 
@@ -260,10 +288,10 @@ def _init_deepl(deepl_key: str):
         usage = translator.get_usage()
         chars_used = usage.character.count if usage.character else "?"
         chars_limit = usage.character.limit if usage.character else "?"
-        print(f"[INFO] DeepL disponible — crédito usado: {chars_used:,} / {chars_limit:,} chars.")
+        print(f"[INFO] DeepL disponible — crédito usado: {chars_used:,} / {chars_limit:,} chars.", flush=True)
         return translator
     except Exception as exc:
-        print(f"[WARN] No se pudo conectar a DeepL ({exc}). Usando solo Google Translate.")
+        print(f"[WARN] No se pudo conectar a DeepL ({exc}). Usando solo Google Translate.", flush=True)
         return None
 
 
@@ -287,6 +315,9 @@ def main() -> int:
                         help="Threads paralelos para las llamadas a la API (default 4).")
     parser.add_argument("--sleep", type=float, default=0.15,
                         help="Pausa en segundos entre llamadas a la API (default 0.15).")
+    parser.add_argument("--flush-every", type=int, default=50,
+                        help="Guardar al disco cada N items procesados (default 50). "
+                             "Permite retomar sin perder progreso si el proceso se interrumpe.")
     args = parser.parse_args()
 
     # --- Verificar dependencias obligatorias ---
@@ -298,15 +329,15 @@ def main() -> int:
     deepl_translator = _init_deepl(deepl_key)
 
     if deepl_translator is None:
-        print("[INFO] Modo traducción: Google Translate (gratuito, sin límites).")
+        print("[INFO] Modo traducción: Google Translate (gratuito, sin límites).", flush=True)
     else:
-        print("[INFO] Modo traducción: DeepL (calidad superior) + Google Translate (fallback).")
+        print("[INFO] Modo traducción: DeepL (calidad superior) + Google Translate (fallback).", flush=True)
 
     # --- Cargar items ---
     src = Path(args.input)
     dst = Path(args.output)
     if not src.exists():
-        print(f"[ERROR] no existe {src}", file=sys.stderr)
+        print(f"[ERROR] no existe {src}", file=sys.stderr, flush=True)
         return 1
 
     raw_lines = src.read_text(encoding="utf-8").splitlines()
@@ -320,7 +351,7 @@ def main() -> int:
         except json.JSONDecodeError:
             items.append({"_raw": line})
 
-    print(f"[INFO] {len(items)} items cargados desde {src}.")
+    print(f"[INFO] {len(items)} items cargados desde {src}.", flush=True)
 
     # --- Filtrar pendientes ---
     pending_idxs = [
@@ -342,11 +373,12 @@ def main() -> int:
     )
     print(
         f"[INFO] Pendientes: {len(pending_idxs)} items "
-        f"({desc_pending} description + {extras_pending} extras[].description)."
+        f"({desc_pending} description + {extras_pending} extras[].description).",
+        flush=True,
     )
 
     if not pending_idxs:
-        print("[OK] Nada que traducir.")
+        print("[OK] Nada que traducir.", flush=True)
         return 0
 
     if args.dry_run:
@@ -361,10 +393,17 @@ def main() -> int:
         print("\n[DRY-RUN] No se escribió nada.")
         return 0
 
-    # --- Traducir ---
+    # --- Backup ÚNICO al inicio (antes de cualquier escritura) ---
+    if dst.exists():
+        backup = backup_and_rotate(dst, "translate")
+        print(f"[OK] Backup guardado en {backup}", flush=True)
+
+    # --- Traducir con flush incremental ---
     total_translated = 0
     total_failed = 0
     updated_items = list(items)
+    done = 0
+    last_flush_at = 0
 
     def process_idx(idx: int) -> tuple[int, dict, int, bool]:
         item = items[idx]
@@ -375,10 +414,15 @@ def main() -> int:
             return idx, new_item, count, True
         except Exception as exc:
             url = item.get("url", "?")[:70]
-            print(f"  [WARN] Error en '{url}': {exc}", file=sys.stderr)
+            print(f"  [WARN] Error en '{url}': {exc}", file=sys.stderr, flush=True)
             return idx, item, 0, False
 
-    done = 0
+    print(
+        f"[INFO] Procesando con {args.workers} workers, "
+        f"guardando cada {args.flush_every} items…",
+        flush=True,
+    )
+
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(process_idx, idx): idx for idx in pending_idxs}
         for fut in as_completed(futures):
@@ -388,27 +432,32 @@ def main() -> int:
             if not ok or count == 0:
                 total_failed += 1
             done += 1
-            if done % 100 == 0 or done == len(pending_idxs):
-                print(f"  [{done}/{len(pending_idxs)}] {total_translated} campos traducidos…")
+
+            # Flush incremental cada flush_every items completados
+            if done - last_flush_at >= args.flush_every:
+                _write_items_atomic(updated_items, dst)
+                last_flush_at = done
+                pct = done * 100 // len(pending_idxs)
+                print(
+                    f"  [{done}/{len(pending_idxs)}] ({pct}%) "
+                    f"{total_translated} campos traducidos — guardado ✓",
+                    flush=True,
+                )
+            elif done % 10 == 0:
+                print(
+                    f"  [{done}/{len(pending_idxs)}] {total_translated} campos…",
+                    flush=True,
+                )
+
+    # --- Flush final (recoge los últimos items desde el último flush parcial) ---
+    _write_items_atomic(updated_items, dst)
 
     print(
-        f"\n[INFO] Resultado: {total_translated} campos traducidos, "
-        f"{total_failed} items sin traducción (ya en ES o error de API)."
+        f"\n[INFO] Listo. {total_translated} campos traducidos, "
+        f"{total_failed} items sin traducción (ya en ES o error de API).",
+        flush=True,
     )
-
-    # --- Guardar ---
-    if dst.exists():
-        backup = backup_and_rotate(dst, "translate")
-        print(f"[OK] Backup guardado en {backup}")
-
-    out_lines: list[str] = []
-    for item in updated_items:
-        if "_raw" in item:
-            out_lines.append(item["_raw"])
-        else:
-            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
-    print(f"[OK] Escrito {dst} ({len(out_lines)} líneas).")
+    print(f"[OK] Escrito {dst} ({len(updated_items)} líneas).", flush=True)
     return 0
 
 

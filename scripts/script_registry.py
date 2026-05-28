@@ -1108,15 +1108,17 @@ SCRIPTS: list[dict[str, Any]] = [
             "alemán, francés, italiano, vietnamita, tailandés… Las descripciones "
             "vienen en el idioma de la fuente y son ilegibles para un lector en "
             "español. Este script popula el campo description_es con la "
-            "traducción al español usando DeepL (idiomas europeos + JP) y "
-            "Google Translate (VI, TH). El campo description original no se "
-            "toca — lo sigue usando el sistema de señales internamente."
+            "traducción al español usando Google Translate (gratuito, sin API key, "
+            "funciona con todos los idiomas) y opcionalmente DeepL (mejor calidad "
+            "si DEEPL_API_KEY está en .env). El campo description original no se "
+            "toca — lo sigue usando el sistema de señales internamente. "
+            "Guarda progreso cada --flush-every items para poder retomar si se interrumpe."
         ),
         "when": (
             "Después de cada scrape grande que trajo items nuevos con "
             "descripción en idioma extranjero. Idempotente: solo traduce "
             "items sin description_es (o todos si usás --force). "
-            "Necesita DEEPL_API_KEY en .env (gratis en deepl.com)."
+            "Funciona sin ninguna API key usando Google Translate."
         ),
         "command": [PYTHON, "scripts/retrofit/translate_descriptions.py"],
         "presets": [
@@ -1151,6 +1153,11 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Segundos de pausa entre llamadas a la API para evitar "
                   "rate-limit. Default 0.15.",
                   type="float", default=0.15, advanced=True),
+            _flag("--flush-every", "Guardar cada N items",
+                  "Guarda el progreso a disco cada N items procesados. "
+                  "Permite retomar sin perder trabajo si el proceso se interrumpe. "
+                  "Default 50.",
+                  type="int", default=50, advanced=True),
             _flag("--force", "Re-traducir existentes",
                   "Traduce aunque description_es ya esté poblado.",
                   type="bool", default=False, advanced=True),

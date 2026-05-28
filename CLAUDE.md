@@ -2708,7 +2708,18 @@ Antes el loop principal acumulaba todos los candidatos en memoria y escribía a 
 **2. `_run_timed()` — timeouts portables en wiki subprocesos para evitar hangs:**
 Los scripts `scrape_delta.sh` y `scrape_full.sh` llamaban wikis sin ningún timeout. Un wiki colgado (AnimeClick fetching detail pages por horas, listadomanga-collections recorriendo 3432 colecciones) bloqueaba TODO el pipeline indefinidamente. Nuevo helper `_run_timed <secs> <cmd>` en ambos scripts: intenta `timeout` (macOS nativo) → `gtimeout` (brew GNU coreutils) → sin timeout (mejor que romper). Todos los 11 wikis del delta y 12 del full ahora tienen límites explícitos (desde 300s para wikis livianos hasta 14400s/4h para AnimeClick full histórico). Ver gotcha #33. Gotchas count: 31 → **33**.
 
-Last updated: 2026-05-27 (WO-004 catálogo Next.js — página principal + todos los componentes del catálogo) — Implementación completa del catálogo en `web-next/`, reemplazando el showcase de design-system con la página real de ediciones.
+Last updated: 2026-05-27 (WO-005 edition detail Next.js — /edition/[editionKey] completo) — Implementación de la página de detalle de edición en `web-next/`.
+
+**Nuevos archivos creados:**
+- `web-next/app/edition/[editionKey]/page.tsx` — Server Component con `generateStaticParams()` (1 ruta por `edition_key` del corpus), `generateMetadata()` (title = edition_display || series_display + " — PandaWatch"), `notFound()` para claves inexistentes, union de signalTypes de todos los clusters de la edición.
+- `web-next/components/edition/EditionHeader.tsx` — header con thumbnail cover (64×96, fill mode en container posicionado), eyebrow con CountryFlag + publisher + country, h1 series_display, h2 edition_display, volume count + ScoreBadge, signal chips con union cross-cluster.
+- `web-next/components/edition/VolumeGrid.tsx` — grid responsivo 2→3→4→5 cols via `<style>` tag (igual patrón que CatalogGrid), `.item-card:hover` con translateY(-2px).
+- `web-next/components/modules/ItemCard.tsx` — card para item individual: cover fill con volume badge (top-left), ScoreBadge (top-right), título line-clamp-2, precio en vermillion-500, fecha formateada "DD MMM YYYY" via `Intl`, hasta 2 SignalChips + "+N" overflow. href = `/item/${slug}?from=${encodeURIComponent(from)}`.
+- `web-next/components/modules/BackLink.tsx` — Server Component con ChevronLeft (Lucide) + label, link a href pasado como prop.
+
+**Verificación** (puerto 3001, `/edition/vagabond-panini-deluxe`): 37 tomos Vagabond Deluxe ordenados Vol.1→37, header con flag IT + "PANINI COMICS" + "Deluxe (Panini)", 0 errores en consola, 0 errores TypeScript. 404 en `/edition/this-edition-does-not-exist`. Title = "Deluxe (Panini) — PandaWatch". BackLink → "/". ItemCard href = "/item/vagabond-panini-deluxe-1?from=edition%3Avagabond-panini-deluxe".
+
+Last updated previo: 2026-05-27 (WO-004 catálogo Next.js — página principal + todos los componentes del catálogo) — Implementación completa del catálogo en `web-next/`, reemplazando el showcase de design-system con la página real de ediciones.
 
 **Nuevos archivos creados:**
 - `web-next/app/page.tsx` — Server Component asíncrono con `export const dynamic = 'force-dynamic'` para renderizado dinámico; carga clusters, facets, filtra, ordena y pagina en el servidor; pasa children a `CatalogControls`.
