@@ -1,7 +1,7 @@
 # FRD-005: Item Detail Page
 
 **Version:** 1.0  
-**Status:** Draft  
+**Status:** Implemented (2026-05-28)  
 **Author:** Architecture session 2026-05-27  
 **Related:** [BP-002](blueprints/BP-002-url-routing.md), [BP-004](blueprints/BP-004-component-hierarchy.md), [WO-006](work-orders/WO-006-item-detail.md)
 

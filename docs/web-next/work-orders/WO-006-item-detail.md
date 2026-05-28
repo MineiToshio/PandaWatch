@@ -2,7 +2,7 @@
 
 **Phase:** 3  
 **Effort:** L  
-**Status:** Pending  
+**Status:** Done  
 **Related:** [FRD-005](../FRD-005-item-detail.md), [BP-002](../blueprints/BP-002-url-routing.md), [BP-004](../blueprints/BP-004-component-hierarchy.md)  
 **Prerequisites:** WO-004 (catalog), WO-005 (edition — ItemCard and BackLink done)
 
@@ -474,17 +474,43 @@ export function SourcesList({ items }: { items: Item[] }) {
 
 ## Acceptance Criteria
 
-- [ ] `/item/berserk-darkhorse-deluxe-42` loads with correct title, images, metadata
-- [ ] Image carousel shows all images in `images[]` array
-- [ ] Arrows and dots work; keyboard Left/Right works
-- [ ] Kind badge shows "Portada" / "Galería" / "Extra" on each image
-- [ ] Image fallback chain works: local → remote → placeholder
-- [ ] `title_original` shown in italic when different from `title`
-- [ ] Signal type chips with icons and correct labels
-- [ ] `ExtrasSection` renders when `extras[]` is non-empty
-- [ ] `SourcesList` renders when cluster has > 1 source
-- [ ] `← {editionDisplay}` appears when navigating from edition page
-- [ ] `← Catálogo` appears when navigating from catalog
-- [ ] Non-existent slug returns 404
-- [ ] `generateStaticParams()` covers all slugs in corpus
-- [ ] No TypeScript errors
+- [x] `/item/kobato-norma-regular-6` loads with correct title, images, metadata
+- [x] Image carousel shows all images in `images[]` array
+- [x] Arrows and dots work; keyboard Left/Right works
+- [x] Kind badge shows "Portada" / "Galería" / "Extra" on each image
+- [x] Image fallback chain works: local → remote → placeholder
+- [x] `title_original` shown in italic when different from `title`
+- [x] Signal type chips with icons and correct labels
+- [x] `ExtrasSection` renders when `extras[]` is non-empty (verified: Kobato 6 shows "Cofre para tomos 1 a 6")
+- [x] `SourcesList` renders when cluster has > 1 source (verified: isbn-9784301004899 shows FUENTES (2))
+- [x] `{editionDisplay}` back label appears when navigating from edition page
+- [x] `Catálogo` back label appears when navigating from catalog
+- [x] Non-existent slug returns 404
+- [x] `generateStaticParams()` covers all slugs in corpus
+- [x] No TypeScript errors (`npm run type-check` exits clean)
+
+---
+
+## Implementation Notes
+
+### Delta from spec
+
+1. **No Tailwind classes** — The spec used Tailwind utility classes (`className="max-w-5xl mx-auto..."`, `className="flex flex-col md:flex-row..."`). The project uses inline styles and `<style>` tags with `@media` queries (consistent with EditionHeader, VolumeGrid, CatalogGrid). All layout CSS was converted to inline styles and scoped `<style>` blocks.
+
+2. **CSS variable corrections** — The spec referenced `var(--text-tertiary)`, `var(--text-secondary)`, `var(--surface-2)`, `var(--border)`, and `var(--accent)` which don't exist in the design system. Replaced with the correct tokens: `var(--color-text-tertiary)`, `var(--color-text-secondary)`, `var(--ink-100)`, `var(--color-border)`, and `var(--bamboo-500)` / `var(--vermillion-500)`.
+
+3. **No `←` prefix on BackLink label** — The spec wrote `← ${editionDisplay}` and `← Catálogo`. BackLink already renders a `<ChevronLeft>` Lucide icon, so the arrow prefix was dropped.
+
+4. **No emojis** — The spec used `🎁` in ExtrasSection. Replaced with the `<Gift>` Lucide icon (size 14, bamboo-500 color) per the "no emojis in UI" project rule.
+
+5. **`lib/format.ts` created** — `formatDate` and `formatISBN` are shared across page.tsx, ItemHero, MetaTable, SourcesList, and ExtrasSection. Extracted to a dedicated utility module rather than duplicating or inlining.
+
+6. **`lib/types.ts` extended** — Added `detected_at?: string` and `stock_type?: string` to `Item`. These are standard scraped fields referenced by MetaTable and SourcesList but were missing from the type definition.
+
+7. **ImageCarousel fallback handling** — For local images, uses `next/image` `<Image>` with `fill` + `object-contain`. For remote images (fallback), uses a plain `<img>` tag to avoid needing `remotePatterns` config for ~76 scrape domains (same pattern as `CoverImage`). The `handleError` callback tries the remote URL first, then falls back to the `<BookOpen>` placeholder.
+
+8. **MetaTable Row type** — The spec showed `value: string | number | boolean | null | undefined`. Removing `boolean` was necessary to avoid a TypeScript false-overlap error in the filter condition; the Estandarizado row always renders (value = formatted date or `"Pendiente"`) so it never hits the filter anyway.
+
+9. **`generateMetadata` description** — The spec had a standalone `buildItemDescription` helper that imported `Item`. Inlined the logic directly into `generateMetadata` to avoid a type import that wasn't used elsewhere in the file.
+
+10. **Responsive layout via `<style>` tag** — ItemHero uses the same `<style>` + `.item-hero` class pattern as VolumeGrid/CatalogGrid: single column on mobile, `280px 1fr` two-column grid at `≥640px`.

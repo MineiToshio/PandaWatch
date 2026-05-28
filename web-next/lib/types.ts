@@ -29,6 +29,8 @@ export type Item = {
   edition_key?: string
   edition_display?: string
   standardized_at?: string
+  detected_at?: string
+  stock_type?: string
 }
 
 export type ItemImage = {
