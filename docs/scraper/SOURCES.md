@@ -28,8 +28,9 @@ The five live `kind`s, in rough order of how often you'll add one:
   no API key. One request returns up to ~30 recent posts.
 - **`js`** — pages that need a real browser. Requires `--enable-js`
   at runtime + `pip install playwright && playwright install chromium`.
-  Under `--workers > 1` these sources serialize through `_js_lock`
-  (Playwright sync isn't thread-safe).
+  Under `--workers > 1` these sources dispatch to a dedicated
+  `playwright-worker` thread via `_PLAYWRIGHT_QUEUE` (Playwright's
+  greenlets are not thread-safe — see gotcha #12 in CLAUDE.md).
 - **`wiki`** — NOT a runtime kind. Documents that the source is
   handled by a dedicated parser in `scripts/wikis/` and activated via
   `--bootstrap-wiki <name>`. Add the entry anyway so the source shows
@@ -145,10 +146,13 @@ non-product posts get dropped automatically. But `source_class:
 relatively low `--min-score` if you want social signals to surface
 (default 20-30 is fine).
 
-**Currently 15 Bluesky sources active.** Adding more: confirm the
-handle is live (don't add stale accounts that haven't posted in 12+
-months — verified empirically), set `enabled: true`, run
-`python scripts/manga_watch.py --only-source "SOCIAL - X Bluesky"`
+**15 Bluesky sources defined; all currently disabled** (0 items in corpus
+— publisher posts are announcement/news, not product listings with
+collectible signals; the 2026-05-25 audit disabled all 15). Re-enable
+individually if a publisher starts posting edition-detail content.
+Adding more: confirm the handle is live (don't add stale accounts that
+haven't posted in 12+ months — verified empirically), set `enabled: true`,
+run `python scripts/manga_watch.py --only-source "SOCIAL - X Bluesky"`
 to smoke-test.
 
 ## Recipe: add a search-template entry

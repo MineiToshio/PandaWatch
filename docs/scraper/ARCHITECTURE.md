@@ -8,8 +8,8 @@ Read `CLAUDE.md` first for the high-level orientation.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                       sources.yml                            │
-│  120 entries × {country, language, kind, selectors,          │
-│  search_template?, keywords?, tags, purity}                  │
+│  138 entries (76 enabled) × {country, language, kind,         │
+│  selectors, search_template?, keywords?, tags, purity}       │
 │  kinds: html | rss | js | bluesky                            │
 └──────────────────────────┬───────────────────────────────────┘
                            │
@@ -28,8 +28,8 @@ Read `CLAUDE.md` first for the high-level orientation.
 │  • extract_bluesky│ │   manga_sanctuary│ │   in data/search_   │
 │  • sitemap miner  │ │   otaku_calendar │ │   queries.yml)      │
 │  (kind:js → Play- │ │   manga_mexico   │ │                     │
-│  wright behind a  │ │   whakoom (opt-  │ │                     │
-│  global js_lock)  │ │     in spider)   │ │                     │
+│  wright via dedic.│ │   whakoom (opt-  │ │                     │
+│  worker+queue)    │ │     in spider)   │ │                     │
 └─────────┬─────────┘ └─────────┬────────┘ └─────────┬───────────┘
           │                     │                    │
           └──────────────┬──────┴────────────────────┘
@@ -114,11 +114,15 @@ Operación / panel admin (separado, no deployable):
                          └────────────────────────────┘
                          (scripts/run_local.sh lanza ambos en paralelo)
 
-Orchestration: scripts/overnight_run.sh chains
-  scrape (parallel) → wiki bootstraps → search discovery →
-  cleanup retrofits (rescore, filter_non_manga, filter_collectible,
-  clean_titles, backfill_metadata, [wayback_recover opt-in]) →
-  build_web. Per-phase logs land in logs/overnight-<ts>/.
+Orchestration (canonical pipelines):
+  scripts/scrape_delta.sh  — incremental (diaria/semanal, ~30-60 min).
+    listadomanga via calendario.php (últimos 3 meses) + resto de wikis
+    → cleanup retrofits → build_web.
+  scripts/scrape_full.sh   — refresh completo (mensual/trimestral, ~2-4 h).
+    listadomanga via lista.php (~3432 colecciones) + mangavariant sitemap
+    → cleanup retrofits → build_web.
+  scripts/overnight_run.sh — DEPRECATED, alias de scrape_delta.sh.
+  Per-phase logs land in logs/overnight-<ts>/ (o scrape-<ts>/).
 
 Observability: scripts/audit/source_health.py parses N recent run
   logs and classifies sources (broken_http / broken_skip /
@@ -134,9 +138,13 @@ default) or concurrently in a `ThreadPoolExecutor` (`--workers N`).
 A per-host `threading.Semaphore` (default size 2 via
 `--per-host-limit`) wraps the HTTP calls so the same domain never
 receives more than N concurrent requests. `kind: js` sources are
-serialized through a global `_js_lock` because `playwright.sync_api`
-is not thread-safe — they coexist in the same pool, just one at a
-time.
+dispatched via a dedicated **Playwright worker thread + queue**
+(`_PLAYWRIGHT_WORKER` / `_PLAYWRIGHT_QUEUE`) because
+`playwright.sync_api` greenlets are bound to the thread that called
+`sync_playwright().start()` and cannot switch threads safely. Workers
+call `fetch_with_playwright(url, ...)` which puts a job on the queue
+and blocks until the worker thread returns the result. See CLAUDE.md
+gotcha #12 for the full story.
 
 Per-source pipeline:
 
@@ -151,7 +159,7 @@ Per-source pipeline:
      (`bluesky_api_url`), and parses posts via
      `extract_bluesky_posts`. No auth required.
    - `kind: js` → Playwright (requires `--enable-js` flag at CLI;
-     serialized through `_js_lock` under parallel runs).
+     dispatched via `_PLAYWRIGHT_QUEUE` to the dedicated worker thread).
    - `kind: wiki` → not in this loop; activated via `--bootstrap-wiki`.
 
 2. **Parse candidates.**
@@ -218,7 +226,21 @@ Per-source pipeline:
          `--include-seen`).
      - Update state[url] with new snapshot.
 
-7. **Image mirror** (Image storage Fase 1, on by default,
+7. **Incremental flush** (resilience, added 2026-05-26):
+   - `flush_source_candidates(candidates, state, items_path, min_score)`
+     is called immediately after EACH source finishes (both in serial
+     mode and inside `as_completed()` in the parallel pool). It applies
+     the same `is_collectible_edition` gate as `process_state()` and
+     writes passing candidates to `items.jsonl` via `append_jsonl`.
+   - Does NOT update `state` — that still happens in step 6 at the end
+     of the full run. If the process is killed mid-run, every source
+     completed so far is already persisted; the next run re-processes
+     only the remaining sources.
+   - The final `append_jsonl` call in step 8 is idempotent — it upserts
+     the enriched fields (from detail-fetch) over what the flush wrote.
+   - See gotcha #32 in CLAUDE.md for details and tests.
+
+8. **Image mirror** (Image storage Fase 1, on by default,
    `--skip-image-download` to opt out):
    - `mirror_candidate_images(reportable, data_dir, session, ...)`
      downloads the cover of each `new`/`changed` candidate to
@@ -384,9 +406,11 @@ even when their title and description had nothing about a boxset.
   `derive_cluster_key(row)` inside `candidate_to_json`. Used by
   `build_web.py` and `web/index.html` to consolidate multi-source
   cards. See "Cluster key" section above.
-- Backup files: `*.pre-compact-bak`, `*.pre-filter-bak`,
-  `*.pre-backfill-bak`, `*.pre-cluster-bak`, `*.pre-wayback-bak`. All
-  gitignored.
+- Backup files: created by `backup_and_rotate(path, label, max_keep=3)`
+  in `manga_watch.py`. Stored under `data/backups/<filename>/` (e.g.
+  `data/backups/items.jsonl/`). Rotates automatically to keep the last 3
+  backups per family; the oldest is deleted when the limit is exceeded.
+  All gitignored via `data/backups/` in `.gitignore`.
 
 Row schema (the fields written by `candidate_to_json`):
 
@@ -408,7 +432,10 @@ Row schema (the fields written by `candidate_to_json`):
   "language":      "language in Spanish",
   "tags":          ["from sources.yml + search:KEYWORD if expanded"],
   "published_at":  "ISO timestamp from RSS or empty",
-  "description":   "extracted description",
+  "description":   "extracted description (original, never modified — detect_signals reads this)",
+  "description_es":"Spanish translation of description (set by translate_descriptions.py retrofit)",
+                   // empty string when description is already ES or translation failed.
+                   // Frontend shows description_es when non-empty, falls back to description.
   "content_hash":  "sha256 for state-diff",
   "price":         "e.g. '19,99 €' or empty",
   "image_url":     "absolute remote URL or empty (provenance + fallback)",
@@ -418,7 +445,9 @@ Row schema (the fields written by `candidate_to_json`):
   "author":        "extracted author or empty",
   "stock_type":    "regular | limited | exclusive | preorder | ...",
   "isbn":          "ISBN-13 if extracted",
-  "cluster_key":   "isbn:X | fuzzy:lang|series|vol|variants|publisher | url:X",
+  "cluster_key":   "isbn:<X> | edition:<edition_key>|<volume> | fuzzy:lang|series|vol|tier|publisher | url:<X>",
+                   // Four tiers (priority order): isbn beats edition beats fuzzy beats url.
+                   // edition: tier added 2026-05-24 for box sets with same edition_key but no ISBN.
 
   // --- Series/edition schema (added 2026-05-22, see CLAUDE.md gotcha #21) ---
   "series_key":    "canonical work id (e.g. 'demon-slayer', 'one-piece')",
@@ -427,6 +456,36 @@ Row schema (the fields written by `candidate_to_json`):
   "edition_display":"display name e.g. 'Deluxe Edition (Dark Horse)'",
   "volume":        "string '1' | '100' | '1-3' for sets | '' for one-shots",
   "standardized_at":"ISO-8601 UTC, set ONLY by /standardize-catalog skill",
+
+  // --- URL slug for Next.js app (added 2026-05-27, see docs/web-next/FRD-006-slug-generation.md) ---
+  "slug":          "URL-safe unique key for /item/[slug] route in web-next.
+                    Generated by scripts/retrofit/generate_slugs.py.
+                    Priority: isbn cluster_key → edition_key+volume →
+                    edition_key only → isbn field → item-{sha1(url)[:12]}.
+                    Collision-safe (oldest keeps clean slug, newer gets -b/-c).
+                    Set ONLY by generate_slugs.py (not by scraper or skill).",
+
+  // --- Multi-image carousel (added 2026-05-26, Image storage Fase 1+2) ---
+  "images": [
+    {
+      "url":         "absolute remote URL",
+      "local":       "filename in data/images/ or empty",
+      "kind":        "cover | gallery | extra | variant_cover | back_cover",
+      "description": "short label e.g. 'Tomo 3' or '' for cover"
+    }
+  ],
+
+  // --- Extras/bonuses linked to the item (added 2026-05-23, LMC Fase 2) ---
+  "extras": [
+    {
+      "description":    "original text, language of the source",
+      "description_es": "Spanish translation (set by translate_descriptions.py)",
+                        // empty string when already ES or translation failed.
+      "release_date":   "ISO date or empty",
+      "source_section": "h2 section label from the wiki source"
+    }
+  ],
+
 }
 ```
 
@@ -475,6 +534,113 @@ to the cleaned scraped title; pass 2 backs up `title` to `title_original`
   files are handled by the retrofit `scripts/retrofit/mirror_images.py`
   (backfill downloads covers for pre-Fase-1 items; GC quarantines or
   deletes files no item references). See CLAUDE.md "Image storage".
+
+### Translation layer — `description_es` / `extras[].description_es`
+
+**Status: IMPLEMENTED** — `scripts/retrofit/translate_descriptions.py`
+
+#### Problem
+
+The corpus spans 13 countries and 8 languages. Descriptions scraped from
+source pages arrive in the native language of the source: Japanese for
+Sumikko/BooksPrivilege/Rakuten, German for Manga-Passion, French for
+Manga-Sanctuary/Glénat/Ki-oon, Italian for AnimeClick/SocialAnime,
+Vietnamese for Vietnamese sources, Thai for Thai sources, English for
+US/UK sources. Only the owner (ES speaker) reads the dashboard; most of
+these descriptions are unreadable without translation.
+
+#### Fields added to items.jsonl
+
+| Field | Scope | Description |
+|---|---|---|
+| `description_es` | top-level | Spanish translation of `description`. Empty string when `description` is already ES, when translation failed, or when `description` is empty. |
+| `extras[].description_es` | per-extra | Spanish translation of `extras[].description`. Same empty-string semantics. |
+
+`description` (original) is **never modified** — `detect_signals` runs on
+it and modifying it would invalidate stored `signal_types`. Same rule for
+`extras[].description`.
+
+#### Naming convention — `description_{lang_code}`
+
+The suffix uses **ISO 639-1** language codes. Today only `_es` is
+generated. Adding `_en`, `_fr`, etc. in the future follows the same
+pattern without schema changes — just new fields. This makes the design
+multi-language-ready at zero extra cost.
+
+#### Translation services
+
+| Priority | Languages | Service | Rationale |
+|---|---|---|---|
+| PRIMARY | All languages | **Google Translate** via `deep-translator` | Free unofficial endpoint, no API key required, no usage limits. Works for every language in the corpus including VI and TH. |
+| UPGRADE (optional) | DE, FR, IT, JP, EN, PT, ZH, KO and more | **DeepL Free API** | If `DEEPL_API_KEY` is present in `.env`, DeepL is tried first for supported languages (better quality). Falls back to Google if DeepL fails or has no credits. |
+
+**Important**: DeepL's free plan provides a **one-time credit of 1M characters**
+(not a monthly renewal). Once exhausted, the script continues working via
+Google Translate without any code change or configuration update.
+
+Language routing:
+```python
+def translate_to_es(text, deepl_translator):
+    lang = langdetect.detect(text)          # detect source language
+    if lang == 'es':
+        return ""                            # already Spanish, skip
+
+    # Upgrade path: DeepL (if available and lang supported)
+    if deepl_translator is not None and lang in _DEEPL_SOURCE_LANGS:
+        result = deepl_client.translate_text(text, target_lang="ES").text
+        if result:
+            return result
+        # DeepL failed → fall through to Google
+
+    # Guaranteed path: Google Translate (always works, no key)
+    return GoogleTranslator(source='auto', target='es').translate(text)
+```
+
+#### Dependencies
+
+```
+# Required:
+deep-translator   # pip install deep-translator  (Google Translate wrapper)
+langdetect        # pip install langdetect        (language detection)
+
+# Optional (quality upgrade):
+deepl             # pip install deepl             (official DeepL SDK)
+                  # + DEEPL_API_KEY in .env
+```
+
+`deep-translator` and `langdetect` are the only required packages.
+`deepl` is strictly optional — the script runs without it.
+
+#### Retrofit script: `translate_descriptions.py`
+
+Lives at `scripts/retrofit/translate_descriptions.py`. Behavior:
+- Iterates all items in `items.jsonl`.
+- For each item, translates `description` → `description_es` if
+  `description_es` is missing or empty AND `description` is non-empty.
+- For each `extras[]` entry, translates `description` → `description_es`
+  under the same condition.
+- Skips items where `description` is already Spanish (detected via
+  `langdetect` — threshold `lang == 'es'`).
+- Writes back in-place (upsert by URL, only the translated fields change).
+- Flags: `--dry-run`, `--limit N`, `--workers N` (parallel calls, default 4),
+  `--force` (re-translate even if `description_es` already set),
+  `--sleep` (pause between API calls, default 0.15s).
+- New items from the scraper will NOT have `description_es` — re-run the
+  retrofit periodically (or after large scrapes).
+
+#### `append_jsonl` stickiness
+
+`description_es` is in `_CURATED_FIELDS` in `append_jsonl` — a re-scrape
+of a standardized item will not wipe translations written by the retrofit.
+For non-standardized items, `description_es` also has sticky behavior:
+if the incoming row has no `description_es` but the existing row does,
+the existing value is preserved.
+
+#### Frontend behavior
+
+`web/index.html` modal: display `description_es` when non-empty, else
+fall back to `description`. No UI changes needed beyond the field
+selection — the template already handles the conditional.
 
 ### unmapped_series.jsonl
 
@@ -555,19 +721,34 @@ demon-slayer:
   `seen`). The web does not read state.json.
 - Size: ~7 MB for 3000 items (cache, can be regenerated by re-scraping).
 
-### feedback.jsonl
+### user_rejected.jsonl
 
-- Format: JSON Lines, one event per line:
-  `{"title": "...", "url": "...", "reason": "...", "submitted_at": "<ISO>"}`.
-- Semantics: **append-only**, unlike `items.jsonl`. Each 👎 submission
-  is a separate line even if the same URL is flagged twice.
-- Writer: `do_POST` in `scripts/serve.py` (the dashboard's 👎 button).
-- Reader: a human or an AI assistant that re-evaluates the filter
-  rules — no code in the scraper pipeline reads this file. It's a
-  one-way feedback channel from the UI back to the maintainer.
-- No ISBN field by design (many JP items don't carry one; URL is the
-  practical identifier).
-- Gitignored along with the rest of `data/`.
+Items that the owner explicitly rejected via the 👎 button in the
+dashboard modal. When 👎 is clicked:
+
+1. JS posts `{title, url, reason}` to `POST /api/feedback` in `scripts/serve.py`.
+2. `_remove_from_catalog(url, reason)` finds the item's `cluster_key`,
+   removes **all rows with that cluster_key** from `items.jsonl` (atomic
+   tmp + rename), and appends each removed row — enriched with
+   `rejection_reason` + `rejected_at` — to `data/user_rejected.jsonl`.
+3. Returns `{"ok": true, "removed": N}`.
+4. JS filters the item(s) out of `this.items` in memory (cards disappear
+   without reload).
+
+Schema: all fields of the original `items.jsonl` row, plus:
+```jsonc
+{
+  "rejection_reason": "free-text from the user",
+  "rejected_at":      "ISO-8601 UTC"
+}
+```
+
+- **Append-only** — one line per removed row. If a cluster had N sources,
+  N lines are appended.
+- **Reader**: the `/review-rejected` skill — reads the queue, categorizes
+  root causes (A–J taxonomy), proposes filter changes, applies approved
+  changes, and truncates the queue.
+- Gitignored.
 
 ### Why JSONL and not SQLite (yet)
 
@@ -632,7 +813,7 @@ contra "olvidé deshabilitar algo".
 `scripts/run_local.sh` lanza ambos en paralelo para uso diario.
 
 Detalle completo del panel admin (API, job manager, registry, modelo
-de seguridad, troubleshooting): **[`docs/CONTROL-PANEL.md`](CONTROL-PANEL.md)**.
+de seguridad, troubleshooting): **[`docs/admin/README.md`](../admin/README.md)**.
 
 ### Server público (`scripts/serve.py`)
 
@@ -644,9 +825,12 @@ Also exposes **`POST /api/feedback`** (the only mutating endpoint):
 
 - Body: JSON `{title, url, reason}`. All three required, non-empty.
 - Validates length (≤100 kB) and JSON shape; returns `400` otherwise.
-- Appends one line to `data/feedback.jsonl` with the payload plus a
-  `submitted_at` ISO-8601 UTC timestamp.
-- Response: `200 {"ok": true}`.
+- Calls `_remove_from_catalog(url, reason)`:
+  - Removes ALL rows with the same `cluster_key` from `items.jsonl`
+    (atomic tmp+rename rewrite).
+  - Appends each removed row + `{rejection_reason, rejected_at}` to
+    `data/user_rejected.jsonl`.
+- Response: `200 {"ok": true, "removed": N}`.
 
 No auth, no rate limit — single-user local. El endpoint es
 intencionalmente angosto (un path, un método, schema fijo) así no se
@@ -716,9 +900,16 @@ propiedades reactivas: `feedbackOpen`, `feedbackReason`, `feedbackSending`,
 `feedbackSent`, `feedbackError`. `_resetFeedback()` se llama al abrir/
 cerrar el modal para no arrastrar estado entre items.
 
-El handler en el servidor (ver "Server" arriba) hace append a
-`data/feedback.jsonl`. Ver también CLAUDE.md → "Feedback de mala
-elección" para el propósito (input para revisión con IA de los filtros).
+El handler en el servidor (ver "Server" arriba) llama a
+`_remove_from_catalog(url, reason)` que: (1) elimina de `items.jsonl`
+TODAS las filas con el mismo `cluster_key` que el item clickeado (upsert
+atómico via tmp+rename), (2) appendea cada fila eliminada a
+`data/user_rejected.jsonl` con `rejection_reason` + `rejected_at`. El JS
+filtra `this.items` en memoria inmediatamente tras el `POST` exitoso —
+la card desaparece sin reload. Navega con `goBack()` a la edición (si
+quedan hermanos con el mismo `edition_key`) o al catálogo si no quedan.
+Ver también CLAUDE.md → "Feedback de mala elección" para el propósito
+(input para el skill `/review-rejected`).
 
 ## Wiki parsers
 
@@ -726,7 +917,7 @@ Wikis are sources that need custom parsing logic, not just generic
 `extract_listing_candidates`. They live in `scripts/wikis/` and are
 invoked via `--bootstrap-wiki <name>`.
 
-All seven have the same public API:
+All 17 parsers share the same public API:
 
 ```python
 def parse_calendar_page(html_text, source_url) -> list[Candidate]:
@@ -850,6 +1041,72 @@ right module based on the CLI arg.
   runs <6h apart. Activated only via `--bootstrap-wiki whakoom` (NOT
   in regular scrapes — the lightweight diff is the
   `ES/LatAm - Whakoom Novedades` source in sources.yml).
+- **booksprivilege.py** (JP — 店舗特典まとめました, extras de tienda JP).
+  Discovery: calendar mensual `?cal_ym=YYYY-M` → `td.has-book` marks
+  days with releases → daily listing `?date=YYYY-MM-DD` → detail
+  `?id=NNNN`. ISBN-10 inferred from Amazon CDN path
+  `/P/<isbn>.09_*.jpg`; Kindle ASIN `B0…` discarded. Imprints JP
+  mapped to canonical publishers (~30 entries). Description structured
+  with per-shop bonuses. Body decoded `utf-8 errors='replace'` because
+  ad banner alt-text contains raw cp932 bytes (gotcha #28).
+- **sumikko.py** (JP — comic.sumikko.info コミック新刊チェック, ~3178
+  限定版/特装版 curated). Listing at `/limited-item/?p=N` (90 items/page,
+  ~32 pages). Each `<a href="/item-select/<isbn>">` block contains full
+  metadata — NO detail fetch needed. ISBN-10 from URL path. Items
+  BL/R18 use `<img class="touch18">` — parser searches any `<img>`
+  (not filtered by class). Type-tag describes the EXTRA type, not the
+  product type — all items accepted by default (gotcha #30).
+- **mangapassion.py** (DE — manga-passion.de via public REST API).
+  Two queries against `api.manga-passion.de`: `type[]=3` (Sonderausgaben)
+  + `type[]=0&tags.tag.id=200` (Variant-Covers). `specialType=1` →
+  Sammelschuber (Schuber/estuche); hint "Box Set" injected so
+  `detect_signals` fires `box_set`. Price in cents (1900 → "19.00 €").
+  Delta mode uses `date[after]` filter; full mode downloads complete
+  historical catalog.
+- **animeclick.py** (IT — calendario semanal edizioni speciali).
+  AJAX navigation via `?paging=prev-week&day=DD&month=MM&year=YYYY`
+  with `X-Requested-With: XMLHttpRequest` header. Keyword filter
+  `_COLLECTOR_RE` on calendar cards before fetching detail pages
+  (~20% hit rate). Detail pages use schema.org Book markup
+  (`itemprop name/image/description/datePublished`) + `Editore:`/
+  `Prezzo:` labels in `<strong>`. No ISBN available. Hints injected
+  for IT terms (`Cofanetto` → `box_set`, `Integrale` → omnibus).
+  Covers Star Comics, Panini Comics, J-POP, MangaYo!, Crunchyroll IT.
+- **prhcomics.py** (US/CA — prhcomics.com/manga/, PRH catalog).
+  Single static page, no pagination or JS. Items in
+  `<li class="toast-anchor">`. ISBN-13 in HTML → cover URL deterministic
+  `images.penguinrandomhouse.com/cover/{isbn13}`. Filter: format
+  (`hardcover`, `boxed set`, `slipcase`) or title keywords. Denylist of
+  non-manga publishers (DK, Golden Books, Prestel, Pantheon). Covers
+  Dark Horse Manga, Kodansha Comics, Seven Seas, Square Enix, TOKYOPOP,
+  Titan, Vertical, Inklore. NOT VIZ or Yen Press.
+- **kinokuniya.py** (US — usa.kinokuniya.com/kinokuniya-exclusives).
+  Squarespace site with dynamic class names; extraction by URL pattern
+  `_ISBN_URL_RE = r"/bw/(\d{13})(?:[/?#]|$)"` (stable). Title in
+  `<img alt>` (not `anchor.get_text()` — Squarespace renders image-link
+  blocks without text nodes). Validates ISBN-13 starts with `978`/`979`
+  to filter gift-card UPCs. Cover URL deterministic via PRH CDN.
+  Injects "Kinokuniya Exclusive" in description → signal
+  `retailer_exclusive`.
+- **yenpress_calendar.py** (US — yenpress.com/calendar, monthly
+  releases). Card selector `a[href~=_ISBN_PATH_RE]` (not CSS class —
+  Squarespace-like dynamic classes). Category from `span.white-label`
+  classes; discards light novels (`light-novels` class). Pre-filter by
+  premium keywords (collector's, deluxe, box set, hardcover, etc.).
+  ISBN-13 from path `/titles/(\d{13})-`. Cover URL deterministic
+  `images.yenpress.com/imgs/{isbn13}.jpg`. Iterates monthly
+  (`iter_year_months`). Delta: last 3 months; full: from 2013-01.
+- **listadomanga_collections.py** (ES — coleccion.php?id=N, per-
+  collection parser). Iterates collection IDs; discovery via
+  `lista.php` index (~3432 active collections). Layout A: sections
+  by `<h2>` (Ediciones Especiales, Portadas alternativas, Packs,
+  premium format detection from `<b>Formato:</b>`). Layout B: extra
+  items (Cofres/Regalos/Extras) linked back to their tomo. Synthetic
+  URL per item via query param `?item=<edition_slug>-<vol>`
+  (gotcha #27). En-cofre format emits single box-level item instead
+  of individual tomos (gotcha #29). `images[]` populated with all
+  cover + extra images. Used exclusively in `scrape_full.sh`
+  (too slow for delta).
 
 ## Concurrency model
 
@@ -867,11 +1124,13 @@ processes sources concurrently using `concurrent.futures.ThreadPoolExecutor`.
                      └────┬───┴────┬───┴────────┘
                           │        │
                           ▼        ▼
-                ┌───────────────┐  ┌──────────────┐
-                │ per-host      │  │ _js_lock     │
-                │ Semaphore     │  │ (Playwright  │
-                │ (size = N)    │  │  serialized) │
-                └───────────────┘  └──────────────┘
+                ┌───────────────┐  ┌────────────────────────┐
+                │ per-host      │  │ _PLAYWRIGHT_QUEUE      │
+                │ Semaphore     │  │ (jobs dispatched to    │
+                │ (size = N)    │  │  playwright-worker     │
+                └───────────────┘  │  thread — never cross  │
+                                   │  greenlet boundaries)  │
+                                   └────────────────────────┘
 ```
 
 - **`--workers N`** (default 1, recommended 8 for overnight). When 1,
@@ -885,11 +1144,20 @@ processes sources concurrently using `concurrent.futures.ThreadPoolExecutor`.
   hammered by search-template expansions of the same source family
   (e.g. several Panini search-keyword children all targeting
   `panini.es`).
-- **`_js_lock`** — a single `threading.Lock`. All `kind: js` sources
-  acquire it before calling `fetch_with_playwright`, so even with 8
-  workers there's never more than one Playwright fetch in flight.
-  Required because `playwright.sync_api` keeps a per-thread event loop
-  that's incompatible with concurrent access.
+- **`_PLAYWRIGHT_WORKER` + `_PLAYWRIGHT_QUEUE`** — dedicated worker
+  thread that owns the entire Playwright lifecycle (browser launch,
+  context, navigate, content, close). HTTP workers call
+  `fetch_with_playwright(url, ...)` which puts a job on
+  `_PLAYWRIGHT_QUEUE` and blocks on a per-job `queue.Queue` for the
+  result. The worker thread lazy-launches Chromium on its first job.
+  `close_playwright()` sends a sentinel for clean shutdown and is
+  idempotent (safe to call multiple times). Required because
+  `playwright.sync_api` binds greenlets to the thread that called
+  `sync_playwright().start()` — any other thread hitting the browser
+  raises `greenlet.error: Cannot switch to a different thread`
+  (gotcha #12). The old `_js_lock` approach serialized access but
+  did NOT move execution to the owner thread, so it failed the same
+  way under concurrent workers.
 - **`print_lock`** wraps every `print()` so log lines from concurrent
   workers don't interleave. Output is still per-source-completion
   rather than strictly ordered.
@@ -921,13 +1189,22 @@ Added 2026-05-21 (Sprint 3.8). `derive_cluster_key(item) -> str` lives
 in `manga_watch.py` and is called by `candidate_to_json` so every row
 in `items.jsonl` carries a precomputed `cluster_key`.
 
-Three cluster-key shapes:
+Four cluster-key shapes, in priority order:
 
 | Shape | When | Example |
 |---|---|---|
 | `isbn:<X>` | Item has an ISBN | `isbn:9784099432416` |
-| `fuzzy:<lang>\|<series>\|<vol>\|<variants>\|<publisher>` | No ISBN but lang + series (≥3 chars) + volume all derivable | `fuzzy:japonés\|転生したらスライムだった件\|15\|limited\|講談社` |
+| `edition:<edition_key>\|<volume>` | No ISBN but both `edition_key` and `volume` set (or no volume needed for box sets) | `edition:gon-norma-collector\|` |
+| `fuzzy:<lang>\|<series>\|<vol>\|<tier>\|<publisher>` | No ISBN/edition_key but lang + series (≥3 chars) + volume all derivable | `fuzzy:japonés\|転生したらスライムだった件\|15\|limited\|講談社` |
 | `url:<url>` | Insufficient info to fuzzy-merge safely | `url:https://example.com/x` |
+
+The `edition:` tier (added 2026-05-24) solves box sets and other items
+without volume that the fuzzy tier couldn't merge — e.g. Gon Edición
+Coleccionista appeared as 2 cards (Whakoom + ListadoManga) because both
+had no ISBN, no volume, and different publishers. With `edition:`, items
+sharing the same `edition_key` (which encodes publisher+market in its
+slug) merge regardless of publisher string. See design decision #4 in
+CLAUDE.md for full details including the variant tier hierarchy.
 
 Components of the fuzzy key:
 - `language`: `item.language` lowercased.
@@ -940,8 +1217,10 @@ Components of the fuzzy key:
   n./#/巻 patterns, including JP-style parenthesized numbers
   (`タイトル（15）`). Required for fuzzy mode; without it we fall through
   to `url:` to avoid merging different tomos of the same series.
-- `variants`: sorted comma-joined `signal_types` (already computed
-  from title+description by `detect_signals`).
+- `tier`: `_variant_tier(signal_types)` — picks the most specific tier
+  from `artbook > omnibus > box_set > kanzenban > lore_edition >
+  variant_cover > deluxe > limited > special > ""`. Two items in the
+  same tier merge; two in different tiers don't.
 - `publisher`: `item.publisher` lowercased.
 
 Grouping consumers:
@@ -1046,7 +1325,9 @@ python scripts/manga_watch.py
                                    --workers > 1)
     --bootstrap-wiki {listadomanga, listadomanga-blog, manga-sanctuary,
                       otaku-calendar, manga-mexico, mangavariant,
-                      socialanime, blogbbm, whakoom}
+                      socialanime, blogbbm, booksprivilege, sumikko,
+                      mangapassion, animeclick, prhcomics, kinokuniya,
+                      yenpress, listadomanga-collections, whakoom}
     --wiki-from YYYY-MM
     --wiki-to YYYY-MM
     --sitemap-mining-domain <domain>
@@ -1073,25 +1354,38 @@ python scripts/retrofit/wayback_recover.py [--check | --dry-run |
                                             --urls a,b,c]
 python scripts/retrofit/mirror_images.py [--dry-run] [--no-gc | --gc-only]
                                           [--gc-delete] [--workers N] [--limit N]
+python scripts/retrofit/translate_descriptions.py [--dry-run] [--limit N]
+                                                   [--workers N] [--force]
+                                                   # Google Translate primary (no key),
+                                                   # DeepL optional via DEEPL_API_KEY
 
 # Audit / observability
 python scripts/audit/source_health.py [--last-n 10] [--output md|json]
                                       [--output-file PATH]
 
-# Orchestrator (chained 5-phase pipeline with per-phase logs)
-./scripts/overnight_run.sh                      # default workers=8
-SCRAPE_WORKERS=4 PER_HOST_LIMIT=1 \
-    ./scripts/overnight_run.sh                  # conservative
-SKIP_SCRAPE=1 SKIP_WIKIS=1 ./scripts/overnight_run.sh   # only search+cleanup
-INCLUDE_WHAKOOM_SPIDER=1 ./scripts/overnight_run.sh     # CF-risk opt-in
-INCLUDE_WAYBACK_RECOVERY=1 ./scripts/overnight_run.sh   # weekly cadence
+# Canonical orchestrators
+./scripts/scrape_delta.sh                       # incremental — listadomanga
+                                                # via calendario.php, ~30-60 min
+                                                # Frequency: daily/weekly
+INCLUDE_WHAKOOM_SPIDER=1 ./scripts/scrape_delta.sh    # CF-risk opt-in
+INCLUDE_WAYBACK_RECOVERY=1 ./scripts/scrape_delta.sh  # weekly cadence
+SKIP_SCRAPE=1 ./scripts/scrape_delta.sh               # only wikis + cleanup
+
+./scripts/scrape_full.sh                        # full refresh — listadomanga
+                                                # via lista.php (~3432 collections)
+                                                # + mangavariant sitemap, ~2-4h
+                                                # Frequency: monthly/quarterly
+
+./scripts/overnight_run.sh                      # DEPRECATED alias for scrape_delta.sh
+                                                # kept for cron backwards compat
+
 ./scripts/retry_failed.sh                       # re-run only sources
                                                 # that errored in latest run
 ```
 
 ## Tests
 
-`tests/test_extraction.py` — 227 tests, runtime <1s.
+`tests/test_extraction.py` — 425 tests, runtime <2s.
 
 Coverage areas:
 - `clean_title()` — every junk pattern has a test with a real example
@@ -1154,7 +1448,7 @@ and idempotent — safe to re-run.
 
 ### `/standardize-catalog`
 
-**File**: `.claude/skills/standardize-catalog.md`
+**File**: `.claude/skills/standardize-catalog/SKILL.md`
 
 **Purpose**: pass 2 of the schema standardization (see `items.jsonl`
 section above). Processes items WITHOUT `standardized_at`. Delegates
@@ -1181,7 +1475,7 @@ standardization rules change substantively.
 
 ### `/enrich-series-aliases`
 
-**File**: `.claude/skills/enrich-series-aliases.md`
+**File**: `.claude/skills/enrich-series-aliases/SKILL.md`
 
 **Purpose**: process the `data/unmapped_series.jsonl` queue, deciding
 for each new `series_key` whether it's an alias of an existing
