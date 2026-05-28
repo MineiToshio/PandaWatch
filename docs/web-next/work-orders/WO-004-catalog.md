@@ -386,3 +386,70 @@ Shows when filters return 0 results:
 - `CoverImage`: uses Next.js `<Image>` for local paths, plain `<img>` for remote fallback (avoiding `remotePatterns` config across ~76 scrape domains).
 - `CountryFlag`: extended to include Spanish country names (`Japón`, `Francia`, `Alemania`, `Italia`, `Brasil`, `Tailandia`, `Taiwán`, `Estados Unidos`) matching how `items.jsonl` stores country values.
 - No dark mode, no emoji in UI (Lucide icons throughout, CountryFlag flag emoji excepted per spec).
+
+**Post-implementation fix (2026-05-27) — edition grouping:**
+- Added `groupByEdition(clusters: Cluster[]): Cluster[]` to `lib/data.ts` (see FR-3b in FRD-001). Collapses all clusters with the same `edition_key` into one representative catalog card. Without this, Berserk Deluxe Vol.1 through Vol.15 each rendered as a separate card — the intended UX is one "Berserk Deluxe Edition" card with a 3-leaf stack and `volumeCount=15`.
+- `app/page.tsx` updated: `sortClusters(filtered) → groupByEdition(sorted) → paginate(editions)`. The `total` count and pagination now reflect edition groups, not raw volumes.
+- `EditionCard` href priority fixed: was checking `slug` first (every cluster has a slug → everything went to `/item/…`). Now checks `editionKey` first per FRD-003 spec: editions → `/edition/[editionKey]`, standalone items → `/item/[slug]`.
+
+**Post-implementation fix (2026-05-27) — stacked card hover bug (inner wrapper pattern):**
+
+Root cause: the original `EditionCard` had `overflow: hidden` + `border-radius` on the outer `<Link>` element (`edition-card`). CSS `overflow: hidden` together with a border-radius creates a stacking context. On hover, `transform: translateY(-3px)` also creates a stacking context. Inside a stacking context, the `::before`/`::after` pseudo-elements with `z-index: -1/-2` paint *above* the element's own `background` but *below* its child elements. Since the info section's text divs have no explicit background (transparent), the brownish paper layers bled through gaps between text elements — visually a partial brownish stripe at the bottom of cards.
+
+Fix — **inner wrapper pattern**:
+1. Outer `<Link className="edition-card">`: removed `overflow: hidden`, `background`, `border`, `borderRadius` from inline styles. Kept only layout/navigation properties. Added `z-index: 0` in CSS (creates stacking context at rest so paper layers are visible from the start, not just on hover). Added `border-radius: var(--radius-md)` so pseudo-elements can `border-radius: inherit`.
+2. Added `<div className="edition-card-inner">` wrapping all card content (cover + info). This inner div has `overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md)`. Its solid white background covers the pseudo-elements within the card boundary, preventing any bleed-through. The pseudo-elements' portions that extend *outside* the inner div (and outside the outer Link) peek out as stacked paper layers.
+3. Hover CSS moved from `CatalogGrid.tsx` inline `<style>` to `globals.css`, alongside the stack pseudo-element rules.
+
+Stack pseudo-element CSS (in `globals.css`):
+```css
+.edition-card {
+  position: relative; z-index: 0;  /* stacking context at rest */
+  border-radius: var(--radius-md); display: block; text-decoration: none;
+  color: inherit; transition: transform 0.15s var(--ease-out-quart);
+}
+.edition-card:hover { transform: translateY(-3px); }
+.edition-card:hover .edition-card-inner { box-shadow: var(--shadow-md); }
+.edition-card-inner {
+  border-radius: var(--radius-md); background: var(--color-surface);
+  border: 1px solid var(--color-border); overflow: hidden;
+  transition: box-shadow 0.15s var(--ease-out-quart);
+}
+/* Stack layer 1 (data-leaves 2 or 3) */
+.edition-card[data-leaves="2"]::before, .edition-card[data-leaves="3"]::before {
+  content:''; position:absolute; inset:0; background:#E8E2D6;
+  border:1px solid #D1C9BB; border-radius:inherit;
+  transform:translate(5px,6px); z-index:-1;
+}
+/* Stack layer 2 (data-leaves 3 only) */
+.edition-card[data-leaves="3"]::after {
+  content:''; position:absolute; inset:0; background:#DDD6C9;
+  border:1px solid #C5BDB0; border-radius:inherit;
+  transform:translate(10px,12px); z-index:-2;
+}
+```
+
+`data-leaves` values: `1` = single volume (no stack), `2` = 2–4 volumes (1 layer), `3` = 5+ volumes (2 layers). Colors are warm brownish paper tones matching the PandaWatch warm background palette.
+
+**Post-implementation fix (2026-05-27) — CSS grid overflow (`1fr` vs `minmax(0, 1fr)`):**
+
+Root cause: `repeat(N, 1fr)` is shorthand for `repeat(N, minmax(auto, 1fr))`. The `auto` minimum means each column can never be narrower than the minimum content size of its items. `EditionCard` has `whiteSpace: 'nowrap'` on the series display paragraph, which forces a minimum content width of ~258px per card — wider than the available fraction. The grid expanded columns past the viewport causing ~124px horizontal overflow.
+
+Fix:
+1. Changed all `repeat(N, 1fr)` → `repeat(N, minmax(0, 1fr))` in `.catalog-grid-inner` (in `globals.css`). The explicit `0` minimum allows columns to shrink to their true fractional share regardless of child content.
+2. Added `min-width: 0` to `.edition-card` CSS rule. Grid items default to `min-width: auto`, which prevents them from shrinking below content size even when the column constraint says otherwise. `min-width: 0` opts the item out of that floor.
+3. Moved all responsive `<style>` tags that were inline in `CatalogGrid.tsx`, `SortBar.tsx`, and `SidebarFilters.tsx` into `globals.css`. React 19's style hoisting/deduplication can cause inline `<style>` tags in components to behave unpredictably. All grid and visibility media queries now live in one place.
+
+Responsive breakpoints (as implemented, from `globals.css`):
+```css
+.catalog-grid-inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }        /* default: 2 cols */
+@media (min-width: 480px)  { .catalog-grid-inner { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .catalog-grid-inner { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .catalog-grid-inner { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+```
+
+Responsive sidebar/button visibility (also in `globals.css`):
+```css
+@media (max-width: 1023px)  { .sidebar-desktop   { display: none !important; } }
+@media (min-width: 1024px)  { .sidebar-mobile-overlay, .sidebar-close-btn, .sort-filter-btn { display: none !important; } }
+```

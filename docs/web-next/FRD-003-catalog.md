@@ -58,9 +58,13 @@ On mobile (< 768px): sidebar slides in from left as a drawer, triggered by a
 Display `Cluster[]` as a responsive grid:
 - Desktop (≥ 1280px): 5 columns
 - Laptop (≥ 1024px): 4 columns
-- Tablet (≥ 768px): 3 columns
-- Mobile (≥ 480px): 2 columns
-- Small mobile: 1 column
+- Mobile-wide (≥ 480px): 3 columns
+- Mobile: 2 columns
+
+> **Implementation note:** columns must use `repeat(N, minmax(0, 1fr))`, NOT `repeat(N, 1fr)`.
+> The `1fr` shorthand expands to `minmax(auto, 1fr)` — columns cannot shrink below minimum
+> content size. Cards have `whiteSpace: nowrap` text that forces ~258px minimum, causing
+> horizontal overflow. `minmax(0, 1fr)` + `min-width: 0` on `.edition-card` removes that floor.
 
 Each card shows:
 - **Cover image** — `image_local` via `/images/{filename}` → `image_url` remote

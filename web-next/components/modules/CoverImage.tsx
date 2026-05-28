@@ -75,7 +75,11 @@ export function CoverImage({
       src={src}
       alt={alt}
       className={className}
-      style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+      style={
+        fill
+          ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+          : { objectFit: 'cover', width: '100%', height: '100%' }
+      }
       onError={() => setSrc(null)}
     />
   )

@@ -13,68 +13,74 @@ export function EditionCard({ cluster }: EditionCardProps) {
   const { canonical, signalTypes, volumeCount, countries, slug } = cluster
   const leaves = Math.min(volumeCount, 3) as 1 | 2 | 3
 
-  const href = slug ? `/item/${slug}` : (cluster.editionKey ? `/edition/${cluster.editionKey}` : '#')
+  // Editions → /edition/[editionKey]; standalone items → /item/[slug]  (FRD-003)
+  const href = cluster.editionKey ? `/edition/${cluster.editionKey}` : (slug ? `/item/${slug}` : '#')
 
   // Show at most 2 signal chips to keep card compact
   const visibleSignals = signalTypes.slice(0, 2)
 
   return (
+    // Outer wrapper: owns the stack pseudo-elements and hover lift.
+    // NO overflow:hidden here — the brownish layers need to peek outside the card boundary.
+    // All visual card styles (bg, border, overflow) live on .edition-card-inner below.
     <Link
       href={href}
       className="edition-card"
       data-leaves={leaves}
-      style={{
-        display: 'block',
-        borderRadius: 'var(--radius-md)',
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        overflow: 'hidden',
-        textDecoration: 'none',
-        transition: 'box-shadow 0.15s, transform 0.15s',
-        color: 'inherit',
-      }}
-      // hover handled via CSS below — inline styles can't do :hover
     >
-      {/* Cover */}
-      <div style={{ position: 'relative', aspectRatio: '2/3', background: 'var(--ink-100)' }}>
-        <CoverImage
-          imageLocal={canonical.image_local}
-          imageUrl={canonical.image_url}
-          alt={canonical.title || 'Portada'}
-          fill
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
-        />
+      {/* Inner surface — clips content and provides solid white background that
+          covers the pseudo-elements within the card area, preventing bleed-through. */}
+      <div className="edition-card-inner">
 
-        {/* Score badge — top right overlay */}
-        {canonical.score !== undefined && (
-          <div style={{ position: 'absolute', top: 8, right: 8 }}>
-            <ScoreBadge score={canonical.score} />
-          </div>
-        )}
+        {/* Cover */}
+        <div style={{ position: 'relative', aspectRatio: '2/3', background: 'var(--ink-100)' }}>
+          <CoverImage
+            imageLocal={canonical.image_local}
+            imageUrl={canonical.image_url}
+            alt={canonical.title || 'Portada'}
+            fill
+            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+          />
 
-        {/* Country flags — bottom left */}
-        {countries.length > 0 && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 6,
-              left: 6,
-              display: 'flex',
-              gap: 3,
-              flexWrap: 'wrap',
-            }}
-          >
-            {countries.slice(0, 3).map(c => (
-              <CountryFlag key={c} country={c} />
-            ))}
-          </div>
-        )}
-      </div>
+          {/* Score badge — top right overlay */}
+          {canonical.score !== undefined && (
+            <div style={{ position: 'absolute', top: 8, right: 8 }}>
+              <ScoreBadge score={canonical.score} />
+            </div>
+          )}
 
-      {/* Info */}
-      <div style={{ padding: '10px 10px 12px' }}>
-        {/* Series name */}
-        {canonical.series_display && (
+          {/* Country flags — bottom left */}
+          {countries.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 6,
+                left: 6,
+                display: 'flex',
+                gap: 3,
+                flexWrap: 'wrap',
+              }}
+            >
+              {countries.slice(0, 3).map(c => (
+                <CountryFlag key={c} country={c} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Info — fixed height so every card (single or stacked) is identical.
+            Three slots with reserved space; shorter content leaves empty space
+            at the bottom instead of shrinking the card. */}
+        <div
+          style={{
+            padding: '10px 10px 12px',
+            height: 96,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Series name — slot always reserved (fixed height) for uniform layout */}
           <p
             style={{
               fontSize: 10,
@@ -82,37 +88,38 @@ export function EditionCard({ cluster }: EditionCardProps) {
               color: 'var(--color-text-secondary)',
               textTransform: 'uppercase',
               letterSpacing: '0.06em',
+              height: 14,
+              lineHeight: '12px',
               marginBottom: 2,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}
           >
-            {canonical.series_display}
+            {canonical.series_display || ' '}
           </p>
-        )}
 
-        {/* Title */}
-        <p
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: 'var(--font-display)',
-            color: 'var(--color-text-primary)',
-            lineHeight: 1.3,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            marginBottom: 6,
-          }}
-        >
-          {canonical.title || 'Sin título'}
-        </p>
+          {/* Title — reserved height for up to 2 lines */}
+          <p
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: 'var(--font-display)',
+              color: 'var(--color-text-primary)',
+              lineHeight: 1.3,
+              height: 34,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              marginBottom: 6,
+            }}
+          >
+            {canonical.title || 'Sin título'}
+          </p>
 
-        {/* Signal chips */}
-        {visibleSignals.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {/* Signal chips — anchored to the bottom of the fixed-height info block */}
+          <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 4, marginTop: 'auto', minHeight: 18, overflow: 'hidden' }}>
             {visibleSignals.map(s => (
               <SignalChip key={s} signal={s} size="sm" />
             ))}
@@ -128,8 +135,9 @@ export function EditionCard({ cluster }: EditionCardProps) {
               </span>
             )}
           </div>
-        )}
-      </div>
+        </div>
+
+      </div>{/* /.edition-card-inner */}
     </Link>
   )
 }

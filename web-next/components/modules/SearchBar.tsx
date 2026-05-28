@@ -1,11 +1,46 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 
 export function SearchBar() {
+  const router   = useRouter()
+  const pathname = usePathname()
+  const params   = useSearchParams()
+
   const [focused, setFocused] = useState(false)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(params.get('q') ?? '')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Sync if URL changes externally (back/forward)
+  useEffect(() => {
+    setQuery(params.get('q') ?? '')
+  }, [params])
+
+  function handleChange(value: string) {
+    setQuery(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      const next = new URLSearchParams(params.toString())
+      if (value.trim()) {
+        next.set('q', value.trim())
+      } else {
+        next.delete('q')
+      }
+      next.delete('page')
+      router.replace(`${pathname}?${next.toString()}`)
+    }, 300)
+  }
+
+  function handleClear() {
+    setQuery('')
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    const next = new URLSearchParams(params.toString())
+    next.delete('q')
+    next.delete('page')
+    router.replace(`${pathname}?${next.toString()}`)
+  }
 
   return (
     <div
@@ -44,7 +79,7 @@ export function SearchBar() {
         type="search"
         placeholder="Search by manga, series, publisher, ISBN…"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => handleChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{
@@ -61,7 +96,7 @@ export function SearchBar() {
       {query && (
         <button
           type="button"
-          onClick={() => setQuery('')}
+          onClick={handleClear}
           aria-label="Clear search"
           style={{
             display: 'flex',

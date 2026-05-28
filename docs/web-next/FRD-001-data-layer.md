@@ -98,6 +98,23 @@ type Cluster = {
 `loadEditionClusters(editionKey: string): Cluster[]` returns all clusters that share
 the same `edition_key`, sorted by volume number ascending. Used by the edition detail page.
 
+### FR-3b: Catalog edition grouping
+
+`groupByEdition(clusters: Cluster[]): Cluster[]` collapses clusters that share the
+same `edition_key` into a single representative entry for the catalog home page.
+
+- Preserves the sort order of the input array (a cluster's position is determined by
+  where the first cluster with its `edition_key` appeared).
+- For each edition group: `volumeCount` = number of clusters in the group;
+  `canonical` = the cluster with the highest `canonical.score`; `signalTypes`,
+  `countries`, `publishers`, `languages` are the union across all clusters.
+- Standalone clusters (no `edition_key`) are passed through unchanged.
+
+Called in `app/page.tsx` **after** `filterClusters()` and `sortClusters()`, so:
+- Facets are always computed from the unfiltered full corpus.
+- Filtering happens at the cluster level (correct).
+- `volumeCount` reflects how many filtered volumes each edition has.
+
 ### FR-4: Slug lookup
 
 `clusterBySlug(slug: string): Cluster | null` returns the cluster whose canonical

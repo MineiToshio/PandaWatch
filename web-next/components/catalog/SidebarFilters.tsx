@@ -290,11 +290,6 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
 
       </div>
 
-      <style>{`
-        @media (min-width: 1024px) {
-          .sidebar-close-btn { display: none !important; }
-        }
-      `}</style>
     </div>
   )
 
@@ -357,14 +352,6 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
         </div>
       )}
 
-      <style>{`
-        @media (min-width: 1024px) {
-          .sidebar-mobile-overlay { display: none !important; }
-        }
-        @media (max-width: 1023px) {
-          .sidebar-desktop { display: none !important; }
-        }
-      `}</style>
     </>
   )
 }

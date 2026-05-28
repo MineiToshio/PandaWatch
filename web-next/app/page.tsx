@@ -1,4 +1,4 @@
-import { loadClusters, buildFacets } from '@/lib/data'
+import { loadClusters, buildFacets, groupByEdition } from '@/lib/data'
 import { parseFilterParams, filterClusters, sortClusters, paginate } from '@/lib/filters'
 import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
@@ -20,7 +20,8 @@ export default async function CatalogPage({
   const fp          = parseFilterParams(rawParams)
   const filtered    = filterClusters(allClusters, fp)
   const sorted      = sortClusters(filtered, fp.sort)
-  const { items, total, pages, page } = paginate(sorted, fp.page)
+  const editions    = groupByEdition(sorted)
+  const { items, total, pages, page } = paginate(editions, fp.page)
 
   return (
     <CatalogControls

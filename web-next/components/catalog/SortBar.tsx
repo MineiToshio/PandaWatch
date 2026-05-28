@@ -102,11 +102,6 @@ export function SortBar({ total, sort, page, pages, onOpenFilters }: SortBarProp
         </button>
       </div>
 
-      <style>{`
-        @media (min-width: 1024px) {
-          .sort-filter-btn { display: none !important; }
-        }
-      `}</style>
     </div>
   )
 }
