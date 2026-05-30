@@ -31,10 +31,95 @@ Cuando llegue, sólo cambia de dónde se sirven los archivos: el esquema
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qsl, urlparse
 
 import requests
+
+# ── CDN resize-param normalization ────────────────────────────────────────────
+# These query params only control thumbnail size/quality, not image identity.
+# Stripping them lets the scraper always hash the "canonical" URL so that
+# the thumbnail (CDN URL with params) and the hi-res (clean URL) map to the
+# same local filename — avoiding the situation where a re-scrape after
+# upgrade_image_resolution stores a new thumbnail under a different hash.
+_CDN_RESIZE_PARAMS = frozenset({
+    "quality", "q",
+    "width", "height", "w", "h",
+    "fit", "fit_mode",
+    "canvas",
+    "bg-color", "bg_color", "background",
+    "format", "auto",
+    "dpr",
+    "crop", "gravity",
+    "resize",
+    "upscale",
+    "bounds",
+})
+# WordPress -NxM suffix  e.g.  image-300x300.jpg → image.jpg
+_WP_SUFFIX_RE = re.compile(r"^(.+?)-(\d{2,4}x\d{2,4})(\.\w{2,5})$", re.IGNORECASE)
+# Shopify _Nx or _NxN suffix  e.g.  image_540x.jpg → image.jpg
+_SHOPIFY_SUFFIX_RE = re.compile(
+    r"^(.+?)_(\d{2,4}x\d*|x\d{2,4})(\.\w{2,5})$", re.IGNORECASE
+)
+# Amazon CDN size modifiers embedded in filename: ._SY300_. ._SL165_. ._SS120_. etc.
+# e.g.  91XYZ._SY300_.jpg → 91XYZ.jpg
+_AMAZON_HOSTS = frozenset({
+    "m.media-amazon.com", "images-amazon.com",
+    "images-fe.ssl-images-amazon.com", "images-na.ssl-images-amazon.com",
+})
+_AMAZON_SIZE_RE = re.compile(r"(\._[A-Z]{2}\d*_)+", re.IGNORECASE)
+# Rakuten Books CDN: ?_ex=NxN  e.g.  ...cabinet/9312/2100014729312.jpg?_ex=200x200
+# Without _ex the CDN returns the full 988×1200 image (36× more pixels).
+_RAKUTEN_THUMB_HOSTS = frozenset({"thumbnail.image.rakuten.co.jp"})
+_RAKUTEN_EX_RE = re.compile(r"^\d+x\d+$")
+
+
+def normalize_image_url(url: str) -> str:
+    """Devuelve la URL sin parámetros de redimensionado de CDN.
+
+    Idempotente: si la URL ya es la original, la devuelve sin cambios.
+    Esto garantiza que sha256(normalize(url)) siempre produce el mismo
+    stem tanto para la URL con parámetros CDN como para la URL limpia.
+    """
+    if not url:
+        return url
+    parsed = urlparse(url)
+    path = parsed.path
+
+    # 1. Magento-style query params
+    if parsed.query:
+        qs_keys = {k.lower() for k, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        if qs_keys & {"width", "height", "w", "h"} and qs_keys & _CDN_RESIZE_PARAMS:
+            return parsed._replace(query="").geturl()
+
+    # 2. WordPress -NxM suffix
+    filename = path.rsplit("/", 1)[-1]
+    m = _WP_SUFFIX_RE.match(filename)
+    if m:
+        clean_path = path[: path.rfind("/") + 1] + m.group(1) + m.group(3)
+        return parsed._replace(path=clean_path, query="").geturl()
+
+    # 3. Shopify _Nx suffix
+    m = _SHOPIFY_SUFFIX_RE.match(filename)
+    if m:
+        clean_path = path[: path.rfind("/") + 1] + m.group(1) + m.group(3)
+        return parsed._replace(path=clean_path, query="").geturl()
+
+    # 4. Amazon CDN embedded size modifiers (._SY300_. ._SL165_. ._SS120_. etc.)
+    if parsed.netloc in _AMAZON_HOSTS:
+        if _AMAZON_SIZE_RE.search(path):
+            clean_path = _AMAZON_SIZE_RE.sub("", path)
+            return parsed._replace(path=clean_path, query="").geturl()
+
+    # 5. Rakuten Books CDN: ?_ex=NxN thumbnail resize param
+    if parsed.netloc in _RAKUTEN_THUMB_HOSTS and parsed.query:
+        qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        if "_ex" in qs and _RAKUTEN_EX_RE.match(qs["_ex"]):
+            return parsed._replace(query="").geturl()
+
+    return url
 
 
 # Subdirectorio bajo data/ donde vive el espejo local.
@@ -49,8 +134,13 @@ _CHUNK_BYTES = 64 * 1024
 
 
 def image_stem(image_url: str) -> str:
-    """Stem determinístico (16 hex) derivado del URL de la imagen."""
-    digest = hashlib.sha256(image_url.strip().encode("utf-8")).hexdigest()
+    """Stem determinístico (16 hex) derivado del URL de la imagen.
+
+    Normaliza los parámetros de redimensionado CDN antes de hashear, de modo
+    que la URL con params y la URL limpia producen el mismo stem.
+    """
+    canonical = normalize_image_url(image_url.strip())
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return digest[:16]
 
 
@@ -111,6 +201,9 @@ def download_image(
     """
     if not image_url or not image_url.lower().startswith(("http://", "https://")):
         return ""
+
+    # Normalize CDN resize params so we always fetch + hash the full-res URL.
+    image_url = normalize_image_url(image_url)
 
     images_dir = Path(images_dir)
     already = existing_local_image(images_dir, image_url)

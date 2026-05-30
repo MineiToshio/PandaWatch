@@ -255,18 +255,40 @@ def main() -> int:
     print(f"\n[PHASE 2] Consultando Wayback Machine...")
     recovered_count = 0
     items_by_url = {it.get("url", ""): it for it in items if not it.get("_raw")}
+    dst = Path(args.output)
+
+    # Backup antes del loop: los flushes incrementales necesitan un punto de retorno seguro
+    if not args.dry_run and dst.exists() and dst == src:
+        backup = backup_and_rotate(src, "wayback")
+        print(f"[OK] Backup: {backup}")
+
+    def _flush_wayback() -> None:
+        """Serializa items al destino atómicamente."""
+        out_lines: list[str] = []
+        for it in items:
+            if "_raw" in it:
+                out_lines.append(it["_raw"])
+            else:
+                out_lines.append(json.dumps(it, ensure_ascii=False))
+        dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+
+    _FLUSH_EVERY = 10  # flush cada N recuperaciones
     for idx, (it, status) in enumerate(dead_items, 1):
         snap = find_wayback_snapshot(it["url"], session)
         if not snap:
+            time.sleep(args.sleep)
             continue
         md = recover_from_snapshot(snap, it, session, (5, args.fetch_timeout))
         if md:
             recovered_count += 1
-            print(f"  [{idx}/{len(dead_items)}] ✓ recovered: {it.get('title','')[:55]}")
-            print(f"      snapshot {snap.get('timestamp','')[:8]}")
+            print(f"  [{idx}/{len(dead_items)}] ✓ recovered: {it.get('title','')[:55]}", flush=True)
+            print(f"      snapshot {snap.get('timestamp','')[:8]}", flush=True)
             if not args.dry_run:
-                # Update the item in place
                 it.update(md)
+                # Flush periódico: no pérdida si se cancela mid-run
+                if recovered_count % _FLUSH_EVERY == 0:
+                    _flush_wayback()
+                    print(f"  → flush parcial ({recovered_count} recuperados)", flush=True)
         time.sleep(args.sleep)
 
     print(f"\n[PHASE 2] {recovered_count} items recuperados con metadata de Wayback")
@@ -278,19 +300,8 @@ def main() -> int:
         print("[OK] Nada que escribir.")
         return 0
 
-    # Persist
-    dst = Path(args.output)
-    if dst == src and src.exists():
-        backup = backup_and_rotate(src, "wayback")
-        print(f"[OK] Backup: {backup}")
-
-    out_lines: list[str] = []
-    for it in items:
-        if "_raw" in it:
-            out_lines.append(it["_raw"])
-        else:
-            out_lines.append(json.dumps(it, ensure_ascii=False))
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    # Flush final (incluye el último bloque < FLUSH_EVERY)
+    _flush_wayback()
     print(f"[OK] Escrito {dst} ({recovered_count} items enriquecidos vía Wayback)")
     return 0
 

@@ -89,6 +89,7 @@ def _run_backfill(
     items: list[dict],
     images_dir: Path,
     *,
+    items_path: Path | None = None,
     workers: int,
     timeout: tuple[int, int],
     limit: int,
@@ -177,6 +178,7 @@ def _run_backfill(
     failed_urls = 0
     done = 0
     total = len(by_url)
+    _FLUSH_EVERY = 200  # flush items.jsonl cada N URLs procesadas (no pérdida si se cancela)
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="mirror") as pool:
         for fut in as_completed(pool.submit(_one, e) for e in by_url.items()):
             consumers, filename = fut.result()
@@ -196,8 +198,12 @@ def _run_backfill(
                 updated += len(consumers)
             else:
                 failed_urls += 1
-            if done % 200 == 0:
-                print(f"  [{done}/{total}] URLs procesadas, {updated} consumers atendidos")
+            if done % _FLUSH_EVERY == 0:
+                print(f"  [{done}/{total}] URLs procesadas, {updated} consumers atendidos", flush=True)
+                # Flush periódico: no pérdida de datos si se cancela mid-run
+                if items_path is not None and not dry_run:
+                    _write_items(items_path, items)
+                    print(f"  → flush parcial ({done} procesadas)", flush=True)
 
     print(f"[BACKFILL] {updated} consumers actualizados, {failed_urls} URLs "
           f"fallidas (esos items quedan con image_url/images[].url como fallback).")
@@ -292,10 +298,19 @@ def main() -> int:
     print(f"[INFO] espejo local: {images_dir}/")
     print()
 
+    dst = Path(args.output)
+
+    # Backup antes del loop — así los flushes incrementales tienen un punto de retorno
+    if not args.dry_run and not args.gc_only:
+        if dst.exists():
+            backup = backup_and_rotate(dst, "mirror")
+            print(f"[OK] Backup en {backup}")
+
     updated = 0
     if not args.gc_only:
         updated = _run_backfill(
             items, images_dir,
+            items_path=dst if not args.dry_run else None,
             workers=args.workers,
             timeout=(args.connect_timeout, args.read_timeout),
             limit=args.limit,
@@ -316,10 +331,7 @@ def main() -> int:
         print("[OK] items.jsonl sin cambios (no hubo backfill que escribir).")
         return 0
 
-    dst = Path(args.output)
-    if dst.exists():
-        backup = backup_and_rotate(dst, "mirror")
-        print(f"[OK] Backup en {backup}")
+    # Flush final (cubre el último bloque y cualquier cambio del GC)
     _write_items(dst, items)
     print(f"[OK] Escribí {dst} — {updated} items con image_local nuevo.")
     return 0
