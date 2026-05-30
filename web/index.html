@@ -281,6 +281,32 @@
 
     <div>
       <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
+        Rareza
+        <span x-show="filters.rarities.length > 0" class="text-pink-500 normal-case font-normal" x-text="`(${filters.rarities.length})`"></span>
+      </label>
+      <div class="flex flex-wrap gap-1">
+        <template x-for="r in ['common','rare','super_rare','ultra_rare']" :key="r">
+          <button
+            type="button"
+            @click="toggleRarity(r)"
+            :class="filters.rarities.includes(r)
+              ? 'bg-pink-500 text-white border-pink-500'
+              : 'bg-white text-gray-700 border-gray-300 hover:border-pink-300'"
+            class="px-2 py-1 text-xs rounded-md border transition cursor-pointer"
+            x-text="{'common':'⬜ Common','rare':'🟦 Rare','super_rare':'🟪 Super Rare','ultra_rare':'🟨 Ultra Rare'}[r]">
+          </button>
+        </template>
+      </div>
+      <button
+        x-show="filters.rarities.length > 0"
+        @click="filters.rarities = []; page = 1; _syncStateToUrl()"
+        class="mt-1 text-xs text-gray-500 hover:text-pink-500 underline">
+        limpiar selección
+      </button>
+    </div>
+
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
         Score mínimo: <span x-text="filters.minScore" class="accent font-bold"></span>
       </label>
       <input type="range" min="0" max="200" step="5" x-model.number="filters.minScore" class="w-full accent-pink-500">
@@ -348,6 +374,12 @@
                   </template>
                   <template x-if="ed.tomoCount === 1 && ed.leader.stock_type === 'limited'">
                     <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
+                  </template>
+                  <template x-if="ed.leader.rarity && ed.leader.rarity !== 'rare'">
+                    <span class="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-xs font-bold"
+                          :class="{'bg-gray-100 text-gray-600': ed.leader.rarity==='common', 'bg-purple-100 text-purple-700': ed.leader.rarity==='super_rare', 'bg-yellow-100 text-yellow-700': ed.leader.rarity==='ultra_rare'}"
+                          x-text="{'common':'⬜','super_rare':'🟪','ultra_rare':'🟨'}[ed.leader.rarity]">
+                    </span>
                   </template>
                 </div>
                 <div class="p-3 flex-1 flex flex-col">
@@ -633,7 +665,7 @@
               <ul class="mt-1 text-gray-800 text-sm list-disc list-inside space-y-0.5">
                 <template x-for="ex in selectedItem.extras" :key="(ex.description||'') + (ex.release_date||'')">
                   <li>
-                    <span x-text="ex.description"></span>
+                    <span x-text="ex.description_es || ex.description"></span>
                     <span x-show="ex.release_date" class="text-xs text-gray-500"
                           x-text="' (' + ex.release_date + ')'"></span>
                   </li>
@@ -642,10 +674,11 @@
             </div>
           </template>
 
-          <template x-if="selectedItem.description">
+          <template x-if="selectedItem.description_es || selectedItem.description">
             <div>
               <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">Fragmento</span>
-              <p class="mt-1 text-gray-700 text-xs italic whitespace-pre-wrap" x-text="selectedItem.description.slice(0, 800)"></p>
+              <p class="mt-1 text-gray-700 text-xs italic whitespace-pre-wrap"
+                 x-text="(selectedItem.description_es || selectedItem.description || '').slice(0, 800)"></p>
             </div>
           </template>
         </div>
@@ -758,6 +791,7 @@ function mangaApp() {
       productType: "",
       sourceClass: "",
       signalTypes: [],
+      rarities: [],
       minScore: 20,
       onlyLimited: false,
     },
@@ -1021,6 +1055,9 @@ function mangaApp() {
           if (!f.signalTypes.some(s => itemSigs.includes(s))) return false;
         }
         if ((i.score || 0) < f.minScore) return false;
+        if (f.rarities && f.rarities.length > 0) {
+          if (!f.rarities.includes(i.rarity)) return false;
+        }
         if (f.onlyLimited && i.stock_type !== "limited") return false;
         return true;
       });
@@ -1388,16 +1425,11 @@ function mangaApp() {
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        // Remove from the in-memory catalog immediately
-        this.items = this.items.filter(i => i.url !== removedUrl);
         this.feedbackSent = true;
         this.feedbackReason = "";
         setTimeout(() => {
-          if (this.feedbackSent) {
-            this._resetFeedback();
-            this.goBack();
-          }
-        }, 1500);
+          if (this.feedbackSent) this._resetFeedback();
+        }, 2000);
       } catch (e) {
         this.feedbackError = "No se pudo guardar: " + e.message;
       } finally {
@@ -1450,7 +1482,7 @@ function mangaApp() {
     resetFilters() {
       this.filters = {
         search: "", country: "", publisher: "", language: "",
-        productType: "", sourceClass: "", signalTypes: [],
+        productType: "", sourceClass: "", signalTypes: [], rarities: [],
         minScore: 20, onlyLimited: false,
       };
       this.page = 1;
@@ -1463,6 +1495,17 @@ function mangaApp() {
         this.filters.signalTypes.splice(idx, 1);
       } else {
         this.filters.signalTypes.push(sig);
+      }
+      this.page = 1;
+      this._syncStateToUrl();
+    },
+
+    toggleRarity(r) {
+      const idx = this.filters.rarities.indexOf(r);
+      if (idx >= 0) {
+        this.filters.rarities.splice(idx, 1);
+      } else {
+        this.filters.rarities.push(r);
       }
       this.page = 1;
       this._syncStateToUrl();
