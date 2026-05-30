@@ -2175,7 +2175,7 @@ _COMMON_CATALOG_RULES: tuple[tuple[str, re.Pattern[str] | None], ...] = (
     # DE — líneas ongoing
     ("carlsen",         re.compile(r"massiv|sammelschuber", re.I)),
     # IT — líneas multi-volumen deluxe con reprints documentados (Panini/Planet Manga)
-    ("panini",          re.compile(r"master.?edition|deluxe|taniguchi|ultimate.?deluxe", re.I)),
+    ("panini",          re.compile(r"master.?edition|deluxe|taniguchi|ultimate", re.I)),
     # ES — Planeta Cómic líneas ongoing
     ("planeta",         re.compile(r"perfect.?edition|kanzenban|deluxe", re.I)),
     # DE — altraverse CEs son per-volume pero las top-tier se reimprimen;
