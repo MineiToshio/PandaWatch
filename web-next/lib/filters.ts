@@ -30,6 +30,7 @@ export function parseFilterParams(
     product_type: getArr('product_type'),
     source_class: getArr('source_class'),
     signal_types: getArr('signal_types'),
+    rarity: getArr('rarity'),
     min_score: params.min_score ? Number(params.min_score) : undefined,
     only_limited: params.only_limited === 'true',
     sort: (params.sort as SortKey) || 'score_desc',
@@ -76,6 +77,10 @@ export function filterClusters(
     if (params.signal_types?.length) {
       if (!params.signal_types.every(s => c.signalTypes.includes(s))) return false
     }
+
+    // Rarity (ANY match)
+    if (params.rarity?.length && !params.rarity.includes(item.rarity ?? ''))
+      return false
 
     // Min score
     if (params.min_score && (item.score || 0) < params.min_score) return false

@@ -31,6 +31,7 @@ export type Item = {
   standardized_at?: string
   detected_at?: string
   stock_type?: string
+  rarity?: 'common' | 'rare' | 'super_rare' | 'ultra_rare'
 }
 
 export type ItemImage = {
@@ -95,6 +96,7 @@ export type FilterParams = {
   product_type?: string[]
   source_class?: string[]
   signal_types?: string[]
+  rarity?: string[]
   min_score?: number
   only_limited?: boolean
   sort: SortKey

@@ -2,7 +2,6 @@ import Link from 'next/link'
 import type { Cluster } from '@/lib/types'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
-import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 
 type EditionCardProps = {
@@ -45,12 +44,8 @@ export function EditionCard({ cluster }: EditionCardProps) {
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
           />
 
-          {/* Score badge — top right overlay */}
-          {canonical.score !== undefined && (
-            <div style={{ position: 'absolute', top: 8, right: 8 }}>
-              <ScoreBadge score={canonical.score} />
-            </div>
-          )}
+          {/* Rarity badge — top left, glassy dark pill */}
+          {canonical.rarity && <RarityBadge rarity={canonical.rarity} />}
 
           {/* Country flags — bottom left */}
           {countries.length > 0 && (
@@ -142,6 +137,79 @@ export function EditionCard({ cluster }: EditionCardProps) {
 
       </div>{/* /.edition-card-inner */}
     </Link>
+  )
+}
+
+// ─── Rarity badge ────────────────────────────────────────────────────────────
+
+const RARITY_META: Record<
+  'common' | 'rare' | 'super_rare' | 'ultra_rare',
+  { label: string; color: string; icon: React.ReactNode }
+> = {
+  common: {
+    label: 'Accessible',
+    color: '#9CA3AF',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+        <circle cx={12} cy={12} r={10} />
+      </svg>
+    ),
+  },
+  rare: {
+    label: 'Rare',
+    color: '#8BA8F8',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+      </svg>
+    ),
+  },
+  super_rare: {
+    label: 'Super Rare',
+    color: '#C4A8FF',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
+      </svg>
+    ),
+  },
+  ultra_rare: {
+    label: 'Ultra Rare',
+    color: '#FDE68A',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M6 3h12l4 6-10 13L2 9z" />
+      </svg>
+    ),
+  },
+}
+
+function RarityBadge({ rarity }: { rarity: 'common' | 'rare' | 'super_rare' | 'ultra_rare' }) {
+  const meta = RARITY_META[rarity]
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        zIndex: 2,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '4px 8px',
+        borderRadius: 5,
+        fontSize: 10,
+        fontWeight: 600,
+        fontFamily: 'var(--font-display)',
+        color: meta.color,
+        background: 'rgba(20,17,14,0.82)',
+        backdropFilter: 'blur(6px)',
+        border: '1px solid rgba(255,255,255,0.12)',
+      }}
+    >
+      {meta.icon}
+      {meta.label}
+    </div>
   )
 }
 

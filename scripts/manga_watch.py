@@ -2078,6 +2078,185 @@ LIMITED_STOCK_KEYWORDS = (
 )
 
 
+_ULTRA_RARE_KEYWORDS = (
+    # Numbered copies — X/Y ratios (denominadores comunes)
+    "/100", "/150", "/200", "/250", "/300", "/400",
+    "/500", "/600", "/750", "/800", "/1000", "/1200", "/2000", "/2500",
+    # Explicit numbering language (multilingual)
+    "numbered edition", "numéroté", "numérotée",
+    "numerado", "numerada", "numerato", "numerata",
+    # Signed (multilingual)
+    "signed by", "autograph",
+    "firmado", "firmada", "firmato", "firmata",
+    "signé", "signiert", "autografado",
+    # Events across markets
+    "event exclusive", "event only", "event-only",
+    "comiket", "jump festa", "anime expo exclusive",
+    "lucca comics", "lucca c&g",
+    "wonder festival", "wonfes",
+    "nuit one piece", "noche one piece",
+    "japan expo exclusive",
+    # Lottery / gacha ultra tier
+    "lottery", "ichiban kuji", "last one prize",
+    "ultra limited", "ultra limitata", "ultra-limitée",
+    "抽選", "くじ",
+)
+
+# Keywords que indican tirada única explícita. NO suben a ultra_rare — solo
+# BLOQUEAN la promoción a common. Un item con "tirage unique" de Norma Editorial
+# se queda en rare (no common) aunque Norma sea publisher de catálogo.
+# Investigación 2026-05-30: 98%+ de confianza de que estos indican no-reimpresión.
+_SINGLE_RUN_KEYWORDS = (
+    # Explícito "tirada única" / "no reimpresión" (multilingual)
+    "tirage unique", "tirada única", "tiratura unica", "edizione unica",
+    "tiratura limitata", "limitata alla prima tiratura",
+    "limitata nel tempo",
+    "no se reimprimirá", "no volverá a imprimirse",
+    "single print run", "one print run only",
+    "limited to a single print",
+    # First-print-only bonuses (el libro se reimprime, el bonus no)
+    "prima tiratura", "primera tirada", "première tirage",
+    "初版限定", "初回限定", "shokai gentei",
+    # Event-tied editions (aniversario/celebración con extras)
+    "celebration edition",
+    # Anniversary / milestone editions — tirada event-tied, no catálogo permanente
+    "anniversary edition", "édition anniversaire", "edizione anniversario",
+    "edición aniversario", "aniversario",
+    # "Limited/Limitada/Limitée/Limitata" en título/descripción — tirada limitada
+    # explícita que bloquea common incluso para publishers de catálogo.
+    # Nota: "limited edition" sola tiene ~75% PPV pero combinada con publisher
+    # de catálogo, su presencia indica una sub-línea limitada dentro de un catálogo
+    # que normalmente reimprime (ej. Norma "Edición Especial Limitada" vs Norma
+    # "Edición Coleccionista" ongoing).
+    "edición especial limitada", "edicion especial limitada",
+    "édition limitée", "edizione limitata",
+    "limited edition", "limitierte ausgabe", "edição limitada",
+    # Explicit sold-out / agotado en editorial
+    "verlagsvergriffen", "épuisé éditeur",
+)
+
+_TOKUTEN_SOURCES = frozenset({
+    "booksprivilege",
+})
+
+# Fuentes de referencia: catalogan qué EXISTE, no qué está disponible hoy.
+# Items que solo vienen de estas fuentes no tienen verificación de stock.
+# Guard: no promover a common si el item solo proviene de aquí.
+_REFERENCE_ONLY_SOURCES = frozenset({
+    "mangavariant", "sumikko", "booksprivilege", "blogbbm",
+})
+
+# Reglas de catálogo permanente: (publisher_substring, title_regex_or_None).
+# Un item matchea si el publisher contiene el substring Y el título matchea el regex
+# (o el regex es None = cualquier título del publisher). Basado en investigación
+# de convenciones editoriales por mercado (2026-05-30, 6 agentes de research).
+#
+# Reglas ordenadas por especificidad — las más específicas primero.
+# Solo aplican cuando NO hay señales de escasez (_SCARCITY_SIGS).
+_COMMON_CATALOG_RULES: tuple[tuple[str, re.Pattern[str] | None], ...] = (
+    # US — líneas ongoing con reprints documentados
+    ("dark horse",      None),          # Berserk Deluxe, Hellsing Deluxe — reprints confirmados
+    ("viz",             None),          # Viz Box Sets (One Piece, DB) — restocks confirmados
+    ("yen press",       None),          # Yen Press CE — ongoing catalog
+    ("seven seas",      None),          # Seven Seas CE (manga) — ongoing
+    # ES — sin límite declarado, retail estándar
+    ("norma editorial", None),          # Norma — retail estándar, sin límite
+    ("distrito manga",  None),          # Distrito — retail estándar
+    # FR — líneas de catálogo permanentes (no per-volume collectors)
+    ("glénat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
+    ("glenat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
+    ("pika",            re.compile(r"masterpiece", re.I)),
+    ("ki-oon",          re.compile(r"coffret.*t[0-9]|perfect.?edition", re.I)),
+    ("kana",            re.compile(r"deluxe|prestige", re.I)),
+    ("meian",           re.compile(r"perfect.?edition", re.I)),
+    ("kazé",            re.compile(r"coffret.*t[0-9]", re.I)),
+    ("kaze",            re.compile(r"coffret.*t[0-9]", re.I)),
+    ("crunchyroll",     re.compile(r"coffret.*t[0-9]", re.I)),
+    # DE — líneas ongoing
+    ("carlsen",         re.compile(r"massiv|sammelschuber", re.I)),
+    # IT — líneas multi-volumen deluxe con reprints documentados (Panini/Planet Manga)
+    ("panini",          re.compile(r"master.?edition|deluxe|taniguchi|ultimate.?deluxe", re.I)),
+    # ES — Planeta Cómic líneas ongoing
+    ("planeta",         re.compile(r"perfect.?edition|kanzenban|deluxe", re.I)),
+    # DE — altraverse CEs son per-volume pero las top-tier se reimprimen;
+    # Carlsen Perfect Edition / box sets son catálogo (no "Sonderausgabe" sueltas)
+    ("carlsen",         re.compile(r"perfect.?edition|box.?set", re.I)),
+    # IT — Edizioni BD/Dynit deluxe box sets son catálogo ongoing
+    ("edizioni bd",     re.compile(r"deluxe|collection", re.I)),
+    ("dynit",           re.compile(r"deluxe|collector", re.I)),
+)
+
+
+def _matches_common_catalog(pub: str, title: str) -> bool:
+    """True si el (publisher, title) matchea alguna regla de catálogo permanente."""
+    pub_l = pub.lower()
+    for pub_sub, title_re in _COMMON_CATALOG_RULES:
+        if pub_sub in pub_l:
+            if title_re is None or title_re.search(title):
+                return True
+    return False
+
+
+def _is_reference_only_source(source: str) -> bool:
+    """True si la fuente es de referencia/catálogo, no de retailer."""
+    src = source.lower()
+    return any(r in src for r in _REFERENCE_ONLY_SOURCES)
+
+
+def derive_rarity_tier(
+    signal_types: list[str],
+    source: str,
+    description: str,
+    title: str,
+    publisher: str = "",
+) -> str:
+    """Clasifica un item en uno de 4 tiers de rareza.
+
+    Tiers (orden de evaluación):
+    1. ultra_rare: edición numerada/firmada, exclusiva de evento, lotería,
+       O retailer_exclusive + lore_edition juntos.
+    2. super_rare: retailer_exclusive solo; tokuten JP (BooksPrivilege).
+    3. common: publisher × edition pattern de catálogo permanente, SIN señales
+       de escasez, SIN keywords de tirada única, Y NO solo de fuente de referencia.
+    4. rare: default conservador para todo lo demás.
+
+    Returns: 'ultra_rare' | 'super_rare' | 'rare' | 'common'
+    """
+    sigs = set(signal_types or [])
+    text = f"{title} {description}".lower()
+    src = (source or "").lower()
+
+    # --- Tier 4: Ultra Rare ---
+    if any(kw in text for kw in _ULTRA_RARE_KEYWORDS):
+        return "ultra_rare"
+    if "retailer_exclusive" in sigs and "lore_edition" in sigs:
+        return "ultra_rare"
+
+    # --- Tier 3: Super Rare ---
+    if "retailer_exclusive" in sigs:
+        return "super_rare"
+    if any(t in src for t in _TOKUTEN_SOURCES):
+        return "super_rare"
+
+    # --- Tier 1: Common (catálogo permanente) ---
+    # 4 condiciones deben cumplirse simultáneamente:
+    #   a) Sin señales de escasez en signal_types
+    #   b) Publisher × title matchea una regla de catálogo permanente
+    #   c) Sin keywords de tirada única en título/descripción
+    #   d) No proviene exclusivamente de fuente de referencia (sin verificación de stock)
+    _SCARCITY_SIGS = frozenset({
+        "limited", "retailer_exclusive", "bonus", "variant_cover",
+    })
+    if not (sigs & _SCARCITY_SIGS):
+        if _matches_common_catalog(publisher or "", title or ""):
+            if not any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
+                if not _is_reference_only_source(source or ""):
+                    return "common"
+
+    # --- Tier 2: Rare (default conservador) ---
+    return "rare"
+
+
 def derive_stock_type(signal_types: list[str], title: str, description: str) -> str:
     """Devuelve 'limited' si hay señal explícita de stock limitado, "" si no."""
     if any(t in LIMITED_STOCK_SIGNAL_TYPES for t in signal_types or []):
@@ -3351,6 +3530,17 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # pero el sticky cubre TODOS los items independientemente del flag.
         if old and old.get("description_es") and not row.get("description_es"):
             row["description_es"] = old["description_es"]
+        # rarity es sticky: un re-scrape no debe pisar el valor asignado por
+        # web-search (set_rarity.py / validate-rarity skill) con el 'rare'
+        # default del scraper. En particular 'common' solo se asigna tras
+        # verificar stock en tiempo real — sería incorrecto revertirlo.
+        if old and old.get("rarity") and old["rarity"] != row.get("rarity"):
+            row["rarity"] = old["rarity"]
+        # rarity_verified_at es sticky: preservar el timestamp de verificación
+        # web (skill /validate-rarity). Un re-scrape no debe borrar la marca
+        # de que este item ya fue verificado por búsqueda web.
+        if old and old.get("rarity_verified_at") and not row.get("rarity_verified_at"):
+            row["rarity_verified_at"] = old["rarity_verified_at"]
         # images[] es UNION-MERGE entre old y new (Fase 2 listadomanga-collections):
         # un re-scrape que sólo trae la cover no debe borrar los extras que
         # se agregaron en una pasada previa con merge extra→tomo, y viceversa
@@ -5158,6 +5348,19 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
                 url=candidate.url,
                 source=candidate.source,
             )
+
+    # Rarity — derivar solo si el item no tiene ya un valor curado. Los items
+    # que pasaron por web-search en set_rarity.py tienen 'common' asignado;
+    # no pisarlo con 'rare' en un re-scrape. Ver gotcha sobre _CURATED_FIELDS.
+    if not row.get("rarity"):
+        row["rarity"] = derive_rarity_tier(
+            signal_types=row.get("signal_types") or [],
+            source=row.get("source") or "",
+            description=row.get("description") or "",
+            title=row.get("title") or "",
+            publisher=row.get("publisher") or "",
+        )
+
     return row
 
 
@@ -5732,6 +5935,11 @@ def mirror_candidate_images(
     images_dir = data_dir / image_store.IMAGES_DIRNAME
 
     def _one_cover(cand: Candidate) -> tuple[Candidate, str]:
+        # Normalize CDN resize params before downloading so image_url and
+        # image_local always reflect the full-res version from the first scrape.
+        clean_url = image_store.normalize_image_url(cand.image_url)
+        if clean_url != cand.image_url:
+            cand.image_url = clean_url
         filename = image_store.download_image(
             cand.image_url, images_dir, session=session,
             timeout=timeout, referer=cand.url or cand.source_url,
@@ -5741,6 +5949,10 @@ def mirror_candidate_images(
     def _one_extra(args: tuple[Candidate, int]) -> tuple[Candidate, int, str]:
         cand, idx = args
         im = cand.images[idx]
+        # Normalize CDN resize params for gallery images too.
+        clean_url = image_store.normalize_image_url(im["url"])
+        if clean_url != im["url"]:
+            im["url"] = clean_url
         filename = image_store.download_image(
             im["url"], images_dir, session=session,
             timeout=timeout, referer=cand.url or cand.source_url,

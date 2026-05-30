@@ -16,6 +16,33 @@ type SidebarFiltersProps = {
 
 const SIGNAL_DISPLAY_LIMIT = 8
 
+const RARITY_OPTIONS = [
+  {
+    value: 'common',
+    label: 'Accessible',
+    color: '#9CA3AF',
+    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>',
+  },
+  {
+    value: 'rare',
+    label: 'Rare',
+    color: '#8BA8F8',
+    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
+  },
+  {
+    value: 'super_rare',
+    label: 'Super Rare',
+    color: '#C4A8FF',
+    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg>',
+  },
+  {
+    value: 'ultra_rare',
+    label: 'Ultra Rare',
+    color: '#FDE68A',
+    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12l4 6-10 13L2 9z"/></svg>',
+  },
+]
+
 export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFiltersProps) {
   const router   = useRouter()
   const pathname = usePathname()
@@ -73,6 +100,7 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
     (current.country?.length ?? 0) > 0 ||
     (current.language?.length ?? 0) > 0 ||
     (current.signal_types?.length ?? 0) > 0 ||
+    (current.rarity?.length ?? 0) > 0 ||
     (current.publisher?.length ?? 0) > 0 ||
     current.only_limited ||
     (current.min_score !== undefined && current.min_score > 0)
@@ -195,6 +223,42 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
             />
             Solo ediciones limitadas / especiales
           </label>
+        </FilterSection>
+
+        {/* Rarity */}
+        <FilterSection title="Rareza">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {RARITY_OPTIONS.map(({ value, label, color, icon }) => {
+              const active = current.rarity?.includes(value) ?? false
+              return (
+                <button
+                  key={value}
+                  onClick={() => toggleArrayParam('rarity', value)}
+                  aria-pressed={active}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '5px 10px',
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    fontFamily: 'var(--font-display)',
+                    cursor: 'pointer',
+                    border: active
+                      ? `1.5px solid ${color}`
+                      : '1.5px solid var(--color-border)',
+                    background: active ? `${color}18` : 'var(--color-surface)',
+                    color: active ? color : 'var(--color-text-secondary)',
+                    transition: 'all 120ms',
+                  }}
+                >
+                  <span dangerouslySetInnerHTML={{ __html: icon }} />
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </FilterSection>
 
         {/* Signal types */}
