@@ -7058,3 +7058,385 @@ def test_yenpress_skips_regular_manga_without_keywords():
     </body></html>"""
     cands = parse_calendar_page(html, 2025, 6)
     assert len(cands) == 0
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — tests
+# ---------------------------------------------------------------------------
+
+def test_rarity_ultra_rare_numbered_copy():
+    """Edición con fracción de tirada (X/500) → ultra_rare."""
+    r = mw.derive_rarity_tier([], "", "", "Berserk Beherit Limited 1 (42/500)")
+    assert r == "ultra_rare"
+
+
+def test_rarity_ultra_rare_numerado_multilingual():
+    """Keywords de numeración en distintos idiomas → ultra_rare."""
+    assert mw.derive_rarity_tier([], "", "", "One Piece 100 numéroté") == "ultra_rare"
+    assert mw.derive_rarity_tier([], "", "", "Attack on Titan Vol.34 numerada") == "ultra_rare"
+    assert mw.derive_rarity_tier([], "", "", "JJK 30 numerato 120/1000") == "ultra_rare"
+
+
+def test_rarity_ultra_rare_signed():
+    """Ediciones firmadas → ultra_rare en cualquier idioma."""
+    assert mw.derive_rarity_tier([], "", "", "Dragon Ball firmado por Toriyama") == "ultra_rare"
+    assert mw.derive_rarity_tier([], "", "", "Naruto signé par l'auteur") == "ultra_rare"
+    assert mw.derive_rarity_tier([], "", "", "Berserk signiert") == "ultra_rare"
+
+
+def test_rarity_ultra_rare_lucca_event():
+    """Exclusivas de Lucca Comics & Games → ultra_rare."""
+    r = mw.derive_rarity_tier([], "", "", "One Piece 108 Lucca Comics Exclusive")
+    assert r == "ultra_rare"
+
+
+def test_rarity_ultra_rare_retailer_exclusive_plus_lore():
+    """retailer_exclusive + lore_edition → ultra_rare (regla original preservada)."""
+    r = mw.derive_rarity_tier(
+        ["retailer_exclusive", "lore_edition"], "", "", "Demon Slayer Celebration 23"
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_super_rare_retailer_exclusive_only():
+    """retailer_exclusive solo → super_rare."""
+    r = mw.derive_rarity_tier(["retailer_exclusive"], "", "", "Kinokuniya Variant Cover")
+    assert r == "super_rare"
+
+
+def test_rarity_super_rare_booksprivilege_source():
+    """Fuente BooksPrivilege (tokuten) → super_rare independientemente de signals."""
+    r = mw.derive_rarity_tier(
+        ["bonus"], "JP - BooksPrivilege (store bonuses)", "", "Kimetsu no Yaiba 23"
+    )
+    assert r == "super_rare"
+
+
+def test_rarity_common_dark_horse_deluxe():
+    """Dark Horse + deluxe sin limited → common (catálogo permanente, reprints confirmados)."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "", "", "Berserk Deluxe 1",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "common"
+
+
+def test_rarity_common_viz_boxset():
+    """Viz + box_set sin limited → common (restocks confirmados)."""
+    r = mw.derive_rarity_tier(
+        ["box_set"], "", "", "One Piece Box Set 1",
+        publisher="VIZ Media"
+    )
+    assert r == "common"
+
+
+def test_rarity_common_yen_press_collector():
+    """Yen Press + collector sin limited → common (catálogo ongoing)."""
+    r = mw.derive_rarity_tier(
+        ["collector", "hardcover"], "", "", "Fruits Basket Collector's Edition 1",
+        publisher="Yen Press"
+    )
+    assert r == "common"
+
+
+def test_rarity_common_norma_coleccionista():
+    """Norma Editorial sin limited → common (sin límite declarado, retail estándar)."""
+    r = mw.derive_rarity_tier(
+        ["collector", "hardcover"], "", "", "Old Boy Collector 1",
+        publisher="Norma Editorial"
+    )
+    assert r == "common"
+
+
+def test_rarity_common_distrito_manga():
+    """Distrito Manga sin limited → common."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "", "Old Boy Edición Coleccionista 2",
+        publisher="Distrito Manga"
+    )
+    assert r == "common"
+
+
+def test_rarity_common_blocked_by_limited_signal():
+    """Publisher conocido + señal 'limited' → rare, no common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "limited"], "", "", "Dark Horse Event Limited Edition",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_common_blocked_by_variant_cover():
+    """Publisher conocido + variant_cover → rare (variant covers son mínimo rare)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "", "Berserk Variant Cover",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_common_blocked_by_bonus():
+    """Publisher conocido + bonus (tokuten) → rare (tokuten no se reimprime)."""
+    r = mw.derive_rarity_tier(
+        ["bonus", "special_edition"], "", "", "Seven Seas Bonus Edition",
+        publisher="Seven Seas"
+    )
+    assert r == "rare"
+
+
+def test_rarity_rare_default_unknown_publisher():
+    """Publisher desconocido sin señales de escasez → rare (default conservador)."""
+    r = mw.derive_rarity_tier(
+        ["collector", "hardcover"], "", "", "Some Collector Edition 1",
+        publisher="Editorial Desconocida"
+    )
+    assert r == "rare"
+
+
+def test_rarity_rare_variant_cover_always_at_least_rare():
+    """variant_cover con publisher desconocido → rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "", "Portada Variante Especial 5",
+        publisher=""
+    )
+    assert r == "rare"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — Mejora 1: guard fuentes de referencia
+# ---------------------------------------------------------------------------
+
+def test_rarity_reference_source_blocks_common():
+    """Publisher conocido PERO fuente de referencia sin precio → rare, no common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "Global - Mangavariant", "",
+        "Berserk Deluxe 1",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_reference_source_sumikko_stays_rare():
+    """Sumikko es fuente de referencia → rare aunque publisher matchee."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
+        "Kimetsu no Yaiba Limited 23",
+        publisher="Shueisha"
+    )
+    assert r == "rare"
+
+
+def test_rarity_retailer_source_allows_common():
+    """Publisher conocido + fuente de retailer (no referencia) → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "US - Amazon", "",
+        "Berserk Deluxe 1",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "common"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — Mejora 2: publisher × edition pattern
+# ---------------------------------------------------------------------------
+
+def test_rarity_glenat_prestige_common():
+    """Glénat Prestige = catálogo ongoing → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe"], "Manga-Sanctuary (planning)", "",
+        "Berserk Prestige 3",
+        publisher="glénat manga"
+    )
+    assert r == "common"
+
+
+def test_rarity_glenat_collector_per_volume_rare():
+    """Glénat 'Collector' por volumen NO matchea el pattern → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "Manga-Sanctuary (planning)", "",
+        "One Piece Collector 100",
+        publisher="glénat manga"
+    )
+    assert r == "rare"
+
+
+def test_rarity_kioon_coffret_decouverte_common():
+    """Ki-oon coffret découverte T1-3 = estacional → common."""
+    r = mw.derive_rarity_tier(
+        ["box_set"], "FR - Ki-oon", "",
+        "Jujutsu Kaisen Coffret T1-3",
+        publisher="Ki-oon"
+    )
+    assert r == "common"
+
+
+def test_rarity_kioon_collector_per_volume_rare():
+    """Ki-oon Collector por volumen = tirada única → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "FR - Ki-oon", "",
+        "Frieren Collector 13",
+        publisher="Ki-oon"
+    )
+    assert r == "rare"
+
+
+def test_rarity_pika_masterpiece_common():
+    """Pika Masterpiece = línea catálogo permanente → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "FR - Pika", "",
+        "Rokudenashi Blues Pika Masterpiece 5",
+        publisher="Pika Edition"
+    )
+    assert r == "common"
+
+
+def test_rarity_carlsen_massiv_common():
+    """Carlsen Massiv = omnibus ongoing → common."""
+    r = mw.derive_rarity_tier(
+        ["omnibus"], "DE - Manga-Passion Sonderausgaben", "",
+        "Dragon Ball Massiv 10",
+        publisher="Carlsen Manga!"
+    )
+    assert r == "common"
+
+
+def test_rarity_carlsen_sammelschuber_common():
+    """Carlsen Sammelschuber = slipcase arc boxes → common."""
+    r = mw.derive_rarity_tier(
+        ["box_set"], "DE - Manga-Passion Sonderausgaben", "",
+        "One Piece Sammelschuber 5",
+        publisher="Carlsen Manga!"
+    )
+    assert r == "common"
+
+
+def test_rarity_panini_master_edition_common():
+    """Panini Master Edition = catálogo ongoing trimestral → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "IT - Panini Planet Manga", "",
+        "Berserk Master Edition 1",
+        publisher="Panini Comics"
+    )
+    assert r == "common"
+
+
+def test_rarity_kana_deluxe_common():
+    """Kana Deluxe (Vinland Saga, etc.) = ongoing → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "FR - Kana", "",
+        "Vinland Saga Deluxe 5",
+        publisher="kana"
+    )
+    assert r == "common"
+
+
+def test_rarity_meian_perfect_edition_common():
+    """Meian Perfect Edition = volúmenes individuales ongoing → common."""
+    r = mw.derive_rarity_tier(
+        ["deluxe"], "FR - Meian", "",
+        "Baki Perfect Edition 8",
+        publisher="meian"
+    )
+    assert r == "common"
+
+
+def test_rarity_star_comics_not_common():
+    """Star Comics NO está en catálogo permanente → rare por default."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "IT - Star Comics", "",
+        "Frieren Limited Edition 12",
+        publisher="Star Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_panini_variant_stays_rare():
+    """Panini + variant_cover → rare (signal de escasez bloquea common)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "IT - Panini Planet Manga", "",
+        "Kagurabachi Variant 1",
+        publisher="Panini Comics"
+    )
+    assert r == "rare"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — Mejora 3: single-run keywords bloquean common
+# ---------------------------------------------------------------------------
+
+def test_rarity_single_run_tiratura_limitata_blocks_common():
+    """'tiratura limitata' en descripción bloquea common aunque publisher matchee."""
+    r = mw.derive_rarity_tier(
+        ["collector", "hardcover"], "IT - Panini Planet Manga",
+        "Edizione in tiratura limitata con poster esclusivo",
+        "Berserk Master Edition Special",
+        publisher="Panini Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_single_run_tirage_unique_blocks_common():
+    """'tirage unique' bloquea common para Glénat Prestige."""
+    r = mw.derive_rarity_tier(
+        ["deluxe"], "Manga-Sanctuary (planning)",
+        "Ce volume prestige est un tirage unique",
+        "Berserk Prestige 6 Collector",
+        publisher="glénat manga"
+    )
+    assert r == "rare"
+
+
+def test_rarity_single_run_primera_tirada_blocks_common():
+    """'primera tirada' bloquea common para Norma."""
+    r = mw.derive_rarity_tier(
+        ["collector", "hardcover"], "ES - Norma",
+        "Incluye extras solo en la primera tirada",
+        "Death Note Collector 1",
+        publisher="Norma Editorial"
+    )
+    assert r == "rare"
+
+
+def test_rarity_single_run_celebration_blocks_common():
+    """'celebration edition' bloquea common."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "IT - Star Comics", "",
+        "One Piece Celebration Edition 100",
+        publisher="Star Comics"
+    )
+    assert r == "rare"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — Mejora 4: celebration/anniversary permanecen rare
+# ---------------------------------------------------------------------------
+
+def test_rarity_celebration_edition_rare():
+    """Celebration Edition = tirada única event-tied → rare."""
+    r = mw.derive_rarity_tier(
+        ["lore_edition", "special_edition"], "IT - AnimeClick (edizioni speciali)", "",
+        "My Hero Academia Celebration Edition 42",
+        publisher="Star Comics"
+    )
+    assert r == "rare"
+
+
+def test_rarity_anniversary_with_extras_rare():
+    """Anniversary edition con extras en descripción → rare."""
+    r = mw.derive_rarity_tier(
+        ["lore_edition"], "ES - Norma",
+        "Edición 30 aniversario con poster y artbook exclusivo",
+        "Slam Dunk 30th Anniversary",
+        publisher="Norma Editorial"
+    )
+    assert r == "rare"
+
+
+def test_rarity_no_false_positive_celebration_in_series():
+    """'Celebration' como parte del nombre de serie, no del formato → no bloquea."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "US - Amazon", "",
+        "Berserk Deluxe 1",
+        publisher="Dark Horse Comics"
+    )
+    assert r == "common"

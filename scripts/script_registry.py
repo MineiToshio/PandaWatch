@@ -1098,6 +1098,184 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "upgrade_image_resolution",
+        "category": "Mantenimiento",
+        "icon": "🔍",
+        "name": "Mejorar resolución de portadas",
+        "tagline": "Re-descarga portadas en resolución original eliminando parámetros de redimensionado.",
+        "what": (
+            "Muchos retailers (Panini IT, JBC BR, MangaLine, Mangavariant…) "
+            "sirven las portadas con parámetros que las redimensionan a "
+            "miniaturas (ej. ?height=222&width=222 o sufijos -300x300.jpg). "
+            "Este script detecta esos patrones, descarga la versión original "
+            "sin redimensionar y reemplaza el archivo local solo si la nueva "
+            "imagen tiene notablemente más píxeles. Actualiza image_url e "
+            "images[] en items.jsonl para reflejar la URL original."
+        ),
+        "when": (
+            "1× después de una ingesta grande de fuentes con imágenes "
+            "pixeladas (Mangavariant, Panini IT, JBC BR). Luego es "
+            "idempotente — URLs ya limpias no se reprocesan. Los archivos "
+            "locales viejos (miniaturas) quedan como huérfanos y se limpian "
+            "la próxima vez que corras mirror_images con GC."
+        ),
+        "command": [PYTHON, "scripts/retrofit/upgrade_image_resolution.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Solo reporta cuántas URLs se podrían mejorar, sin descargar.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "all",
+                "label": "🟢 Mejorar todo",
+                "desc": "Upgrade completo del corpus con 8 workers paralelos.",
+                "values": {"--workers": 8},
+            },
+            {
+                "id": "test",
+                "label": "🔬 Prueba rápida (100 items)",
+                "desc": "Procesa solo 100 URLs para verificar que funciona antes del run completo.",
+                "values": {"--limit": 100},
+            },
+        ],
+        "flags": [
+            _flag("--workers", "Descargas en paralelo",
+                  "Cuántas imágenes bajar al mismo tiempo. Default 4.",
+                  type="int", default=4),
+            _flag("--min-gain", "Ganancia mínima de píxeles",
+                  "Fracción mínima de mejora para reemplazar la imagen "
+                  "(0.10 = 10% más píxeles). Default 0.10.",
+                  type="float", default=0.10, placeholder="0.10", advanced=True),
+            _flag("--limit", "Máx URLs a procesar",
+                  "0 = sin límite. Útil para probar con --limit 100.",
+                  type="int", default=0, placeholder="100"),
+            _flag("--dry-run", "Modo prueba (no descarga ni escribe)",
+                  "Solo reporta qué haría, sin tocar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "backfill_prh_covers",
+        "category": "Mantenimiento",
+        "icon": "🇺🇸",
+        "name": "Portadas EN via PRH CDN",
+        "tagline": "Mejora portadas de items EN con ISBN usando el CDN determinístico de Penguin Random House.",
+        "what": (
+            "Para items en inglés con ISBN-13 de prefijo 978-0 / 978-1, "
+            "prueba la URL determinística del CDN de PRH: "
+            "images.penguinrandomhouse.com/cover/{isbn13}. PRH distribuye manga EN "
+            "de Dark Horse, Kodansha Comics, Seven Seas, Square Enix, TOKYOPOP, "
+            "Titan, Vertical, Inklore, Yen Press y más. Para ISBNs fuera del "
+            "catálogo PRH el CDN devuelve 404 (descartado automáticamente). "
+            "Compara por píxeles antes de reemplazar (--min-gain 0.10 = 10% mínimo)."
+        ),
+        "when": (
+            "Después de ingestas de fuentes EN con imágenes pequeñas (Yen Press "
+            "Calendar, VIZ, Manga-Sanctuary EN). Idempotente — items ya usando PRH "
+            "CDN se saltan. 39 candidatos en el corpus actual."
+        ),
+        "command": [PYTHON, "scripts/retrofit/backfill_prh_covers.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Muestra los candidatos sin descargar ni modificar nada.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "all",
+                "label": "🟢 Backfill completo",
+                "desc": "Procesa todos los items EN con ISBN en paralelo.",
+                "values": {"--workers": 8},
+            },
+            {
+                "id": "accept_always",
+                "label": "🔓 Aceptar siempre (sin umbral)",
+                "desc": "Reemplaza la portada aunque no haya mejora de píxeles (útil cuando la actual es placeholder).",
+                "values": {"--min-gain": 0, "--workers": 8},
+            },
+        ],
+        "flags": [
+            _flag("--workers", "Descargas en paralelo",
+                  "Cuántas ISBNs probar al mismo tiempo. Default 4.",
+                  type="int", default=4),
+            _flag("--min-gain", "Ganancia mínima de píxeles",
+                  "Fracción mínima de mejora para reemplazar (0.10 = 10% más píxeles). "
+                  "Usar 0 para aceptar siempre si PRH tiene la imagen.",
+                  type="float", default=0.10, placeholder="0.10", advanced=True),
+            _flag("--limit", "Máx items a procesar",
+                  "0 = sin límite. Útil para probar con --limit 10.",
+                  type="int", default=0, placeholder="10"),
+            _flag("--dry-run", "Modo prueba (no descarga ni escribe)",
+                  "Solo muestra los candidatos que procesaría.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "upscale_images",
+        "category": "Mantenimiento",
+        "icon": "🔬",
+        "name": "Upscaling de portadas pixeladas (IA)",
+        "tagline": "Mejora la resolución de portadas pequeñas con waifu2x o Real-ESRGAN.",
+        "what": (
+            "Muchas fuentes JP (sumikko, booksprivilege, Rakuten) y algunas IT "
+            "(animeclick) sólo exponen miniaturas de ~150×220 px — no existe "
+            "versión más grande en el servidor. Este script usa IA (waifu2x-ncnn-vulkan "
+            "o realesrgan-ncnn-vulkan, modelos optimizados para anime/manga) para "
+            "upscalear ×2 esas imágenes a ~300×440 px. El resultado se guarda como "
+            "PNG (lossless) en data/images/. Si la extensión cambia de .jpg a .png, "
+            "el campo image_local en items.jsonl se actualiza automáticamente."
+        ),
+        "when": (
+            "Después de ingestas de fuentes JP con muchas portadas pixeladas. "
+            "Requiere instalar primero: brew install waifu2x-ncnn-vulkan"
+        ),
+        "command": [PYTHON, "scripts/retrofit/upscale_images.py"],
+        "presets": [
+            {
+                "label": "🔬 Dry-run (ver cuántas hay)",
+                "flags": {"--dry-run": True},
+            },
+            {
+                "label": "🔬 Test rápido (20 imágenes)",
+                "flags": {"--limit": 20},
+            },
+            {
+                "label": "🔬 Todo (< 200 000 px)",
+                "flags": {"--max-pixels": 200000},
+            },
+        ],
+        "flags": [
+            _flag("--max-pixels", "Umbral de píxeles",
+                  "Solo procesa imágenes con menos de N píxeles totales. "
+                  "200 000 ≈ 450×445 px. Subir para procesar más imágenes.",
+                  type="int", default=200000, placeholder="200000"),
+            _flag("--scale", "Factor de escala",
+                  "Multiplicar las dimensiones por este factor (2 o 4). "
+                  "Default 2: una imagen de 150×220 pasa a ~300×440 px.",
+                  type="choice", default="2", choices=["2", "4"]),
+            _flag("--denoise", "Nivel de denoise (waifu2x)",
+                  "0 = sin denoise, 1 = leve (recomendado), 3 = agresivo. "
+                  "Solo aplica a waifu2x-ncnn-vulkan.",
+                  type="int", default=1, placeholder="1", advanced=True),
+            _flag("--limit", "Máx imágenes a procesar",
+                  "0 = sin límite. Útil para probar con --limit 20.",
+                  type="int", default=0, placeholder="20"),
+            _flag("--dry-run", "Modo prueba (no upscalea ni escribe)",
+                  "Solo muestra las imágenes candidatas con sus píxeles actuales.",
+                  type="bool", default=False),
+            _flag("--no-delete-original", "Conservar .jpg original",
+                  "Por default el .jpg se borra cuando se guarda el .png upscaleado. "
+                  "Con este flag se conservan ambos.",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
         "id": "translate_descriptions",
         "category": "Mantenimiento",
         "icon": "🌐",
@@ -1163,6 +1341,83 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False, advanced=True),
             _flag("--dry-run", "Modo prueba",
                   "Solo muestra qué se traduciría. No llama a la API.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "fetch_better_covers",
+        "category": "Mantenimiento",
+        "icon": "🔍",
+        "name": "Buscar portadas en mayor resolución",
+        "tagline": "Para items con imagen pequeña, busca portadas hi-res vía CDN, OpenLibrary, Serper y Tavily.",
+        "what": (
+            "Muchas fuentes IT (AnimeClick) y ES (ListadoManga) sólo exponen portadas pequeñas. "
+            "Este script busca la versión hi-res por orden de prioridad: "
+            "(1) ISBN → Amazon CDN + PRH CDN (EN) + OpenLibrary — gratis, sin cuota, sin búsqueda web. "
+            "(2) Sin ISBN → Serper Google Images API (SERPER_API_KEY, 2 500 queries gratis sin tarjeta) o "
+            "Tavily Search API (TAVILY_API_KEY, 1 000 queries/mes) como fallback. "
+            "Keys auto-cargadas desde .env. "
+            "Verificación: perceptual hash aHash 8×8, distancia Hamming ≤ --max-hash-dist (default 12/64). "
+            "Flush incremental: cada mejora se guarda inmediatamente en items.jsonl."
+        ),
+        "when": (
+            "Después de upgrade_image_resolution.py. Cuando hay items con imagen < 100 000 px "
+            "sin versión hi-res en el servidor origen (típico: AnimeClick IT, ListadoManga ES). "
+            "Correr primero con --dry-run para estimar. "
+            "Requiere: pip install Pillow. "
+            "APIs opcionales en .env: SERPER_API_KEY (2 500 gratis, sin tarjeta) o TAVILY_API_KEY (1 000/mes)."
+        ),
+        "command": [PYTHON, "scripts/retrofit/fetch_better_covers.py"],
+        "presets": [
+            {
+                "label": "🔍 Dry-run (ver candidatos)",
+                "flags": {"--dry-run": True, "--limit": 30, "--verbose": True},
+            },
+            {
+                "label": "🔍 Solo CDN + OpenLibrary (sin web search)",
+                "flags": {"--no-search": True},
+            },
+            {
+                "label": "🔍 Todo (CDN + OpenLibrary + Brave/Tavily)",
+                "flags": {},
+            },
+        ],
+        "flags": [
+            _flag("--min-pixels", "Umbral de calidad baja (px)",
+                  "Items con imagen de menos de N píxeles totales son candidatos. "
+                  "Default 100 000 ≈ 316×316 px.",
+                  type="int", default=100000, placeholder="100000"),
+            _flag("--min-gain", "Ganancia mínima requerida (×)",
+                  "La candidata debe tener al menos N× más píxeles que la imagen actual. "
+                  "Default 1.5: si la actual tiene 30 000 px, la candidata debe tener ≥ 45 000 px.",
+                  type="float", default=1.5, placeholder="1.5"),
+            _flag("--max-hash-dist", "Distancia hash máxima (0-64)",
+                  "Distancia Hamming máxima del perceptual hash para aceptar la candidata "
+                  "como 'misma portada'. 0 = imagen idéntica, 64 = completamente diferente. "
+                  "Default 12: permite variaciones de iluminación, recorte leve, compresión.",
+                  type="int", default=12, placeholder="12"),
+            _flag("--no-search", "Solo CDN + OpenLibrary (sin búsqueda web)",
+                  "No usa Serper, Brave ni Tavily. Solo lookups determinísticos por ISBN. "
+                  "Rápido, sin consumo de cuota API; solo ayuda a items con ISBN.",
+                  type="bool", default=False),
+            _flag("--serper-key", "Serper API key (recomendado)",
+                  "Si no se pasa, se lee SERPER_API_KEY del .env. "
+                  "Google Images API — 2 500 queries gratis sin tarjeta de crédito en serper.dev. "
+                  "Preferido sobre Brave y Tavily.",
+                  type="str", default="", placeholder="abc123...", advanced=True),
+            _flag("--tavily-key", "Tavily API key (opcional)",
+                  "Si no se pasa, se lee TAVILY_API_KEY del .env. "
+                  "Fallback si no hay Serper key. 1 000 queries/mes gratis.",
+                  type="str", default="", placeholder="tvly-...", advanced=True),
+            _flag("--limit", "Máx items a procesar",
+                  "0 = sin límite. Útil para probar con --limit 50.",
+                  type="int", default=0, placeholder="50"),
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Solo muestra qué se encontraría. No descarga ni modifica archivos.",
+                  type="bool", default=False),
+            _flag("--verbose", "Mostrar detalle de cada item",
+                  "Imprime URL candidata, píxeles y resultado de verificación por item.",
                   type="bool", default=False),
         ],
     },
@@ -1372,6 +1627,48 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--verbose", "Log de cada asignación",
                   "Imprime el slug asignado y el título de cada item procesado.",
                   type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "set_rarity",
+        "category": "Retrofit",
+        "icon": "🟪",
+        "name": "Asignar rareza",
+        "tagline": "Aplica el campo rarity a todos los items",
+        "what": "Clasifica cada item en common / rare / super_rare / ultra_rare "
+                "usando derive_rarity_tier() de manga_watch.py. Solo recalcula "
+                "los items que no tienen rarity asignado (o todos con --force).",
+        "when": "Después de scrapes grandes, o cuando cambien las reglas de rareza.",
+        "command": [PYTHON, "scripts/retrofit/set_rarity.py"],
+        "presets": [
+            {
+                "id": "missing_only",
+                "label": "🟢 Solo items sin rareza (incremental)",
+                "desc": "Asigna rareza únicamente a los items nuevos sin clasificar.",
+                "values": {},
+            },
+            {
+                "id": "force_all",
+                "label": "🔄 Recalcular todos (--force)",
+                "desc": "Recomputa rarity en todo el corpus con las reglas actuales.",
+                "values": {"--force": True},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué cambiaría sin modificar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los cambios que aplicaría sin modificar items.jsonl.",
+                  type="bool", default=False),
+            _flag("--force", "Recalcular todos",
+                  "Recalcula rarity en TODOS los items, incluso los ya clasificados. "
+                  "Útil cuando cambian las reglas de derive_rarity_tier().",
+                  type="bool", default=False),
         ],
     },
 
