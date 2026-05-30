@@ -622,7 +622,28 @@ prints each assignment so you can spot unexpected fallback slugs (`item-{sha1}`)
 that indicate items with missing `edition_key` — those may need a follow-up
 `/standardize-catalog` pass.
 
-## Step 7 — Cleanup + report
+## Step 7 — Translate new descriptions
+
+Run `translate_descriptions.py` to populate `description_es` (and `extras[].description_es`)
+for the items that were just standardized. Newly scraped items never have the
+`description_es` key, so the script automatically skips everything that was already
+translated in previous passes — no extra flag required.
+
+```bash
+.venv/bin/python scripts/retrofit/translate_descriptions.py --workers 4
+```
+
+**How the targeting works** (no manual filtering needed):
+- Items WITH `description_es` key (whole corpus from previous runs) → skipped.
+- Items WITHOUT `description_es` key (newly standardized items) → translated.
+- Items whose `description` is already in Spanish → written with `description_es = ""`
+  (sentinel = "processed, already Spanish") so they won't be re-queued next time.
+
+If the corpus is large (>500 pending) and you want to see progress, add `--limit N`
+to do a partial run, then re-run without `--limit` to finish. The script flushes
+every 50 items, so a kill mid-run loses at most 50 items' worth of work.
+
+## Step 8 — Cleanup + report
 
 ```bash
 rm -rf /tmp/manga-standardize-run
@@ -634,6 +655,7 @@ Then report to the user:
 - Distinct edition_keys.
 - Non-manga removed (with sample reasons).
 - Items deduplicated.
+- Items translated in Step 7 (if any).
 - Suggest running `/enrich-series-aliases` if new series_keys appeared.
 
 ## Anti-patterns
@@ -643,6 +665,7 @@ Then report to the user:
 - **Don't skip the `canonical_series_key` step in merge** — that's where Demon Slayer's various names collapse to one. Without it, the standardization output is partial.
 - **Don't forget to set `standardized_at`** on each processed item — that's what makes future runs incremental.
 - **Don't truncate `/tmp/manga-standardize-run/` until you've confirmed the merge wrote items.jsonl successfully.** If the merge fails, you want the raw subagent outputs preserved for debugging.
+- **Don't skip Step 7 (translation)** for small runs. Even 1 new item without `description_es` will keep showing its raw non-Spanish description in both UIs.
 
 ## Force-rerun the whole catalog
 

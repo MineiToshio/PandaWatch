@@ -126,6 +126,9 @@
 7th-time-loop:
   display: 7th Time Loop
   aliases: []
+7th-time-loop-villainess:
+  display: '7th Time Loop: The Villainess Enjoys a Carefree Life'
+  aliases: []
 8-guerrieri:
   display: 8 guerrieri
   aliases: []
@@ -183,6 +186,9 @@ a-couple-of-cuckoos:
 a-distant-neighborhood:
   display: A Distant Neighborhood
   aliases: []
+a-girl-on-the-shore:
+  display: A Girl on the Shore
+  aliases: []
 a-heartfelt-andante:
   display: A Heartfelt Andante
   aliases: []
@@ -199,6 +205,9 @@ a-man-and-his-cat:
   - le chat qui rendait l'homme heureux
   - um homem e seu gato
   - おじさまと猫
+a-man-who-defies-the-world-of-bl:
+  display: A Man Who Defies the World of BL
+  aliases: []
 a-sign-of-affection:
   display: A Sign of Affection
   aliases:
@@ -229,6 +238,12 @@ a-tale-of-the-secret-saint:
 a-witch-in-mongolia:
   display: A Witch in Mongolia
   aliases: []
+a-yuri-love-story-rejected-in-dream:
+  display: A Yuri Love Story That Begins with Getting Rejected in a Dream
+  aliases: []
+aa-cho-de-aritai:
+  display: 嗚呼 蝶でありたい
+  aliases: []
 abara:
   display: Abara
   aliases:
@@ -242,6 +257,9 @@ abismos-y-sinfonias-tales-of:
   - abismos-y-sinfonias-tales
 acquerelli:
   display: Acquerelli
+  aliases: []
+acro-trip:
+  display: アクロトリップ
   aliases: []
 act-age:
   display: Act-Age
@@ -258,6 +276,9 @@ adolf:
   - La Storia dei Tre Adolf
   - Message to Adolf
   - アドルフに告ぐ
+adou:
+  display: Adou
+  aliases: []
 aethernal:
   display: AEthernal
   aliases: []
@@ -317,6 +338,12 @@ ai-yori-aoshi:
 aika-to-hanayome:
   display: Aika to Hanayome
   aliases: []
+aira-san-in-bedrangnis:
+  display: Aira-san in Bedrängnis
+  aliases: []
+aisha-noch-einmal-ins-licht:
+  display: Aisha – Noch einmal ins Licht
+  aliases: []
 aishi-no-xl-size-zoku-zoku:
   display: 愛しのXLサイズ・続々
   aliases: []
@@ -330,6 +357,9 @@ aishite-knight:
   - Love me, my Knight
 aitsu-no-daihonmei:
   display: Aitsu no Daihonmei
+  aliases: []
+aitsu-no-koe-wo-kiku-dake-de:
+  display: アイツの声を聞くだけで
   aliases: []
 ajin:
   display: 'Ajin: Demi-Human'
@@ -345,6 +375,12 @@ aka-x-kuro:
   aliases: []
 akagami-no-shirayuki-hime:
   display: Akagami no Shirayuki-hime
+  aliases: []
+akagami-no-shirayukihime:
+  display: 赤髪の白雪姫
+  aliases: []
+akagamin-wa-dasshutsu-dekinai:
+  display: あかがみんは脱出できない
   aliases: []
 akakichi-no-eleven:
   display: Akakichi no Eleven
@@ -379,6 +415,14 @@ akb49:
   - AKB49 - The Rules Against Love
   - AKB49〜恋愛禁止条例〜
   - akb49
+akete-mo-kurete-mo:
+  display: 'Akete mo Kurete mo: Zoku Itsuka Koi ni Naru made'
+  aliases:
+  - Akete mo Kurete mo
+  - 'Akete mo Kurete mo: Zoku Itsuka Koi ni Naru made'
+  - 'Night and Day: After Until the Love Blooms'
+  - akete-mo-kurete-mo-zoku
+  - 明けても暮れても -続 いつか恋になるまで-
 akira:
   display: Akira
   aliases:
@@ -387,11 +431,23 @@ akira:
 aku-no-hana:
   display: Aku no Hana
   aliases: []
+aku-yome:
+  display: あくヨメ
+  aliases: []
 akuma-zelma:
   display: Akuma Zelma
   aliases: []
+akuyaku-hime-desu-ga-oji-to-kozukuri:
+  display: 悪役姫ですが、嫌われているはずの王子と子作りしないといけません。
+  aliases: []
 akuyaku-reijo-level99:
   display: Akuyaku Reijou Level 99
+  aliases: []
+akuyaku-reijo-tokidoki-honki-nochi-seijo:
+  display: 悪役令嬢、時々本気、のち聖女。
+  aliases: []
+akuyaku-reijo-wa-rinkoku-no-oji:
+  display: 悪役令嬢は隣国の王太子に溺愛される
   aliases: []
 akuyaku-reijou-wa-dere-dere-route:
   display: Akuyaku Reijou wa Dere-dere Route ni Hairimashita!?
@@ -410,11 +466,17 @@ album-de-graduacion:
   aliases:
   - Sotsugyou Album
   - Álbum de graduación
+aldnoah-zero:
+  display: Aldnoah.Zero
+  aliases: []
 ale-e-cucca:
   display: Ale e Cucca
   aliases: []
 alexis-empire-chronicle:
   display: The Alexis Empire Chronicle
+  aliases: []
+alice-19th:
+  display: Alice 19th
   aliases: []
 alice-and-zoroku:
   display: Alice & Zoroku
@@ -467,6 +529,9 @@ all-world:
 allevare-un-cane:
   display: Allevare un cane e altri racconti
   aliases: []
+alley-junji-ito:
+  display: 'ALLEY: Junji Ito Short Story Collection'
+  aliases: []
 alma:
   display: Alma
   aliases: []
@@ -484,8 +549,14 @@ alya-sometimes-hides-feelings-in-russian:
   - roshidere
   - tokidoki bosotto russian-go de dereru tonari no alya-san
   - 時々ボソッとロシア語でデレる隣のアーリャさん
+am-ende-des-weges:
+  display: Am Ende des Weges
+  aliases: []
 amakamisan-chi-no-enmusubi:
   display: Amakamisan-chi no Enmusubi
+  aliases: []
+amakano-2:
+  display: アマカノ2
   aliases: []
 amanchu:
   display: Amanchu
@@ -501,6 +572,9 @@ amatsuki:
 amebe:
   display: Amebe
   aliases: []
+ami-chans-tagebuch:
+  display: Ami-chans Tagebuch
+  aliases: []
 amon-darkside-of-the-devilman:
   display: 'Amon: The Darkside of the Devilman'
   aliases:
@@ -513,6 +587,9 @@ amon-saga:
   aliases: []
 amore-senza-frontiere:
   display: Amore senza frontiere
+  aliases: []
+an-archdemon-s-dilemma:
+  display: 'An Archdemon''s Dilemma: How to Love Your Elf Bride'
   aliases: []
 an-hour-of-romance:
   display: An Hour of Romance
@@ -529,6 +606,9 @@ ancient-magus-bride:
   - The Ancient Magus Bride
   - The Magician's Bride
   - 魔法使いの嫁
+and-then-she-became-mina:
+  display: And Then, She Became Mina.
+  aliases: []
 ane-log:
   display: Ane Log
   aliases:
@@ -559,6 +639,9 @@ angel-sanctuary:
 angelic-u-jin:
   display: Angelic (U-Jin)
   aliases: []
+angels-of-death:
+  display: Angels of Death
+  aliases: []
 angle-symbol:
   display: '>>>>>>& (Angle Symbol Manga)'
   aliases: []
@@ -575,6 +658,12 @@ animal-crossing-new-horizons:
   aliases: []
 animal-crossing-new-horizons-journal:
   display: Animal Crossing New Horizons – Le Journal de l'île
+  aliases: []
+anne-of-green-gables:
+  display: Anne mit den roten Haaren
+  aliases: []
+annette-san-to-liliana-san:
+  display: アネットさんとリリアナさん
   aliases: []
 ano-hi-no-koi-ga-owattekurenai:
   display: Ano Hi no Koi ga Owattekurenai
@@ -706,6 +795,9 @@ aria-the-scarlet-ammo:
 ariadne-in-the-blue-sky:
   display: Ariadne in the Blue Sky
   aliases: []
+aristia-la-monique:
+  display: Aristia la Monique
+  aliases: []
 armagia:
   display: Armagia
   aliases: []
@@ -739,6 +831,12 @@ asadora:
   - Asadora!
   - あさドラ！
   - 連続漫画小説 あさドラ！
+asahina-sans-bento:
+  display: Asahina-san's Bento
+  aliases: []
+asayake-refrain:
+  display: Asayake Refrain
+  aliases: []
 ase-to-sekken:
   display: Sweat and Soap
   aliases:
@@ -758,6 +856,13 @@ ashita-no-joe:
 ashita-wa-docchida:
   display: Ashita wa Docchida!
   aliases: []
+asobi-asobase:
+  display: Asobi Asobase
+  aliases:
+  - Asobi Asobase
+  - Play and Let Play
+  - asobi-asobase
+  - あそびあそばせ
 assassin-no-tamago-ni-tensei-shita:
   display: Assassin no Tamago ni Tensei Shita
   aliases: []
@@ -773,6 +878,9 @@ assassins-creed-blade-of-shao-jun:
   display: 'Assassin''s Creed: Blade of Shao Jun'
   aliases:
   - 'Assassin''s Creed: Blade of Shao Jun'
+assassins-creed-dynasty:
+  display: Assassin's Creed Dynasty
+  aliases: []
 assault-lily-bouquet:
   display: Assault Lily Bouquet
   aliases:
@@ -798,14 +906,23 @@ astro-royale:
 at-summers-end:
   display: At Summer's End
   aliases: []
+atama-no-naka-no-are:
+  display: アタマの中のアレを食べたい
+  aliases: []
 atashin-chi:
   display: Atashin'chi
   aliases: []
 atema-kyara-no-kuse-shite-supada-ouji:
   display: Atema Kyara no Kuse Shite, Supada Ouji ni Choai Sarete Imasu
   aliases: []
+ateya-no-tsubaki:
+  display: 当て屋の椿
+  aliases: []
 ateyano-tsubaki:
   display: Ateyano Tsubaki
+  aliases: []
+athanasia-plotzlich-prinzessin:
+  display: Athanasia – Plötzlich Prinzessin
   aliases: []
 atom-cat:
   display: Atom Cat
@@ -871,6 +988,17 @@ au:
   aliases:
   - AU 画集
   - AU画集
+aufgeweckt-mit-einem-kuss:
+  display: Aufgeweckt mit einem Kuss
+  aliases: []
+awkward-silence:
+  display: Awkward Silence
+  aliases:
+  - Awkward Silence
+  - Bukiyou na Silent
+  - Ohne viele Worte
+  - bukiyou-na-silent
+  - 不器用なサイレント
 ayakashi-hiougi:
   display: Ayakashi Hiougi
   aliases:
@@ -892,6 +1020,9 @@ ayanashi:
 ayashimon:
   display: Ayashimon
   aliases: []
+azato-making:
+  display: アザトメイキング
+  aliases: []
 azatokute-hentai:
   display: Azatokute, Hentai
   aliases: []
@@ -912,11 +1043,17 @@ b-project:
   display: B-Project
   aliases:
   - B-Project On and Off
+babel-no-sekkei:
+  display: バベルの設計士
+  aliases: []
 baby-steps:
   display: Baby Steps
   aliases: []
 backhome:
   display: Backhome
+  aliases: []
+bad-boy-yagami:
+  display: Bad Boy Yagami
   aliases: []
 badboys:
   display: BADBOYS
@@ -927,6 +1064,12 @@ badducks:
 baito-kun-no-nichijou:
   display: '...Baito-kun no Nichijou'
   aliases: []
+baka-to-hasami:
+  display: Baka to Hasami
+  aliases:
+  - Baka to Hasami
+  - baka-to-hasami
+  - 馬鹿とハサミ
 bakemono:
   display: Bakemono
   aliases: []
@@ -982,11 +1125,17 @@ bakuman:
 bakumatsu-elf:
   display: Bakumatsu Elf
   aliases: []
+bakunyu-tachi-ni-tsuihou-sareta-the-comic:
+  display: 爆乳たちに追放されたが戻れと言われても THE COMIC
+  aliases: []
 bakuon:
   display: Bakuon!!
   aliases: []
 ball-and-chain:
   display: Ball and Chain
+  aliases: []
+ban-miman-no-bokura-wa-kitto:
+  display: 番未満の僕らはきっと
   aliases: []
 banana-fish:
   display: Banana Fish
@@ -1061,6 +1210,9 @@ battle-angel-alita:
 battle-angel-alita-last-order:
   display: 'Battle Angel Alita: Last Order'
   aliases: []
+battle-angel-alita-other-stories:
+  display: Battle Angel Alita – Other Stories
+  aliases: []
 battle-game-in-5-seconds:
   display: Battle Game in 5 Seconds
   aliases: []
@@ -1112,6 +1264,12 @@ bem:
 bena:
   display: Bena
   aliases: []
+berichte-aus-japan:
+  display: Berichte aus Japan
+  aliases: []
+berrybrook-middle-school:
+  display: Berrybrook Middle School
+  aliases: []
 berserk:
   display: Berserk
   aliases:
@@ -1126,6 +1284,12 @@ berserk-of-gluttony:
   aliases: []
 bestiarius:
   display: Bestiarius
+  aliases: []
+bevor-ihr-mich-wegwerft-spiele-ich:
+  display: Bevor Ihr mich wegwerft, spiele ich nach meinen Regeln!
+  aliases: []
+bibi-and-miyu:
+  display: Bibi & Miyu
   aliases: []
 biblia-koshodou:
   display: Biblia Koshodou no Jiken Techou
@@ -1153,6 +1317,9 @@ biomega-abara:
   aliases: []
 birthday:
   display: Birthday
+  aliases: []
+bis-deine-knochen-verrotten:
+  display: Bis deine Knochen verrotten
   aliases: []
 bishoujo-bunko-mikazuki-benitsuki:
   display: Bishoujo Bunko Mikazuki Benitsuki
@@ -1296,6 +1463,9 @@ blood-blockade-battlefront:
   - blood blockade battlefront back 2 back
   - kekkai sensen
   - kekkai sensen back 2 back
+blood-c:
+  display: Blood-C
+  aliases: []
 blood-crawling-princess:
   display: Blood-Crawling Princess
   aliases: []
@@ -1305,6 +1475,9 @@ blood-lad:
   - ブラッドラッド
 bloody-book:
   display: Bloody Book
+  aliases: []
+bloody-mary:
+  display: Bloody Mary
   aliases: []
 bloody-monday:
   display: Bloody Monday
@@ -1367,6 +1540,9 @@ blue-sky-complex:
   aliases:
   - blue sky complex
   - ブルースカイコンプレックス
+blue-spring-ride:
+  display: Blue Spring Ride
+  aliases: []
 blue-summer:
   display: Blue Summer
   aliases: []
@@ -1396,11 +1572,23 @@ boku-no-heya-ga-dungeon-no-kyukeijo:
 boku-no-kanojo-ga-majimesugiru-shojo-bitch:
   display: My Girlfriend is Shobitch
   aliases: []
+boku-no-kanojo-sensei:
+  display: 僕のカノジョ先生
+  aliases: []
 boku-no-kokoro-no-yabai-yatsu:
   display: Boku no Kokoro no Yabai Yatsu
   aliases: []
+boku-to-kanojo-no-xxx-bangaihen:
+  display: 僕と彼女の×××番外編
+  aliases: []
 boku-to-kimi-no-taisetsu-na-hanashi:
   display: Boku to Kimi no Taisetsu na Hanashi
+  aliases: []
+boku-to-roboco:
+  display: 僕とロボコ
+  aliases: []
+boku-wa-chikyuu-to-utau:
+  display: ぼくは地球と歌う
   aliases: []
 boku-wo-tsutsumu-tsuki-no-hikari:
   display: Boku wo Tsutsumu Tsuki no Hikari
@@ -1412,6 +1600,9 @@ bokura-no-kiseki:
   - ボクラノキセキ
 bokura-no-koi-to-seishun-no-subete:
   display: Bokura no Koi to Seishun no Subete
+  aliases: []
+bokura-no-seishun-wa-yugande-iru:
+  display: 僕らの青春は歪んでいる
   aliases: []
 bokurano:
   display: Bokurano
@@ -1436,6 +1627,12 @@ boruto:
   - ボルト
 boruto-two-blue-vortex:
   display: Boruto - Two Blue Vortex
+  aliases: []
+boshoku-no-berserk-comic:
+  display: 暴食のベルセルク THE COMIC
+  aliases: []
+bota-bota:
+  display: Bota Bota
   aliases: []
 boukensha-no-chiryou-wo-hajimetara-juujin-no-ts番-ni-tsukamari-mashita:
   display: Boukensha no Chiryou wo Hajimetara Juujin no Ban ni Tsukamari Mashita
@@ -1470,6 +1667,9 @@ break-blade:
   aliases: []
 breaking-the-ice:
   display: Breaking the Ice
+  aliases: []
+bride-of-ignat:
+  display: Bride of Ignat
   aliases: []
 brother-x-brother:
   display: Brother x Brother
@@ -1529,6 +1729,12 @@ cacao-79:
   aliases: []
 cacciatori-di-cadaveri:
   display: Cacciatori di Cadaveri
+  aliases: []
+cafe-acheron:
+  display: Café Acheron
+  aliases: []
+cafe-liebe:
+  display: Café Liebe
   aliases: []
 cagaster:
   display: Cagaster
@@ -1651,8 +1857,14 @@ casas-con-historias-seiji-yoshida:
   - houses with stories
   - seiji yoshida
   - seiji-yoshida
+casino-gui:
+  display: カジノグイ
+  aliases: []
 castle-in-the-sky:
   display: Castle in the Sky
+  aliases: []
+cat-life-balance:
+  display: Cat-Life Balance
   aliases: []
 cat-shit-one:
   display: Cat Shit One
@@ -1703,6 +1915,9 @@ chainsaw-man:
   - チェンソーマン
   - 电锯人
   - 鏈鋸人
+chairoi-koguma-kokoro-no-kakera:
+  display: チャイロイコグマ ココロのかけらをあつめて
+  aliases: []
 chameleon-wa-tenohira-ni-koi-wo-suru:
   display: Chameleon wa Tenohira ni Koi wo Suru.
   aliases: []
@@ -1712,14 +1927,25 @@ change-123:
 charisma:
   display: Charisma
   aliases: []
+charon-78:
+  display: Charon 78
+  aliases:
+  - Charon 78
+  - charon-78
 chat-de-yakuza:
   display: Chat de Yakuza
   aliases: []
 cheat-kusushi-no-slow-life:
   display: Cheat Kusushi no Slow Life
   aliases: []
+check-me-up:
+  display: Check Me Up!
+  aliases: []
 checkmate-capture-my-heart:
   display: Checkmate! Capture My Heart
+  aliases: []
+cherry-blossoms-after-winter:
+  display: Cherry Blossoms After Winter
   aliases: []
 cherry-magic:
   display: Cherry Magic
@@ -1745,6 +1971,9 @@ chicken:
 chiduru-no-yoake-watashi-ni-ichizu-na-danna-sama:
   display: Chiduru no Yoake - Watashi ni Ichizu na Danna-sama
   aliases: []
+chiguhagu-na-kiss:
+  display: ちぐはぐなキス
+  aliases: []
 chihayafuru:
   display: Chihayafuru
   aliases:
@@ -1767,11 +1996,17 @@ chiisakobe:
 chika-no-ko:
   display: Chika no Ko
   aliases: []
+chikanoko:
+  display: ちかのこ
+  aliases: []
 chikuwa-senki:
   display: Chikuwa Senki
   aliases: []
 children:
   display: Children
+  aliases: []
+children-of-grimm:
+  display: Children of Grimm
   aliases: []
 children-of-the-whales:
   display: Children of the Whales
@@ -1796,6 +2031,9 @@ chis-sweet-home:
 chiseigaku-boys:
   display: Chiseigaku Boys
   aliases: []
+cho-ka-han-ka:
+  display: 蝶か犯か
+  aliases: []
 chobits:
   display: Chobits
   aliases:
@@ -1807,8 +2045,14 @@ chocolat-no-maho-honey-blood:
 chocolat-noisette-food:
   display: Chocolat Noisette Food
   aliases: []
+chocolate-vampire:
+  display: Chocolate Vampire
+  aliases: []
 choujin-x:
   display: Choujin X
+  aliases: []
+choukyou-seikatu:
+  display: 調教性活
   aliases: []
 chouritsu-soukou-zyklus-code:
   display: Chouritsu Soukou Zyklus;CODE
@@ -1818,6 +2062,9 @@ chouritsusoko-zyklus-code:
   aliases: []
 chrome-breaker:
   display: Chrome Breaker
+  aliases: []
+chusotsu-roudousha-kara-hajimeru:
+  display: 中卒労働者から始める高校生活
   aliases: []
 chuu2-limited-girls-talk:
   display: Chuu2 Gentei!? Girls Talk
@@ -1868,11 +2115,17 @@ clamp-artbook-kuro:
 clamp-artbook-shiro:
   display: Clamp Artbook - Shiro
   aliases: []
+clamp-color-kuro:
+  display: CLAMP Color Kuro
+  aliases: []
 clamp-premium-collection-angelic-layer:
   display: CLAMP PREMIUM COLLECTION ANGELIC LAYER
   aliases: []
 clamp-school-detectives:
   display: CLAMP School Detectives
+  aliases: []
+class-no-ikemen-to-jimi-chara-ga-band-kumu-hanashi:
+  display: クラスのイケメンと地味キャラがバンド組む話
   aliases: []
 class-no-inkya-ojosama-no-shitsuji:
   display: クラスの陰キャお嬢様の執事になりました My Pure Lady
@@ -1938,8 +2191,17 @@ cofre-5o-aniversario-planeta-manga:
 cokettichu:
   display: Cokettichu
   aliases: []
+cold-die-kreatur:
+  display: Cold – Die Kreatur
+  aliases:
+  - Cold Die Kreatur
+  - Cold – Die Kreatur
+  - cold-die-kreatur
 cold-game:
   display: Cold Game
+  aliases: []
+colette-beschliesst-zu-sterben:
+  display: Colette beschließt zu sterben
   aliases: []
 colette-decides-to-die:
   display: Colette Decides to Die
@@ -1976,11 +2238,17 @@ confuso-primer-amor:
 console-2073:
   display: Console, 2073
   aliases: []
+convenient-semi-friend:
+  display: Convenient Semi-Friend
+  aliases: []
 cora:
   display: Cora
   aliases: []
 corpse-hunters:
   display: Corpse Hunters
+  aliases: []
+corseltel-no-ryujutsushi:
+  display: コーセルテルの竜術士
   aliases: []
 crayon-shin-chan:
   display: Crayon Shin-chan
@@ -2006,6 +2274,9 @@ criminal-engagement:
   aliases: []
 criminal-girls-invitation:
   display: 'Criminal Girls: INVITATION Official Complete Guide'
+  aliases: []
+crimson-spell:
+  display: クリムゾン・スペル
   aliases: []
 critical-lovers:
   display: Critical Lovers
@@ -2068,6 +2339,9 @@ d-n-angel:
   - D・N・ANGEL
   - dn-angel
   - ディー・エヌ・エンジェル
+dad-is-a-hero-mom-is-a-spirit:
+  display: Dad Is a Hero, Mom Is a Spirit, I'm a Reincarnator
+  aliases: []
 dada-adventure:
   display: Dada Adventure
   aliases: []
@@ -2079,6 +2353,9 @@ dahlia-in-bloom:
   - 魔導具師ダリヤはうつむかない
 dai-dark:
   display: Dai Dark
+  aliases: []
+daisuki-itoshi-no-muco:
+  display: だいすき! いとしのムーコ
   aliases: []
 daiya-no-a:
   display: Diamond no Ace
@@ -2094,6 +2371,9 @@ daiya-no-ace-act-ii:
 dakara-boku-wa-h-ga-dekinai:
   display: So I Can't Play H
   aliases: []
+damonin-hexe-und-exorzistin:
+  display: Dämonin, Hexe und Exorzistin
+  aliases: []
 dance-kremlin-palace:
   display: Dance! Kremlin Palace
   aliases: []
@@ -2108,6 +2388,16 @@ danganronpa-1-2-reload:
 danganronpa-v3:
   display: New Danganronpa V3
   aliases: []
+dangerous-convenience-store:
+  display: The Dangerous Convenience Store
+  aliases:
+  - Dangerous Convenience Store
+  - Der Gefährliche Kiosk
+  - La tienda de conveniencia peligrosa
+  - The Dangerous Convenience Store
+  - Wiheomhan Pyeonuijeom
+  - dangerous-convenience-store
+  - 위험한 편의점
 danguard-ace:
   display: Danguard Ace
   aliases: []
@@ -2134,6 +2424,9 @@ dare-ni-mo-ienai-koi-bakka:
   aliases: []
 dareka-kono-jokyo-o-setsumei:
   display: Dareka Kono Jokyo o Setsumei Shite Kudasai
+  aliases: []
+dareka-kono-jokyo-wo-wedding:
+  display: 誰かこの状況を説明してください!
   aliases: []
 dareni-mo-aisarenakatta-shuukirei-jo-ga-shiawase-ni-naru-made:
   display: Dareni mo Aisarenakatta Shuukirei Jo ga Shiawase ni Naru Made
@@ -2162,6 +2455,18 @@ darwins-incident:
   - darwin's incident
   - darwins incident
   - el incidente darwin
+das-biest-des-konigs:
+  display: Das Biest des Königs
+  aliases: []
+das-geheimnis-der-falschen-prinzessin:
+  display: 'Das Geheimnis der falschen Prinzessin: Mein Leben am Kaiserhof'
+  aliases: []
+das-geheimnis-von-scarecrow:
+  display: Das Geheimnis von Scarecrow
+  aliases:
+  - Das Geheimnis von Scarecrow
+  - Scarecrow
+  - das-geheimnis-von-scarecrow
 date-a-bullet:
   display: Date A Bullet
   aliases:
@@ -2169,6 +2474,9 @@ date-a-bullet:
   - デート・ア・バレット
 date-a-live:
   display: Date A Live
+  aliases: []
+dawn-of-the-dragon:
+  display: Dawn of the Dragon
   aliases: []
 daydream-hour:
   display: Daydream Hour
@@ -2201,6 +2509,9 @@ dead-tube:
   aliases:
   - DEAD Tube ～デッドチューブ～
   - デッドチューブ
+deadlock:
+  display: Deadlock
+  aliases: []
 deadmount-deathplay:
   display: Dead Mount Death Play
   aliases: []
@@ -2210,11 +2521,17 @@ deadpool-samurai:
   - Deadpool Samurai
   - 'Deadpool: Samurai'
   - デッドプール:SAMURAI
+deaimon:
+  display: であいもん
+  aliases: []
 dear-brother:
   display: Dear Brother
   aliases: []
 dear-gene:
   display: Dear Gene
+  aliases: []
+dear-signal:
+  display: dear signal
   aliases: []
 death-march-kara-hajimaru:
   display: Death March kara Hajimaru Isekai Kyousoukyoku
@@ -2256,6 +2573,12 @@ deer-king:
 defense-devil:
   display: Defense Devil
   aliases: []
+define-the-relationship:
+  display: Define the Relationship
+  aliases: []
+deine-teuflischen-kusse:
+  display: Deine teuflischen Küsse
+  aliases: []
 dekin-no-mogura:
   display: 'Dekin no Mogura: The Earthbound Mole'
   aliases:
@@ -2267,6 +2590,9 @@ dekin-no-mogura:
   - deiden-no-mogura
   - dekin no mogura
   - 出禁のモグラ
+deko-boko-sugar-days:
+  display: Deko Boko Sugar Days
+  aliases: []
 delicious-in-dungeon:
   display: Delicious in Dungeon
   aliases: []
@@ -2346,14 +2672,51 @@ denka-anata-ga-suteta-onna-ga-honmono-no-seijo-desu:
 denpa-kyoushi:
   display: Denpa Kyoushi
   aliases: []
+der-blick-aus-133-cm-hohe:
+  display: Der Blick aus 133 cm Höhe
+  aliases: []
+der-deliquente-omega-biestkoenig:
+  display: Der deliquente Omega gehört dem Biestkönig!
+  aliases: []
+der-fluch-des-purpurnen-rauches:
+  display: Der Fluch des purpurnen Rauches
+  aliases: []
+der-gluckliche-irrtum-der-markgrafin:
+  display: Der glückliche Irrtum der Markgräfin
+  aliases: []
+der-kleine-laden-der-blumenhexe:
+  display: Der kleine Laden der Blumenhexe
+  aliases: []
 der-mond:
   display: Der Mond
+  aliases: []
+der-pirat-und-die-prinzessin:
+  display: Der Pirat und die Prinzessin
+  aliases: []
+der-polizist-und-ich:
+  display: Der Polizist und Ich
+  aliases: []
+der-wunsch-dich-zu-beruhren:
+  display: Der Wunsch, dich zu berühren, ist der Anfang der Liebe
+  aliases: []
+derail:
+  display: Derail
+  aliases: []
+deroriman:
+  display: デロリンマン
   aliases: []
 deseado-por-la-muerte:
   display: Deseado por la Muerte
   aliases:
   - Desired by Death
   - Shi ni Aisareta Shounen
+desharow-merman:
+  display: Desharow Merman
+  aliases:
+  - Desharow Merman
+  - Desharow Renyu
+  - desharow-merman
+  - 德萨罗人鱼
 dessert-eagle:
   display: Dessert Eagle
   aliases:
@@ -2420,8 +2783,39 @@ diamond-is-unbreakable-jojo-part-4:
 dias-police:
   display: Dias Police
   aliases: []
+die-braut-mit-dem-damonenfluch:
+  display: Die Braut mit dem Dämonenfluch
+  aliases: []
+die-grausame-heilige:
+  display: Die grausame Heilige, die nützlich sein möchte, wird von ihrem Ehemann gehasst
+  aliases: []
+die-legendare-hexe-wird-als-unterdruckte-prinzessin:
+  display: Die legendäre Hexe wird als unterdrückte Prinzessin wiedergeboren
+  aliases: []
+die-legende-von-azfareo:
+  display: Die Legende von Azfareo
+  aliases: []
+die-letzte-elfe:
+  display: Die letzte Elfe
+  aliases: []
+die-stadt-der-freude:
+  display: Die Stadt der Freude
+  aliases: []
 die-sterne:
   display: Die Sterne
+  aliases: []
+die-tanzerin-des-konigs:
+  display: Die Tänzerin des Königs
+  aliases:
+  - Dancer of the King
+  - Die Tanzerin des Konigs
+  - Die Tänzerin des Königs
+  - die-tanzerin-des-konigs
+die-wiederauferstandene-braut:
+  display: Die wiederauferstandene Braut und der grausame Prinz
+  aliases: []
+diese-heilige-lasst-sich-nicht-tauschen:
+  display: Diese Heilige lässt sich nicht täuschen
   aliases: []
 dimension-w:
   display: Dimension W
@@ -2430,6 +2824,23 @@ dimension-w:
   - ディメンション W
 dirty-waters:
   display: Dirty Waters
+  aliases: []
+disney-alice-in-wonderland:
+  display: Disney Alice in Wonderland
+  aliases: []
+disney-pirates-of-caribbean:
+  display: Disney Pirates of the Caribbean
+  aliases: []
+disney-stitch:
+  display: Disney Stitch!
+  aliases:
+  - 'Disney Manga: Stitch!'
+  - Disney Stitch!
+  - Stitch!
+  - disney-stitch
+  - スティッチ!
+disney-toy-story:
+  display: Disney Pixar's Toy Story
   aliases: []
 disney-twisted-wonderland:
   display: Disney Twisted-Wonderland
@@ -2492,6 +2903,15 @@ don-t-toy-with-me-miss-nagatoro:
   - イジらないで、長瀞さん
   - 不要欺負我，長瀞同學
   - 不要欺负我、长瀞同学
+dont-be-too-gentle:
+  display: Don't be too gentle
+  aliases: []
+dont-dress-up-my-sweet-sweet-love:
+  display: Don't Dress up My Sweet Sweet Love!
+  aliases: []
+dont-let-go-of-my-hand:
+  display: Lass meine Hand nicht los
+  aliases: []
 doppelganger:
   display: Doppelganger
   aliases: []
@@ -2501,6 +2921,9 @@ dorohedoro:
   - ドロヘドロ
 dororo-and-hyakkimaru:
   display: 'Dororo and Hyakkimaru: The Legend'
+  aliases: []
+double-complex:
+  display: ダブルコンプレックス
   aliases: []
 double-dog-buddy:
   display: Double Dog Buddy
@@ -2589,6 +3012,9 @@ dragon-head:
   aliases:
   - Doragon Heddo
   - ドラゴンヘッド
+dragon-ie-wo-kau:
+  display: ドラゴン、家を買う。
+  aliases: []
 dragon-quest-25-aniversario:
   display: Dragon Quest 25 Aniversario
   aliases: []
@@ -2641,11 +3067,26 @@ dressing-biyougeka-morino-maria:
 drifters:
   display: Drifters
   aliases: []
+drowning-into-the-night:
+  display: Drowning Into the Night
+  aliases: []
+du-bist-nicht-allein:
+  display: Du bist nicht allein
+  aliases: []
+du-riechst-so-gut:
+  display: Du riechst so gut
+  aliases: []
 duklyon-clamp-school:
   display: 'Duklyon: CLAMP School Defenders'
   aliases: []
 dungeon-de-service-zangyo-wo-shite-ita-dake-na-no-ni:
   display: Dungeon de Service Zangyo wo Shite Ita Dake na no ni
+  aliases: []
+dungeon-kurashi-no-moto-yuusha:
+  display: ダンジョン暮らしの元勇者 THE COMIC
+  aliases: []
+dur-an-ki:
+  display: Dur-an-ki
   aliases: []
 duranki:
   display: Duranki
@@ -2671,6 +3112,9 @@ eat:
 ebiten:
   display: Ebiten
   aliases: []
+echt-jetzt-tamon:
+  display: Echt jetzt, Tamon?!
+  aliases: []
 eden:
   display: 'Eden: It''''s an Endless World!'
   aliases:
@@ -2689,11 +3133,26 @@ egregor:
   display: Egregor
   aliases:
   - 에그르고르
+eguchi-hisashi-bijinga:
+  display: 江口寿史美人画集 彼女
+  aliases: []
+eguchi-san-pure-hearted-succubus:
+  display: Eguchi-san's Pure-hearted Succubus
+  aliases: []
+eigano-osomatsu-san:
+  display: えいがのおそ松さん
+  aliases: []
 eighty-six:
   display: Eighty-Six
   aliases: []
+ein-wir-jenseits-jeder-paarbindung:
+  display: Ein Wir jenseits jeder Paarbindung
+  aliases: []
 eiyuu-densetsu-sora-no-kiseki:
   display: 'Eiyuu Densetsu: Sora no Kiseki'
+  aliases: []
+eizouken:
+  display: 映像研には手を出すな
   aliases: []
 el-club-del-divorcio:
   display: El Club del Divorcio
@@ -2749,6 +3208,9 @@ elf-kareshi-to-boyish-kanojo:
 elf-san-wa-yaserarenai:
   display: Elf-san wa Yaserarenai.
   aliases: []
+eliana-prinzessin-der-bucher:
+  display: Eliana – Prinzessin der Bücher
+  aliases: []
 elite-jack:
   display: Elite Jack!!
   aliases: []
@@ -2764,6 +3226,9 @@ elven-bride:
 emperor-limited:
   display: Koutei Gentei (Emperor Limited)
   aliases: []
+empress-age:
+  display: エンプレスエイジ
+  aliases: []
 endo:
   display: Endo
   aliases: []
@@ -2775,6 +3240,9 @@ energheia:
   aliases: []
 enidewi-eniale-dewiela:
   display: Enidewi - Eniale & Dewiela
+  aliases: []
+ennead:
+  display: Ennead
   aliases: []
 ensemble-stars:
   display: Ensemble Stars!
@@ -2832,6 +3300,9 @@ even-if-tempest:
   aliases:
   - Tatoe Hai ni Nattemo
   - たとえ灰になっても
+even-introverted-gals-want-to-look-cool:
+  display: Even Introverted Gals Want to Look Cool!
+  aliases: []
 evol:
   display: Evol
   aliases: []
@@ -2890,6 +3361,9 @@ fake-fact-lips-break:
 familia:
   display: Familia
   aliases: []
+family-restaurant-iko:
+  display: ファミレス行こ。
+  aliases: []
 famires-iko:
   display: Famires Ikou
   aliases: []
@@ -2925,6 +3399,9 @@ fate-grand-order-epic-of-remnant:
   - Fate/Grand Order -Epic of Remnant-
   - 'Fate/Grand Order: Epic of Remnant - Ashutokuiten EX Shinkai Dennou Rakudo SE.RA.PH'
   - 'Fate/Grand Order: Epic of Remnant - Deep Sea Cyber-Paradise SE.RA.PH'
+fate-grand-order-fujimaru-ritsuka-wa-wakaranai:
+  display: Fate/Grand Order 藤丸立香はわからない
+  aliases: []
 fate-grand-order-mortalis-stella:
   display: Fate/Grand Order -mortalis:stella-
   aliases:
@@ -2996,8 +3473,20 @@ final-fantasy-xvi:
 finder:
   display: Finder
   aliases: []
+finder-no-dekiai:
+  display: ファインダーの溺愛
+  aliases: []
+finder-no-hoyo:
+  display: ファインダーの抱擁
+  aliases: []
+finder-no-kageroo:
+  display: ファインダーの陽炎
+  aliases: []
 finder-no-katsubou:
   display: Finder no Katsubou
+  aliases: []
+finder-no-tobousha:
+  display: ファインダーの逃避行
   aliases: []
 finder-series:
   display: Finder Series
@@ -3049,6 +3538,9 @@ flcl:
 fleurs-de-jasmin-etoile:
   display: Fleurs de Jasmin Étoilé
   aliases: []
+flight-sign-startfreigabe-fur-die-liebe:
+  display: Flight Sign – Startfreigabe für die Liebe
+  aliases: []
 flores-de-piedra:
   display: Flores de Piedra
   aliases:
@@ -3059,6 +3551,12 @@ flow:
   aliases: []
 flower-of-the-moon:
   display: Flower of the Moon
+  aliases: []
+fluster-mir-ein-liebeslied:
+  display: Flüster mir ein Liebeslied
+  aliases: []
+fly-with-me-in-the-endless-sky:
+  display: Fly with Me in the Endless Sky
   aliases: []
 folli-passioni:
   display: Folli Passioni
@@ -3121,6 +3619,9 @@ frieren:
   - 'frieren: beyond journey''''s end'
   - 葬送のフリーレン
   - 葬送的芙莉蓮
+from-overshadowed-to-overpowered:
+  display: 'From Overshadowed to Overpowered: Die zweite Wiedergeburt eines untalentierten Helden'
+  aliases: []
 from-the-childrens-country:
   display: From the Children's Country
   aliases: []
@@ -3146,11 +3647,20 @@ fucking-sakura:
 fugu-skill-no-renkinjutsushi-henkyou-wo-kaitaku-suru:
   display: Fugu Skill no Renkinjutsushi Henkyou wo Kaitaku Suru
   aliases: []
+fukaatsu-sunny:
+  display: 不可測サニー
+  aliases: []
 fukucat-biyori-syroh-art-works:
   display: 福猫びより〜Syroh Art Works
   aliases: []
 fukuonsei-wa-urusai-juubun-ni:
   display: Fukuonsei wa Urusai Juubun ni
+  aliases: []
+fukushu-kansui-sha-isekai-tan:
+  display: 復讐完遂者の人生二周目異世界譚 THE COMIC
+  aliases: []
+full-moon-wo-sagashite:
+  display: Full Moon wo Sagashite
   aliases: []
 fullmetal-alchemist:
   display: Fullmetal Alchemist
@@ -3169,6 +3679,12 @@ fullmetal-alchemist:
   - Čelični alhemičar
   - 鋼の錬金術師
   - 鋼之鍊金術師
+fumi-chan-no-rakuen:
+  display: ふみちゃんの楽園
+  aliases: []
+furare-girl:
+  display: フラレガール
+  aliases: []
 furuetsumore-shiawase-no-hana:
   display: Furuetsumore Shiawase no Hana
   aliases: []
@@ -3193,6 +3709,9 @@ fushigi-yugi:
 fushigi-yugi-byakko-senki:
   display: 'Fushigi Yugi: Byakko Senki'
   aliases: []
+fusoku-no-renjo:
+  display: 不測ノ恋情
+  aliases: []
 futari-ecchi:
   display: Futari Ecchi
   aliases:
@@ -3214,6 +3733,9 @@ futari-switch:
   aliases: []
 futsutsuka-na-akujo-de-wa-gozaimasu-ga:
   display: Futsutsuka na Akujo de wa Gozaimasu ga
+  aliases: []
+futsutsukana-akujo-de-wa-gozaimasu-ga:
+  display: ふつつかな悪女ではございますが
   aliases: []
 futsuu-no-joshi-kousei-ga-localdol:
   display: Futsuu no Joshi Kousei ga [Locodol] Yatte Mita
@@ -3259,6 +3781,9 @@ fuzichoco-saigenkyou:
 fuzichoco-shukusai-junrei:
   display: Fuzichoco Shukusai Junrei
   aliases: []
+gacha-wo-mawashite-nakama-wo-fuyasu:
+  display: ガチャを回して仲間を増やす THE COMIC
+  aliases: []
 gachi-koi-nenchakujuu:
   display: Gachi Koi Nenchakujuu
   aliases:
@@ -3270,6 +3795,9 @@ gachiakuta:
   aliases:
   - Gachi Akuta
   - ガチアクタ
+gaea-tima:
+  display: Gaea-Tima
+  aliases: []
 gaikotsushoten-in-honda-san:
   display: Gaikotsu Shoten-in Honda-san
   aliases: []
@@ -3358,6 +3886,9 @@ gash-bell:
   - 金色のガッシュベル!!
 gate:
   display: Gate
+  aliases: []
+gekai-elise:
+  display: 外科医エリーゼ
   aliases: []
 gekiga-yoshihiro-tatsumi:
   display: Gekiga Yoshihiro Tatsumi
@@ -3477,6 +4008,9 @@ gifu-doudou:
 gigant:
   display: Gigant
   aliases: []
+gikei-ga-boku-wo-dekiai-suru:
+  display: 義兄が僕を溺愛する
+  aliases: []
 ginga-the-last-wars:
   display: 銀牙 〜THE LAST WARS〜
   aliases: []
@@ -3499,6 +4033,12 @@ girls-last-tour:
 girls-und-panzer:
   display: Girls und Panzer
   aliases: []
+girls-x-vampire:
+  display: Girls x Vampire
+  aliases: []
+girls-x-vampire-doujinishi:
+  display: Girls x Vampire Doujinishi
+  aliases: []
 given:
   display: Given
   aliases:
@@ -3506,6 +4046,9 @@ given:
   - ギヴン
 glass-no-kamen:
   display: Glass no Kamen
+  aliases: []
+glucksspiel-mit-der-liebe-villainess-mafioso:
+  display: 'Glücksspiel mit der Liebe: Die Villainess und der verrückte Mafioso'
   aliases: []
 go-go-loser-ranger:
   display: Go! Go! Loser Ranger!
@@ -3562,6 +4105,9 @@ gokinjo-monogatari:
   - gokinjo-monogatari-neighborhood-sto
   - historia de un vecindario
   - neighborhood story
+goku-tsuma-days:
+  display: 極妻デイズ
+  aliases: []
 gokurakugai:
   display: Gokurakugai
   aliases:
@@ -3647,6 +4193,9 @@ grand-blue-dreaming:
 grand-prix-yaro:
   display: Grand Prix Yaro
   aliases: []
+gravitation:
+  display: Gravitation
+  aliases: []
 great-mazinger:
   display: Great Mazinger
   aliases:
@@ -3668,8 +4217,14 @@ great-teacher-onizuka:
   - 'GTO: Great Teacher Onizuka'
   - Great Teacher Onizuka
   - グレート・ティーチャー・オニヅカ
+green-garden:
+  display: Green Garden
+  aliases: []
 green-star:
   display: Green Star
+  aliases: []
+green-worldz:
+  display: Green Worldz
   aliases: []
 grendizer:
   display: Grendizer
@@ -3735,6 +4290,9 @@ gundam-msv-r-johnny-ridden:
 gundam-the-origin:
   display: 'Mobile Suit Gundam: THE ORIGIN'
   aliases: []
+gundam-thunderbolt:
+  display: 機動戦士ガンダム サンダーボルト
+  aliases: []
 gundam-uc-bande-dessinee:
   display: Mobile Suit Gundam UC Bande Dessinee
   aliases: []
@@ -3754,9 +4312,24 @@ gunslinger-girl:
   display: Gunslinger Girl
   aliases:
   - gunslinger girl
+gunyo-chan-wa-shippaisaku-janai:
+  display: ぐにょちゃんは失敗作じゃない!
+  aliases: []
 gurren-lagann:
   display: Gurren Lagann
   aliases: []
+gushing-over-magical-girls:
+  display: Gushing Over Magical Girls
+  aliases:
+  - Gushing Over Magical Girls
+  - Le mie adorate maghette
+  - Looking Up to Magical Girls!
+  - Looking up to Magical Girls
+  - Mahoako
+  - Mahou Shoujo ni Akogarete
+  - gushing-over-magical-girls
+  - looking-up-to-magical-girls
+  - 魔法少女にあこがれて
 guyver:
   display: Guyver
   aliases:
@@ -3830,6 +4403,9 @@ hajimeshacho-no-youtuber-na-nichijou:
 hajimete-no-gal:
   display: My First Girlfriend is a Gal
   aliases: []
+hajimete-ore-wo-daita-otoko:
+  display: 初めて俺を抱いた男
+  aliases: []
 hakaba-kitaro:
   display: Hakaba Kitaro
   aliases: []
@@ -3850,6 +4426,12 @@ hakkenden-eight-dogs-of-the-east:
   - hakkenden
   - hakkenden eight dogs of the east
   - 八犬伝－東方八犬異聞－
+hakuhatsu-kyoudan:
+  display: Hakuhatsu Kyoudan Kounin Mishima Kurone Poster BOX
+  aliases: []
+hakumei-to-mikochi:
+  display: ハクメイとミコチ
+  aliases: []
 hakuoki:
   display: Hakuoki
   aliases: []
@@ -3861,11 +4443,17 @@ hakuoki-shinkai:
 hallelujah-baby:
   display: Hallelujah Baby
   aliases: []
+hallo-ich-bin-eine-hexe:
+  display: Hallo, ich bin eine Hexe & mein Schwarm wünscht sich einen Liebestrank von mir
+  aliases: []
 hamefura:
   display: My Next Life as a Villainess
   aliases: []
 hamerareta-miboujin-wa-pta-wo-yurusanai:
   display: ハメられた未亡人はPTAを許さない
+  aliases: []
+hamidashikko:
+  display: はみだしっ子
   aliases: []
 hana-and-mr-beast:
   display: Hana & Mr. Beast
@@ -3881,6 +4469,12 @@ hana-no-keiji:
   aliases: []
 hana-to-kemono-no-koi:
   display: Hana et la Bête
+  aliases: []
+hana-to-konjo-boda-danshi-ni-koi-shimashita:
+  display: 花と紺青 防大男子に恋しました。
+  aliases: []
+hanashoku-no-shiro:
+  display: 花燭の白
   aliases: []
 hanazakari-no-kimitachi-e:
   display: 'Hana-Kimi: For You in Full Blossom'
@@ -3936,8 +4530,14 @@ harem-tune-cos:
 haretoki-doki-kirimi-chan:
   display: 晴れ、ときどきKIRIMIちゃん.
   aliases: []
+hariko-no-otome:
+  display: 針子の乙女
+  aliases: []
 harisugawa-in-mirrorland:
   display: Harisugawa in Mirrorland
+  aliases: []
+harta:
+  display: ハルタ
   aliases: []
 haru-matsu-bokura:
   display: Haru Matsu Bokura
@@ -3959,6 +4559,9 @@ harvest:
 hate-my-mia:
   display: Hate My MIA!
   aliases: []
+hate-no-hoshi-tsushin:
+  display: 果ての星通信
+  aliases: []
 hate-no-hoshi-tsuushin:
   display: Hate no Hoshi Tsuushin
   aliases: []
@@ -3967,6 +4570,9 @@ hatenkou-yuugi:
   aliases: []
 hatsu-haru:
   display: Hatsu*Haru
+  aliases: []
+hatsukkon:
+  display: 初×婚
   aliases: []
 hatsukoi-limited:
   display: Hatsukoi Limited
@@ -3981,6 +4587,9 @@ hatsukoi-monster:
 hatsukoi-tribute:
   display: Hatsukoi Tribute
   aliases: []
+haus-der-sonne:
+  display: Haus der Sonne
+  aliases: []
 hayate-no-gotoku:
   display: Hayate The Combat Butler
   aliases:
@@ -3990,6 +4599,9 @@ hayate-no-gotoku:
   - ハヤテのごとく
 head-trick:
   display: Head Trick
+  aliases: []
+healingood-precure:
+  display: ヒーリングっど プリキュア
   aliases: []
 heart-gear:
   display: Heart Gear
@@ -4013,6 +4625,9 @@ hechima:
   aliases: []
 heimin-shusshin-no-teikoku-shoukan:
   display: Heimin Shusshin no Teikoku Shoukan
+  aliases: []
+heimweg-nach-der-schule:
+  display: Heimweg nach der Schule
   aliases: []
 helck:
   display: Helck
@@ -4042,6 +4657,9 @@ hell-s-paradise:
   - Piekielny Raj
   - 地獄楽
   - 地獄樂
+hello-innocent:
+  display: Hello, Innocent
+  aliases: []
 hello-spank:
   display: Hello! Spank
   aliases:
@@ -4079,6 +4697,13 @@ henkyo-hakke-jiman-wa-tensei-cheat-life-wo-tanoshimitai:
 henkyo-ryoshu-wa-daikizoку-ni-nariagaru:
   display: Henkyou Ryoushu wa Daikizoku ni Nariagaru
   aliases: []
+hentai-stalker-ni-nerawaretemasu:
+  display: My Perverted Stalker
+  aliases:
+  - Hentai Stalker ni Nerawaretemasu
+  - My Perverted Stalker
+  - hentai-stalker-ni-nerawarete-masu
+  - 変態ストーカーに狙われてます
 hetalia-axis-powers:
   display: 'Hetalia: Axis Powers'
   aliases:
@@ -4087,6 +4712,9 @@ hetalia-axis-powers:
   - 'Hetalia: Axis Powers'
   - 'Hetaria: Axis Powers'
   - ヘタリア Axis Powers
+hi-gentei-kyoukai:
+  display: 非限定境界
+  aliases: []
 hi-mote-sarariiman-40-sai-ni-daima:
   display: 非モテサラリーマン40歳の誕生日に突然大魔導士に覚醒する
   aliases: []
@@ -4098,6 +4726,12 @@ hi-no-matoi:
   - 緋の纏
 hi-score-girl:
   display: Hi Score Girl
+  aliases: []
+hiasobi-kinshi-shouboshi:
+  display: 火遊び禁止!秘密のセフレは消防士
+  aliases: []
+hibi-shiromemuiteimasu:
+  display: 日々白目むいてます
   aliases: []
 hidamari-ga-kikoeru:
   display: Hidamari ga Kikoeru
@@ -4122,6 +4756,14 @@ higeki-no-genkyou-to-naru-saikyo-gedo-rasubosu-joou-wa-tami-no-tame-ni-tsukushim
 high-low-g-sword:
   display: HiGH&LOW g-sword
   aliases: []
+high-school-fleet:
+  display: High School Fleet
+  aliases:
+  - Haifuri
+  - High School Fleet
+  - Peaceful Diary of High School Fleet
+  - haifuri
+  - はいふり
 highschool-dxd:
   display: High School DxD
   aliases: []
@@ -4156,11 +4798,16 @@ hikaru-no-go:
   - Hikaru's Go
   - ヒカルの碁
 hikikomori-reijo-noni-kori-no-henkyohaku:
-  display: Hikikomori Reijo nano ni, Koori no Henkyohaku no Hanayome ni Erabarete
-    shimatta
+  display: Hikikomori Reijo nano ni, Koori no Henkyohaku no Hanayome ni Erabarete shimatta
+  aliases: []
+himesama-kun-wo-omamori-shimasu:
+  display: 姫様くんをおマモりします!
   aliases: []
 himitsu-no-hanazono:
   display: Himitsu no Hanazono
+  aliases: []
+himitsu-no-shanai-renai:
+  display: ヒミツの社内恋愛が波乱なんですけど?
   aliases: []
 himitsu-sentai-gorenger:
   display: Himitsu Sentai Gorenger
@@ -4182,6 +4829,9 @@ hina-change:
 hinako-note:
   display: Hinako Note
   aliases: []
+hinichijou-katsu-hajimemashita:
+  display: 非日常活はじめました。
+  aliases: []
 hinowa-ga-crush:
   display: Hinowa ga Crush!
   aliases:
@@ -4189,6 +4839,9 @@ hinowa-ga-crush:
   - ヒノワが征く!
 hiraeth:
   display: Hiraeth
+  aliases: []
+hirano-to-kagiura:
+  display: 平野と鍵浦
   aliases: []
 hirayasumi:
   display: Hirayasumi
@@ -4206,14 +4859,23 @@ his-little-amber:
 hisho-ikuseichuu:
   display: Hisho Ikuseichuu.
   aliases: []
+hisshu-kamoku-takanotume:
+  display: 必修科目鷹の爪
+  aliases: []
 hitman:
   display: Hitman
+  aliases: []
+hitori-de-shinitai:
+  display: ひとりでしにたい
   aliases: []
 hitoribocchi-no-marumaru-seikatsu:
   display: Hitoribocchi no Marumaru Seikatsu
   aliases: []
 hitorijime-my-hero:
   display: Hitorijime My Hero
+  aliases: []
+hokago-wa-kissaten-de:
+  display: 放課後は喫茶店で
   aliases: []
 hokenshitsu-no-bokura:
   display: Hokenshitsu no Bokura
@@ -4230,6 +4892,9 @@ hokkaido-gals-are-super-adorable:
   - hokkaido-gals
 hokkyoku-hyakkaten-no-concierge-san:
   display: Hokkyoku Hyakkaten no Concierge-san
+  aliases: []
+hokuo-kizoku-to-moukin-tsuma:
+  display: 北欧貴族と猛禽妻の雪国狩り暮らし
   aliases: []
 hokuto-no-ken:
   display: Fist of the North Star
@@ -4256,8 +4921,17 @@ holyland:
 home:
   display: Home
   aliases: []
+home-drama-shika-shiranai:
+  display: ホームドラマしか知らない
+  aliases: []
+honeko-akabanes-bodyguard:
+  display: Honeko Akabanes Bodyguard
+  aliases: []
 honey-bitter:
   display: Honey Bitter
+  aliases: []
+honey-lemon-soda:
+  display: ハニーレモンソーダ
   aliases: []
 honey-shueisha:
   display: Honey
@@ -4295,6 +4969,12 @@ horimiya-page-100:
   aliases: []
 horion:
   display: Horion
+  aliases: []
+horizon-in-the-middle-of-nowhere:
+  display: Kyoukai Senjou no Horizon
+  aliases: []
+horror-collector:
+  display: Horror Collector
   aliases: []
 hosaka-san-to-miyoshi-kun:
   display: Hosaka-san to Miyoshi-kun
@@ -4348,8 +5028,26 @@ houshou-marine:
   aliases:
   - hololive houshou marine
   - 宝鐘マリン
+how-can-i-pick-up-girls-after-the-apocalypse:
+  display: How can I pick up girls after the apocalypse?!
+  aliases: []
+how-to-hide-the-emperors-child:
+  display: How to Hide the Emperor's Child
+  aliases:
+  - Astelle und der geheime Sohn des Kaisers
+  - Comment Cacher le Fils de l'Empereur
+  - How to Hide the Emperor's Child
+  - Hwangjeui Aireul Sumgineun Bangbeop
+  - astelle-und-der-geheime-sohn-des-kaisers
+  - 황제의 아이를 숨기는 방법
 how-to-survive-as-a-villain:
   display: Cómo sobrevivir siendo un villano
+  aliases: []
+how-to-use-a-returner:
+  display: How to Use a Returner
+  aliases: []
+how-to-win-my-husband-over:
+  display: How to Win My Husband Over
   aliases: []
 howls-moving-castle-novel:
   display: Howl's Moving Castle
@@ -4361,6 +5059,9 @@ howls-moving-castle-novel:
   - howls-moving-castle
 hp5-demo-auto-heal-ga-areba:
   display: HP5ですけど自動治癒(オートヒール)があれば死にません!
+  aliases: []
+hua-the-art-of-mochipanko:
+  display: HUÀ – The Art of Mochipanko
   aliases: []
 hugtto-precure:
   display: HUGtto! PreCure
@@ -4374,6 +5075,12 @@ hunter-x-hunter:
   - HUNTER×HUNTER
   - HxH
   - ハンター×ハンター
+huntsu-trash:
+  display: Ханцу & Трэш
+  aliases: []
+huterin-der-drachen:
+  display: Hüterin der Drachen
+  aliases: []
 hyakkamiya-no-osouji-gakari:
   display: Hyakkamiya no Osouji Gakari
   aliases: []
@@ -4388,6 +5095,9 @@ hyakuman-no-inochi-no-ue-ni:
   aliases: []
 hyakusho-kizoku:
   display: Hyakusho Kizoku
+  aliases: []
+hyakushou-kizoku:
+  display: 百姓貴族
   aliases: []
 hyper-dash-yonkuro:
   display: Hyper Dash! Yonkuro
@@ -4429,6 +5139,9 @@ hypnosismic-division-rap-battle-side-bb-mtc:
 hypnosismic-division-rap-battle-side-dh-bat:
   display: 'Hypnosis Mic: Division Rap Battle side D.H & B.A.T+'
   aliases: []
+hypnotic-therapy:
+  display: Hypnotic Therapy
+  aliases: []
 i-am-a-hero:
   display: I Am a Hero
   aliases:
@@ -4445,14 +5158,26 @@ i-chu:
 i-dont-know-if-its-love-or-magic:
   display: I Don't Know if It's Love or Magic!
   aliases: []
+i-have-been-killing-slimes-for-300-years:
+  display: I've Been Killing Slimes for 300 Years and Maxed Out My Level
+  aliases: []
 i-hear-the-sunspot:
   display: I Hear the Sunspot
+  aliases: []
+i-married-my-female-friend:
+  display: I Married My Female Friend
+  aliases: []
+i-want-to-crush-your-brush:
+  display: I Want to Crush Your Brush
   aliases: []
 i-want-to-eat-your-pancreas:
   display: I Want to Eat Your Pancreas
   aliases: []
 icaro:
   display: Icaro
+  aliases: []
+ich-traf-dich-nach-dem-ende-der-welt:
+  display: Ich traf dich nach dem Ende der Welt
   aliases: []
 ichi-the-witch:
   display: Ichi the Witch
@@ -4481,6 +5206,9 @@ icons-terada-katsuya:
   - icons artbook
 idol-sister:
   display: Idol Sister
+  aliases: []
+idol-x-idol-story:
+  display: IDOL x IDOL STORY!
   aliases: []
 idolish-seven-nagareboshi:
   display: 'Idolish Seven: Nagareboshi ni Negau'
@@ -4561,6 +5289,9 @@ idolmaster-sidem-struggle-heart:
 if-my-favorite-pop-idol-budokan:
   display: If My Favorite Pop Idol Made It to the Budokan
   aliases: []
+if-you-insist:
+  display: If You Insist …
+  aliases: []
 if-you-insist-ill-come-for-you:
   display: If You Insist I'll Come For You
   aliases: []
@@ -4572,6 +5303,9 @@ ii-aru-fanclub:
   aliases: []
 iincho:
   display: Iincho.
+  aliases: []
+ika-gorilla:
+  display: いかゴリラのもっと! 元気が出るマンガ
   aliases: []
 ikasama-nashi-no-kiss-ga-shitai:
   display: イカサマなしのkissがしたい
@@ -4626,6 +5360,9 @@ il-richiamo-di-cthulhu:
 il-vampiro-che-ride:
   display: Il Vampiro che Ride
   aliases: []
+im-fluss-der-zeit:
+  display: Im Fluss der Zeit
+  aliases: []
 im-great-priest-imhotep:
   display: 'Im: Great Priest Imhotep'
   aliases:
@@ -4633,8 +5370,14 @@ im-great-priest-imhotep:
   - Im - El Sumo Sacerdote Imhotep
   - im-imhotep
   - イム-Great Priest Imhotep-
+im-namen-der-meerjungfrau:
+  display: Im Namen der Meerjungfrau
+  aliases: []
 im-not-an-angel:
   display: I'm Not an Angel
+  aliases: []
+im-the-only-one-who-knows-your-body:
+  display: I'm the Only One Who Knows Your Body
   aliases: []
 im-the-villainess-so-im-taming-the-final-boss:
   display: I'm the Villainess, So I'm Taming the Final Boss
@@ -4643,6 +5386,9 @@ im-the-villainess-so-im-taming-the-final-boss:
   - Watashi wa Akuyaku Reijou nano de Last Boss wo Kattemimashita
   - si-je-suis-la-vilaine-autant-mater-le-boss-final
   - 私は悪役令嬢なので、ラスボスを飼ってみました
+ima-kara-shinyuu-yameyou-ka:
+  display: 今から、親友やめようか。
+  aliases: []
 imaizumi-n-chi-deep:
   display: 'Imaizumi-n-chi wa Douyara Gal no Tamariba: DEEP'
   aliases: []
@@ -4657,6 +5403,9 @@ imouto-wa-shitteiru:
   aliases: []
 in-next-life-dont-want-meet:
   display: In the Next Life I Don't Want to Meet You
+  aliases: []
+in-so-deep-its-love-already:
+  display: In So Deep, It's Love Already
   aliases: []
 in-spectre:
   display: In/Spectre
@@ -4727,6 +5476,9 @@ inu-mo-arukeba-koi-ga-hajimaru:
 inu-neko-docchi-mo-katteru-to-mainichi-tanoshii:
   display: Inu to Neko Docchi mo Katteru to Mainichi Tanoshii
   aliases: []
+inu-to-neko-docchi-mo-katteru:
+  display: 犬と猫どっちも飼ってると毎日たのしい
+  aliases: []
 inu-to-neko-dotchimo-katteru-to-mainichi-tanoshii:
   display: Inu to Neko Dotchimo Katteru to Mainichi Tanoshii
   aliases: []
@@ -4760,6 +5512,9 @@ irene-of-love:
   aliases:
   - aijou no irene
   - love irene
+irgendwo-auf-dieser-welt:
+  display: Irgendwo auf dieser Welt
+  aliases: []
 iruma-kun-if-episode-of-mafia:
   display: 'Welcome to Demon School! Iruma-kun: if Episode of Mafia'
   aliases:
@@ -4793,8 +5548,14 @@ isekai-gibier-meshi:
 isekai-maou-to-shoukan-shoujo-no-dorei-majutsu:
   display: How NOT to Summon a Demon Lord
   aliases: []
+isekai-meikyuu-de-harem-wo:
+  display: 異世界迷宮でハーレムを
+  aliases: []
 isekai-ni-kyuuseishu-toshite-yobaremashita:
   display: Isekai ni Kyuuseishu toshite Yobaremashita ga Arasa ni wa Muri
+  aliases: []
+isekai-soapland:
+  display: Isekai Soapland
   aliases: []
 isekai-tenni-h-no-tabi-ni-gacha:
   display: 異世界転移した俺は、Hのたびにガチャを引く!
@@ -4835,6 +5596,9 @@ itoshi-no-muco:
 itoshi-no-muuco:
   display: Itoshi no Muuco
   aliases: []
+itoshi-no-nekoge:
+  display: いとしの猫っ毛
+  aliases: []
 itoshi-no-xl-size:
   display: Itoshi no XL Size
   aliases: []
@@ -4870,6 +5634,9 @@ jahy-sama-wa-kujikenai:
 jardin-de-caleidoscopios:
   display: Jardin de Caleidoscopios
   aliases: []
+jenseits-der-worte:
+  display: Jenseits der Worte
+  aliases: []
 jewel-box-natural-prince:
   display: The Jewel Box of the Natural Prince
   aliases: []
@@ -4882,6 +5649,13 @@ jigoku-no-senki:
 jigokudo-reikai-tsushin:
   display: Jigokudo Reikai Tsushin
   aliases: []
+jimoto-saikou:
+  display: Jimoto Saikou!
+  aliases:
+  - JIMOTO SAIKO
+  - Jimoto Saikou!
+  - jimoto-saikou
+  - 地元最高！
 jingai-san-no-yome:
   display: Jingai-san no Yome
   aliases: []
@@ -4896,6 +5670,14 @@ jiro-taniguchi-collection:
   aliases:
   - Jiro Taniguchi Deluxe
   - Taniguchi Jiro Collection
+jk-kara-yarinaosu-silver-plan:
+  display: Silver Plan to Redo From JK
+  aliases:
+  - JK kara Yarinaosu Silver Plan
+  - JKからやり直すシルバープラン
+  - Silver Plan to Redo From JK
+  - Spoiled and Retired
+  - jk-kara-yarinaosu-silver-plan
 jojo-no-kimyou-na-bouken:
   display: JoJo's Bizarre Adventure
   aliases: []
@@ -4943,6 +5725,9 @@ josee-the-tiger-and-the-fish:
   aliases: []
 joshi-ana-demo-ii-desu-ka:
   display: Joshi Ana demo Ii desu ka?
+  aliases: []
+joshi-ochi:
+  display: 女子落ちっ!
   aliases: []
 joshi-shougakusei-hajimemashita-p:
   display: 女子小学生はじめました P!
@@ -4996,6 +5781,9 @@ junji-ito:
   - 'Junji Ito: Terror Insólito'
   - junji-ito-terror-insolito
   - 伊藤潤二傑作集
+junji-ito-cat-diary:
+  display: 'Junji Ito''s Cat Diary: Yon & Mu'
+  aliases: []
 junji-ito-complete-works:
   display: 'Junji Ito: Complete Works'
   aliases:
@@ -5028,6 +5816,9 @@ juunana-sai-no-hisoka-jou:
 juusanshi-engi:
   display: 'Juusanshi Engi: Engetsu Sangokuden'
   aliases: []
+juvelian:
+  display: Juvelian – Vater, ich will diese Ehe nicht
+  aliases: []
 k-days-of-blue:
   display: 'K: Days of Blue'
   aliases: []
@@ -5051,11 +5842,25 @@ k-on:
 k-sensei-no-furachi-na-junai:
   display: K-sensei no Furachi na Junai
   aliases: []
+kabeana-gossip-star:
+  display: 壁穴ゴシップスター
+  aliases: []
+kachou-fuugetsu:
+  display: Kachou Fuugetsu
+  aliases:
+  - Kacho Fugetsu
+  - Kachou Fuugetsu
+  - kacho-fugetsu
+  - 花鳥風月
+  - 화조풍월
 kaette-kudasai-akutsu-san:
   display: Kaette Kudasai! Akutsu-san
   aliases: []
 kagaku-na-yatsura:
   display: Kagaku na Yatsura
+  aliases: []
+kageki-shoujo:
+  display: かげきしょうじょ!!
   aliases: []
 kageno-tambien-quiere-disfrutar-de-la-juventud:
   display: Kageno también quiere disfrutar de la juventud
@@ -5121,8 +5926,14 @@ kaiju-no-8:
 kaiju-no-8-side-b:
   display: Kaiju No. 8 - Side B
   aliases: []
+kaiki-limited-horror-kessakusen:
+  display: 夏季限定 戦慄ホラー傑作選 恐之噺
+  aliases: []
 kaisha-to-shiseikatsu-on-to-off:
   display: 'Kaisha to Shiseikatsu: On to Off'
+  aliases: []
+kaishin-no-ichigeki:
+  display: かいしんのいちげき!
   aliases: []
 kajiki-chef:
   display: Kajiki Chef
@@ -5141,6 +5952,9 @@ kakegurui-midari:
   aliases: []
 kakegurui-twin:
   display: Kakegurui Twin
+  aliases: []
+kakuei-ni-hanataba-wo:
+  display: 角栄に花束を
   aliases: []
 kameba-kamu-hodo-amaku-naru:
   display: Kameba Kamu Hodo Amaku Naru
@@ -5171,6 +5985,9 @@ kamisama-kiss:
   - Divine Nanami
   - Kamisama Hajimemashita
   - 神様はじめました
+kamisama-kitsune-to-salaryman:
+  display: かみさまキツネとサラリーマン
+  aliases: []
 kamisama-operation-divine:
   display: Kamisama Operation Divine
   aliases: []
@@ -5201,6 +6018,9 @@ kanojo-mo-kanojo:
   aliases: []
 kanpachi:
   display: Kanpachi
+  aliases: []
+kanpeki-de-saikou-no-watashi:
+  display: 完璧で最高の私にホレないのは天然バカなお前のせい!
   aliases: []
 kantai-collection-itsuka-shizukana-umi-de:
   display: 'Kantai Collection: Itsuka Shizukana Umi de'
@@ -5236,6 +6056,12 @@ kao-dake-ja-suki-ni-narimasen:
 kaoru-tada-collection:
   display: Kaoru Tada Collection
   aliases: []
+kara-no-kyoukai:
+  display: 空の境界
+  aliases: []
+karakai-jouzu-no-takagi-san:
+  display: からかい上手の高木さん
+  aliases: []
 karakuri-circus:
   display: Karakuri Circus
   aliases:
@@ -5251,8 +6077,17 @@ kare-ni-irai-shite-wa-ikemasen:
   - You Should Not Ask Him
   - kare-ni-irai-shite-wa-ikemasen
   - 彼に依頼してはいけません
+karekore:
+  display: カレコレ
+  aliases: []
+karisuma-karisuma-house-de-kashimachi:
+  display: カリスマ〜カリスマな彼らはカリスマハウスで仮住まい中〜
+  aliases: []
 karisuma-karisumahouse:
   display: 'Karisuma: Karisuma House de Karizumai-chuu'
+  aliases: []
+karisuma-kyou-mo-heiwa:
+  display: カリスマ〜きょうもへいわです〜
   aliases: []
 karisuma-kyou-mo-heiwa-desu:
   display: 'Karisuma: Kyou mo Heiwa desu'
@@ -5278,6 +6113,9 @@ kasai-ayumi-reijin-1993-2025:
 kasane:
   display: Kasane
   aliases: []
+kasasaki-azusa-to-shichinin-no-teki:
+  display: 笠佐木梓と七人の敵
+  aliases: []
 kashoku-no-shiro:
   display: Kashoku no Shiro
   aliases:
@@ -5299,6 +6137,14 @@ katekyo-hitman-reborn:
   - katekyō hitman reborn
   - reborn
   - 家庭教師ヒットマンREBORN!
+kawaii-watashi-no-tsukurikata:
+  display: Kawaii Watashi no Tsukurikata
+  aliases:
+  - How to Make Myself Pretty
+  - Kawaii Watashi no Tsukurikata
+  - Kawawata
+  - kawaii-watashi-no-tsukurikata
+  - カワイイ私の作り方
 kawarage-ryuuen-gakan:
   display: 'Kawarage Gashu: Ryuuen Gakan'
   aliases:
@@ -5306,6 +6152,15 @@ kawarage-ryuuen-gakan:
   - ryuuen gakan
   - かわらげ画集 龍苑画巻
   - 龍苑画巻
+kaya-chan-isnt-scary:
+  display: Kaya-chan Isn't Scary
+  aliases:
+  - Kaya-chan Isn't Scary
+  - Kaya-chan hat keine Angst
+  - Kaya-chan wa Kowakunai
+  - KayaKowa
+  - kaya-chan-hat-keine-angst
+  - カヤちゃんはコワくない
 kayata-sunako-zenrework:
   display: Kayata Sunako Zenwork 1993-2013
   aliases: []
@@ -5327,6 +6182,12 @@ keiko-nishi:
 kemono-incidents:
   display: Kemono Incidents
   aliases: []
+kemono-san-to-ohana-chan:
+  display: 獣人さんとお花ちゃん
+  aliases: []
+kemuri-to-mitsu:
+  display: 煙と蜜
+  aliases: []
 kenban-no-ue-no-karesu:
   display: Kenban no Ue no Karesu
   aliases: []
@@ -5347,6 +6208,12 @@ kenichiro-kun-no-konyakusha:
 kenji-tsuruta:
   display: Kenji Tsuruta
   aliases: []
+kenminsei-manga-uchi-no-toko-de-wa:
+  display: 県民性マンガ うちのトコでは
+  aliases: []
+kenran-taru-grand-seine:
+  display: 絢爛たるグランドセーヌ
+  aliases: []
 kenshiro-tsubanari:
   display: Kenshiro Tsubanari
   aliases: []
@@ -5362,8 +6229,23 @@ keyman-the-hand-of-judgement:
 ki-hi:
   display: Ki & Hi
   aliases: []
+kid-nappers:
+  display: Kid Nappers
+  aliases: []
+kiela-und-das-letzte-geleit:
+  display: Kiela und das letzte Geleit
+  aliases: []
 kii-taro-shonen-no-youkai-enikki:
   display: Kii-taro Shonen no Youkai Enikki
+  aliases: []
+kijibato-kun-nikki:
+  display: キジバトくん日記
+  aliases: []
+kijin-gentosho:
+  display: 'Kijin Gentosho: Dämonenjäger'
+  aliases: []
+kikai-jikake-no-marie:
+  display: 機械じかけのマリー
   aliases: []
 kikami-genteiban:
   display: Kikami Genteiban Anthology
@@ -5445,11 +6327,29 @@ kimi-ni-todoke:
 kimi-no-iru-machi:
   display: Kimi no Iru Machi
   aliases: []
+kimi-no-kakera:
+  display: きみのカケラ
+  aliases: []
 kimi-no-utagoe-ni-kiss-o:
   display: Kimi no Utagoe ni Kiss o
   aliases: []
+kimi-no-utagoe-ni-kiss-wo:
+  display: 君の歌声にキスを
+  aliases: []
+kimi-to-boku-no-saigo-no-sensen:
+  display: キミと僕の最後の戦場
+  aliases: []
 kimi-to-natsu-no-naka:
   display: Kimi to Natsu no Naka
+  aliases: []
+kimi-to-tsuzuru-utakata:
+  display: 君と綴るうたかた
+  aliases: []
+kimi-wa-mendou-na-kon-yakusha:
+  display: きみは面倒な婚約者
+  aliases: []
+kimi-wa-natsu-no-naka:
+  display: 君は夏のなか
   aliases: []
 kindaichi-37-sai-no-jikenbo:
   display: Kindaichi 37-sai no Jikenbo
@@ -5470,6 +6370,9 @@ kindergarten-wars:
   - Kindergarten Wars
   - Youchien WARS
   - 幼稚園WARS
+king-in-a-lab-coat:
+  display: King in a Lab Coat
+  aliases: []
 king-the-land:
   display: King the Land
   aliases: []
@@ -5495,6 +6398,12 @@ kingdom-hearts-iii:
 kingdoms-of-ruin:
   display: The Kingdoms of Ruin
   aliases: []
+kings-maker:
+  display: King's Maker
+  aliases: []
+kings-maker-triple-crown:
+  display: 'King''s Maker: Triple Crown'
+  aliases: []
 kininatteru-hito-ga-otoko-janakatta:
   display: Kininatteru Hito ga Otoko Janakatta
   aliases: []
@@ -5515,8 +6424,14 @@ kinnikuman:
   - Ultimate Muscle
   - kinnikuman
   - キン肉マン
+kinnikuman-waza:
+  display: キン肉マン「技」
+  aliases: []
 kinou-nani-tabeta:
   display: Kinou Nani Tabeta?
+  aliases: []
+kinro-roadshow:
+  display: 勤労ロードショー
   aliases: []
 kirakira-precure-a-la-mode:
   display: KiraKira PreCure a la Mode
@@ -5529,6 +6444,9 @@ kire-papa:
   aliases: []
 kiriko:
   display: Kiriko
+  aliases: []
+kirschblueten-nach-dem-winter:
+  display: Kirschblüten nach dem Winter
   aliases: []
 kiss-him-not-me:
   display: Kiss Him, Not Me
@@ -5545,8 +6463,14 @@ kissho-tennyo:
   aliases:
   - kissho tennyo
   - 吉祥天女
+kisu-de-tokashita-sono-ato-ni:
+  display: キスで溶かしたそのあとに
+  aliases: []
 kitanai-kimi-ga-ichiban-kawaii:
   display: Kitanai Kimi ga Ichiban Kawaii
+  aliases: []
+kitayama-kun-und-minamiya-kun:
+  display: Kitayama-kun und Minamiya-kun
   aliases: []
 kitsune-men-fuufu:
   display: Kitsune-men Fuufu
@@ -5618,11 +6542,26 @@ kodomo-no-omocha:
 koe-de-oshigoto:
   display: Koe de Oshigoto!
   aliases: []
+kohakuiro-no-kusotan:
+  display: 琥珀色の空想汽譚
+  aliases: []
+koharu-und-minato:
+  display: 'Koharu und Minato: Mein Partner ist eine Frau'
+  aliases: []
+kohva:
+  display: Kohva
+  aliases: []
+koi-ga-michitara:
+  display: 恋が満ちたら
+  aliases: []
 koi-izumi-natsuki:
   display: Koi Izumi (Natsuki Sumeragi)
   aliases: []
 koi-musubi-tenshi-chan-ga-onnoko-ni-meneki-zero-na-boku-ni:
   display: Koi Musubi Tenshi-chan ga Onnoko ni Meneki Zero na Boku ni Kisu Saseru
+  aliases: []
+koi-ni-mudaguchi:
+  display: 恋に無駄口
   aliases: []
 koi-no-hajime:
   display: Koi no Hajime
@@ -5635,6 +6574,9 @@ koi-suru-moon-dog:
   aliases: []
 koi-suru-shirokuma:
   display: Koi Suru Shirokuma
+  aliases: []
+koi-to-dangan:
+  display: 恋と弾丸
   aliases: []
 koi-to-uso:
   display: Love & Lies
@@ -5658,6 +6600,9 @@ koisuru-boryaku:
   aliases: []
 koisuru-milk-crown:
   display: Koisuru Milk Crown
+  aliases: []
+koisuru-otome-no-tsukurikata:
+  display: 恋する(おとめ)の作り方
   aliases: []
 kojiro-del-clan-fuma:
   display: Kojiro del Clan Fuma
@@ -5689,6 +6634,9 @@ komiya-yuta-sakuhinshuu:
   aliases: []
 kono-manga-mioboe:
   display: Q Kono Manga ni Mioboe ga Aru Kata wa Oshirase Kudasai
+  aliases: []
+kono-otoko-moju-ni-tsuki-youchui:
+  display: この男、猛獣につき要注意。
   aliases: []
 konosuba:
   display: 'Konosuba: God''s Blessing on This Wonderful World!'
@@ -5733,6 +6681,9 @@ kore-kaite-shine:
 kore-wa-zombie-desuka:
   display: Kore wa Zombie Desu ka?
   aliases: []
+kosertel-no-ryujutsushi-ko-ryu-monogatari:
+  display: コーセルテルの竜術士〜子竜物語〜
+  aliases: []
 koshakuke-no-jijo-wa-sugata-wo-kakusu:
   display: Koshakuke no Jijo wa Sugata wo Kakusu
   aliases: []
@@ -5743,12 +6694,18 @@ kotetsu-jeeg:
   - Kotetsu Shin Jeeg
   - Steel Jeeg
   - 鋼鉄ジーグ
+kouka-koukyu-monogatari:
+  display: 紅霞後宮物語 〜小玉伝〜
+  aliases: []
 koukoku-no-souheki-kizumono-no-hanayome-gaiden:
   display: 'Koukoku no Souheki: Kizumono no Hanayome Gaiden'
   aliases:
   - 皇國の双璧　傷モノの花嫁 外伝
 koukou-esper:
   display: Koukou Esper
+  aliases: []
+kouu-to-ryuho-ato-tanaka:
+  display: 項羽と劉邦、あと田中
   aliases: []
 kowamote-no-rinjin-ga-omega:
   display: Kowamote no Rinjin ga Omega Datta Toki no Taishohou
@@ -5758,6 +6715,9 @@ kowamote-no-rinjin-ga-omega-datta-toki:
   aliases: []
 kowamote-no-rinjin-omega:
   display: Kowamote no Rinjin ga Omega
+  aliases: []
+kowamoto-no-rinjin-ga-omega:
+  display: コワモテの隣人がΩだった時の対処法
   aliases: []
 kowloon-generic-romance:
   display: Kowloon Generic Romance
@@ -5773,6 +6733,12 @@ kubo-ibuki:
   aliases: []
 kudami-mino-neko:
   display: Kudami Mino no Neko
+  aliases: []
+kudan-no-folklore:
+  display: クダンノフォークロア
+  aliases: []
+kuki-ga-yomeru-shinshakaiin-to-muaiso-na-senpai:
+  display: 空気が「読める」新入社員と無愛想な先輩
   aliases: []
 kuma-kuma-kuma-bear:
   display: Kuma Kuma Kuma Bear
@@ -5795,6 +6761,9 @@ kuraitsuite-yo-danna-sama:
   aliases: []
 kure-nai:
   display: Kure-nai
+  aliases: []
+kuro-ka-shiro-ka:
+  display: 黒か白か
   aliases: []
 kuro-somato:
   display: Kuro
@@ -5841,6 +6810,15 @@ kuruneko:
 kuso-joushi-wa-yari-aideru-mono-to-kokoroe-yo:
   display: Kuso Joushi wa Yari Aideru Mono to Kokoroe yo
   aliases: []
+kuss-den-kater:
+  display: Küss den Kater!
+  aliases: []
+kuu-ka-kuwareru-ka:
+  display: 喰うか、喰われるか
+  aliases: []
+kuubo-ibuki:
+  display: 空母いぶき
+  aliases: []
 kuubo-ibuki-great-game:
   display: Kuubo Ibuki GREAT GAME
   aliases: []
@@ -5852,6 +6830,9 @@ kyo-kara-boku-wa-kanojo-xx:
   aliases: []
 kyo-wo-nagasu:
   display: Kyo wo Nagasu
+  aliases: []
+kyodai-seido-no-aru-yankee-gakuen:
+  display: 兄弟制度のあるヤンキー学園で、今日も契りを迫られてます
   aliases: []
 kyodai-seido-yankee-gakuen:
   display: Kyoudai Seido no Aru Yankee Gakuen
@@ -5875,6 +6856,9 @@ kyoukai-no-rinne:
   - Rin-ne Círculo de Reencarnación
   - Rinne, le cercle de la réincarnation
   - 境界のRINNE
+kyujitsu-gentei-kanojo:
+  display: 休日限定彼女
+  aliases: []
 kyuki-no-adabana:
   display: Kyuki no Adabana
   aliases: []
@@ -5883,6 +6867,9 @@ kyurun-kawaii-chibi-chara:
   aliases: []
 kyuujitsu-gentei-kanojo:
   display: Kyuujitsu Gentei Kanojo
+  aliases: []
+kyuuketsu-doutei-chichi-wo-suu:
+  display: 吸血童貞、乳を吸う。
   aliases: []
 l-dk:
   display: L-DK
@@ -6006,6 +6993,9 @@ lady-snowblood:
   - shura yukihime
   - shurayuki-hime
   - 'yuki: vingança na neve'
+lady-tamer-comeback-der-versagerinnen:
+  display: 'Lady Tamer: Das Comeback der Versagerinnen'
+  aliases: []
 lam:
   display: LAM
   aliases: []
@@ -6032,6 +7022,9 @@ landreaall:
   - ランドリオール
 lantern-of-nyx:
   display: The Lantern of Nyx
+  aliases: []
+lass-mich-dich-flicken:
+  display: Lass mich dich flicken
   aliases: []
 last-game:
   display: Last Game
@@ -6065,6 +7058,9 @@ legend-of-zelda:
 legeres-sur-le-dancefloor:
   display: Légères sur le Dancefloor
   aliases: []
+leichtfussig-auf-der-tanzflache:
+  display: Leichtfüßig auf der Tanzfläche
+  aliases: []
 leiji-matsumoto-unpublished-works:
   display: Leiji Matsumoto's Unpublished Works
   aliases:
@@ -6077,11 +7073,28 @@ lenfant-frankenstein:
 les-noces-or-eau:
   display: Les Noces de l'Or et de l'Eau
   aliases: []
+let-me-undress-you:
+  display: Let Me Undress You
+  aliases: []
+lets-be-together-night-and-day:
+  display: Let's Be Together – Night and Day
+  aliases: []
+lets-cast-off:
+  display: Let's Cast Off
+  aliases:
+  - Let's Cast Off
+  - lets-cast-off
+lets-destroy-the-idol-dream:
+  display: Let's destroy the Idol Dream
+  aliases: []
 leviathan:
   display: Leviathan
   aliases: []
 leviathan-kuroi:
   display: Leviathan
+  aliases: []
+liaison-kodomo-no-kokoro-shinryojo:
+  display: リエゾン -こどものこころ診療所-
   aliases: []
 liar-game:
   display: Liar Game
@@ -6089,6 +7102,9 @@ liar-game:
   - ライアーゲーム
 liar-x-liar:
   display: Liar x Liar
+  aliases: []
+liebe-und-herz:
+  display: Liebe & Herz
   aliases: []
 lili-men:
   display: Lili-men
@@ -6105,12 +7121,17 @@ limited-m-kanojo:
 linferno-delle-vergini:
   display: L'Inferno delle Vergini
   aliases: []
+link-click:
+  display: Link Click
+  aliases: []
 litchi-hikari-club:
   display: Litchi Hikari Club
   aliases: []
 little-mushroom:
   display: Little Mushroom
-  aliases: []
+  aliases:
+  - Little Mushroom – Wrong but still right
+  - Wrong But Still Right
 little-my-maid:
   display: Little My Maid
   aliases: []
@@ -6122,6 +7143,9 @@ little-witch-academia:
   display: Little Witch Academia
   aliases:
   - リトルウィッチアカデミア
+living-with-him:
+  display: Living with Him
+  aliases: []
 locodol:
   display: Locodol
   aliases: []
@@ -6137,6 +7161,9 @@ lone-wolf-and-cub:
   - Lone Wolf & Cub
   - Lone Wolf And Cub
   - 子連れ狼
+lonely-girl-ni-sakaraenai:
+  display: ロンリーガールに逆らえない
+  aliases: []
 long-period:
   display: Long Period
   aliases: []
@@ -6147,17 +7174,20 @@ long-riders:
   - Longriders!
   - long-riders
   - ろんぐらいだぁす！
+long-riders-tanpenshuu:
+  display: ろんぐらいだぁす!短編集
+  aliases: []
 look-back:
   display: Look Back
-  aliases: []
-looking-up-to-magical-girls:
-  display: Looking Up to Magical Girls!
   aliases: []
 loon:
   display: Loon
   aliases: []
 loosers:
   display: Loosers
+  aliases: []
+lord-of-mysteries:
+  display: Lord of Mysteries
   aliases: []
 losers:
   display: 'Losers: El Nacimiento de la Primera Revista Semanal de Seinen en Japón'
@@ -6202,6 +7232,9 @@ love-live-nijigasaki-high-school-idol-club:
   - love live nijigasaki gakuen school idol doukoukai
   - love-live-nijigasaki
   - ラブライブ!虹ヶ咲学園スクールアイドル同好会
+love-me-for-who-i-am:
+  display: Love Me for Who I Am
+  aliases: []
 love-me-love-me-not:
   display: Love Me, Love Me Not
   aliases:
@@ -6232,8 +7265,14 @@ lovecraft-innsmouth:
 loveless:
   display: Loveless
   aliases: []
+lovelock:
+  display: LoveLock
+  aliases: []
 lovesick-e-altre-storie:
   display: Lovesick e altre storie
+  aliases: []
+low-tide-in-twilight:
+  display: Low Tide in Twilight
   aliases: []
 luce-to-shiro-no-keiyaku:
   display: Luce to Shiro no Keiyaku
@@ -6245,6 +7284,9 @@ luche-to-shiro-no-keiyaku:
   aliases: []
 lucky-star:
   display: Lucky Star
+  aliases: []
+ludwig-fantasia:
+  display: Ludwig Fantasia
   aliases: []
 luminosity:
   display: Luminosity
@@ -6275,12 +7317,18 @@ lycoris-recoil:
 m-no-retsujou:
   display: M no Retsujou
   aliases: []
+mach-ihn-hart:
+  display: 'Mach ihn hart: Mein Chef hält sich nicht zurück!'
+  aliases: []
 mad:
   display: Mad
   aliases: []
 madame-tachi-no-room-share:
   display: Madame-tachi no Room Share
-  aliases: []
+  aliases:
+  - Madam's Room Share
+  - Madamu-tachi no Room Share
+  - マダムたちのルームシェア
 made-in-abyss:
   display: Made in Abyss
   aliases:
@@ -6289,6 +7337,9 @@ made-in-abyss:
   - メイドインアビス
 made-in-akatsuka-fujio:
   display: Made in Akatsuka Fujio
+  aliases: []
+maeda-mahiro-gashu:
+  display: 雑 前田真宏 雑画集
   aliases: []
 magi:
   display: 'Magi: The Labyrinth of Magic'
@@ -6325,6 +7376,9 @@ magica:
 magical-circle-guru-guru:
   display: Magical Circle Guru Guru
   aliases: []
+magical-girl-and-evil-lieutenant:
+  display: The Magical Girl and the Evil Lieutenant Used to Be Archenemies
+  aliases: []
 magical-girl-howling-moon:
   display: Divine Raiment Magical Girl Howling Moon
   aliases:
@@ -6346,6 +7400,9 @@ magus-of-the-library:
   - 図書館の大魔術師
 maho-tsukai-precure:
   display: Maho Tsukai PreCure!
+  aliases: []
+mahou-shoujo-lyrical-nanoha-memorial-visual-collection:
+  display: 魔法少女リリカルなのは メモリアルビジュアルコレクション
   aliases: []
 mahou-shoujo-lyrical-nanoha-movie-1st-comics:
   display: Mahou Shoujo Lyrical Nanoha MOVIE 1st THE COMICS
@@ -6386,6 +7443,9 @@ maison-ikkoku:
 maiwai:
   display: Maiwai
   aliases: []
+majime-kun-to-dame-otoko:
+  display: マジメくんとダメ男
+  aliases: []
 majimoji-rurumo:
   display: Majimoji Rurumo
   aliases: []
@@ -6412,6 +7472,9 @@ makai-ouji-devils-and-realist:
 make-the-exorcist-fall-in-love:
   display: Make the Exorcist Fall in Love
   aliases: []
+make-wa-tada-no-mahou-janai-no:
+  display: メイクはただの魔法じゃないの
+  aliases: []
 maken-ki:
   display: Maken-Ki!
   aliases: []
@@ -6420,6 +7483,9 @@ maken-retsuken:
   aliases: []
 makikomare-shoukan-ol-guild-kaitai:
   display: 巻き込まれて召喚された限界OL、ギルド所属の【魔物解体嬢】として奮闘中 THE COMIC
+  aliases: []
+maku-ga-oriru-to-bokura-wa-番:
+  display: 幕が下りたら僕らは番
   aliases: []
 maldestro-dalla-nascita:
   display: Maldestro dalla Nascita
@@ -6451,8 +7517,14 @@ manga-bible:
   - La Biblia (Manga)
   - 'Manga de Dokuha: Seisho'
   - la-biblia
+manga-issho:
+  display: MANGA ISSHO
+  aliases: []
 manga-of-the-dead:
   display: Manga of the Dead
+  aliases: []
+manga-sa-tabi:
+  display: マンガ サ旅〜マンガで読む世界のすごいサウナ〜
   aliases: []
 manga-story:
   display: Manga Story
@@ -6477,6 +7549,9 @@ mao-momiji-art:
 maorenc-collection:
   display: Maorenc Collection
   aliases: []
+maou-gakuin:
+  display: 魔王学院の不適合者
+  aliases: []
 maou-ibrogia-ni-mi-wo-sasageyo:
   display: Maou Ibrogia ni Mi wo Sasageyo
   aliases:
@@ -6486,8 +7561,14 @@ maou-ibrogia-ni-mi-wo-sasageyo:
 maou-no-hajime-kata-the-comic:
   display: Maou no Hajime-kata THE COMIC
   aliases: []
+maou-no-ore-ga-dorei-elf-wo-yome-ni-shitanda-ga:
+  display: 魔王の俺が奴隷エルフを嫁にしたんだが、どう愛でればいい?
+  aliases: []
 maou-toubatsugo-no-sekai-ni-yuusha-nante-inai:
   display: Maou Toubatsugo no Sekai ni Yuusha Nante Inai
+  aliases: []
+maousama-no-renai-encounter:
+  display: 魔王様の◯恋エンカウント
   aliases: []
 maravillas-y-delicias-de-japon:
   display: Maravillas y delicias de Japón
@@ -6551,6 +7632,15 @@ marvel-a-manga-tribute:
   aliases: []
 masakazu-katsura-4c:
   display: Masakazu Katsura 4C Illustrations
+  aliases: []
+masamune-kun-no-revenge:
+  display: 政宗くんのリベンジ
+  aliases: []
+masamune-kuns-revenge:
+  display: Masamune-kun's Revenge
+  aliases: []
+masaomi-kun-ni-matoraremashita:
+  display: 正臣くんに娶られました。
   aliases: []
 masaomi-kun-ni-metoraremashita:
   display: Masaomi-kun ni Metoraremashita
@@ -6629,6 +7719,18 @@ megami-no-cafe-terrace:
 meidea-tensei-monogatari-kono-sekai-de-ichiban-warui-majo:
   display: Maidea Tensei Monogatari
   aliases: []
+mein-fraulein-bekommt-mein-blut-nicht:
+  display: Mein Fräulein bekommt mein Blut nicht!
+  aliases: []
+mein-partner-ist-ein-vollblut-omega:
+  display: Mein Partner ist ein Vollblut-Omega
+  aliases: []
+mein-sommer-mit-dir:
+  display: Mein Sommer mit dir
+  aliases: []
+meine-chefin-kommt-immer-zuerst:
+  display: Meine Chefin kommt immer zuerst!!
+  aliases: []
 mejor-asi:
   display: Mejor Así
   aliases: []
@@ -6646,6 +7748,9 @@ mentaiko:
   aliases: []
 mermaid-melody:
   display: Mermaid Melody
+  aliases: []
+mero-to-tabi:
+  display: メロとタビ
   aliases: []
 message-to-adolf:
   display: Message to Adolf
@@ -6705,6 +7810,9 @@ midnight-diner:
   - Shinya Shokudo
   - Shinya Shokudou
   - 深夜食堂
+midnight-monologue:
+  display: Midnight Monologue
+  aliases: []
 mihara-jun-special-box:
   display: Mihara Jun Special Box
   aliases:
@@ -6731,6 +7839,9 @@ mikansei-psychotronics:
   aliases: []
 milk-spot:
   display: Milk Spot
+  aliases: []
+milky-sketch:
+  display: ミルキィスケッチ
   aliases: []
 mimis-horror-stories:
   display: Mimi's Horror Stories
@@ -6795,6 +7906,9 @@ mirai-nikki:
 mirai-nikki-redial:
   display: Mirai Nikki Redial
   aliases: []
+miss-kobayashi-dragon-maid-kanna:
+  display: 'Miss Kobayashi''s Dragon Maid: Kanna''s Daily Life'
+  aliases: []
 miss-kobayashis-dragon-maid:
   display: Miss Kobayashi's Dragon Maid
   aliases:
@@ -6830,8 +7944,14 @@ mitsubara-no-kekkon:
   aliases:
   - 'Mitsubara no Kekkon: Deep Love'
   - 蜜薔薇の結婚
+mitsuki-kun-chotto-matte:
+  display: ミツキくんちょっと待って!
+  aliases: []
 mitsume:
   display: Mitsume
+  aliases: []
+miyako-satellite-stories:
+  display: Miyako – Satellite Stories
   aliases: []
 miyoshi-jukujo:
   display: A Miyoshi le Gustan los Pechos
@@ -6887,6 +8007,9 @@ mobile-suit-gundam:
 mobile-suit-gundam-crossbone:
   display: Mobile Suit Gundam Crossbone
   aliases: []
+mobile-suit-gundam-cucuruz-doan:
+  display: 'Mobile Suit Gundam: THE ORIGIN MSD Cucuruz Doan''s Island'
+  aliases: []
 mobile-suit-gundam-f91-eternal-wind:
   display: 機動戦士ガンダムF91 エターナルウインド
   aliases: []
@@ -6913,6 +8036,9 @@ mogumogu-tabeauriku-kuma:
   aliases: []
 mokuoku-the-light-in-the-night:
   display: 黙読 The Light in the Night
+  aliases: []
+momo-to-manji:
+  display: 百と卍
   aliases: []
 momogumi-plus-senki:
   display: Momogumi Plus Senki
@@ -6978,6 +8104,9 @@ moonlight-mile:
 more-than-a-married-couple-but-not:
   display: More Than a Married Couple but Not Lovers
   aliases: []
+morgana-and-oz:
+  display: Morgana & Oz
+  aliases: []
 mori-no-kuma-san-toumin-chuu:
   display: Mori no Kuma-san, Toumin-chuu.
   aliases: []
@@ -6995,6 +8124,12 @@ moriarty-the-patriot:
 morris-cat-adventure:
   display: 'Morris: Tsuno ga Haeta Neko no Bouken'
   aliases: []
+mother-parasite:
+  display: マザーパラサイト
+  aliases: []
+moto-saikyou-no-kenshi-mahou:
+  display: 元最強の剣士は、異世界魔法に憧れる THE COMIC
+  aliases: []
 moto-yan-papa-to-hitsuji-sensei-yotsuba:
   display: Moto Yan Papa to Hitsuji Sensei Yotsuba
   aliases: []
@@ -7003,6 +8138,9 @@ motsunabe-to-regent:
   aliases: []
 motto-kawairaku-natte-ii:
   display: Motto Kawairaku Natte Ii
+  aliases: []
+motto-kawayuku-natte-ii:
+  display: もっと可愛くなっていい
   aliases: []
 mountains-of-madness:
   display: At the Mountains of Madness
@@ -7013,12 +8151,18 @@ mozaiku-san-shimai:
 mr-applicant:
   display: MR. Applicant
   aliases: []
+mr-morning:
+  display: MR.MORNING
+  aliases: []
 mujaki-no-rakuen:
   display: Mujaki no Rakuen
   aliases:
   - Mujaki no Rakuen
   - mujaki-no-rakuen
   - 無邪気の楽園
+mujikaku-inma-wa-mitasaretai:
+  display: 無自覚淫魔は満たされたい
+  aliases: []
 mujikaku-seijo-wa-kyou-mo:
   display: Mujikaku Seijo wa Kyou mo Muishiki ni Chikara wo Tarenagasu
   aliases: []
@@ -7034,6 +8178,9 @@ murcielago:
   - MURCIÉLAGO
   - MURCIÉLAGO-ムルシエラゴ-
   - Murcielago
+muscle-grill-the-comic:
+  display: マッスルグリル THE COMIC
+  aliases: []
 museum:
   display: Museum
   aliases:
@@ -7068,6 +8215,12 @@ mushoku-tensei-redundant-reincarnation:
   - 'Mushoku Tensei: Dasoku-hen'
   - mushoku-tensei-dasokuhen
   - 無職転生 蛇足編
+musume-fuzoku-building:
+  display: 「娘。」のいる風俗ビル
+  aliases: []
+muted:
+  display: '#muted'
+  aliases: []
 my-brothers-husband:
   display: My Brother's Husband
   aliases:
@@ -7075,6 +8228,9 @@ my-brothers-husband:
   - Le Mari de Mon Frère
   - Otouto no Otto
   - 弟の夫
+my-contract-with-the-apothecary-monster:
+  display: My Contract with the Apothecary Monster
+  aliases: []
 my-dearest-patrolman:
   display: My Dearest Patrolman
   aliases:
@@ -7105,10 +8261,16 @@ my-dress-up-darling:
 my-dress-up-darling-bisque-doll:
   display: My Dress-Up Darling | Bisque Doll
   aliases: []
+my-ex-husbands-mad-dog:
+  display: My Ex-Husband's Mad Dog
+  aliases: []
 my-garland:
   display: My Garland
   aliases:
   - my garland artbook
+my-gently-raised-beast:
+  display: My Gently Raised Beast
+  aliases: []
 my-happy-marriage:
   display: My Happy Marriage
   aliases:
@@ -7177,6 +8339,12 @@ my-neighbor-totoro:
   - Mon voisin Totoro
   - Tonari no Totoro
   - となりのトトロ
+my-noons-and-midnights-are-for-you:
+  display: My Noons and Midnights Are for You
+  aliases: []
+my-tiny-senpai:
+  display: My Tiny Senpai
+  aliases: []
 mystery-to-iu-nakare:
   display: Mystery to Iu Nakare
   aliases: []
@@ -7213,6 +8381,9 @@ nana:
   display: Nana
   aliases:
   - ナナ
+nana-and-kaoru-das-letzte-jahr:
+  display: 'Nana & Kaoru: Das letzte Jahr'
+  aliases: []
 nana-to-kaoru:
   display: Nana to Kaoru
   aliases: []
@@ -7233,8 +8404,14 @@ nande-koko-ni-sensei-ga:
 nanka-mou-aa-tte-kanji:
   display: Nanka Mou Aa tte Kanji.
   aliases: []
+nano-machine:
+  display: Nano Machine
+  aliases: []
 nanokakan-gentei-kanojo:
   display: 7日間限定彼女
+  aliases: []
+nao-tsuki-chi:
+  display: 尚月地
   aliases: []
 naoki-urasawa-dibujar-sin-descanso:
   display: 'Naoki Urasawa: Dibujar sin descanso'
@@ -7248,6 +8425,9 @@ napoli-new-york:
   - napoli new york
   - napoli new york movie
   - napoli-new york movie
+naraku-izuko-emaki:
+  display: 奈落何処絵巻
+  aliases: []
 naruto:
   display: Naruto
   aliases:
@@ -7291,14 +8471,23 @@ navaguraha-defend-9-triggers:
 navigavi-jun-fantasy-sakuhin-shu:
   display: NAVIGAVI Jun Fantasy Sakuhin-shu
   aliases: []
+navillera:
+  display: Navillera
+  aliases: []
 nazo-no-kanojo-x:
   display: Nazo no Kanojo X
   aliases: []
 nazotoki-hime-wa-meitantei:
   display: Nazotoki Hime wa Meitantei
   aliases: []
+nee-piyochan:
+  display: ねえ、ぴよちゃん
+  aliases: []
 neet-dakedo-haro-wa-ni-ittara-isekai:
   display: Neet dakedo Harowa ni ittara Isekai ni Tsurete Kareta
+  aliases: []
+neet-dakedo-isekai:
+  display: ニートだけどハロワにいったら異世界につれてかれた
   aliases: []
 negima:
   display: Negima!
@@ -7319,11 +8508,20 @@ neko-atsume:
 neko-goze:
   display: Neko Goze - Chats Errants
   aliases: []
+neko-neko-nihonshi:
+  display: ねこねこ日本史
+  aliases: []
+neko-oji:
+  display: 'Neko Oji: Salaryman Reincarnated as a Kitten'
+  aliases: []
 neko-pitcher:
   display: Neko Pitcher
   aliases: []
 nekome-towol:
   display: Nekome Towol
+  aliases: []
+nennen-hyaku-ansatsu-koiuta:
+  display: 年年百暗殺恋歌
   aliases: []
 neo-cat:
   display: Neo Cat
@@ -7341,6 +8539,12 @@ neon-genesis-evangelion-iron-maiden:
   aliases: []
 netsuzou-trap-ntr:
   display: Netsuzou Trap -NTR-
+  aliases: []
+nettori-netorare-bijin-tsuma:
+  display: ねっとりネトラレ美人妻淫肉調教
+  aliases: []
+neuanfang-mit-nixe:
+  display: 'Neuanfang mit Nixe: Mein Sprung ins kühle Nass'
   aliases: []
 neun:
   display: NeuN
@@ -7398,8 +8602,20 @@ nigeru-wa-haji-daga-yaku-ni-tatsu:
 night-of-the-ghoul:
   display: Night of the Ghoul
   aliases: []
+night-of-the-living-cat:
+  display: Night of the Living Cat
+  aliases: []
+nightmare-before-christmas-pumpkin:
+  display: 'The Nightmare Before Christmas: Battle for Pumpkin King'
+  aliases: []
+nightmare-before-christmas-zero:
+  display: 'The Nightmare Before Christmas: Zero''s Journey'
+  aliases: []
 nights-before-night:
   display: Nights Before Night
+  aliases: []
+nightschool:
+  display: 'Nightschool: The Weirn Books'
   aliases: []
 nijiiro-days:
   display: Nijiiro Days
@@ -7409,7 +8625,10 @@ nijuugo-ji-akasaka-de:
   aliases: []
 nikke:
   display: 'Goddess of Victory: NIKKE - Sweet Encount'
-  aliases: []
+  aliases:
+  - 'Shouri no Megami: NIKKE - Sweet Encount'
+  - nikke-sweet-encounter
+  - 勝利の女神:NIKKE すいーとえんかうんと
 nina-stardust:
   display: Nina Stardust
   aliases: []
@@ -7436,6 +8655,9 @@ ninja-batman:
   aliases: []
 ninja-slayer:
   display: 'Ninja Slayer: Neo-Saitama炎上'
+  aliases: []
+ninja-to-koroshiya-no-futarigurashi:
+  display: 忍者と殺し屋のふたりぐらし
   aliases: []
 nintama-rantarou:
   display: Nintama Rantarou
@@ -7469,10 +8691,16 @@ no-game-no-life-please:
   - No Game No Life, Please!
   - No Game No Life, desu!
   - ノーゲーム・ノーライフ・です!
+no-god-in-eden:
+  display: No God in Eden
+  aliases: []
 no-guns-life:
   display: No Guns Life
   aliases:
   - ノー・ガンズ・ライフ
+no-love-zone:
+  display: No Love Zone
+  aliases: []
 no-name:
   display: No\Name
   aliases: []
@@ -7484,6 +8712,9 @@ noblesse:
   aliases:
   - Noblesse
   - 大貴族
+nobody-dies-a-virgin:
+  display: Nobody Dies a Virgin, Life Fucks Us All
+  aliases: []
 nobunaga-no-shinobi:
   display: Nobunaga no Shinobi
   aliases:
@@ -7514,6 +8745,9 @@ non-non-biyori:
 non-non-biyori-remember:
   display: Non Non Biyori Remember
   aliases: []
+nora-neko-to-ookami:
+  display: 野良猫と狼
+  aliases: []
 nora-to-zassou:
   display: Nora to Zassou
   aliases: []
@@ -7532,6 +8766,9 @@ noroi-michiru:
   aliases: []
 notte-putrescente:
   display: Notte Putrescente
+  aliases: []
+nova-das-madchen-aus-dem-monsterwald:
+  display: Nova, das Mädchen aus dem Monsterwald
   aliases: []
 noyu-girl:
   display: Noyu Girl
@@ -7582,8 +8819,17 @@ odd-taxi:
   - Odd Taxi Visual Comic
   - odd-taxi
   - オッドタクシー
+odoriba-ni-skirt-ga-naru:
+  display: 踊り場にスカートが鳴る
+  aliases: []
+oedo-fire-slayer:
+  display: Oedo Fire Slayer
+  aliases: []
 of-machines-and-beasts:
   display: Of Machines and Beasts
+  aliases: []
+offstage-love-side:
+  display: オフステージラブサイド
   aliases: []
 ogeretsu-tanaka-yarichin-bitch-anniversary:
   display: Ogeretsu Tanaka & Yarichin Bitch Club Anniversary
@@ -7638,6 +8884,14 @@ okane-ariki-no-kankei-desuga:
 okitsune-sama-okiniiri:
   display: Okitsune-sama no Okiniiri
   aliases: []
+okosama-star:
+  display: Okosama Star
+  aliases:
+  - Oko-sama Star
+  - Okosama Star
+  - Super Morning Star
+  - okosama-star
+  - おこさまスター
 okuri-noro-wa-kinshi-sarete-imasu:
   display: Okuri Noro wa Kinshi Sarete Imasu
   aliases: []
@@ -7678,6 +8932,9 @@ omniscient-readers-viewpoint:
   - zenchiteki na dokusha no shiten kara
 omorai-kun:
   display: Omorai-kun
+  aliases: []
+omori:
+  display: OMORI
   aliases: []
 omuro-ke:
   display: Omuro-ke
@@ -7764,6 +9021,9 @@ onimai:
 only-sense-online:
   display: Only Sense Online
   aliases: []
+onmyoji-abe-no-seimei:
+  display: 陰陽師・安倍晴明
+  aliases: []
 onmyoji-heian-youki-den:
   display: 'Onmyoji: Heian Youki Den'
   aliases: []
@@ -7774,6 +9034,9 @@ onna-no-sono-no-hoshi:
   - 女の園の星
 onslaught:
   display: Onslaught
+  aliases: []
+ookami-e-no-yomeiri:
+  display: 狼への嫁入り〜異種婚姻譚〜
   aliases: []
 ookami-heika-no-hanayome:
   display: Ookami Heika no Hanayome
@@ -7787,6 +9050,19 @@ ookami-rise:
 ookami-shoujo-to-kuro-ouji:
   display: Wolf Girl and Black Prince
   aliases: []
+ooku-the-inner-chambers:
+  display: 'Ōoku: The Inner Chambers'
+  aliases:
+  - Le Pavillon des Hommes
+  - O-oku
+  - Ohoku
+  - Ooku
+  - Ooku - Le stanze proibite
+  - Oooku
+  - ooku
+  - 'Ōoku: Los Aposentos Privados'
+  - 'Ōoku: The Inner Chambers'
+  - 大奥
 oomuro-ke:
   display: Oomuro-ke
   aliases: []
@@ -7806,14 +9082,23 @@ orb-on-the-movements-of-the-earth:
 ore-ga-ojousama-gakkou-ni-shomin-sample:
   display: Ore ga Ojousama Gakkou ni Shomin Sample Toshite Rachirareta Ken
   aliases: []
+ore-limited-komushyo:
+  display: 俺、限定コミュ症なんでっ。
+  aliases: []
 ore-monogatari:
   display: Ore Monogatari!!
   aliases:
   - My Love Story!!
   - Ore Monogatari
   - 俺物語!!
+ore-ni-midasarete-senpai:
+  display: 俺に乱されて、先輩。
+  aliases: []
 ore-no-imouto-ga-konnani-kawaii:
   display: Ore no Imouto ga Konnani Kawaii Wake ga Nai
+  aliases: []
+ore-no-joushi-wa-mate-ga-dekinai:
+  display: 俺の上司は待てができない
   aliases: []
 ore-no-koto-ga-daikirai-na-kouhai-to-365nichi:
   display: 俺のことが大嫌いな後輩と、365日一緒で気まずい話
@@ -7830,6 +9115,15 @@ ore-tsushima:
 oreimo:
   display: Oreimo
   aliases: []
+oresama-teacher:
+  display: Oresama Teacher
+  aliases:
+  - Fight Girl
+  - Ore-sama Teacher
+  - Oresama Teacher
+  - ore-sama-teacher
+  - 俺様ティーチャー
+  - 王樣老師
 origin:
   display: Origin
   aliases:
@@ -7842,6 +9136,9 @@ oruchuban-ebichu:
   - オるチュばんエビちゅ
 osamaru-ie-ida-chiaki:
   display: Osamaru Ie - Ida Chiaki
+  aliases: []
+osamaru-ie-ida-chiaki-sakuhinshuu:
+  display: おさまる家 井田千秋 作品集
   aliases: []
 osananajimi-ga-zettai-ni-makenai-rabu-come:
   display: Osananajimi ga Zettai ni Makenai Love Come
@@ -7873,6 +9170,9 @@ oshiete-gyaruko-chan:
 oshiete-kudasai-fujishima-san:
   display: Oshiete Kudasai, Fujishima-san
   aliases: []
+oshiri-tantei:
+  display: (おしり)よ
+  aliases: []
 osomatsu-san:
   display: Osomatsu-san
   aliases: []
@@ -7897,6 +9197,9 @@ otome-game-no-hametsu-flag:
 otome-youkai-zakuro:
   display: Otome Youkai Zakuro
   aliases: []
+otomege-no-akuyaku-reijo-na-no-ni-oji-to-ero-tenkai:
+  display: 乙女ゲーの悪役令嬢なのに王子とエロ展開になるんですが!?
+  aliases: []
 otomege-no-tensei-mob-reijo-gensakukaiben-de-akuyakureisoku-wo-sukuimasu:
   display: Otomege no Tensei Mob Reijo
   aliases: []
@@ -7908,6 +9211,9 @@ otonari-no-tenshi-sama:
   aliases: []
 otousan-watashi-kono-kekkon-iya:
   display: Otousan, Watashi Kono Kekkon Iya Desu!
+  aliases: []
+otto-ni-koishicha-dame-desuka:
+  display: オットに恋しちゃダメですか?
   aliases: []
 otto-wo-mikata-ni-suru-houhou:
   display: Otto wo Mikata ni suru Houhou
@@ -7948,6 +9254,9 @@ our-not-so-lonely-planet-travel-guide:
   - Our Not So Lonely Planet Travel Guide
   - our-not-so-lonely-planet
   - 僕らの地球の歩き方
+our-sunny-days:
+  display: Our Sunny Days
+  aliases: []
 our-true-colors:
   display: Our True Colors
   aliases: []
@@ -7984,6 +9293,9 @@ outen-no-mon:
 outlaw-tamer-epic-rise:
   display: The Epic Rise of the Outlaw Tamer
   aliases: []
+oventroja:
+  display: Oventroja
+  aliases: []
 over-drive:
   display: Over Drive
   aliases: []
@@ -8009,6 +9321,9 @@ palace-meiji:
   aliases: []
 pan-ga-kogete-mo-futari-nara:
   display: Pan ga Kogete mo Futari nara
+  aliases: []
+panda-to-inu:
+  display: パンダと犬
   aliases: []
 pandora-hearts:
   display: Pandora Hearts
@@ -8061,6 +9376,9 @@ peace-electronics:
   aliases: []
 peace-hame:
   display: Peace Hame
+  aliases: []
+peleliu:
+  display: ペリリュー -楽園のゲルニカ-
   aliases: []
 pendulum:
   display: Pendulum
@@ -8131,6 +9449,9 @@ piofiore-no-bansho:
   - piofiore episodio 1926
   - piofiore fated memories
   - ピオフィオーレの晩鐘
+pirouette-into-my-heart:
+  display: Pirouette into my Heart
+  aliases: []
 planeta-manga:
   display: Planeta Manga
   aliases: []
@@ -8178,6 +9499,9 @@ plum-historias-gatunas:
   - Plum Crazy! Stories of a Tiger-Striped Cat
   - Plum, Historias Gatunas
   - 猫ミックス幻奇譚とらじ
+plushmond:
+  display: '#plüschmond'
+  aliases: []
 pluto:
   display: Pluto
   aliases: []
@@ -8299,6 +9623,9 @@ prince-alchimiste:
 prince-of-ghost:
   display: PRINCE OF GHOST
   aliases: []
+prince-of-tennis:
+  display: テニスの王子様
+  aliases: []
 princess-jellyfish:
   display: Princess Jellyfish
   aliases:
@@ -8319,6 +9646,12 @@ princess-lucia:
   aliases: []
 princess-mononoke:
   display: Princess Mononoke
+  aliases: []
+prinz-freya:
+  display: Prinz Freya
+  aliases: []
+prinzessin-sakura:
+  display: Prinzessin Sakura
   aliases: []
 prison-school:
   display: Prison School
@@ -8343,6 +9676,9 @@ project-sekai:
   - 'Project Sekai: Colorful Stage!'
   - プロジェクトセカイ カラフルステージ！ feat.初音ミク
   - プロセカ
+promise-cinderella:
+  display: プロミス・シンデレラ
+  aliases: []
 prophecy:
   display: Prophecy
   aliases: []
@@ -8356,6 +9692,9 @@ psycho-pass-inspector:
   aliases: []
 ptsd-radio:
   display: PTSD Radio
+  aliases: []
+puchi-gonabisu:
+  display: ぷちゴナビス
   aliases: []
 puchimas:
   display: Puchimas!
@@ -8399,6 +9738,9 @@ pure-kantoku-artworks:
   aliases: []
 purgatory-girl:
   display: Purgatory Girl
+  aliases: []
+puripuri-kaki:
+  display: ぷりぷりカキ わちゃわちゃパラダイス
   aliases: []
 purr-evil:
   display: Purr Evil
@@ -8449,6 +9791,9 @@ radiant-tale:
   aliases:
   - Radiant Tale Fanbook
   - ラディアンテイル
+raeliana:
+  display: Raeliana
+  aliases: []
 ragna-crimson:
   display: Ragna Crimson
   aliases: []
@@ -8462,6 +9807,9 @@ rainbow-parakeet:
   display: Rainbow Parakeet
   aliases:
   - nanairo inko
+raion-gotoki-no-kuni-kara:
+  display: ライオン如きの国から
+  aliases: []
 raise-de-wa-aitakunai:
   display: Raise de wa Aitakunai
   aliases: []
@@ -8496,6 +9844,9 @@ ranma-1-2:
   - Ranma ½
   - ranma 1 2
   - らんま1/2
+rantaro-to-meguru-fushigina-sekai:
+  display: 乱太郎とめぐるふしぎな世界
+  aliases: []
 rascal-does-not-dream:
   display: Rascal Does Not Dream
   aliases:
@@ -8541,6 +9892,14 @@ real-game-h:
 reborn-kamen-no-otoko:
   display: RE:BORN Kamen no Otoko to Ribbon no Kishi
   aliases: []
+reborn-to-master-the-blade:
+  display: Reborn to Master the Blade
+  aliases:
+  - Eiyuu-ou, Bu wo Kiwameru Tame Tenseisu
+  - Reborn to Master the Blade
+  - 'Reborn to Master the Blade: From Hero-King to Extraordinary Squire'
+  - reborn-to-master-the-blade
+  - 英雄王、武を極めるため転生す
 record-of-lodoss-war:
   display: Record of Lodoss War
   aliases:
@@ -8577,6 +9936,34 @@ red-mask:
 red-requiem:
   display: Red Requiem
   aliases: []
+reincarnated-as-a-sword-another-wish:
+  display: 'Reincarnated as a Sword: Another Wish'
+  aliases:
+  - 'Reincarnated as a Sword: Another Wish'
+  - 'Tensei Shitara Ken Deshita: Another Wish'
+  - reincarnated-as-a-sword-another-wish
+  - 転生したら剣でした Another Wish
+reincarnated-as-the-7th-prince:
+  display: I Was Reincarnated as the 7th Prince So I Can Take My Time Perfecting My Magical Ability
+  aliases:
+  - Dainanaoji
+  - I Was Reincarnated as the 7th Prince
+  - I Was Reincarnated as the 7th Prince So I Can Take My Time Perfecting My Magical Ability
+  - Tensei Shitara Dai Nana Ouji Datta node, Kimamani Majutsu wo Kiwamemasu
+  - reincarnated-7th-prince-magical-ability
+  - 転生したら第七王子だったので、気ままに魔術を極めます
+reincarnated-in-a-mafia-dating-sim:
+  display: Reincarnated in a Mafia Dating Sim
+  aliases:
+  - Akutou Ikka no Manamusume, Tensei-saki mo Otome Game no Gokudou Reijou deshita
+  - Reincarnated in a Mafia Dating Sim
+  - Vom Yakuza zur Villainess
+  - 'Vom Yakuza zur Villainess: Wiedergeboren in einem Otome Game'
+  - vom-yakuza-zur-villainess
+  - 悪党一家の愛娘、転生先も乙女ゲームの極道令嬢でした
+reincarnation-no-kaben:
+  display: リィンカーネーションの花弁
+  aliases: []
 reiraku:
   display: Reiraku
   aliases:
@@ -8592,6 +9979,9 @@ relife:
 remina:
   display: Remina
   aliases: []
+remnant-kemono-omegaverse:
+  display: レムナント -獣人オメガバース-
+  aliases: []
 renai-nenrei:
   display: Renai Nenrei
   aliases: []
@@ -8600,6 +9990,9 @@ renai-paradox:
   aliases: []
 renai-sousa:
   display: Renai Sousa
+  aliases: []
+rengoku-ni-warau:
+  display: 煉獄に笑う
   aliases: []
 rent-a-girlfriend:
   display: Rent-A-Girlfriend
@@ -8630,6 +10023,9 @@ resident-evil-death-island:
   aliases:
   - 'Biohazard: Death Island'
   - バイオハザード：デスアイランド
+resident-evil-heavenly-island:
+  display: Resident Evil – Heavenly Island
+  aliases: []
 retsujou-gentei:
   display: Retsujou Gentei
   aliases: []
@@ -8652,6 +10048,9 @@ revolutionary-girl-utena:
   - 少女革命ウテナ
 rg-veda:
   display: RG Veda
+  aliases: []
+riba-koi:
+  display: Riba Koi
   aliases: []
 ride-your-wave:
   display: Ride Your Wave
@@ -8684,6 +10083,9 @@ rise-of-the-ronin:
 riso-no-kedamono:
   display: Riso no Kedamono
   aliases: []
+riso-no-kedamono-genteiban:
+  display: 理想のけだもの 限定版
+  aliases: []
 risoteki-renai-no-joken:
   display: Risoteki Renai no Joken
   aliases: []
@@ -8713,6 +10115,21 @@ rokudenashi-majutsu-koushi:
   - Rokudenashi Majutsu Koushi to Akashic Records
   - Rokudenashi Majutsu Koushi to Kinki Kyouten
   - ロクでなし魔術講師と禁忌教典
+rokujo-ichima:
+  display: 六畳一魔
+  aliases: []
+roll-over-and-die:
+  display: Roll Over and Die
+  aliases:
+  - Omae Gotoki ga Maou ni Kateru to Omou na
+  - Omaegotoki
+  - 'ROLL OVER AND DIE: I Will Fight for an Ordinary Life with My Love and Cursed Sword!'
+  - Roll Over and Die
+  - roll-over-and-die
+  - 「お前ごときが魔王に勝てると思うな」と勇者パーティを追放されたので、王都で気ままに暮らしたい
+rolle-der-femme-fatale:
+  display: Rolle der Femme Fatale
+  aliases: []
 romantic-killer:
   display: Romantic Killer
   aliases: []
@@ -8757,6 +10174,12 @@ rosen-garten-saga:
   display: Rosen Garten Saga
   aliases:
   - rosengarten saga
+rosen-und-champagner:
+  display: Rosen & Champagner
+  aliases: []
+rosen-und-champagner-side-story:
+  display: Rosen & Champagner – Side Story
+  aliases: []
 rosetta:
   display: Rosetta
   aliases: []
@@ -8828,11 +10251,17 @@ s-h-n-d-ero-gal-iru-tte-hontou-desu-ka:
   - Secret Love
   - Toshishita no Osananajimi ga Kawaiku na tte Ita Kudan ni Tsuite
   - Tsubuyaiter
+sabaku-no-harem:
+  display: 砂漠のハレム
+  aliases: []
 saber-tooth-cats:
   display: SABER TOOTH CATS
   aliases: []
 sabikui-bisco:
   display: Sabikui Bisco
+  aliases: []
+sacrificed-to-the-shark-clan-after-marriage:
+  display: Sacrificed to the Shark Clan – After Marriage
   aliases: []
 sacrificial-princess-and-the-king-of-beasts:
   display: Sacrificial Princess and the King of Beasts
@@ -8861,6 +10290,15 @@ saibou-shinkoku-cell-of-empireo:
 saihate-no-paladin:
   display: Saihate no Paladin
   aliases: []
+saijo-no-osewa:
+  display: Rich Girl Caretaker
+  aliases:
+  - Das (fast) perfekte Fräulein und sein Butler
+  - Das fast perfekte Fraulein und sein Butler
+  - Rich Girl Caretaker
+  - Saijo no Osewa
+  - das-fast-perfekte-fraulein-und-sein-butler
+  - 才女のお世話
 saikin-imouto-no-yousu-ga-chotto-okashiin-da-ga:
   display: Saikin, Imouto no Yousu ga Chotto Okashiin da ga.
   aliases: []
@@ -8962,6 +10400,12 @@ sakitama:
   - Sakitama
   - sakitama
   - さきたま
+saku-wa-edo-ni-mo-sono-shishitsu:
+  display: Saku wa Edo ni mo Sono Shishitsu
+  aliases:
+  - Saku wa Edo ni mo Sono Shishitsu
+  - saku-wa-edo-ni-mo-sono-shishitsu
+  - 咲くは江戸にもその素質
 sakura-mail:
   display: Sakura Mail
   aliases:
@@ -9018,6 +10462,12 @@ sanda:
   aliases:
   - Sanda
   - サンダ
+sandaime-doshi-kissaten-to-sakaya-no-osananajimi:
+  display: 三代目同士、喫茶と酒屋の幼なじみ
+  aliases: []
+sanjussai-made-dato-mahou-tsukai-ni-nareru-rashii:
+  display: 30歳まで...だと魔法使いになれるらしい
+  aliases: []
 sankarea:
   display: Sankarea
   aliases: []
@@ -9036,6 +10486,9 @@ sasaki-and-miyano:
   - Sasaki y Miyano
   - sasaki-to-miyano
   - 佐々木と宮野
+sasakure-impact:
+  display: ササクレ・インパクト
+  aliases: []
 saseba-naru:
   display: Saseba Naru
   aliases: []
@@ -9076,6 +10529,9 @@ scarlet-secret:
 scary-lessons:
   display: Scary Lessons
   aliases: []
+schattenprinzessin-des-drachenkoenigs:
+  display: Schattenprinzessin des Drachenkönigs
+  aliases: []
 school-babysitters:
   display: School Babysitters
   aliases:
@@ -9087,6 +10543,9 @@ school-detective:
   display: School Detective
   aliases:
   - School Detective
+scum-villains-self-saving-system:
+  display: The Scum Villain's Self-Saving System
+  aliases: []
 se-insisti:
   display: Se Insisti
   aliases: []
@@ -9095,6 +10554,9 @@ search-and-destroy:
   aliases: []
 seaside-stranger:
   display: The Stranger by the Beach
+  aliases: []
+secret-massage:
+  display: Secret Massage
   aliases: []
 secret-reiko-shimizu:
   display: Secret
@@ -9133,6 +10595,9 @@ seima-no-mikkei:
 seirei-gensouki:
   display: 'Seirei Gensouki: Konna Sekai de Deaeta Kimi ni'
   aliases: []
+seirei-gensouki-spirit-chronicles:
+  display: 'Seirei Gensouki: Spirit Chronicles'
+  aliases: []
 seirou-opera:
   display: Seirou Opera
   aliases: []
@@ -9141,6 +10606,9 @@ seishun-tetsudou:
   aliases:
   - Youth Railway
   - 青春鉄道
+seishun-x-kikanjuu:
+  display: 青春×機関銃
+  aliases: []
 seitokai-no-ichizon:
   display: Seitokai no Ichizon
   aliases: []
@@ -9151,11 +10619,17 @@ seitokai-yakuindomo:
   - Seitokai Yakuindomo
   - seitokai-yakuindomo
   - 生徒会役員共
+seitokaichou-to-yankee-kun:
+  display: 生徒会長とヤンキーくん
+  aliases: []
 sekai-denki-kou:
   display: Sekai Denki Kou
   aliases: []
 sekai-ka-kanojo-ka-erabenai:
   display: Sekai ka Kanojo ka Erabenai
+  aliases: []
+sekai-no-owari-no-mahoutsukai:
+  display: Sekai no Owari no Mahoutsukai
   aliases: []
 sekaiichi-hatsukoi:
   display: Sekaiichi Hatsukoi
@@ -9174,6 +10648,12 @@ sekisei-inko:
   - セキセイインコ
 sekkaku-cheat-isekai:
   display: Sekkaku Cheat wo Moratte Isekai
+  aliases: []
+sekkaku-cheat-isekai-comic:
+  display: せっかくチートを貰って異世界に転移したんだから THE COMIC
+  aliases: []
+semantic-error:
+  display: Semantic Error
   aliases: []
 sen-x-koi:
   display: Sen x Koi
@@ -9310,6 +10790,9 @@ sherlock-manga:
   - sherlock a study in pink
   - sherlock holmes manga
   - シャーロック
+sherlock-scandal-belgravia:
+  display: 'Sherlock: A Scandal in Belgravia'
+  aliases: []
 shiawase-iro-no-one-room:
   display: Shiawase-iro no One Room
   aliases: []
@@ -9325,12 +10808,22 @@ shigatsu-no-kimi-spica:
 shigurui:
   display: Shigurui
   aliases: []
+shiina-kun-no-tori-ju-hyakka:
+  display: 椎名くんの鳥獣百科
+  aliases: []
 shiina-kun-no-torimonocho:
   display: Shiina-kun no Torimonocho
   aliases: []
 shijou-saikyou-no-deshi-kenichi:
   display: History's Strongest Disciple Kenichi
   aliases: []
+shikyouin-hibiki-no-kareinaru-oasobi:
+  display: Shikyouin Hibiki no Kareinaru Oasobi
+  aliases:
+  - Shikyouin Hibiki no Kareinaru Oasobi
+  - Shikyouin Hibiki's Splendid Play
+  - shikiin-hibiki-no-kareinaru-oyuugi
+  - 紫京院ひびきの華麗なるお遊戯
 shin-devilman:
   display: Shin Devilman
   aliases: []
@@ -9383,6 +10876,9 @@ shinji-ikari-raising-project:
 shinju-una-storia-d-amore:
   display: 'Shinju: Una Storia d''Amore'
   aliases: []
+shinobi-koi:
+  display: 忍恋
+  aliases: []
 shinobi-koi-utsutsu:
   display: Shinobi, Koi Utsutsu
   aliases: []
@@ -9420,6 +10916,9 @@ shirley:
 shiro-monogatari:
   display: Shiro Monogatari
   aliases: []
+shiro-seijo-to-kuro-bokushi:
+  display: 白聖女と黒牧師
+  aliases: []
 shiroi-kekkon-no-danna-sama-to-tsumugu-saigo-no-ikkagetsu:
   display: Shiroi Kekkon no Danna-sama to Tsumugu Saigo no Ikkagetsu
   aliases: []
@@ -9443,6 +10942,9 @@ shitasaki-kara-koi:
   - Shitasaki kara Koi
   - shitasaki-kara-koi
   - 舌先から恋
+shitsuji-kurosei-wa-kashizukamai:
+  display: 執事・黒星は傅かない
+  aliases: []
 shitteru-yo:
   display: Shitteru yo.
   aliases: []
@@ -9524,8 +11026,18 @@ shumari:
 shunas-journey:
   display: Shuna's Journey
   aliases: []
+shunkan-lyle:
+  display: Shunkan Lyle
+  aliases:
+  - Moment Lyle
+  - Shunkan Lyle
+  - shunkan-lyle
+  - 瞬間ライル
 shunki-gentei-ichigo-tart-jiken:
   display: Shunki Gentei Ichigo Tart Jiken
+  aliases: []
+shusse-no-hanamichi:
+  display: 出世の花道
   aliases: []
 shut-hell:
   display: Shut Hell
@@ -9586,6 +11098,9 @@ silverday:
   - ginyoubi no otogibanashi
   - silverday, conte de fades de divendres de plata
   - silverday, cuento de hadas del viernes de plata
+simplified-pervert-romance:
+  display: Simplified Pervert Romance
+  aliases: []
 sin-amor:
   display: Sin amor
   aliases:
@@ -9617,6 +11132,9 @@ slam-dunk:
 sleeping-dead:
   display: Sleeping Dead
   aliases: []
+sleepy-boy:
+  display: Sleepy Boy
+  aliases: []
 sleepy-princess-in-the-demon-castle:
   display: Sleepy Princess in the Demon Castle
   aliases:
@@ -9633,11 +11151,13 @@ slime-tempest:
   display: 'That Time I Got Reincarnated as a Slime: Tempest'
   aliases: []
 slime-walking-tempest:
-  display: 'That Time I Got Reincarnated as a Slime: The Ways of Strolling in the
-    Demon Country'
+  display: 'That Time I Got Reincarnated as a Slime: The Ways of Strolling in the Demon Country'
   aliases: []
 smoke:
   display: Smoke
+  aliases: []
+smoking-behind-the-supermarket:
+  display: Smoking Behind The Supermarket
   aliases: []
 snack-world:
   display: The Snack World
@@ -9681,6 +11201,16 @@ solo-leveling:
   - Ore dake Level Up na Ken
   - 俺だけレベルアップな件
   - 我獨自升級
+solo-leveling-ragnarok:
+  display: 'Solo Leveling: Ragnarok'
+  aliases: []
+solo-yoi-sakaba:
+  display: Solo Yoi Sakaba
+  aliases:
+  - Solo Yoi Sakaba
+  - 'Solo Yoi Sakaba: Kyou mo Yorimichi Hitori Nomi'
+  - solo-yoi-sakaba
+  - ソロ酔い酒場 今日も寄り道ひとり飲み
 soloist-in-a-cage:
   display: Soloist in a Cage
   aliases: []
@@ -9693,11 +11223,23 @@ sonic-the-hedgehog-la-era-2d:
 sonicomi:
   display: Sonicomi
   aliases: []
+sora-ni-mairu:
+  display: 宙に参る
+  aliases: []
 sora-no-otoshimono:
   display: Sora no Otoshimono
   aliases: []
+sora-wo-matotte:
+  display: Sora wo Matotte
+  aliases: []
+soredemo-ai-wo-chikaimasu-ka:
+  display: それでも愛を誓いますか?
+  aliases: []
 soredemo-sekai-wa-utsukushii:
   display: The World is Still Beautiful
+  aliases: []
+soryuu-no-sobayounin:
+  display: 蒼竜の側用人
   aliases: []
 soto-no-kuni-no-yome:
   display: Soto no Kuni no Yome
@@ -9736,6 +11278,9 @@ sounan-desu-ka:
   aliases: []
 sous-un-rayon-de-soleil:
   display: Sous un Rayon de Soleil
+  aliases: []
+soushite-kimi-ni-fureru-made:
+  display: そうして君に触れるまで
   aliases: []
 sozo-shita-g-rank-dungeon-wa-kamisama-tsuki:
   display: Souzou Shita G-Rank Dungeon wa Kamisama Tsuki
@@ -9871,6 +11416,9 @@ starmine:
 starmyne:
   display: Starmyne
   aliases: []
+starting-from-a-lie:
+  display: Starting From a Lie
+  aliases: []
 starting-with-a-lie:
   display: Starting with a Lie
   aliases: []
@@ -9925,6 +11473,9 @@ strange-houses:
   - Strange House
   - strange house
   - 変な家
+strange-pictures:
+  display: Strange Pictures
+  aliases: []
 strange-plus:
   display: Strange+
   aliases:
@@ -9963,6 +11514,12 @@ subarashii-sekai:
 sudachi-demon-king-castle:
   display: 'Sudachi: The Demon King''s Castle'
   aliases: []
+sudachi-no-maoujo:
+  display: すだちの魔王城
+  aliases: []
+sugaku-golden:
+  display: 数学ゴールデン
+  aliases: []
 sugar-sugar-rune:
   display: Sugar Sugar Rune
   aliases: []
@@ -9979,6 +11536,9 @@ suicide-island:
   - jisatsutou
 suieibu-no-ueno-senpai:
   display: Suieibu no Ueno Senpai wa Hameraretai
+  aliases: []
+suki-ni-sasete-miserukaara:
+  display: 好きにさせてみせるから!
   aliases: []
 sukinezumi:
   display: Sukinezumi
@@ -10014,6 +11574,9 @@ sunohara-sou-no-kanrinin-san:
   aliases: []
 super-ball-girls:
   display: Super Ball Girls
+  aliases: []
+super-danganronpa-2-comic:
+  display: スーパーダンガンロンパ2 南国ぜつぼうカーニバル!
   aliases: []
 super-dragon-ball-heroes:
   display: 'Super Dragon Ball Heroes: Avatars!!'
@@ -10084,6 +11647,15 @@ sweetness-and-lightning:
   - Sweetness & Lightning
   - amaama-to-inazuma
   - 甘々と稲妻
+sweets-for-my-sweet:
+  display: Sweets for my Sweet
+  aliases: []
+swing-manga:
+  display: Swing!!
+  aliases:
+  - Swing!!
+  - swing
+  - すいんぐ！！
 switch:
   display: Switch
   aliases: []
@@ -10123,6 +11695,9 @@ tachibana-kan-to-lie-angle:
   - 立花館To Lieあんぐる
 tactics:
   display: Tactics
+  aliases: []
+tadaima-okaeri-hitoyasumi:
+  display: ただいま、おかえり-ひとやすみ-
   aliases: []
 tadokoro-san:
   display: Tadokoro-san
@@ -10202,8 +11777,17 @@ takumi-kun-series:
 takuya-kishi:
   display: Takuya Kishi
   aliases: []
+talentless-nana:
+  display: Talentless Nana
+  aliases: []
 tales-of-an-imaginary-deadman:
   display: Tales of an Imaginary Deadman
+  aliases: []
+tales-of-symphonia:
+  display: Tales of Symphonia
+  aliases: []
+tales-of-xillia-side-milla:
+  display: Tales of Xillia – Side;Milla
   aliases: []
 tamaranai-no-wa-koi-nano-ka:
   display: Tamaranai no wa Koi nano ka
@@ -10214,6 +11798,9 @@ tamon-kun-ima-docchi:
 tamon-no-futatsu-no-kao:
   display: Tamon no Futatsu no Kao
   aliases: []
+tanaka-kun-wa-itsumo-kedaruge:
+  display: 田中くんはいつもけだるげ
+  aliases: []
 tanin-no-furi-shite-douro-ni-dakarete-imasu:
   display: Tanin no Furi shite Douro ni Dakarete Imasu
   aliases: []
@@ -10222,6 +11809,16 @@ tanin-no-furi-shite-douryou:
   aliases: []
 tank-chair:
   display: Tank Chair
+  aliases: []
+tanuki-to-kitsune:
+  display: Tanuki to Kitsune
+  aliases:
+  - Tanuki and Fox
+  - Tanuki to Kitsune
+  - tanuki-to-kitsune
+  - タヌキとキツネ
+tar-to-agu-no-shiawase-biyori:
+  display: ターとアグのしあわせ日和
   aliases: []
 tarumi-kyoichiro:
   display: Tarumi Kyoichiro
@@ -10233,6 +11830,9 @@ tatari:
   display: Tatari
   aliases:
   - 祟
+tatoe-todokanu-ito-da-to-shitemo:
+  display: たとえとどかぬ糸だとしても
+  aliases: []
 tatsuki-fujimoto-short-stories:
   display: Tatsuki Fujimoto Short Stories
   aliases:
@@ -10242,8 +11842,14 @@ tatsuki-fujimoto-short-stories:
 tattoi-5sai-tachi-ga-watashi-ni-kekkon-aite-wo-asessen:
   display: 尊い5歳児たちが私に結婚相手を斡旋してきます
   aliases: []
+teach-me-how-to-kill-you:
+  display: Teach me how to Kill you
+  aliases: []
 team-phoenix:
   display: Team Phoenix
+  aliases: []
+teddyboys-love:
+  display: TeddyBoys Love
   aliases: []
 teiso-gyakuten-sekai:
   display: Teiso Gyakuten Sekai
@@ -10281,6 +11887,9 @@ tensei-akujo-no-kurorekishi:
   aliases: []
 tensei-akuyakureijo-wa-hametsu-kaihi-no-tame-ni-oniisan-to-kekkon:
   display: Tensei Akuyakureijo wa Hametsu Kaihi no Tame ni Oniisama to Kekkon
+  aliases: []
+tensei-colosseum:
+  display: 転生コロシアム
   aliases: []
 tensei-shita-daiseijoha:
   display: The Reincarnated Great Saint Hides That She's a Saint
@@ -10320,6 +11929,9 @@ tensura-tempest-tour:
 tentai-senshi-sunred:
   display: Tentai Senshi Sunred
   aliases: []
+teppeki-honeymoon:
+  display: 鉄壁ハニームーン
+  aliases: []
 terada-katsuya-kim-jung-gi-illustration-book:
   display: Terada Katsuya + Kim Jung Gi Illustration Book
   aliases:
@@ -10356,6 +11968,9 @@ tezucomi:
 tezuka-osamu-85th-anniversary-box:
   display: Tezuka Osamu 85th Anniversary Limited BOX
   aliases: []
+tezuka-osamu-bunko-zenshu:
+  display: 手塚治虫 文庫全集
+  aliases: []
 thats-my-space-opera:
   display: That's My Space Opera!
   aliases: []
@@ -10371,6 +11986,15 @@ the-apothecary-diaries:
   - 藥師少女的獨語
 the-arms-peddler:
   display: The Arms Peddler
+  aliases: []
+the-art-of-eru-kudo:
+  display: 'The Art of Eru Kudo: Mikoto & Rei LOG'
+  aliases: []
+the-art-of-susumu-maeya:
+  display: 'The Art of Susumu Maeya: Various Maids and More'
+  aliases: []
+the-ashes-of-my-flesh-and-blood:
+  display: The Ashes of My Flesh and Blood is the Vast Flowing Galaxy
   aliases: []
 the-bird-david-bird:
   display: The Bird
@@ -10402,6 +12026,9 @@ the-breaker-new-waves:
   - The Breaker 2
   - 'The Breaker: NW'
   - 'The Breaker: Part 2'
+the-broken-ring:
+  display: The Broken Ring
+  aliases: []
 the-bugle-call:
   display: The Bugle Call
   aliases: []
@@ -10443,6 +12070,9 @@ the-dark-history-of-the-reincarnated-villainess:
 the-decagon-house-murders:
   display: The Decagon House Murders
   aliases: []
+the-delinquent-and-the-transfer-student:
+  display: The Delinquent and the Transfer Student
+  aliases: []
 the-demon-kings-champion:
   display: The Demon King's Champion
   aliases: []
@@ -10458,6 +12088,14 @@ the-devils-lost-soul:
   aliases:
   - The Devil's Lost Soul
   - the-devils-lost-soul
+the-dreaming-boy-is-a-realist:
+  display: The Dreaming Boy Is a Realist
+  aliases:
+  - My Dreamy Realist
+  - The Dreaming Boy Is a Realist
+  - Yumemiru Danshi wa Genjitsushugisha
+  - my-dreamy-realist
+  - 夢見る男子は現実主義者
 the-drifting-classroom:
   display: The Drifting Classroom
   aliases: []
@@ -10491,8 +12129,14 @@ the-fable:
   display: The Fable
   aliases:
   - za faburu
+the-fallen-summoner-and-i-the-invisible-one:
+  display: The Fallen Summoner and I, the Invisible One
+  aliases: []
 the-flowers-of-evil:
   display: The Flowers of Evil
+  aliases: []
+the-food-diary-of-miss-maid:
+  display: The Food Diary of Miss Maid
   aliases: []
 the-fox-and-little-tanuki:
   display: The Fox and Little Tanuki
@@ -10532,6 +12176,9 @@ the-girl-i-like-forgot-her-glasses:
   - The Girl I Like Forgot Her Glasses
   - suki-na-ko-ga-megane-wo-wasureta
   - 好きな子がめがねを忘れた
+the-golden-forest:
+  display: The Golden Forest
+  aliases: []
 the-golden-sheep:
   display: The Golden Sheep
   aliases: []
@@ -10627,8 +12274,7 @@ the-magical-revolution-of-the-reincarnated-princess:
   display: The Magical Revolution of the Reincarnated Princess
   aliases: []
 the-magical-revolution-of-the-reincarnated-princess-and-the-genius-young-lady:
-  display: The Magical Revolution of the Reincarnated Princess and the Genius Young
-    Lady
+  display: The Magical Revolution of the Reincarnated Princess and the Genius Young Lady
   aliases:
   - magirevo
   - tensei oujo
@@ -10735,15 +12381,39 @@ the-summer-hikaru-died:
 the-swordsman:
   display: The Swordsman
   aliases: []
+the-too-perfect-saint:
+  display: The Too-Perfect Saint
+  aliases:
+  - Kanpeki Sugite Kawai-ge ga Nai to Konyaku Haki Sareta Seijo wa Ringoku ni Urareru
+  - The Too-Perfect Saint
+  - 'The Too-Perfect Saint: Tossed Aside by My Fiancé and Sold To Another Kingdom'
+  - the-too-perfect-saint
+  - 完璧すぎて可愛げがないと婚約破棄された聖女は隣国に売られる
 the-tunnel-to-summer:
   display: The Tunnel to Summer, The Exit of Goodbyes
   aliases: []
 the-untamed:
   display: The Untamed
   aliases: []
+the-vampire-dies-in-no-time:
+  display: The Vampire Dies in No Time
+  aliases:
+  - Kyuuketsuki Sugu Shinu
+  - The Vampire Dies in No Time
+  - The Vampire Instantly Dies
+  - kyuuketsuki-sugu-shinu
+  - 吸血鬼すぐ死ぬ
 the-way-of-the-househusband:
   display: The Way Of The Househusband
   aliases: []
+the-world-has-been-saved-but-i-picked-up-a-girl:
+  display: The World Has Been Saved, but I Picked up a Girl with Amnesia
+  aliases: []
+the-wrong-scents:
+  display: The Wrong Scents
+  aliases:
+  - The Wrong Scents
+  - the-wrong-scents
 the-yakuzas-guide-to-babysitting:
   display: The Yakuza's Guide to Babysitting
   aliases: []
@@ -10752,6 +12422,9 @@ therapy-game:
   aliases: []
 thermae-romae:
   display: Thermae Romae
+  aliases: []
+this-years-hot-ace-chan:
+  display: This Year's Hot Ace-chan
   aliases: []
 thunder-3:
   display: Thunder 3
@@ -10832,6 +12505,9 @@ toaru-kagaku-no-shinri-shouaku:
 toaru-majutsu-no-index:
   display: A Certain Magical Index
   aliases: []
+tobidase-tsuzui-san:
+  display: とびだせ! つづ井さん
+  aliases: []
 tobihachi:
   display: Tobihachi
   aliases: []
@@ -10875,6 +12551,9 @@ tokko:
   - Tokko Phantom Hunter
   - 'Tokko: Devil''s Awaken'
   - 特公
+tokubetsu-janai-hi:
+  display: 特別じゃない日
+  aliases: []
 tokusatsu-gagaga:
   display: Tokusatsu Gagaga
   aliases: []
@@ -10898,6 +12577,9 @@ tokyo-color-sonic:
   - 東京カラーソニック
 tokyo-duel:
   display: Tokyo Duel
+  aliases: []
+tokyo-fears-rhapsody:
+  display: Tokyo Fears Rhapsody
   aliases: []
 tokyo-genso:
   display: TOKYO GENSO
@@ -10959,6 +12641,18 @@ tokyo-tarareba-girls:
 tokyo-these-days:
   display: Tokyo These Days
   aliases: []
+tomb-raider-king:
+  display: Tomb Raider King
+  aliases:
+  - Der König der Grabräuber
+  - Dogul Wang
+  - Tomb Raider King
+  - tomb-raider-king
+  - 盗掘王
+  - 도굴왕
+tombs-junji-ito:
+  display: 'TOMBS: Junji Ito Story Collection'
+  aliases: []
 tomie:
   display: Tomie
   aliases:
@@ -10984,6 +12678,9 @@ tonari-no-seki-kun:
 tonari-no-seki-no-hen-na-senpai:
   display: Tonari no Seki no Hen na Senpai
   aliases: []
+tongari-boshi-no-kitchen:
+  display: とんがり帽子のキッチン
+  aliases: []
 tonikaku-kawaii:
   display: Fly Me to the Moon
   aliases:
@@ -10997,6 +12694,12 @@ tonikaku-kawaii:
   - トニカクカワイイ
   - 总之就是非常可爱
   - 總之就是很可愛
+tonosama-to-stitch:
+  display: 殿さまとスティッチ
+  aliases: []
+tora-no-ko-ga-oshi-yoseru:
+  display: トラの子が♂なのに迫ってくる話
+  aliases: []
 toradora:
   display: Toradora!
   aliases:
@@ -11007,11 +12710,29 @@ toradora:
 torikae-baya:
   display: Torikae Baya
   aliases: []
+toriko:
+  display: Toriko
+  aliases: []
 toshi-kaihatsu-skill-de-rakuraku-isekai-machi-zukuri:
   display: Toshi Kaihatsu Skill de Rakuraku Isekai Machi Zukuri
   aliases: []
+toshi-no-sa-kon:
+  display: 年の差婚
+  aliases: []
 toshi-no-sakon:
   display: Toshi no Sakon
+  aliases: []
+toshishita-joushi-wa-homeraretai:
+  display: 年下上司は褒められたい
+  aliases: []
+toshishita-kareshi-no-renai-kanriheiki:
+  display: 年下彼氏の恋愛管理癖
+  aliases: []
+toshishita-kareshi-takuhaibin:
+  display: 年下彼氏は宅配便のお兄さんです。
+  aliases: []
+toshishita-no-otoko-no-ko:
+  display: 年下の男の子
   aliases: []
 toshiue-kanojo:
   display: Toshiue Kanojo
@@ -11061,6 +12782,9 @@ toy-e-superbeast:
   display: Toy-E Art Superbeast
   aliases:
   - Toy-E Art Superbeast
+tranen-des-homunkulus:
+  display: Tränen des Homunkulus
+  aliases: []
 transformers-war-for-cybertron-artbook:
   display: 'The Art and Making of Transformers: War for Cybertron Trilogy'
   aliases:
@@ -11073,6 +12797,9 @@ trasparente:
   aliases: []
 trese:
   display: Trese
+  aliases: []
+trezor:
+  display: トレゾア
   aliases: []
 triage-x:
   display: Triage X
@@ -11118,15 +12845,22 @@ tsuihou-sareta-s-kyu-kanteishi:
   aliases: []
 tsuiraku-jk-to-haijin-kyoshi:
   display: Tsuiraku JK to Haijin Kyoushi
-  aliases: []
+  aliases:
+  - Lieb mich noch, bevor du stirbst
 tsukasa-hojo-histoires-courtes:
   display: Tsukasa Hojo - Histoires courtes
+  aliases: []
+tsuki-ga-kirei-desu-ne:
+  display: 月が綺麗ですね
   aliases: []
 tsukimichi-moonlit-fantasy:
   display: 'Tsukimichi: Moonlit Fantasy'
   aliases: []
 tsukipro-the-animation:
   display: TSUKIPRO THE ANIMATION
+  aliases: []
+tsukishima-kun-no-koroshikata:
+  display: 月島くんの殺し方
   aliases: []
 tsuredure-children:
   display: Tsuredure Children
@@ -11183,6 +12917,9 @@ ubel-blatt:
   - Evil Blade
   - Ubel Blatt
   - Übel Blatt ～ユーベルブラット～
+uchi-ga-suki-na-hito:
+  display: 家が好きな人
+  aliases: []
 uchi-no-kaisha-no-chiisai-senpai:
   display: Uchi no Kaisha no Chiisai Senpai no Hanashi
   aliases: []
@@ -11254,6 +12991,9 @@ una-ragazza-alla-moda:
 uncle-from-another-world:
   display: Uncle from Another World
   aliases: []
+und-plotzlich-war-da-ein-meermann:
+  display: … und plötzlich war da ein Meermann!
+  aliases: []
 undead-unluck:
   display: Undead Unluck
   aliases:
@@ -11268,11 +13008,17 @@ under-ninja:
 une-breve-histoire-robo-sapiens:
   display: Une brève histoire du robo-sapiens
   aliases: []
+unintentional-love-story:
+  display: Unintentional Love Story
+  aliases: []
 unmei-no-hito-ni-deau-hanashi:
   display: Unmei no Hito ni Deau Hanashi
   aliases: []
 unmei-no-makimodoshi:
   display: Unmei no Makimodoshi
+  aliases: []
+unser-unstillbares-verlangen:
+  display: Unser unstillbares Verlangen
   aliases: []
 unsung-cinderella:
   display: Unsung Cinderella
@@ -11318,6 +13064,9 @@ usagi-youseino-touhai:
 uso-kano:
   display: Uso Kano
   aliases: []
+uso-tsuki-kitsune-tsuki:
+  display: 嘘憑きキツネツキ
+  aliases: []
 usogui:
   display: Usogui
   aliases: []
@@ -11327,12 +13076,18 @@ utakata-no-euchronia:
 utakata-no-mujina:
   display: Utakata no Mujina
   aliases: []
+utsumi-kuns-liebeslied:
+  display: Utsumi-kuns Liebeslied
+  aliases: []
 uzumaki:
   display: Uzumaki
   aliases:
   - Spiral
   - 'Uzumaki: Spiral into Horror'
   - うずまき
+uzura-no-jikan:
+  display: うずらのじかん
+  aliases: []
 vagabond:
   display: Vagabond
   aliases:
@@ -11369,6 +13124,9 @@ vanquished-queens:
 vascello-delle-stelle:
   display: Il Vascello delle Stelle
   aliases: []
+vassalord:
+  display: Vassalord
+  aliases: []
 vavam-vampire:
   display: Vavam Vampire
   aliases: []
@@ -11377,8 +13135,17 @@ veil:
   aliases:
   - Veiru
   - ヴェイル
+verhatschel-mich-idol:
+  display: Verhätschel mich, Idol!
+  aliases: []
 veritas:
   display: Veritas
+  aliases: []
+verliebt-in-prinz-und-teufel:
+  display: Verliebt in Prinz und Teufel?
+  aliases: []
+vermeil-in-gold:
+  display: Vermeil in Gold
   aliases: []
 verso-la-terra:
   display: Verso la Terra
@@ -11396,6 +13163,17 @@ vigilante-mha-illegals:
 villaggio-dei-maiali:
   display: Il Villaggio dei Maiali
   aliases: []
+villains-are-destined-to-die:
+  display: Villains Are Destined to Die
+  aliases:
+  - Agyeogui Ending Jugeumppun
+  - Death Is The Only Ending For The Villainess
+  - Penelope – Das Böse ist dem Tod geweiht
+  - Seule la mort attend la Vilaine
+  - The Villain's Ending Is Death
+  - Villains Are Destined to Die
+  - penelope-das-bose-ist-dem-tod
+  - 악역의 엔딩은 죽음뿐
 vinland-saga:
   display: Vinland Saga
   aliases:
@@ -11410,6 +13188,12 @@ violence-jack:
   - ヴァイオレンスジャック
 vita-segreta-mitsumei:
   display: 'Vita Segreta: Mitsumei'
+  aliases: []
+waga-engi:
+  display: 我演義
+  aliases: []
+wake-ari-senpai-no-kanojo-ni-narimashita:
+  display: 訳アリ先輩の彼女になりました
   aliases: []
 wakfu:
   display: Wakfu
@@ -11445,11 +13229,17 @@ watashi-ni-tenshi-ga-maiorita:
   - Watashi ni Tenshi ga Maiorita!
   - watashi-ni-tenshi-ga-maiorita
   - 私に天使が舞い降りた！
+watashi-no-koto-wo-oboete-imasuka:
+  display: 私のことを憶えていますか
+  aliases: []
 watashi-no-oshi-wa-akuyaku-reijou:
   display: Watashi no Oshi wa Akuyaku Reijou
   aliases: []
 watashi-no-oshi-wa-chika-ni-iru:
   display: Watashi no Oshi wa Chika ni Iru
+  aliases: []
+watashi-no-yume-ga-sameru-made:
+  display: わたしの夢が覚めるまで
   aliases: []
 watashi-no-yuri-wa-oshigoto:
   display: Watashi no Yuri wa Oshigoto desu!
@@ -11459,6 +13249,9 @@ watashi-wo-sukisugiru-yuusha:
   aliases: []
 watashitachi-sankagetsu-go-ni-rikon:
   display: Watashitachi, Sankagetsu-go ni Rikon shimasu!
+  aliases: []
+watashitachi-wa-douka-shite-iru:
+  display: 私たちはどうかしている
   aliases: []
 wayne-family-adventures:
   display: Wayne Family Adventures
@@ -11487,6 +13280,9 @@ weekly-sorcerer:
 welcome-to-demon-school-iruma-kun:
   display: Welcome to Demon School! Iruma-kun
   aliases: []
+welcome-to-japan-ms-elf:
+  display: Welcome to Japan, Ms. Elf!
+  aliases: []
 welcome-to-the-ballroom:
   display: Welcome to the Ballroom
   aliases: []
@@ -11501,6 +13297,9 @@ what-about-tomorrow:
   aliases: []
 what-did-you-eat-yesterday:
   display: What Did You Eat Yesterday?
+  aliases: []
+what-we-do-when-the-curtain-falls:
+  display: What We Do When the Curtain Falls
   aliases: []
 whats-wrong-with-secretary-kim:
   display: What's Wrong with Secretary Kim?
@@ -11518,6 +13317,11 @@ whisper-me-a-love-song:
 whispering-you-a-love-song:
   display: Whispering You a Love Song
   aliases: []
+white-light-ceremony:
+  display: White Light Ceremony
+  aliases:
+  - White Light Ceremony
+  - white-light-ceremony
 wild-adapter:
   display: Wild Adapter
   aliases: []
@@ -11571,6 +13375,9 @@ witches-igarashi:
   aliases: []
 wolf-and-parchment:
   display: 'Wolf and Parchment: New Theory Spice & Wolf'
+  aliases: []
+wolf-children-ame-and-yuki:
+  display: Wolf Children Ame & Yuki
   aliases: []
 wolf-in-the-house:
   display: Wolf in the House
@@ -11655,6 +13462,12 @@ xxxholic-rei:
 y-aun-asi-eres-muy-dulce:
   display: Y aun así, eres muy dulce
   aliases: []
+yagate-kiriiro-wa-kumorazu:
+  display: やがて霧色は曇りなく
+  aliases: []
+yaju-wa-hageshiku-ubau:
+  display: 野獣は激しく奪う
+  aliases: []
 yakyu-shoujo-washio-comic:
   display: 野球少女鷲尾@comic
   aliases: []
@@ -11663,6 +13476,9 @@ yamada-kun-and-the-7-witches:
   aliases: []
 yamada-kun-to-7-nin-no-majo:
   display: Yamada-kun to 7-nin no Majo
+  aliases: []
+yamashii-koi-no-hajimekata:
+  display: やましい恋のはじめかた
   aliases: []
 yami-bl:
   display: Yami BL
@@ -11676,6 +13492,23 @@ yamikin-ushijima-kun:
 yan:
   display: Yan
   aliases: []
+yancha-gal-no-anjou-san:
+  display: Yancha Gal no Anjou-san
+  aliases:
+  - Anjo the Mischievous Gal
+  - Anjo, la chica traviesa
+  - Mischievous Gal Anjou-san
+  - Yancha Gal no Anjou-san
+  - mischievous-gal-anjou-san
+  - やんちゃギャルの安城さん
+yandere-dark-elf:
+  display: 'Yandere Dark Elf: She Chased Me All the Way From Another World'
+  aliases:
+  - Chotto dake Ai ga Omoi Dark Elf ga Isekai kara Oikakete Kita
+  - Yandere Dark Elf
+  - 'Yandere Dark Elf: She Chased Me All the Way From Another World'
+  - yandere-dark-elf
+  - ちょっとだけ愛が重いダークエルフが異世界から追いかけてきた
 yankee-jk-kuzuhana:
   display: ヤンキーJKクズハナちゃん
   aliases: []
@@ -11696,9 +13529,13 @@ yarichin-bitch-bu:
   aliases: []
 yarichin-bitch-club:
   display: Yarichin Bitch Club
-  aliases: []
+  aliases:
+  - Come to where the Bitch Boys are
 yasashii-kyoushi-no-shitsukekata:
   display: Yasashii Kyoushi no Shitsukekata
+  aliases: []
+yasashii-pants-no-nugasekata:
+  display: 優しいパンツの脱がせ方
   aliases: []
 yasei-no-last-boss:
   display: Yasei no Last Boss
@@ -11729,6 +13566,9 @@ yo-kai-watch:
   - Yo-kai Watch
   - Youkai Watch
   - 妖怪ウォッチ
+yoi-no-yomeiri:
+  display: 宵の嫁入り
+  aliases: []
 yokai-gakkou-no-sensei:
   display: Yokai Gakkou no Sensei
   aliases: []
@@ -11762,6 +13602,9 @@ yomi-no-tsugai:
   - ヨミツガ
   - 黃泉使者
   - 黄泉のツガイ
+yomotsuhegui:
+  display: 'Yomotsuhegui: Die Frucht aus dem Totenreich'
+  aliases: []
 yona-of-the-dawn:
   display: Yona of the Dawn
   aliases:
@@ -11787,6 +13630,9 @@ yonde-masu-yo-azazel-san:
   - よんでますよ、アザゼルさん。
 yorha-pearl-harbor-nier-automata:
   display: 'YoRHa: Pearl Harbor Descent Record'
+  aliases: []
+yoru-no-kotoba-tachi:
+  display: 夜のことばたち
   aliases: []
 yoshitoo-sama:
   display: Yoshitoo-sama!
@@ -12001,6 +13847,9 @@ zelda-twilight-princess:
   - Twilight Princess
   - 'Zelda no Densetsu: Twilight Princess'
   - ゼルダの伝説 トワイライトプリンセス
+zenbu-oshiete-sensei:
+  display: 全部教えて、先生。
+  aliases: []
 zenra-de-chokuritsu-hokou:
   display: Zenra de Chokuritsu Hokou
   aliases: []

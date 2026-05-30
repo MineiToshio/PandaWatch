@@ -35,16 +35,16 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 - **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, score mínimo, solo stock limitado, signal types (multi-select chips)
 - **Ordenamiento**: por score, fecha de detección, o título A-Z
 - **Paginación** con contador de items que matchean los filtros
-- **Modal de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción original e idioma
+- **Modal de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción en español (`description_es` con fallback a `description` si no hay traducción)
 - **Multi-source view**: un producto con N fuentes se muestra como 1 card consolidada; el modal lista todas las fuentes con sus precios y URLs
 
 ### Curación de datos
 
-- **Botón 👎 en el modal**: marca un item como "no debería estar aquí" con motivo libre
-  - Elimina el item del catálogo (`items.jsonl`) inmediatamente
-  - Mueve el item a `data/user_rejected.jsonl` con `rejection_reason` + timestamp
-  - Si el item tiene varios fuentes (mismo `cluster_key`), elimina todas las filas del cluster
-  - La card desaparece del dashboard sin recargar la página
+- **Botón 👎 en el modal**: registra feedback sobre un item (datos erróneos, clasificación equivocada, etc.)
+  - El item **NO se elimina** del catálogo — sigue visible
+  - Appendea la entrada a `data/feedback.jsonl` con `url`, `title`, `reason`, `submitted_at`
+  - Muestra confirmación "Feedback enviado" y cierra el panel sin navegar
+  - Sirve como cola de revisión para corregir datos incorrectos, no para eliminar items
 
 ### Presentación
 
@@ -84,6 +84,25 @@ Estas son las funcionalidades que queremos agregar al dashboard HTML (el orden n
 - Notificaciones push
 - Tracking de precios históricos (solo se ve el último precio)
 - Predicción de lanzamientos
+
+---
+
+## Convención de idioma en descripción
+
+El modal muestra siempre el texto más útil para el dueño (español):
+
+```js
+// Patrón aplicado en dos lugares del modal:
+description_es || description        // descripción principal del item
+ex.description_es || ex.description  // descripción de cada extra
+```
+
+- `description_es` — traducción al español generada por `translate_descriptions.py`
+  (Google Translate, idempotente, guardado en items.jsonl).
+- Si `description_es` es vacío (descripción original ya era español) o el campo no
+  existe, se muestra `description` directamente.
+- Los campos originales (`description`, `extras[].description`) nunca se modifican —
+  los usa `detect_signals()` internamente.
 
 ---
 

@@ -116,33 +116,62 @@ contexto adicional o sin él.
 - Al recibir una lista de sitios a evaluar ("evalúa estas páginas").
 - Cuando una fuente existente parece redundante con una nueva.
 
-### `/review-rejected`
+### `/review-feedback`
 
-**Propósito**: revisar items que el usuario rechazó via el botón 👎 del
-dashboard (`data/user_rejected.jsonl`), categorizar la causa raíz de
-cada rechazo, y proponer mejoras concretas a los filtros del scraper.
+**Propósito**: revisar el feedback que el usuario dejó via el botón 👎 del
+dashboard (`data/feedback.jsonl`). Cada entrada ya contiene todos los campos
+del item más el motivo. Categoriza cada feedback (problema de filtro vs.
+problema de calidad de datos), propone fixes concretos, aplica los aprobados
+y trunca la queue.
 
 **Cómo funciona**:
-1. Carga y muestra la cola de rechazos (dedupando por `cluster_key`).
-2. Clasifica cada item usando una taxonomía de 10 categorías (A–J):
-   merchandising, trading cards, noticias/blogs, tomos regulares,
-   source ruidosa, western comics, light novels, preferencia personal,
-   falsa señal, selectores demasiado amplios.
-3. Presenta propuestas numeradas al usuario — **espera confirmación**
-   antes de aplicar.
-4. Para cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
-   `sources.yml` + agrega tests en `tests/test_extraction.py`.
-5. Corre pytest (debe quedar verde) y los retrofits correspondientes
-   (`filter_non_manga.py`, `filter_collectible.py`, `rescore.py`).
-6. Trunca `data/user_rejected.jsonl` (solo después de aplicar todos los
-   cambios aprobados).
-7. Actualiza CLAUDE.md "Last updated".
+1. Carga la queue (`data/feedback.jsonl` — ya incluye campos completos del item, sin JOIN).
+2. Clasifica cada item con taxonomía de 14 categorías:
+   - **A–J** (filtros/catálogo): merchandising, trading cards, noticias, tomos
+     regulares, source ruidosa, western comics, light novels, preferencia personal,
+     falsa señal, selectores amplios.
+   - **K–N** (calidad de datos): portada equivocada, metadata incorrecta,
+     series_key/edition_key mal asignado, título con basura del scraper.
+3. Para problemas de filtro: escanea el corpus buscando más items afectados
+   por el mismo patrón, presenta propuestas numeradas y **espera confirmación**.
+4. Aplica cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
+   `sources.yml` / `series_aliases.yml` / o correcciones directas en `items.jsonl`.
+5. Agrega tests y corre pytest (solo para cambios de filtros).
+6. Corre retrofits correspondientes (`filter_non_manga.py`, `filter_collectible.py`,
+   `rescore.py`, `backfill_metadata.py`, `clean_titles.py`, etc.).
+7. Trunca `data/feedback.jsonl`.
+8. Actualiza CLAUDE.md "Last updated".
 
 **Cuándo invocarlo**:
-- Cuando `data/user_rejected.jsonl` tiene entradas (el usuario ha
-  clickeado 👎 en el dashboard).
-- Explícitamente al decir "revisar rechazados" o "mejorar los filtros".
-- Periódicamente después de scrapes grandes (antes de commitear).
+- Cuando `data/feedback.jsonl` tiene entradas (el usuario ha clickeado 👎).
+- Al decir "revisar feedback", "mejorar los filtros", "corregir datos".
+- Periódicamente después de scrapes grandes.
+
+### `/validate-rarity`
+
+**Propósito**: verificar vía búsqueda web si los **boxsets y artbooks de
+publishers grandes** que tienen `rarity="rare"` por default están
+actualmente en stock (→ `common`) o no (→ mantener `rare`). Solo procesa
+items sin `rarity_verified_at` (incremental). Liviano: agrupa por
+`edition_key` (1 búsqueda por edición, no por volumen) y cap de 60
+candidatos por corrida.
+
+**Cómo funciona**:
+1. Identifica items con `rarity="rare"`, sin `rarity_verified_at`,
+   `product_type` en `{boxset, artbook, fanbook, manga}`, y publisher grande.
+2. Agrupa por `edition_key` → toma el representativo de mayor score.
+3. Busca en el retailer del país (amazon.fr/it/de/es/com, cdjapan.co.jp)
+   si está en stock hoy.
+4. Actualiza `rarity` a `common` si confirma stock activo; deja `rare` si
+   no encontrado o solo segunda mano.
+5. Marca `rarity_verified_at` en cada item procesado.
+
+**Cuándo invocarlo**:
+- Después de scrapes grandes que trajeron boxsets/artbooks nuevos.
+- No para corridas delta diarias (10-20 items nuevos, el default `rare` está bien).
+- Nunca integrar en `/standardize-catalog` — separa el costo de tokens.
+
+---
 
 ## Workflow post-scrape recomendado
 
@@ -152,13 +181,15 @@ manga_watch.py scrape
 /standardize-catalog
        ↓ subagentes verifican/corrigen, marcan timestamp,
          loguean series desconocidas a unmapped_series.jsonl
-/enrich-series-aliases
+/enrich-series-aliases    (si aparecieron series_keys nuevas)
        ↓ consolida nuevas series multilingües
+/validate-rarity          (opcional — solo si scrape trajo boxsets/artbooks)
+       ↓ 1 búsqueda web por edición, actualiza common/rare
 build_web.py  (opcional)
        ↓ refresh del dashboard
 ```
 
-Ambos skills son **idempotentes** y **incrementales**. Re-ejecutarlos
+Todos los skills son **idempotentes** y **incrementales**. Re-ejecutarlos
 sin cambios en el corpus no rompe nada.
 
 ## Cómo agregar un skill nuevo
