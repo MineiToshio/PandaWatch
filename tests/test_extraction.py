@@ -7907,3 +7907,74 @@ def test_corpus_all_items_have_slug():
     items = _load_corpus()
     missing = [it.get("url", "") for it in items if not it.get("slug")]
     assert not missing, f"{len(missing)} items without slug, e.g. {missing[:3]}"
+
+
+# ---------------------------------------------------------------------------
+# VIZ Media special-editions parser (generalized, calendar-driven)
+# ---------------------------------------------------------------------------
+
+from scripts.wikis import viz_artbooks as _viz
+
+
+def test_viz_url_filter_accepts_special_editions():
+    # Regular paperback → rejected
+    q, _, _ = _viz.special_signals_from_url(
+        "/manga-books/manga/chainsaw-man-volume-21-0/product/8857/paperback")
+    assert q is False
+    # Hardcover definitive → accepted (hardcover + deluxe)
+    q, sigs, pt = _viz.special_signals_from_url(
+        "/manga-books/manga/vagabond-definitive-edition-volume-5-0/product/8681/hardcover")
+    assert q is True and "hardcover" in sigs and "deluxe" in sigs
+    # Art-book path → accepted as artbook
+    q, sigs, pt = _viz.special_signals_from_url(
+        "/manga-books/art-book/one-piece-color-walk-compendium-east-blue/product/7000/hardcover")
+    assert q is True and "artbook" in sigs and pt == "artbook"
+    # Box set slug → accepted
+    q, sigs, pt = _viz.special_signals_from_url(
+        "/manga-books/manga/one-piece-box-set-1/product/4000")
+    assert q is True and "box_set" in sigs and pt == "boxset"
+
+
+def test_viz_url_filter_rejects_bare_omnibus_and_3in1():
+    # Gotcha #18: bare 3-in-1 / omnibus paperback does NOT qualify alone.
+    for href in (
+        "/manga-books/manga/naruto-3-in-1-volume-9-0/product/123/paperback",
+        "/manga-books/manga/one-piece-omnibus-edition-volume-36-0/product/8881/paperback",
+    ):
+        q, _, _ = _viz.special_signals_from_url(href)
+        assert q is False, href
+
+
+def test_viz_isbn10_to_13():
+    # 1974718190 (Zelda Legendary box set ISBN-10) → 9781974718191
+    assert _viz._isbn10_to_13("1974718190") == "9781974718191"
+
+
+def test_viz_parse_product_page():
+    html = """
+    <html><head>
+      <meta property="og:title" content="VIZ: See Vagabond Definitive Edition, Vol. 5">
+    </head><body>
+      <h2>Manga &amp; Anime Favorites</h2>
+      <img src="https://dw9to29mmj727.cloudfront.net/misc/placeholder_400x320.png">
+      <img src="https://dw9to29mmj727.cloudfront.net/products/1974761924.png">
+      <p>ISBN-13: 978-1-9747-6192-0</p>
+      <p>$55.00</p>
+      <p>Hardcover</p>
+      <p>An oversized hardcover definitive edition collecting the epic samurai tale by Takehiko Inoue.</p>
+    </body></html>
+    """
+    meta = _viz.parse_product_page(html)
+    assert meta is not None
+    assert meta["title"] == "Vagabond Definitive Edition, Vol. 5"
+    assert meta["isbn"] == "9781974761920"
+    assert meta["price"] == "$55.00"
+    # Cover is the real product image, not the placeholder
+    assert meta["cover_url"].endswith("/products/1974761924.png")
+
+
+def test_viz_iter_year_months_clamps_to_2013():
+    # Full mode passes 2000-01; parser must clamp to the catalog start (2013).
+    pairs = _viz.iter_year_months(2000, 1, 2013, 3)
+    assert pairs[0] == (2013, 1)
+    assert (2012, 6) not in pairs

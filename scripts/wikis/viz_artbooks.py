@@ -1,29 +1,43 @@
-"""Parser de VIZ Media — artbooks, box sets, companion books EN.
+"""Parser de VIZ Media — ediciones especiales EN (US), catálogo COMPLETO.
 
-viz.com vende publicaciones especiales de manga en inglés: Color Walk
-Compendiums, box sets, cookbooks, artbooks, spin-off manga. Cada serie
-tiene una listing page en /manga-books/art-book/<series>/all que lista
-los volúmenes, y cada volumen tiene un detail page en
-/manga-books/art-book/<series>/product/<id> con metadata completa
-(ISBN, precio, fecha, formato, portada CloudFront).
+viz.com es el editor oficial en inglés del catálogo de Shueisha (Shonen
+Jump: One Piece, Naruto, Bleach, Jujutsu Kaisen, Chainsaw Man…) además de
+sus propias licencias. Vende ediciones especiales físicas: box sets,
+deluxe / definitive editions, hardcovers, collector's / anniversary /
+legendary editions, artbooks (Color Walk Compendium), companion books.
 
-Discovery::
+Discovery GENERALIZADO (no hardcodeado) — calendario mensual::
 
-    Listing pages conocidas → product links → detail pages con metadata.
-    Catálogo chico (~20-30 items), sin paginación.
+    GET https://www.viz.com/calendar/{YYYY}/{M}  (server-rendered, sin JS)
 
-Endpoints::
+El calendario lista TODOS los lanzamientos del mes con la edición codificada
+en el slug de la URL del producto y el formato en el sufijo del path:
 
-    Listing: GET https://www.viz.com/manga-books/art-book/<series>/all
-    Detail:  GET https://www.viz.com/manga-books/art-book/<series>/product/<id>
+    /manga-books/manga/vagabond-definitive-edition-volume-5-0/product/8681/hardcover
+    /manga-books/art-book/one-piece-color-walk-compendium-.../product/.../hardcover
+    /manga-books/manga/one-piece-box-set-.../product/...
 
-HTML server-rendered. Cover URL: ``https://dw9to29mmj727.cloudfront.net/products/{isbn10}.jpg``
+El parser PRE-FILTRA por la URL (segmento ``art-book``, sufijo ``/hardcover``,
+o keywords de edición especial en el slug) para quedarse SOLO con ediciones
+especiales — los tomos paperback regulares se descartan sin hitear el detail
+page. Los omnibus / 3-in-1 "pelados" NO califican solos (gotcha #18); el gate
+``is_collectible_edition`` aguas abajo termina de filtrar.
 
-API pública::
+El calendario llega hasta ~2013 (verificado), así que la iteración mensual
+cubre el catálogo histórico completo. NO requiere listas hardcodeadas por
+serie. La fecha de lanzamiento sale del mes del calendario (el detail page de
+VIZ no expone la fecha). El resto de metadata (título, ISBN, precio, portada)
+sale del detail page server-rendered.
 
-    parse_product_page(html) -> dict | None
-    bootstrap(yf, mf, yt, mt, session, ...) -> list[Candidate]
-    iter_year_months(yf, mf, yt, mt) -> [(yf, mf)]
+Cover URL: la imagen real de CloudFront del detail page
+(``dw9to29mmj727.cloudfront.net/products/{isbn10}.{jpg|png}``).
+
+API pública (misma firma que los demás wiki parsers)::
+
+    parse_product_page(html)                   -> dict | None
+    fetch_calendar_month(y, m, session)        -> list[str]  (product paths)
+    bootstrap(yf, mf, yt, mt, session, ...)    -> list[Candidate]
+    iter_year_months(yf, mf, yt, mt)           -> list[(year, month)]
 """
 
 from __future__ import annotations
@@ -33,7 +47,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -43,7 +56,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from scripts.manga_watch import (
+    from scripts.manga_watch import (  # type: ignore[import-not-found]
         Candidate,
         Source,
         candidate_from_source,
@@ -51,7 +64,7 @@ try:
         score_candidate,
     )
 except ImportError:
-    from manga_watch import (
+    from manga_watch import (  # type: ignore[no-redef]
         Candidate,
         Source,
         candidate_from_source,
@@ -61,31 +74,35 @@ except ImportError:
 
 
 VIZ_BASE = "https://www.viz.com"
-COVER_CDN = "https://dw9to29mmj727.cloudfront.net/products"
-UA = "manga-watch-personal/0.2"
+CALENDAR_URL = "https://www.viz.com/calendar"
+UA = "Mozilla/5.0 (compatible; manga-watch-personal/0.2)"
 
-# ── Listing pages to crawl ────────────────────────────────────────
-# Each: (url_path, category_hint)
-LISTING_PAGES = [
-    # One Piece artbooks
-    ("/manga-books/art-book/one-piece-color-walk-compendium/all", "artbook"),
-    # Box sets
-    ("/manga-books/box-set/one-piece/all", "box_set"),
-    # More categories can be added here as needed
+# El calendario de VIZ no tiene datos antes de ~2013 (lanzamiento del catálogo
+# online). Clamp para no malgastar ~150 requests vacíos en modo full.
+_MIN_YEAR = 2013
+
+# Product URL: /manga-books/{manga|art-book}/{slug}/product/{id}[/{format}]
+_PRODUCT_RE = re.compile(r"/(?:manga-books|read)/(manga|art-book)/([^/]+)/product/(\d+)(?:/(\w+))?")
+
+# Keywords de edición especial en el slug de la URL. Cada uno → (signal, product_type).
+# NOTA (gotcha #18): "omnibus" / "3-in-1" NO están acá — un omnibus pelado no
+# califica solo; sí lo hace si además es hardcover (sufijo /hardcover) o tiene
+# otro qualifier premium.
+_SLUG_SIGNALS: list[tuple[re.Pattern[str], str, str]] = [
+    (re.compile(r"\bbox-set\b"),                "box_set",      "boxset"),
+    (re.compile(r"\bcomplete-box\b"),           "box_set",      "boxset"),
+    (re.compile(r"\bdeluxe\b"),                 "deluxe",       "special"),
+    (re.compile(r"\bdefinitive-edition\b"),     "deluxe",       "special"),
+    (re.compile(r"\blegendary-edition\b"),      "deluxe",       "special"),
+    (re.compile(r"\bcollector"),                "collector",    "special"),
+    (re.compile(r"\d+\w*-anniversary"),         "lore_edition", "special"),
+    (re.compile(r"\bcolor-walk\b"),             "artbook",      "artbook"),
+    (re.compile(r"\bcompendium\b"),             "artbook",      "artbook"),
+    (re.compile(r"\billustration"),             "artbook",      "artbook"),
+    (re.compile(r"\bart-of\b|\bartbook\b|art-book"), "artbook", "artbook"),
+    (re.compile(r"\bfanbook\b|\brecipes?\b|\bcookbook\b"), "fanbook", "fanbook"),
 ]
 
-# Known product detail URLs for items NOT discoverable from listings
-# (standalone products, special editions, companion books).
-# Each: (url_path, signals, product_type, description)
-KNOWN_PRODUCTS = [
-    ("/manga-books/art-book/one-piece-pirate-recipes/product/7142",
-     ["fanbook"], "fanbook", "Official One Piece cookbook."),
-    ("/manga-books/art-book/set-sail-the-art-and-making-of-one-piece/product/8126",
-     ["artbook", "hardcover"], "artbook",
-     "Behind-the-scenes artbook for the Netflix live-action."),
-]
-
-# Month map for date parsing
 _MONTH_MAP: dict[str, int] = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -93,108 +110,137 @@ _MONTH_MAP: dict[str, int] = {
 }
 
 
+# ── URL-based special-edition filter ──────────────────────────────
+
+def special_signals_from_url(href: str) -> tuple[bool, list[str], str]:
+    """Decide si una URL de producto VIZ es una edición especial.
+
+    Devuelve ``(qualifies, signals, product_type)``. Pre-filtro barato que
+    evita hitear el detail page de los miles de tomos paperback regulares.
+
+    Califica si:
+    - el path es ``/art-book/`` (artbooks), o
+    - el sufijo de formato es ``/hardcover``, o
+    - el slug contiene un keyword de edición especial (box-set, deluxe,
+      definitive-edition, collector, anniversary, color-walk, etc.).
+    """
+    m = _PRODUCT_RE.search(href)
+    if not m:
+        return False, [], ""
+    section, slug, _pid, fmt = m.group(1), m.group(2), m.group(3), (m.group(4) or "")
+
+    signals: list[str] = []
+    product_type = ""
+
+    if section == "art-book":
+        signals.append("artbook")
+        product_type = "artbook"
+
+    if fmt.lower() == "hardcover":
+        signals.append("hardcover")
+        if not product_type:
+            product_type = "special"
+
+    for pat, sig, ptype in _SLUG_SIGNALS:
+        if pat.search(slug):
+            if sig not in signals:
+                signals.append(sig)
+            if not product_type or product_type == "special":
+                product_type = ptype
+
+    qualifies = bool(signals)
+    if qualifies and not product_type:
+        product_type = "special"
+    return qualifies, signals, product_type
+
+
 # ── HTML parsing ──────────────────────────────────────────────────
 
 def _parse_date(raw: str) -> str:
-    """'July 03, 2018' or 'July 3, 2018' → '2018-07-03'."""
+    """'July 03, 2018' → '2018-07-03'."""
     raw = raw.strip()
-    for pfx in ("On sale ", "On Sale "):
+    for pfx in ("On sale ", "On Sale ", "Release Date ", "Publication Date "):
         if raw.startswith(pfx):
             raw = raw[len(pfx):]
     try:
         parts = raw.replace(",", "").split()
         if len(parts) == 3:
-            m = _MONTH_MAP.get(parts[0].lower())
+            mm = _MONTH_MAP.get(parts[0].lower())
             d, y = int(parts[1]), int(parts[2])
-            if m:
-                return f"{y:04d}-{m:02d}-{d:02d}"
+            if mm:
+                return f"{y:04d}-{mm:02d}-{d:02d}"
     except (ValueError, IndexError):
         pass
     return ""
 
 
 def parse_product_page(html: str) -> dict | None:
-    """Parse a VIZ product detail page.
+    """Parsea un detail page de producto VIZ.
 
-    Returns dict with: title, isbn, price, release_date, pages,
-    format, cover_url, description, trim_size, url.
+    Devuelve dict con title, isbn, price, format, cover_url, description.
+    (La fecha NO está en el detail page de VIZ — se setea desde el calendario.)
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Title — typically in an h2 tag
+    # Título — og:title es la fuente más confiable: "VIZ: See {title}".
     title = ""
-    for h in soup.find_all(["h1", "h2"]):
-        text = h.get_text().strip()
-        # Skip navigation/menu headers
-        if text and len(text) > 5 and "manga" not in text.lower()[:10]:
-            title = clean_text(text)
-            break
+    og_t = soup.find("meta", property="og:title")
+    if og_t and og_t.get("content"):
+        title = re.sub(r"^VIZ:\s*See\s+", "", og_t["content"]).strip()
+    if not title:
+        for h in soup.find_all(["h1", "h2"]):
+            text = h.get_text().strip()
+            if text and len(text) > 5 and "manga" not in text.lower()[:10]:
+                title = clean_text(text)
+                break
     if not title:
         return None
+    title = clean_text(title)
 
-    # Look for dt/dd pairs or labeled data
+    # ISBN-13: regex sobre el texto (978/979 + 10 dígitos).
     isbn = ""
-    release_date = ""
-    pages = ""
-    trim_size = ""
+    for text in soup.stripped_strings:
+        cleaned = text.replace("-", "").replace(" ", "")
+        m = re.search(r"\b(97[89]\d{10})\b", cleaned)
+        if m:
+            isbn = m.group(1)
+            break
+
+    # Portada CloudFront real (skip placeholders del CDN).
+    cover_url = ""
+    for img in soup.find_all("img"):
+        src = img.get("src", "") or ""
+        if "cloudfront.net/products/" in src and "placeholder" not in src:
+            cover_url = src
+            break
+    if not cover_url:
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content") and "placeholder" not in og["content"]:
+            cover_url = og["content"]
+
+    # Fallback de ISBN desde la portada CloudFront (/products/{isbn10}.ext).
+    if not isbn and cover_url:
+        mm = re.search(r"/products/(\d{9}[\dXx])\.", cover_url)
+        if mm:
+            isbn = _isbn10_to_13(mm.group(1))
+
+    # Precio — primer monto en dólares.
     price = ""
+    for text in soup.stripped_strings:
+        m = re.search(r"\$(\d+\.\d{2})", text)
+        if m:
+            price = f"${m.group(1)}"
+            break
+
+    # Formato — Hardcover / Paperback / Box set.
     fmt = ""
-
-    # Try dt/dd pairs first
-    for dt in soup.find_all("dt"):
-        label = dt.get_text().strip().lower()
-        dd = dt.find_next_sibling("dd")
-        if not dd:
-            continue
-        val = dd.get_text().strip()
-
-        if "isbn" in label:
-            isbn = val.replace("-", "").strip()
-        elif "release" in label:
-            release_date = _parse_date(val)
-        elif "length" in label or "pages" in label:
-            pages = re.sub(r"[^\d]", "", val)
-        elif "trim" in label:
-            trim_size = val
-        elif "imprint" in label:
-            pass  # skip for now
-
-    # Try finding ISBN in any text
-    if not isbn:
-        for text in soup.stripped_strings:
-            if re.match(r"978[\d\-]{10,}", text.replace(" ", "")):
-                isbn = text.replace("-", "").replace(" ", "").strip()[:13]
-                break
-
-    # Price — look for dollar amount
-    if not price:
-        for text in soup.stripped_strings:
-            m = re.search(r"\$(\d+\.\d{2})", text)
-            if m:
-                price = f"${m.group(1)}"
-                break
-
-    # Format — look for "Hardcover" or "Paperback"
     for text in soup.stripped_strings:
         tl = text.strip().lower()
         if tl in ("hardcover", "paperback", "boxed set", "box set"):
             fmt = text.strip()
             break
 
-    # Cover image — look for cloudfront URL
-    cover_url = ""
-    for img in soup.find_all("img"):
-        src = img.get("src", "")
-        if "cloudfront.net" in src:
-            cover_url = src
-            break
-    # Also check og:image
-    if not cover_url:
-        og = soup.find("meta", property="og:image")
-        if og and og.get("content"):
-            cover_url = og["content"]
-
-    # Description
+    # Descripción larga.
     description = ""
     for p in soup.find_all("p"):
         text = p.get_text().strip()
@@ -209,42 +255,59 @@ def parse_product_page(html: str) -> dict | None:
         "title": title,
         "isbn": isbn,
         "price": price,
-        "release_date": release_date,
-        "pages": pages,
         "format": fmt,
-        "trim_size": trim_size,
         "cover_url": cover_url,
         "description": description,
     }
 
 
-def fetch_listing_page(
-    url_path: str,
+def _isbn10_to_13(isbn10: str) -> str:
+    """Convierte ISBN-10 → ISBN-13 (prefijo 978 + recálculo de dígito)."""
+    core = "978" + isbn10[:9]
+    total = sum((1 if i % 2 == 0 else 3) * int(c) for i, c in enumerate(core))
+    check = (10 - total % 10) % 10
+    return core + str(check)
+
+
+# ── HTTP ──────────────────────────────────────────────────────────
+
+def fetch_calendar_month(
+    year: int,
+    month: int,
     session: requests.Session,
     timeout: tuple[int, int] = (10, 30),
 ) -> list[str]:
-    """Fetch a VIZ listing page and return product detail URL paths."""
-    url = f"{VIZ_BASE}{url_path}"
+    """Descarga un mes del calendario de VIZ y devuelve los paths de producto
+    que pre-califican como edición especial (deduplicados)."""
+    url = f"{CALENDAR_URL}/{year}/{month}"
     try:
-        resp = session.get(
-            url, timeout=timeout,
-            headers={"User-Agent": UA, "Accept": "text/html"},
-        )
+        resp = session.get(url, timeout=timeout,
+                           headers={"User-Agent": UA, "Accept": "text/html"})
         resp.raise_for_status()
     except requests.RequestException as exc:
-        print(f"[viz] ERROR listing {url}: {exc}")
+        print(f"[viz] ERROR calendar {url}: {exc}")
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    product_urls: list[str] = []
-
+    seen: set[str] = set()
+    paths: list[str] = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "/product/" in href and href not in product_urls:
-            product_urls.append(href)
-
-    print(f"[viz] {url_path} → {len(product_urls)} product links")
-    return product_urls
+        if "/product/" not in href:
+            continue
+        # Normalizar al path canónico sin el sufijo de formato para dedup.
+        m = _PRODUCT_RE.search(href)
+        if not m:
+            continue
+        key = m.group(0)
+        if key in seen:
+            continue
+        qualifies, _sigs, _pt = special_signals_from_url(href)
+        if not qualifies:
+            continue
+        seen.add(key)
+        paths.append(href)
+    return paths
 
 
 def fetch_product(
@@ -252,13 +315,11 @@ def fetch_product(
     session: requests.Session,
     timeout: tuple[int, int] = (10, 30),
 ) -> dict | None:
-    """Fetch a VIZ product detail page and parse it."""
+    """Descarga y parsea un detail page de producto VIZ."""
     url = f"{VIZ_BASE}{url_path}" if url_path.startswith("/") else url_path
     try:
-        resp = session.get(
-            url, timeout=timeout,
-            headers={"User-Agent": UA, "Accept": "text/html"},
-        )
+        resp = session.get(url, timeout=timeout,
+                           headers={"User-Agent": UA, "Accept": "text/html"})
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -272,22 +333,26 @@ def fetch_product(
     return meta
 
 
-# ── Virtual source ────────────────────────────────────────────────
+# ── Candidate building ────────────────────────────────────────────
 
 def _virtual_source() -> Source:
     return Source(
-        name="US - VIZ Media Artbooks",
-        url="https://www.viz.com/manga-books",
+        name="US - VIZ Media Special Editions",
+        url=CALENDAR_URL,
         country="Estados Unidos",
         language="English",
         publisher="VIZ Media",
         source_class="trusted_catalog",
         kind="wiki",
         enabled=True,
-        tags=["wiki", "viz", "usa", "english", "artbook", "box_set"],
+        tags=["wiki", "viz", "usa", "english", "special-edition",
+              "box_set", "artbook", "hardcover"],
         notes=(
-            "VIZ Media's special publications catalog. Covers One Piece "
-            "Color Walk Compendiums, box sets, artbooks, companion books."
+            "viz.com/calendar — catálogo completo de ediciones especiales EN "
+            "de VIZ Media (editor oficial en inglés de Shueisha/Shonen Jump). "
+            "Discovery por calendario mensual; pre-filtro por URL (art-book / "
+            "hardcover / box-set / deluxe / definitive / collector / artbook). "
+            "Cubre el catálogo histórico desde ~2013."
         ),
         selectors={},
         max_pages=0,
@@ -295,62 +360,66 @@ def _virtual_source() -> Source:
     )
 
 
-def _meta_to_candidate(meta: dict, signals: list[str],
-                       product_type: str, extra_desc: str = "") -> Candidate:
-    """Convert parsed metadata to a Candidate."""
-    source = _virtual_source()
-
-    desc_parts = []
-    if extra_desc:
-        desc_parts.append(extra_desc)
+def _meta_to_candidate(
+    meta: dict,
+    signals: list[str],
+    product_type: str,
+    release_date: str,
+    source: Source,
+) -> Candidate:
+    """Construye un Candidate desde la metadata + signals derivadas de la URL."""
+    # Hints en la descripción para que detect_signals levante las señales.
+    hint_map = {
+        "artbook": "Artbook.", "box_set": "Box Set.", "hardcover": "Hardcover.",
+        "deluxe": "Deluxe edition.", "collector": "Collector's Edition.",
+        "lore_edition": "Anniversary Edition.", "fanbook": "Fanbook.",
+    }
+    parts: list[str] = []
+    for s in signals:
+        if hint_map.get(s):
+            parts.append(hint_map[s])
     if meta.get("format"):
-        desc_parts.append(f"{meta['format']}.")
-    if signals:
-        for s in signals:
-            if s == "artbook":
-                desc_parts.insert(0, "Artbook.")
-            elif s == "box_set":
-                desc_parts.insert(0, "Box Set.")
-            elif s == "hardcover":
-                desc_parts.insert(0, "Hardcover.")
+        parts.append(f"{meta['format']}.")
+    if meta.get("description"):
+        parts.append(meta["description"])
+    description = " ".join(parts).strip()
 
     cand = candidate_from_source(
         source,
         title=meta["title"],
         url=meta.get("url", ""),
-        description=" ".join(desc_parts),
-        published_at=meta.get("release_date", ""),
+        description=description,
+        published_at=release_date,
     )
+    cand.isbn = meta.get("isbn", "")
     cand.image_url = meta.get("cover_url", "")
-    cand.release_date = meta.get("release_date", "")
+    cand.release_date = release_date
     cand.price = meta.get("price", "")
-    if meta.get("isbn"):
-        cand.isbn = meta["isbn"]
 
     score_candidate(cand)
     return cand
 
 
-def _infer_signals(title: str, fmt: str) -> list[str]:
-    """Infer signal_types from title and format."""
-    tl = title.lower()
-    signals = []
-    if "art book" in tl or "artbook" in tl or "color walk" in tl:
-        signals.append("artbook")
-    if "box set" in tl or "boxed" in fmt.lower():
-        signals.append("box_set")
-    if "hardcover" in fmt.lower():
-        signals.append("hardcover")
-    if "compendium" in tl or "collector" in tl:
-        signals.append("collector")
-    if "recipe" in tl or "cookbook" in tl:
-        signals.append("fanbook")
-    if not signals:
-        signals = ["special_edition"]
-    return signals
-
-
 # ── Bootstrap ─────────────────────────────────────────────────────
+
+def iter_year_months(
+    year_from: int, month_from: int,
+    year_to: int, month_to: int,
+) -> list[tuple[int, int]]:
+    """Pares (year, month) en el rango [from, to], con clamp a ``_MIN_YEAR``."""
+    if year_from < _MIN_YEAR:
+        year_from, month_from = _MIN_YEAR, 1
+    pairs: list[tuple[int, int]] = []
+    y, m = year_from, month_from
+    while (y, m) <= (year_to, month_to):
+        pairs.append((y, m))
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+        if y > year_to + 5:
+            break
+    return pairs
+
 
 def bootstrap(
     year_from: int,
@@ -361,75 +430,84 @@ def bootstrap(
     sleep_seconds: float = 1.0,
     timeout: tuple[int, int] = (15, 45),
     min_score: int = 0,
-    fetch_details: bool = True,
+    fetch_details: bool = True,  # noqa: ARG001
     flush_fn: Callable[[list[Candidate]], None] | None = None,
     **kwargs: Any,
 ) -> list[Candidate]:
-    """Fetch VIZ special publications catalog.
+    """Descubre ediciones especiales de VIZ recorriendo el calendario mensual.
 
-    Discovers products from listing pages and known product URLs.
+    Para cada mes: lista los productos, pre-filtra por URL las ediciones
+    especiales, fetchea el detail page de cada una y construye el Candidate.
+    Dedup por ISBN cross-month. La fecha sale del mes del calendario.
     """
-    delta = year_from >= 2020
-    date_cutoff = f"{year_from:04d}-{month_from:02d}-01" if delta else ""
-
-    print(f"[viz] mode={'delta ≥' + date_cutoff if delta else 'full'}")
-
-    candidates: list[Candidate] = []
+    pairs = iter_year_months(year_from, month_from, year_to, month_to)
+    source = _virtual_source()
+    all_candidates: list[Candidate] = []
     seen_isbns: set[str] = set()
-    product_paths: list[tuple[str, list[str], str, str]] = []
 
-    # 1. Discover products from listing pages
-    for listing_path, category in LISTING_PAGES:
-        paths = fetch_listing_page(listing_path, session, timeout=timeout)
-        for p in paths:
-            product_paths.append((p, [], category, ""))
-        time.sleep(sleep_seconds)
+    print(f"[viz] {len(pairs)} meses a recorrer "
+          f"({pairs[0][0]}-{pairs[0][1]:02d} → {pairs[-1][0]}-{pairs[-1][1]:02d})")
 
-    # 2. Add known standalone products
-    for path, sigs, ptype, desc in KNOWN_PRODUCTS:
-        product_paths.append((path, sigs, ptype, desc))
+    for idx, (y, m) in enumerate(pairs, start=1):
+        paths = fetch_calendar_month(y, m, session, timeout=timeout)
+        kept: list[Candidate] = []
+        for href in paths:
+            qualifies, signals, ptype = special_signals_from_url(href)
+            if not qualifies:
+                continue
+            meta = fetch_product(href, session, timeout=timeout)
+            if meta is None:
+                continue
+            isbn = meta.get("isbn", "")
+            if isbn and isbn in seen_isbns:
+                continue
+            if isbn:
+                seen_isbns.add(isbn)
 
-    print(f"[viz] {len(product_paths)} product URLs to fetch")
+            release_date = f"{y:04d}-{m:02d}-01"
+            cand = _meta_to_candidate(meta, signals, ptype, release_date, source)
+            if min_score and cand.score < min_score:
+                continue
+            kept.append(cand)
+            time.sleep(sleep_seconds)
 
-    # 3. Fetch each product detail page
-    for path, preset_sigs, preset_ptype, preset_desc in product_paths:
-        meta = fetch_product(path, session, timeout=timeout)
-        if meta is None:
-            continue
+        if kept:
+            print(f"[{idx}/{len(pairs)}] VIZ {y}-{m:02d}: {len(paths)} especiales, {len(kept)} kept")
+            all_candidates.extend(kept)
+            if flush_fn:
+                flush_fn(kept)
+        if sleep_seconds > 0 and idx < len(pairs):
+            time.sleep(sleep_seconds)
 
-        isbn = meta.get("isbn", "")
-        if isbn and isbn in seen_isbns:
-            continue
-        if isbn:
-            seen_isbns.add(isbn)
-
-        # Date filter
-        if date_cutoff and meta.get("release_date") and meta["release_date"] < date_cutoff:
-            continue
-
-        # Determine signals
-        signals = preset_sigs or _infer_signals(
-            meta.get("title", ""), meta.get("format", ""))
-        ptype = preset_ptype or ("artbook" if "artbook" in signals else "special")
-
-        cand = _meta_to_candidate(meta, signals, ptype, preset_desc)
-        if min_score and cand.score < min_score:
-            continue
-
-        candidates.append(cand)
-        print(f"[viz]   {meta['title']} ({isbn})")
-        time.sleep(sleep_seconds)
-
-    if flush_fn and candidates:
-        flush_fn(candidates)
-
-    print(f"[viz] Done: {len(candidates)} candidates")
-    return candidates
+    print(f"[viz] total: {len(all_candidates)} candidates")
+    return all_candidates
 
 
-def iter_year_months(
-    year_from: int, month_from: int,
-    year_to: int, month_to: int,
-) -> list[tuple[int, int]]:
-    """Single batch — small catalog, no monthly iteration needed."""
-    return [(year_from, month_from)]
+if __name__ == "__main__":
+    import argparse
+    import datetime
+
+    p = argparse.ArgumentParser(description="VIZ Media special-editions parser")
+    p.add_argument("--wiki-from", default="", help="Mes inicial YYYY-MM. Vacío = mes actual.")
+    p.add_argument("--wiki-to", default="", help="Mes final YYYY-MM. Vacío = mismo que --wiki-from.")
+    p.add_argument("--sleep-seconds", type=float, default=1.0)
+    p.add_argument("--min-score", type=int, default=0)
+    args = p.parse_args()
+
+    today = datetime.date.today()
+    if args.wiki_from:
+        yf, mf = (int(x) for x in args.wiki_from.split("-")[:2])
+    else:
+        yf, mf = today.year, today.month
+    if args.wiki_to:
+        yt, mt = (int(x) for x in args.wiki_to.split("-")[:2])
+    else:
+        yt, mt = today.year, today.month
+
+    s = requests.Session()
+    s.headers["User-Agent"] = UA
+    cands = bootstrap(yf, mf, yt, mt, session=s,
+                      sleep_seconds=args.sleep_seconds, min_score=args.min_score)
+    print(f"\nTotal: {len(cands)} candidates")
+    for c in cands[:25]:
+        print(f"  [{c.score:3d}] {c.isbn or 'no-isbn':<14} {c.release_date or '?':10} {c.title[:60]}")

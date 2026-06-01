@@ -681,27 +681,45 @@ scripts/
                                        URLs sintéticas con query param
                                        `?item=<edition_slug>-<vol>` para
                                        unicidad por tomo — ver gotcha #27.)
-    shueisha_books.py                (JP — publicaciones especiales de One
-                                       Piece distribuidas por Shueisha:
-                                       artbooks Color Walk, números de
-                                       One Piece Magazine, databooks. ⚠️ NO es
-                                       un parser de catálogo general: es un
-                                       fetcher con listas HARDCODEADAS de
-                                       cadenas de serie + ISBNs standalone, hoy
-                                       todas de One Piece. Nombre engañoso —
-                                       tratar como "one-piece-shueisha". Modo
-                                       delta (year_from>=2020) trae sólo
-                                       volúmenes nuevos; full camina cada
-                                       serie desde el vol 1. Sin tests de
-                                       parser propios. Wired en scrape_delta
-                                       fase 2n / scrape_full fase 2o.)
-    viz_artbooks.py                  (US — companion books / Color Walk
-                                       Compendium en inglés vía viz.com. ⚠️
-                                       Igual que shueisha_books: fetcher con
-                                       listing pages + productos HARDCODEADOS,
-                                       hoy todos de One Piece. Sin tests de
-                                       parser. Wired en scrape_delta fase 2o /
-                                       scrape_full fase 2p.)
+    shueisha_books.py                (JP — publicaciones especiales JP-native
+                                       de One Piece (artbooks Color Walk, One
+                                       Piece Magazine, databooks). ⚠️ NO se pudo
+                                       generalizar a catálogo completo (auditoría
+                                       2026-06-01): el detail page
+                                       `contents.html?isbn=` es server-rendered y
+                                       funciona, pero el LISTADO de shueisha.co.jp
+                                       inyecta productos por JS y no expone filtro
+                                       de ediciones especiales — no hay discovery
+                                       programático sin Playwright + XHR sniffing.
+                                       Por eso camina links "次巻" desde seeds ISBN
+                                       HARDCODEADOS (hoy One Piece). Las franquicias
+                                       Shueisha ya entran por VIZ (EN, generalizado)
+                                       + sumikko/booksprivilege (limitadas JP), así
+                                       que esto queda como suplemento JP-native de
+                                       One Piece. Para sumar serie: agregar su seed
+                                       a SERIES. Wired scrape_delta 2n / full 2o.)
+    viz_artbooks.py                  (US — catálogo COMPLETO de ediciones
+                                       especiales EN de VIZ Media (editor
+                                       oficial en inglés de Shueisha/Shonen
+                                       Jump). GENERALIZADO 2026-06-01: discovery
+                                       por calendario mensual viz.com/calendar/
+                                       {YYYY}/{M} (server-rendered, sin JS,
+                                       histórico desde 2013). Pre-filtra por la
+                                       URL del producto — segmento `art-book`,
+                                       sufijo `/hardcover`, o keyword de edición
+                                       especial en el slug (box-set, deluxe,
+                                       definitive-edition, collector, anniversary,
+                                       color-walk…) — para no hitear el detail
+                                       page de los miles de paperbacks regulares.
+                                       Omnibus/3-in-1 pelados NO califican solos
+                                       (gotcha #18). Metadata del detail page
+                                       (og:title, ISBN, precio, portada
+                                       CloudFront); fecha del mes del calendario.
+                                       Source virtual: `US - VIZ Media Special
+                                       Editions`. Cubre las franquicias Shueisha
+                                       en inglés (One Piece, Naruto, Vagabond,
+                                       Nana…). 5 tests. Wired scrape_delta 2o /
+                                       scrape_full 2p.)
   retrofit/                          — utilities to apply changes to
                                        historic data.
     README.md
@@ -2854,6 +2872,18 @@ These came up in conversation but were explicitly deferred:
   colecciones conocidas (ids 1606, 3020, 6090, 6242, 2688) + dry-run
   comparado contra items.jsonl actual, se decide si avanzar Fase 2
   inmediatamente o esperar feedback del corpus.
+
+---
+
+Last updated: 2026-06-01 (post-auditoría: generalizar VIZ, eliminar el score, gitignore cover_preview) — Tres decisiones del owner tras la auditoría de ingesta. **Tests: 502 → 507 (+5 VIZ). web-next: 14 tests verdes, type-check limpio.**
+
+**1. VIZ generalizado (de fetcher One Piece-only → catálogo completo).** `scripts/wikis/viz_artbooks.py` reescrito: ya no usa listing pages hardcodeadas de One Piece. Ahora hace discovery por el **calendario mensual** `viz.com/calendar/{YYYY}/{M}` (server-rendered, sin JS, histórico verificado desde 2013). Pre-filtra los productos por la URL — segmento `art-book`, sufijo `/hardcover`, o keyword de edición especial en el slug (box-set/deluxe/definitive/collector/anniversary/color-walk) — para no hitear el detail page de los miles de paperbacks. Omnibus/3-in-1 pelados NO califican solos (gotcha #18). Metadata del detail page (og:title, ISBN, precio, portada CloudFront), fecha del mes del calendario. Cubre las franquicias Shonen Jump de Shueisha en inglés (One Piece, Naruto, Vagabond, Nana…). Source renombrada a `US - VIZ Media Special Editions`. Smoke test en vivo (2026-06): descubrió Nana 25th Anniversary, Vagabond Definitive Vol.5, Set Sail artbook. Preset `viz_full` actualizado (`--wiki-from 2013-01`). 5 tests nuevos.
+
+**Shueisha NO se pudo generalizar** (investigado con WebFetch): el detail page funciona pero el listado de shueisha.co.jp es JS-only sin filtro de ediciones especiales — no hay discovery programático sin Playwright + reverse-engineering de XHR, y solapa fuerte con sumikko/booksprivilege. Las franquicias Shueisha ya entran por VIZ (EN) + sumikko (limitadas JP). `shueisha_books.py` queda como suplemento JP-native de One Piece, con docstring honesto sobre la limitación. (Decisión del owner: rareza pausada para más adelante.)
+
+**2. Score eliminado de ordenamiento y UI** (ambos dashboards). El score perdió sentido como ranking visible (el cap saturaba ~26% del catálogo en una banda). Se removió de la presentación; el scoring interno del pipeline (gate de coleccionables) NO se tocó. web-next: sort por defecto `score_desc → date_desc`, eliminados ScoreBadge/scoreLevel/min_score/scoreRange/SortKey-de-score, selección de canónico por completitud (ISBN>imagen>precio). web/index.html: sort `score_desc → detected_desc`, eliminados badges de score, CSS `.score-*`, filtro "Score mínimo", `scoreClass()`. Verificado en preview (0 badges, 60 cards, sin errores).
+
+**3. `data/cover_preview.json` sacado de git + gitignored** (artefacto regenerable de la familia items.jsonl/state.json).
 
 ---
 

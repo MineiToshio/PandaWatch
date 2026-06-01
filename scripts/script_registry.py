@@ -596,15 +596,17 @@ SCRIPTS: list[dict[str, Any]] = [
             },
             {
                 "id": "viz_full",
-                "label": "🇺🇸 VIZ Artbooks - catálogo completo",
+                "label": "🇺🇸 VIZ Special Editions - catálogo completo",
                 "desc": (
-                    "Descarga el catálogo de VIZ Media: Color Walk Compendiums, "
-                    "Pirate Recipes, Set Sail artbook, companion books. "
-                    "Catálogo chico (~20 items), una sola pasada."
+                    "Recorre el calendario mensual de VIZ Media (2013 → hoy) y "
+                    "captura TODAS las ediciones especiales EN: box sets, deluxe / "
+                    "definitive editions, hardcovers, collector's / anniversary, "
+                    "artbooks (Color Walk). Cubre las franquicias Shonen Jump de "
+                    "Shueisha en inglés (One Piece, Naruto, Vagabond, Nana…)."
                 ),
                 "values": {
                     "--bootstrap-wiki": "viz",
-                    "--wiki-from": "2000-01",
+                    "--wiki-from": "2013-01",
                 },
             },
             {

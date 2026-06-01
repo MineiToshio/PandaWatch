@@ -1,8 +1,26 @@
-"""Parser de Shueisha Books — artbooks, magazines, databooks JP.
+"""Parser de Shueisha Books — artbooks, magazines, databooks JP (One Piece).
 
 shueisha.co.jp/books/ es el catálogo editorial de Shueisha. Cada libro
 tiene una página individual con ISBN, precio, fecha, formato, portada
 CloudFront y navegación prev/next entre volúmenes de la misma serie.
+
+⚠️ ALCANCE Y LIMITACIÓN DE GENERALIZACIÓN (auditoría 2026-06-01):
+
+    El DETAIL page (``contents.html?isbn=``) es server-rendered y funciona,
+    pero el LISTADO / buscador de shueisha.co.jp inyecta los productos por
+    JavaScript y NO expone un filtro de ediciones especiales (限定版/特装版/
+    画集). Es decir: no hay forma programática (sin Playwright + reverse-
+    engineering de XHR) de DESCUBRIR qué series/ediciones especiales existen.
+    Por eso este parser NO es un crawler de catálogo general: descubre
+    caminando los links "次巻" desde ``seed_isbn`` HARDCODEADOS — hoy todos
+    de One Piece (artbooks Color Walk, One Piece Magazine, databooks JP-native).
+
+    Las franquicias de Shueisha (Shonen Jump) ya entran al corpus por dos
+    vías sin tocar el sitio JP: (1) en inglés vía el parser VIZ generalizado
+    (viz_artbooks.py — VIZ es el editor oficial EN de Shueisha); (2) las
+    ediciones limitadas JP vía sumikko (限定版/特装版) y booksprivilege
+    (店舗特典). Este parser queda como suplemento JP-native específico de
+    One Piece. Para sumar otra serie, agregar su seed ISBN a ``SERIES``.
 
 Discovery::
 
