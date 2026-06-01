@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
-"""serve.py — HTTP server PÚBLICO para el browser de Manga Watch.
+"""serve.py — servidor único de Manga Watch.
 
-Sirve el catálogo desde la raíz del proyecto y expone únicamente:
-- `GET /`          → 302 a `/web/`
-- archivos estáticos en `/web/`, `/data/`, `/reports/`
-- `POST /api/feedback` → registra el feedback en data/feedback.jsonl
-  sin modificar items.jsonl (el ítem sigue visible en el catálogo).
+Sirve el catálogo, el panel de control y la API de ejecución de scripts.
+Todos los endpoints conviven en un solo proceso (port 8000, 0.0.0.0).
 
-Este server NO ejecuta scripts — para eso está `scripts/admin_serve.py`,
-que bindea solo a 127.0.0.1 y se mantiene fuera del deploy.
+Endpoints:
+    GET  /                          → 302 a /web/
+    archivos estáticos en /web/, /data/, /reports/
+    POST /api/feedback              → registra feedback en data/feedback.jsonl
+    POST /api/curation/move         → mover item a otra edición (inmediato)
+    POST /api/curation/merge        → fusionar items duplicados (inmediato)
+    POST /api/curation/remove       → sacar item de su edición (inmediato)
+    GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
+    POST /api/save-cover-preview    → guarda data/cover_preview.json
+    GET  /api/health                → liveness probe
+    GET  /api/scripts               → JSON del script registry (panel)
+    POST /api/run                   → lanza un script (panel)
+    GET  /api/jobs                  → lista jobs (panel)
+    GET  /api/jobs/<id>             → detalle de un job (panel)
+    GET  /api/jobs/<id>/stream      → SSE stdout/stderr en vivo (panel)
+    POST /api/jobs/<id>/stop        → SIGTERM al proceso (panel)
+    GET  /api/image-file-sizes      → {filename: bytes} del espejo local
+    POST /api/image-manager/save    → guarda images[] de un item
+    POST /api/image-manager/download → descarga imagen por URL al espejo
+    POST /api/image-manager/scrape  → extrae <img> URLs de una página
 
 Uso:
-    python scripts/serve.py             # puerto 8000 (default), 0.0.0.0
+    python scripts/serve.py             # port 8000 (default), 0.0.0.0
     python scripts/serve.py --port 9000
 """
 
@@ -21,26 +36,306 @@ import argparse
 import http.server
 import json
 import os
+import shlex
 import socketserver
+import subprocess
 import sys
+import threading
+import time
+import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
-ITEMS_PATH = Path("data/items.jsonl")
-FEEDBACK_PATH = Path("data/feedback.jsonl")
+# ---------------------------------------------------------------------------
+# Configuración
+# ---------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+ITEMS_PATH    = ROOT / "data" / "items.jsonl"
+FEEDBACK_PATH = ROOT / "data" / "feedback.jsonl"
+IMAGES_DIR    = ROOT / "data" / "images"
+
+MAX_BUFFERED_LINES = 5000
+MAX_FINISHED_JOBS  = 30
+
+# Permite importar script_registry como módulo top-level desde scripts/.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+try:
+    from script_registry import SCRIPTS, get_script, known_flags  # type: ignore
+    _REGISTRY_OK = True
+except ImportError:
+    SCRIPTS: list = []
+    _REGISTRY_OK = False
+
+    def get_script(sid: str) -> None:  # type: ignore[misc]
+        return None
+
+    def known_flags(sid: str) -> set:  # type: ignore[misc]
+        return set()
 
 
-def _log_feedback(url: str, reason: str) -> None:
-    """Append a feedback entry to data/feedback.jsonl.
+# ---------------------------------------------------------------------------
+# Job manager — corre subprocesos y reparte sus logs via SSE
+# ---------------------------------------------------------------------------
 
-    Looks up the full item from items.jsonl by URL and writes its complete
-    data plus 'reason' and 'submitted_at'. The item is NOT removed from
-    items.jsonl — feedback is informational only.
-    """
+class Job:
+    """Un proceso en ejecución (o terminado) con sus logs y suscriptores SSE."""
+
+    __slots__ = (
+        "id", "script_id", "label", "command", "status", "started_at",
+        "ended_at", "exit_code", "process", "lines", "lock", "cv", "version",
+    )
+
+    def __init__(self, script_id: str, label: str, command: list[str]) -> None:
+        self.id: str = uuid.uuid4().hex[:12]
+        self.script_id: str = script_id
+        self.label: str = label
+        self.command: list[str] = command
+        self.status: str = "running"  # running | exited | error | killed
+        self.started_at: str = datetime.now(timezone.utc).isoformat()
+        self.ended_at: str | None = None
+        self.exit_code: int | None = None
+        self.process: subprocess.Popen[bytes] | None = None
+        self.lines: deque[str] = deque(maxlen=MAX_BUFFERED_LINES)
+        self.lock: threading.Lock = threading.Lock()
+        self.cv: threading.Condition = threading.Condition(self.lock)
+        self.version: int = 0
+
+    def append(self, line: str) -> None:
+        with self.cv:
+            self.lines.append(line)
+            self.version += 1
+            self.cv.notify_all()
+
+    def mark_done(self, status: str, exit_code: int | None) -> None:
+        with self.cv:
+            self.status = status
+            self.exit_code = exit_code
+            self.ended_at = datetime.now(timezone.utc).isoformat()
+            self.version += 1
+            self.cv.notify_all()
+
+    def to_dict(self, include_lines: bool = False) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "script_id": self.script_id,
+            "label": self.label,
+            "command": self.command,
+            "status": self.status,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "exit_code": self.exit_code,
+            "lines_count": len(self.lines),
+        }
+        if include_lines:
+            out["lines"] = list(self.lines)
+        return out
+
+
+class JobManager:
+    def __init__(self) -> None:
+        self.jobs: dict[str, Job] = {}
+        self.order: deque[str] = deque()
+        self.lock = threading.Lock()
+
+    def start(self, script_id: str, command: list[str], label: str,
+              cwd: Path) -> Job:
+        job = Job(script_id, label, command)
+        with self.lock:
+            self.jobs[job.id] = job
+            self.order.append(job.id)
+            self._trim()
+
+        def reader(proc: subprocess.Popen[bytes]) -> None:
+            try:
+                assert proc.stdout is not None
+                for raw in iter(proc.stdout.readline, b""):
+                    try:
+                        text = raw.decode("utf-8", errors="replace").rstrip("\n")
+                    except Exception:
+                        text = repr(raw)
+                    job.append(text)
+                proc.stdout.close()
+                rc = proc.wait()
+                job.mark_done("exited" if rc == 0 else "error", rc)
+            except Exception as e:
+                job.append(f"[serve][ERROR reader] {e}")
+                job.mark_done("error", -1)
+
+        try:
+            full_env = os.environ.copy()
+            full_env["PYTHONUNBUFFERED"] = "1"
+            proc = subprocess.Popen(
+                command,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=full_env,
+                bufsize=1,
+            )
+            job.process = proc
+            job.append(f"[serve] PID {proc.pid} — {shlex.join(command)}")
+            threading.Thread(target=reader, args=(proc,), daemon=True).start()
+        except Exception as e:
+            job.append(f"[serve][ERROR spawn] {e}")
+            job.mark_done("error", -1)
+        return job
+
+    def stop(self, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        if not job or not job.process or job.status != "running":
+            return False
+        try:
+            job.process.terminate()
+
+            def _killer(p: subprocess.Popen[bytes]) -> None:
+                try:
+                    p.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+
+            threading.Thread(target=_killer, args=(job.process,), daemon=True).start()
+            job.append("[serve] SIGTERM enviado por el usuario")
+            return True
+        except Exception as e:
+            job.append(f"[serve][ERROR stop] {e}")
+            return False
+
+    def get(self, job_id: str) -> Job | None:
+        return self.jobs.get(job_id)
+
+    def list(self) -> list[Job]:
+        return [self.jobs[jid] for jid in self.order if jid in self.jobs]
+
+    def _trim(self) -> None:
+        finished = [
+            jid for jid in self.order
+            if jid in self.jobs and self.jobs[jid].status != "running"
+        ]
+        while len(finished) > MAX_FINISHED_JOBS:
+            old = finished.pop(0)
+            self.jobs.pop(old, None)
+            try:
+                self.order.remove(old)
+            except ValueError:
+                pass
+
+
+JOBS = JobManager()
+
+
+# ---------------------------------------------------------------------------
+# Construcción del comando desde flags
+# ---------------------------------------------------------------------------
+
+def build_command(
+    script_id: str, flag_values: dict[str, Any]
+) -> tuple[list[str], str] | tuple[None, str]:
+    """Valida flags y devuelve (argv, label) o (None, mensaje_error)."""
+    spec = get_script(script_id)
+    if not spec:
+        return None, f"script_id desconocido: {script_id}"
+
+    valid = known_flags(script_id)
+    cmd = list(spec["command"])
+    used_labels: list[str] = []
+    by_arg = {f["arg"]: f for f in spec["flags"]}
+
+    for arg, value in flag_values.items():
+        if arg not in valid:
+            return None, f"flag desconocido para {script_id}: {arg}"
+        f = by_arg[arg]
+        t = f["type"]
+
+        if t == "bool":
+            if bool(value):
+                cmd.append(arg)
+                used_labels.append(arg)
+        elif t == "int":
+            if value in (None, "", "null"):
+                continue
+            try:
+                ival = int(value)
+            except (TypeError, ValueError):
+                return None, f"valor int inválido para {arg}: {value!r}"
+            cmd.extend([arg, str(ival)])
+            used_labels.append(f"{arg}={ival}")
+        elif t == "float":
+            if value in (None, "", "null"):
+                continue
+            try:
+                fval = float(value)
+            except (TypeError, ValueError):
+                return None, f"valor float inválido para {arg}: {value!r}"
+            cmd.extend([arg, str(fval)])
+            used_labels.append(f"{arg}={fval}")
+        elif t in ("str", "csv"):
+            sval = "" if value is None else str(value).strip()
+            if not sval:
+                continue
+            cmd.extend([arg, sval])
+            used_labels.append(f"{arg}={sval}")
+        elif t == "choice":
+            sval = "" if value is None else str(value).strip()
+            if not sval:
+                continue
+            if f.get("choices") and sval not in f["choices"]:
+                return None, f"choice inválido para {arg}: {sval!r}"
+            cmd.extend([arg, sval])
+            used_labels.append(f"{arg}={sval}")
+        else:
+            return None, f"tipo de flag no soportado: {t}"
+
+    label = spec["name"]
+    if used_labels:
+        label += "  ·  " + " ".join(used_labels)
+    return cmd, label
+
+
+# ---------------------------------------------------------------------------
+# Feedback / curation helpers
+# ---------------------------------------------------------------------------
+
+def _load_items() -> list[dict]:
+    items: list[dict] = []
+    if not ITEMS_PATH.exists():
+        return items
+    with ITEMS_PATH.open("r", encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                items.append(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+    return items
+
+
+def _write_items(items: list[dict]) -> None:
+    tmp = ITEMS_PATH.with_suffix(".jsonl.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for it in items:
+            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+    tmp.replace(ITEMS_PATH)
+
+
+def _find_item_by_url(items: list[dict], url: str) -> dict | None:
+    for it in items:
+        if it.get("url") == url:
+            return it
+    return None
+
+
+def _log_feedback(url: str, reason: str, action: str = "feedback",
+                  extra: dict | None = None) -> None:
     now = datetime.now(timezone.utc).isoformat()
-
-    # Look up full item data from items.jsonl
     item: dict = {}
     if ITEMS_PATH.exists():
         with ITEMS_PATH.open("r", encoding="utf-8") as fh:
@@ -56,60 +351,688 @@ def _log_feedback(url: str, reason: str) -> None:
                 except json.JSONDecodeError:
                     pass
 
-    entry = {**item, "reason": reason, "submitted_at": now}
-    # Fallback: if item not found in jsonl, at least store the url
+    entry = {**item, "action": action, "reason": reason, "submitted_at": now}
     if not item:
         entry["url"] = url
+    if extra:
+        entry.update(extra)
 
     FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with FEEDBACK_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def _search_editions(query: str, limit: int = 15) -> list[dict]:
+    """Search edition_keys by series/edition display name."""
+    if not query or len(query) < 2:
+        return []
+    q = query.lower()
+    items = _load_items()
+    seen: dict[str, dict] = {}
+    for it in items:
+        ek = it.get("edition_key", "")
+        if not ek or ek in seen:
+            continue
+        sd = (it.get("series_display") or "").lower()
+        ed = (it.get("edition_display") or "").lower()
+        sk = (it.get("series_key") or "").lower()
+        if q in sd or q in ed or q in sk or q in ek:
+            vol_count = sum(1 for i in items if i.get("edition_key") == ek)
+            seen[ek] = {
+                "edition_key": ek,
+                "series_display": it.get("series_display", ""),
+                "edition_display": it.get("edition_display", ""),
+                "publisher": it.get("publisher", ""),
+                "country": it.get("country", ""),
+                "volume_count": vol_count,
+            }
+        if len(seen) >= limit:
+            break
+    return list(seen.values())
+
+
+def _apply_move(item_url: str, to_edition_key: str, reason: str) -> str:
+    """Move item to a different edition. Returns status message."""
+    items = _load_items()
+    item = _find_item_by_url(items, item_url)
+    if not item:
+        return "Item no encontrado"
+
+    old_ek = item.get("edition_key", "")
+
+    target_items = [i for i in items if i.get("edition_key") == to_edition_key]
+    if not target_items:
+        return f"Edición destino '{to_edition_key}' no existe"
+
+    ref = target_items[0]
+    item["edition_key"] = to_edition_key
+    item["edition_display"] = ref.get("edition_display", "")
+    item["series_key"] = ref.get("series_key", item.get("series_key", ""))
+    item["series_display"] = ref.get("series_display", item.get("series_display", ""))
+    vol = (item.get("volume") or "").strip()
+    item["cluster_key"] = f"edition:{to_edition_key}|{vol}"
+
+    _write_items(items)
+    _log_feedback(item_url, reason, action="move",
+                  extra={"from_edition": old_ek, "to_edition": to_edition_key})
+    return "ok"
+
+
+def _apply_merge_items(item_url: str, duplicate_of_url: str,
+                       reason: str) -> str:
+    """Merge two duplicate items: keep the better one, remove the other."""
+    items = _load_items()
+    item_a = _find_item_by_url(items, item_url)
+    item_b = _find_item_by_url(items, duplicate_of_url)
+    if not item_a:
+        return "Item origen no encontrado"
+    if not item_b:
+        return "Item destino no encontrado"
+
+    keep, drop = (item_b, item_a) if (item_b.get("score", 0) >=
+                  item_a.get("score", 0)) else (item_a, item_b)
+
+    for field in ("isbn", "price", "author", "release_date", "image_url",
+                  "image_local", "description"):
+        if not keep.get(field) and drop.get(field):
+            keep[field] = drop[field]
+
+    keep_imgs = keep.get("images") or []
+    drop_imgs = drop.get("images") or []
+    existing_urls = {img.get("url") for img in keep_imgs}
+    for img in drop_imgs:
+        if img.get("url") not in existing_urls:
+            keep_imgs.append(img)
+    if keep_imgs:
+        keep["images"] = keep_imgs
+
+    items = [i for i in items if i.get("url") != drop.get("url")]
+    _write_items(items)
+    _log_feedback(item_url, reason, action="merge",
+                  extra={"duplicate_of": duplicate_of_url,
+                         "kept_url": keep.get("url"),
+                         "dropped_url": drop.get("url")})
+    return "ok"
+
+
+def _apply_remove(item_url: str, reason: str) -> str:
+    """Remove item from its edition (set standalone edition_key)."""
+    items = _load_items()
+    item = _find_item_by_url(items, item_url)
+    if not item:
+        return "Item no encontrado"
+
+    old_ek = item.get("edition_key", "")
+    item["edition_key"] = ""
+    item["edition_display"] = ""
+    item["cluster_key"] = f"url:{item_url}"
+
+    _write_items(items)
+    _log_feedback(item_url, reason, action="remove",
+                  extra={"from_edition": old_ek})
+    return "ok"
+
+
+# ---------------------------------------------------------------------------
+# Image manager helpers
+# ---------------------------------------------------------------------------
+
+def _image_file_sizes() -> dict[str, int]:
+    """Return {filename: size_bytes} for all files in data/images/."""
+    sizes: dict[str, int] = {}
+    if not IMAGES_DIR.exists():
+        return sizes
+    for p in IMAGES_DIR.iterdir():
+        if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".tmp"):
+            sizes[p.name] = p.stat().st_size
+    return sizes
+
+
+def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[str]]:
+    """Rewrite item's images[] in items.jsonl.
+
+    Returns (success, deleted_files) — deleted_files lists local filenames
+    that were in the old images but not in the new ones AND are not referenced
+    by any other item. Those files are deleted from disk.
+    """
+    if not ITEMS_PATH.exists():
+        return False, []
+    lines = ITEMS_PATH.read_text(encoding="utf-8").splitlines()
+    found = False
+    old_locals: set[str] = set()
+    new_locals: set[str] = {img.get("local", "") for img in images} - {""}
+    new_lines = []
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            new_lines.append(raw)
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError:
+            new_lines.append(raw)
+            continue
+        if row.get("url") == item_url:
+            found = True
+            for img in row.get("images", []):
+                loc = img.get("local", "")
+                if loc:
+                    old_locals.add(loc)
+            if row.get("image_local"):
+                old_locals.add(row["image_local"])
+            row["images"] = images
+            if images:
+                cover = images[0]
+                row["image_url"] = cover.get("url", "")
+                row["image_local"] = cover.get("local", "")
+            else:
+                row["image_url"] = ""
+                row["image_local"] = ""
+            new_lines.append(json.dumps(row, ensure_ascii=False))
+        else:
+            new_lines.append(raw)
+    if not found:
+        return False, []
+    tmp = ITEMS_PATH.with_suffix(".tmp")
+    tmp.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    tmp.replace(ITEMS_PATH)
+
+    removed_locals = old_locals - new_locals
+    deleted_files: list[str] = []
+    if removed_locals:
+        all_referenced: set[str] = set()
+        for raw in tmp.parent.joinpath("items.jsonl").read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            loc = row.get("image_local", "")
+            if loc:
+                all_referenced.add(loc)
+            for img in row.get("images", []):
+                loc = img.get("local", "")
+                if loc:
+                    all_referenced.add(loc)
+        for orphan in removed_locals:
+            if orphan not in all_referenced:
+                p = IMAGES_DIR / orphan
+                if p.exists():
+                    p.unlink()
+                    deleted_files.append(orphan)
+    return True, deleted_files
+
+
+def _download_image_to_store(image_url: str) -> tuple[str, str]:
+    """Download image to data/images/. Returns (filename, '') on success or ('', error_msg) on failure."""
+    import hashlib
+    import urllib.request
+
+    if not image_url or not image_url.strip().startswith(("http://", "https://")):
+        return "", "URL invalida"
+    image_url = image_url.strip()
+
+    _MAGIC = {
+        b"\xff\xd8\xff": ".jpg",
+        b"\x89PNG\r\n\x1a\n": ".png",
+        b"GIF87a": ".gif", b"GIF89a": ".gif",
+    }
+
+    def _ext(body: bytes) -> str:
+        for sig, ext in _MAGIC.items():
+            if body[:len(sig)] == sig:
+                return ext
+        if len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WEBP":
+            return ".webp"
+        if len(body) >= 12 and body[4:12] in (b"ftypavif", b"ftypavis"):
+            return ".avif"
+        return ""
+
+    stem = hashlib.sha256(image_url.encode("utf-8")).hexdigest()[:16]
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+    for existing in sorted(IMAGES_DIR.glob(stem + ".*")):
+        if existing.is_file() and not existing.name.endswith(".tmp"):
+            return existing.name, ""
+
+    try:
+        req = urllib.request.Request(image_url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read(12 * 1024 * 1024)
+    except Exception as e:
+        return "", f"Error descargando: {e}"
+
+    ext = _ext(body)
+    if not ext:
+        return "", "El archivo descargado no es una imagen valida (HTML de error o formato desconocido)"
+
+    filename = stem + ext
+    dest = IMAGES_DIR / filename
+    tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(body)
+        tmp.replace(dest)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        return "", f"Error escribiendo archivo: {e}"
+    return filename, ""
+
+
+def _scrape_images_from_page(page_url: str) -> list[dict]:
+    """Fetch a page and extract image URLs."""
+    import re
+    import urllib.request
+    try:
+        req = urllib.request.Request(page_url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    from urllib.parse import urljoin
+    results: list[dict] = []
+    seen: set[str] = set()
+    for m in re.finditer(r'<img[^>]+>', html, re.I):
+        tag = m.group(0)
+        url = ""
+        alt = ""
+        for attr in ("data-src", "data-lazy-src", "data-large_image", "data-zoom-image", "src"):
+            am = re.search(rf'{attr}\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+            if am:
+                u = am.group(1).strip()
+                if u and not u.startswith("data:") and u.lower().startswith(("http", "//")):
+                    url = urljoin(page_url, u)
+                    break
+        am = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', tag, re.I)
+        if am:
+            alt = am.group(1).strip()
+        if url and url not in seen:
+            ext = url.rsplit(".", 1)[-1].lower().split("?")[0]
+            if ext in ("jpg", "jpeg", "png", "webp", "gif", "avif"):
+                seen.add(url)
+                results.append({"url": url, "alt": alt})
+    return results
+
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
+
 class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
-    """Sirve la raíz del proyecto. `/` (y `/index.html`) redirige a `/web/`."""
+    """Sirve la raíz del proyecto + todos los endpoints /api/*."""
 
-    def do_GET(self) -> None:
-        if self.path in ("/", "/index.html", ""):
-            self.send_response(302)
-            self.send_header("Location", "/web/")
-            self.end_headers()
-            return
-        return super().do_GET()
+    def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A002
+        sys.stderr.write("[serve] " + (fmt % args) + "\n")
 
-    def do_POST(self) -> None:
-        if self.path != "/api/feedback":
+    # ---------- helpers ----------
+
+    def _serve_file(self, filepath: Path) -> None:
+        """Sirve un archivo directamente con el content-type correcto."""
+        import mimetypes
+        if not filepath.exists():
             self.send_error(404, "Not Found")
             return
+        ctype, _ = mimetypes.guess_type(str(filepath))
+        content = filepath.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype or "application/octet-stream")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        try:
+            self.wfile.write(content)
+        except BrokenPipeError:
+            pass
 
+    def _json(self, status: int, payload: Any) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+
+    def _read_json(self, max_bytes: int = 5_000_000) -> Any:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > max_bytes:
+            raise ValueError("body vacío u oversized")
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    # ---------- GET ----------
+
+    def do_GET(self) -> None:
+        # Páginas HTML accesibles directamente en la raíz (sin /web/ en la URL)
+        _HTML_ALIASES = {
+            "/":                  ROOT / "web" / "index.html",
+            "/index.html":        ROOT / "web" / "index.html",
+            "/panel.html":        ROOT / "web" / "panel.html",
+            "/cover-preview.html": ROOT / "web" / "cover-preview.html",
+            "/image-manager.html": ROOT / "web" / "image-manager.html",
+        }
+        if self.path in _HTML_ALIASES:
+            self._serve_file(_HTML_ALIASES[self.path])
+            return
+
+        # Curation API (GET)
+        if self.path.startswith("/api/editions/search?"):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            q = (qs.get("q") or [""])[0]
+            results = _search_editions(q)
+            self._json(200, {"results": results})
+            return
+
+        # Panel API
+        if self.path == "/api/health":
+            self._json(200, {"ok": True, "ts": datetime.now(timezone.utc).isoformat()})
+            return
+        if self.path == "/api/image-file-sizes":
+            self._json(200, _image_file_sizes())
+            return
+        if self.path == "/api/scripts":
+            self._json(200, {"scripts": SCRIPTS})
+            return
+        if self.path == "/api/jobs":
+            self._json(200, {"jobs": [j.to_dict() for j in JOBS.list()]})
+            return
+        if self.path.startswith("/api/jobs/"):
+            rest = self.path[len("/api/jobs/"):]
+            parts = rest.split("/", 1)
+            jid = parts[0]
+            sub = parts[1] if len(parts) > 1 else ""
+            job = JOBS.get(jid)
+            if not job:
+                self._json(404, {"error": "job not found"})
+                return
+            if sub == "":
+                self._json(200, job.to_dict(include_lines=True))
+                return
+            if sub == "stream":
+                self._stream_job(job)
+                return
+            self._json(404, {"error": "endpoint desconocido"})
+            return
+
+        # Archivos estáticos (web/, data/, reports/, etc.)
+        return super().do_GET()
+
+    # ---------- POST ----------
+
+    def do_POST(self) -> None:
+        # Panel API
+        if self.path == "/api/run":
+            self._handle_run()
+            return
+        if self.path.startswith("/api/jobs/") and self.path.endswith("/stop"):
+            jid = self.path[len("/api/jobs/"):-len("/stop")]
+            ok = JOBS.stop(jid)
+            self._json(200 if ok else 400, {"ok": ok})
+            return
+
+        # Catalog API
+        if self.path == "/api/feedback":
+            self._handle_feedback()
+            return
+        if self.path == "/api/curation/move":
+            self._handle_curation_move()
+            return
+        if self.path == "/api/curation/merge":
+            self._handle_curation_merge()
+            return
+        if self.path == "/api/curation/remove":
+            self._handle_curation_remove()
+            return
+        if self.path == "/api/save-cover-preview":
+            self._handle_save_cover_preview()
+            return
+
+        # Image manager API
+        if self.path == "/api/image-manager/save":
+            self._handle_image_save()
+            return
+        if self.path == "/api/image-manager/download":
+            self._handle_image_download()
+            return
+        if self.path == "/api/image-manager/scrape":
+            self._handle_image_scrape()
+            return
+
+        self.send_error(404, "Not Found")
+
+    # ---------- Panel: run + SSE ----------
+
+    def _handle_run(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=200_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+
+        script_id = (payload.get("script_id") or "").strip()
+        flags = payload.get("flags") or {}
+        if not isinstance(flags, dict):
+            self._json(400, {"error": "'flags' debe ser dict"})
+            return
+
+        cmd, label = build_command(script_id, flags)
+        if cmd is None:
+            self._json(400, {"error": label})
+            return
+
+        # Resolver python del venv si existe.
+        if cmd and cmd[0] == ".venv/bin/python":
+            candidate = ROOT / ".venv" / "bin" / "python"
+            cmd[0] = str(candidate) if candidate.exists() else sys.executable
+
+        job = JOBS.start(script_id, cmd, label, cwd=ROOT)
+        self._json(200, {"job_id": job.id, "label": label, "command": cmd})
+
+    def _stream_job(self, job: Job) -> None:
+        """Server-Sent Events stream del stdout del job."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        sent = 0
+        last_keepalive = time.monotonic()
+        try:
+            while True:
+                with job.cv:
+                    while len(job.lines) <= sent and job.status == "running":
+                        job.cv.wait(timeout=15)
+                    snapshot = list(job.lines)[sent:]
+                    finished = job.status != "running"
+
+                for line in snapshot:
+                    data = json.dumps({"line": line}, ensure_ascii=False)
+                    self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                sent += len(snapshot)
+
+                now = time.monotonic()
+                if not snapshot and not finished and (now - last_keepalive) > 14:
+                    self.wfile.write(b": keepalive\n\n")
+                    last_keepalive = now
+                elif snapshot:
+                    last_keepalive = now
+
+                self.wfile.flush()
+
+                if finished:
+                    end_data = json.dumps({
+                        "status": job.status,
+                        "exit_code": job.exit_code,
+                        "ended_at": job.ended_at,
+                    }, ensure_ascii=False)
+                    self.wfile.write(b"event: end\n")
+                    self.wfile.write(f"data: {end_data}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    return
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    # ---------- Catalog handlers ----------
+
+    def _handle_feedback(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > 100_000:
             self.send_error(400, "Empty or oversized body")
             return
-
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             self.send_error(400, f"Invalid JSON: {e}")
             return
 
-        title = (payload.get("title") or "").strip()
-        url = (payload.get("url") or "").strip()
+        title  = (payload.get("title") or "").strip()
+        url    = (payload.get("url") or "").strip()
         reason = (payload.get("reason") or "").strip()
 
         if not title or not url or not reason:
             self.send_error(400, "Missing 'title', 'url' or 'reason'")
             return
 
-        # Log feedback (item stays in catalog)
-        _log_feedback(url, reason)
+        _log_feedback(url, reason, action="feedback")
+        self._json(200, {"ok": True})
 
-        body = json.dumps({"ok": True}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    def _handle_curation_move(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        url = (payload.get("url") or "").strip()
+        to_edition = (payload.get("to_edition") or "").strip()
+        reason = (payload.get("reason") or "").strip()
+        if not url or not to_edition:
+            self._json(400, {"error": "Missing 'url' or 'to_edition'"})
+            return
+        result = _apply_move(url, to_edition, reason or "moved via UI")
+        if result == "ok":
+            self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_curation_merge(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        url = (payload.get("url") or "").strip()
+        duplicate_of = (payload.get("duplicate_of") or "").strip()
+        reason = (payload.get("reason") or "").strip()
+        if not url or not duplicate_of:
+            self._json(400, {"error": "Missing 'url' or 'duplicate_of'"})
+            return
+        result = _apply_merge_items(url, duplicate_of, reason or "merged via UI")
+        if result == "ok":
+            self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_curation_remove(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        url = (payload.get("url") or "").strip()
+        reason = (payload.get("reason") or "").strip()
+        if not url:
+            self._json(400, {"error": "Missing 'url'"})
+            return
+        result = _apply_remove(url, reason or "removed via UI")
+        if result == "ok":
+            self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_save_cover_preview(self) -> None:
+        try:
+            entries = self._read_json(max_bytes=5_000_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self.send_error(400, f"Invalid body: {e}")
+            return
+        if not isinstance(entries, list):
+            self.send_error(400, "Expected JSON array")
+            return
+        dst = ROOT / "data" / "cover_preview.json"
+        dst.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._json(200, {"ok": True, "saved": len(entries)})
+
+    # ---------- Image manager handlers ----------
+
+    def _handle_image_save(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=1_000_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        item_url = (payload.get("item_url") or "").strip()
+        images = payload.get("images")
+        if not item_url or not isinstance(images, list):
+            self._json(400, {"error": "Missing 'item_url' or 'images'"})
+            return
+        ok, deleted = _update_item_images(item_url, images)
+        if ok:
+            self._json(200, {"ok": True, "deleted_files": deleted})
+        else:
+            self._json(404, {"error": "Item not found"})
+
+    def _handle_image_download(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        image_url = (payload.get("image_url") or "").strip()
+        if not image_url:
+            self._json(400, {"error": "Missing 'image_url'"})
+            return
+        local, err = _download_image_to_store(image_url)
+        if local:
+            file_size = 0
+            try:
+                file_size = (IMAGES_DIR / local).stat().st_size
+            except OSError:
+                pass
+            self._json(200, {"ok": True, "local": local, "url": image_url, "file_size": file_size})
+        else:
+            self._json(422, {"error": err or "Failed to download image"})
+
+    def _handle_image_scrape(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        page_url = (payload.get("page_url") or "").strip()
+        if not page_url:
+            self._json(400, {"error": "Missing 'page_url'"})
+            return
+        images = _scrape_images_from_page(page_url)
+        self._json(200, {"images": images, "count": len(images)})
+
+
+# ---------------------------------------------------------------------------
+# Server — threaded para soportar SSE + peticiones concurrentes
+# ---------------------------------------------------------------------------
+
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
 
 
 def main() -> int:
@@ -118,19 +1041,17 @@ def main() -> int:
     parser.add_argument("--bind", default="0.0.0.0")
     args = parser.parse_args()
 
-    # Servir desde la raíz del proyecto (parent de scripts/).
-    root = Path(__file__).resolve().parent.parent
-    os.chdir(root)
+    os.chdir(ROOT)
 
-    print(f"==> Manga Watch Browser (público)")
-    print(f"    Raíz:    {root}")
-    print(f"    Server:  http://localhost:{args.port}/")
-    print(f"    (redirige a /web/ — los datos están en /data/items.jsonl)")
+    print("==> Manga Watch")
+    print(f"    Raíz:    {ROOT}")
+    print(f"    URL:     http://localhost:{args.port}/")
+    print(f"    Panel:   http://localhost:{args.port}/web/panel.html")
+    if not _REGISTRY_OK:
+        print("    ⚠️  script_registry no encontrado — /api/run deshabilitado")
     print()
 
-    # Permite reusar el puerto rápido tras Ctrl+C (evita 'Address already in use').
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer((args.bind, args.port), MangaWatchHandler) as httpd:
+    with ThreadedTCPServer((args.bind, args.port), MangaWatchHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

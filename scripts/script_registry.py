@@ -570,6 +570,44 @@ SCRIPTS: list[dict[str, Any]] = [
                 },
             },
             {
+                "id": "shueisha_delta",
+                "label": "🇯🇵 Shueisha Books - nuevos volúmenes",
+                "desc": (
+                    "Busca nuevos volúmenes en series Shueisha (ONE PIECE Magazine, "
+                    "Color Walk, All Faces, Doors). Navega los links '次巻' desde "
+                    "los últimos volúmenes conocidos. Rápido (~10 requests)."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "shueisha",
+                },
+            },
+            {
+                "id": "shueisha_full",
+                "label": "🇯🇵 Shueisha Books - catálogo completo",
+                "desc": (
+                    "Recorre series completas + standalone (databooks, artbooks, "
+                    "cookbooks). ~40-50 pages × 0.5s = ~25s. Cubre el catálogo "
+                    "histórico de publicaciones especiales Shueisha para One Piece."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "shueisha",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
+                "id": "viz_full",
+                "label": "🇺🇸 VIZ Artbooks - catálogo completo",
+                "desc": (
+                    "Descarga el catálogo de VIZ Media: Color Walk Compendiums, "
+                    "Pirate Recipes, Set Sail artbook, companion books. "
+                    "Catálogo chico (~20 items), una sola pasada."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "viz",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
                 "id": "listadomanga_collections_piloto",
                 "label": "🇪🇸 Listado Manga - colecciones (piloto Fase 1, primeros 100 ids)",
                 "desc": (

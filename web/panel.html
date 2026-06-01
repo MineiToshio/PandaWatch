@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manga Watch — Panel de control</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root {
+    --accent: #d63384;
+    --accent-soft: #fce4ec;
+    --bg: #fafaf7;
+    --code-bg: #0f172a;
+    --code-fg: #e2e8f0;
+  }
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .accent { color: var(--accent); }
+  .bg-accent { background: var(--accent); }
+  .bg-accent-soft { background: var(--accent-soft); }
+  .border-accent { border-color: var(--accent); }
+  .script-card {
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 2px solid transparent;
+  }
+  .script-card:hover {
+    background: var(--accent-soft);
+  }
+  .script-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .toggle-switch {
+    appearance: none;
+    width: 44px;
+    height: 24px;
+    background: #d1d5db;
+    border-radius: 12px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+  }
+  .toggle-switch:checked { background: var(--accent); }
+  .toggle-switch::after {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .toggle-switch:checked::after { left: 22px; }
+
+  /* Console */
+  .console {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .console-line {
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 0 12px;
+  }
+  .console-line.err { color: #fca5a5; }
+  .console-line.warn { color: #fcd34d; }
+  .console-line.info { color: #93c5fd; }
+  .console-line.ok { color: #6ee7b7; }
+  .console-line.meta { color: #94a3b8; font-style: italic; }
+
+  /* Subtle scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #999; }
+  .console ::-webkit-scrollbar-thumb { background: #475569; }
+
+  /* Status dot */
+  .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dot-running {
+    background: #f59e0b;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .dot-exited { background: #22c55e; }
+  .dot-error  { background: #ef4444; }
+  .dot-killed { background: #94a3b8; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  /* Tooltip */
+  .help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #cbd5e1;
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    cursor: help;
+    flex-shrink: 0;
+  }
+
+  details.advanced > summary {
+    cursor: pointer;
+    user-select: none;
+    color: #6b7280;
+    font-size: 13px;
+    padding: 8px 0;
+  }
+  details.advanced > summary:hover { color: var(--accent); }
+
+  /* Sticky right panel solo cuando está side-by-side (2xl: 1536px+). */
+  @media (min-width: 1536px) {
+    .right-stack {
+      position: sticky;
+      top: 96px;
+      max-height: calc(100vh - 112px);
+    }
+  }
+</style>
+</head>
+<body x-data="controlPanel()" x-init="init()" class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-30">
+  <div class="mx-auto px-4 lg:px-6 py-3 lg:py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold accent">Panel de control</h1>
+      <p class="text-sm text-gray-500">
+        Ejecutá los scripts del proyecto sin acordarte de flags. Cada
+        opción tiene su explicación — pasá el mouse por el <span class="help-icon" style="font-size:9px">?</span> si dudás.
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <a href="./cover-preview.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300">
+        🖼 Revisión de portadas
+      </a>
+      <a href="./index.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300">
+        ← Catálogo
+      </a>
+      <div class="text-[11px] text-gray-400 text-right">
+        🔒 Solo localhost<br>no se despliega
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ERROR -->
+<template x-if="loadError">
+  <div class="mx-auto p-4 lg:p-6">
+    <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4">
+      <strong>No se pudo cargar la lista de scripts.</strong>
+      <p class="mt-1 text-sm" x-text="loadError"></p>
+      <p class="mt-2 text-sm">Asegurate de estar corriendo el server admin con
+        <code class="bg-red-100 px-2 py-0.5 rounded">.venv/bin/python scripts/admin_serve.py</code>
+        (o usá <code class="bg-red-100 px-2 py-0.5 rounded">./scripts/run_local.sh</code> para lanzar todo).
+      </p>
+    </div>
+  </div>
+</template>
+
+<!-- MAIN -->
+<div class="mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-4 lg:gap-6"
+     x-show="!loadError">
+
+  <!-- ============== COLUMNA IZQUIERDA: lista de scripts ============== -->
+  <aside class="space-y-5 self-start">
+    <template x-for="category in categories" :key="category">
+      <div>
+        <h2 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2 px-1"
+            x-text="category"></h2>
+        <div class="space-y-2">
+          <template x-for="s in scriptsByCategory[category]" :key="s.id">
+            <div class="script-card rounded-lg bg-white border border-gray-200 p-3"
+                 :class="selected && selected.id === s.id ? 'selected' : ''"
+                 @click="selectScript(s.id)">
+              <div class="flex items-start gap-3">
+                <span class="text-2xl leading-none" x-text="s.icon"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="font-semibold text-sm text-gray-900" x-text="s.name"></div>
+                  <div class="text-xs text-gray-500 mt-0.5" x-text="s.tagline"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Historial de jobs -->
+    <div>
+      <h2 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2 px-1">
+        Historial reciente
+      </h2>
+      <div class="space-y-1.5" x-show="jobsHistory.length">
+        <template x-for="j in jobsHistory" :key="j.id">
+          <div class="bg-white border border-gray-200 rounded p-2 text-xs cursor-pointer hover:border-pink-300"
+               @click="attachToJob(j.id)">
+            <div class="flex items-center justify-between gap-2">
+              <span class="truncate text-gray-700" x-text="jobLabelShort(j)"></span>
+              <span :class="'dot dot-' + j.status"></span>
+            </div>
+            <div class="text-gray-400 mt-0.5" x-text="formatJobTime(j)"></div>
+          </div>
+        </template>
+      </div>
+      <p class="text-xs text-gray-400 px-1" x-show="!jobsHistory.length">
+        Aún no corriste nada en esta sesión.
+      </p>
+    </div>
+  </aside>
+
+  <!-- ============== COLUMNA DERECHA: detalle + logs ============== -->
+  <main class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)] gap-4 lg:gap-6 min-w-0">
+
+    <!-- Detalle del script seleccionado -->
+    <section x-show="selected" class="space-y-4 min-w-0">
+      <!-- Header del script -->
+      <div class="bg-white rounded-lg border border-gray-200 p-5">
+        <div class="flex items-start gap-4">
+          <span class="text-4xl leading-none" x-text="selected?.icon"></span>
+          <div class="min-w-0 flex-1">
+            <h2 class="text-xl font-bold text-gray-900" x-text="selected?.name"></h2>
+            <p class="text-sm text-gray-600 mt-1" x-text="selected?.tagline"></p>
+          </div>
+        </div>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          <div class="bg-blue-50 border border-blue-100 rounded p-3">
+            <div class="font-semibold text-blue-900 mb-1">¿Qué hace?</div>
+            <p class="text-blue-800" x-text="selected?.what"></p>
+          </div>
+          <div class="bg-amber-50 border border-amber-100 rounded p-3">
+            <div class="font-semibold text-amber-900 mb-1">¿Cuándo usarlo?</div>
+            <p class="text-amber-800" x-text="selected?.when"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Presets -->
+      <div class="bg-white rounded-lg border border-gray-200 p-5"
+           x-show="selected && selected.presets && selected.presets.length">
+        <h3 class="text-sm font-semibold text-gray-900 mb-2">Recetas rápidas</h3>
+        <p class="text-xs text-gray-500 mb-3">
+          Cargá una receta para autocompletar los flags. Después podés ajustar
+          lo que quieras.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <template x-for="p in selected.presets" :key="p.id">
+            <button @click="applyPreset(p)"
+                    class="text-left border border-gray-200 hover:border-pink-400 hover:bg-pink-50
+                           rounded p-3 transition">
+              <div class="font-semibold text-sm text-gray-900" x-text="p.label"></div>
+              <div class="text-xs text-gray-600 mt-0.5" x-text="p.desc"></div>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Flags básicos -->
+      <div class="bg-white rounded-lg border border-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-gray-900">Opciones</h3>
+          <button @click="resetFlags()" class="text-xs text-gray-500 hover:text-pink-600">
+            ↺ Restablecer defaults
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          <template x-for="f in basicFlags" :key="f.arg">
+            <div>
+              <!-- Bool / toggle -->
+              <template x-if="f.type === 'bool'">
+                <label class="flex items-start gap-3 cursor-pointer">
+                  <input type="checkbox" class="toggle-switch mt-0.5"
+                         :checked="!!flagValues[f.arg]"
+                         @change="setFlag(f.arg, $event.target.checked)">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-medium text-sm text-gray-900" x-text="f.label"></span>
+                      <span class="help-icon" :title="f.help">?</span>
+                      <code class="text-[10px] text-gray-400" x-text="f.arg"></code>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1" x-text="f.help"></p>
+                  </div>
+                </label>
+              </template>
+
+              <!-- Number / text / csv / choice -->
+              <template x-if="f.type !== 'bool'">
+                <div>
+                  <label class="flex items-center gap-1.5 mb-1">
+                    <span class="font-medium text-sm text-gray-900" x-text="f.label"></span>
+                    <span class="help-icon" :title="f.help">?</span>
+                    <code class="text-[10px] text-gray-400" x-text="f.arg"></code>
+                  </label>
+                  <p class="text-xs text-gray-500 mb-1.5" x-text="f.help"></p>
+
+                  <template x-if="f.type === 'int' || f.type === 'float'">
+                    <input type="number" :step="f.type === 'float' ? '0.1' : '1'"
+                           :placeholder="f.placeholder || (f.default !== null ? 'default: ' + f.default : '')"
+                           :value="flagValues[f.arg] ?? ''"
+                           @input="setFlag(f.arg, $event.target.value)"
+                           class="w-full md:w-60 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-pink-400">
+                  </template>
+
+                  <template x-if="f.type === 'str' || f.type === 'csv'">
+                    <input type="text"
+                           :placeholder="f.placeholder || (f.default ? 'default: ' + f.default : 'vacío = sin restricción')"
+                           :value="flagValues[f.arg] ?? ''"
+                           @input="setFlag(f.arg, $event.target.value)"
+                           class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-pink-400">
+                  </template>
+
+                  <template x-if="f.type === 'choice'">
+                    <select :value="flagValues[f.arg] ?? ''"
+                            @change="setFlag(f.arg, $event.target.value)"
+                            class="px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-pink-400">
+                      <option value="">(no aplicar)</option>
+                      <template x-for="opt in f.choices" :key="opt">
+                        <option :value="opt" x-text="opt || '(vacío)'"></option>
+                      </template>
+                    </select>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Avanzados -->
+        <details class="advanced mt-5" x-show="advancedFlags.length">
+          <summary>
+            ▸ Mostrar opciones avanzadas
+            (<span x-text="advancedFlags.length"></span>)
+          </summary>
+          <div class="mt-3 space-y-4 border-t border-gray-100 pt-3">
+            <template x-for="f in advancedFlags" :key="f.arg">
+              <div>
+                <template x-if="f.type === 'bool'">
+                  <label class="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" class="toggle-switch mt-0.5"
+                           :checked="!!flagValues[f.arg]"
+                           @change="setFlag(f.arg, $event.target.checked)">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <span class="font-medium text-sm text-gray-900" x-text="f.label"></span>
+                        <span class="help-icon" :title="f.help">?</span>
+                        <code class="text-[10px] text-gray-400" x-text="f.arg"></code>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-1" x-text="f.help"></p>
+                    </div>
+                  </label>
+                </template>
+
+                <template x-if="f.type !== 'bool'">
+                  <div>
+                    <label class="flex items-center gap-1.5 mb-1">
+                      <span class="font-medium text-sm text-gray-900" x-text="f.label"></span>
+                      <span class="help-icon" :title="f.help">?</span>
+                      <code class="text-[10px] text-gray-400" x-text="f.arg"></code>
+                    </label>
+                    <p class="text-xs text-gray-500 mb-1.5" x-text="f.help"></p>
+
+                    <template x-if="f.type === 'int' || f.type === 'float'">
+                      <input type="number" :step="f.type === 'float' ? '0.1' : '1'"
+                             :placeholder="f.placeholder || (f.default !== null ? 'default: ' + f.default : '')"
+                             :value="flagValues[f.arg] ?? ''"
+                             @input="setFlag(f.arg, $event.target.value)"
+                             class="w-full md:w-60 px-3 py-1.5 text-sm border border-gray-300 rounded">
+                    </template>
+                    <template x-if="f.type === 'str' || f.type === 'csv'">
+                      <input type="text"
+                             :placeholder="f.placeholder || ''"
+                             :value="flagValues[f.arg] ?? ''"
+                             @input="setFlag(f.arg, $event.target.value)"
+                             class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded">
+                    </template>
+                    <template x-if="f.type === 'choice'">
+                      <select :value="flagValues[f.arg] ?? ''"
+                              @change="setFlag(f.arg, $event.target.value)"
+                              class="px-3 py-1.5 text-sm border border-gray-300 rounded">
+                        <option value="">(no aplicar)</option>
+                        <template x-for="opt in f.choices" :key="opt">
+                          <option :value="opt" x-text="opt || '(vacío)'"></option>
+                        </template>
+                      </select>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </details>
+      </div>
+
+      <!-- Preview del comando + botón ejecutar -->
+      <div class="bg-white rounded-lg border border-gray-200 p-5 space-y-3">
+        <div>
+          <div class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-1.5">
+            Comando que se va a ejecutar
+          </div>
+          <pre class="bg-gray-900 text-gray-100 text-xs rounded p-3 overflow-x-auto"><code x-text="previewCommand()"></code></pre>
+        </div>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button @click="runScript()"
+                  :disabled="running"
+                  class="bg-accent hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed
+                         text-white font-semibold px-6 py-2.5 rounded shadow-sm transition">
+            <span x-show="!running">▶ Ejecutar</span>
+            <span x-show="running">⏳ En curso…</span>
+          </button>
+          <button @click="copyCommand()" type="button"
+                  class="text-sm text-gray-600 hover:text-pink-600 underline">
+            <span x-text="copiedMsg || '📋 Copiar comando'"></span>
+          </button>
+          <button @click="stopJob()" x-show="running" type="button"
+                  class="text-sm text-red-600 hover:text-red-800 underline ml-auto">
+            ⏹ Detener
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Empty state -->
+    <section x-show="!selected" class="bg-white rounded-lg border border-gray-200 p-10 text-center text-gray-500">
+      <div class="text-5xl mb-3">👈</div>
+      <p>Elegí un script de la izquierda para empezar.</p>
+    </section>
+
+    <!-- Logs en vivo. Side-by-side al detalle en 2xl+; apilado debajo si no. -->
+    <section class="right-stack min-w-0">
+      <div class="bg-white rounded-lg border border-gray-200 overflow-hidden flex flex-col"
+           style="min-height: 600px;">
+        <header class="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+          <div class="flex items-center gap-2 min-w-0">
+            <template x-if="activeJob">
+              <span :class="'dot dot-' + activeJob.status"></span>
+            </template>
+            <span class="font-semibold text-sm text-gray-800 truncate"
+                  x-text="activeJob ? jobLabelShort(activeJob) : 'Consola de logs'"></span>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-gray-500">
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" x-model="autoscroll" class="cursor-pointer">
+              <span>Auto-scroll</span>
+            </label>
+            <button @click="clearConsole()" class="hover:text-pink-600">Limpiar</button>
+          </div>
+        </header>
+        <div class="console flex-1 overflow-y-auto py-2" x-ref="console" style="min-height: 500px; max-height: calc(100vh - 200px);">
+          <template x-for="(line, idx) in consoleLines" :key="idx">
+            <div :class="'console-line ' + lineClass(line)" x-text="line"></div>
+          </template>
+          <template x-if="!consoleLines.length">
+            <div class="text-gray-500 italic px-4 py-3 text-xs">
+              Sin output todavía. Elegí un script y dale ▶ Ejecutar.
+            </div>
+          </template>
+        </div>
+        <footer class="px-4 py-2 border-t border-gray-700 bg-gray-900 text-xs text-gray-400 flex items-center justify-between"
+                x-show="activeJob">
+          <span x-text="jobStatusLabel()"></span>
+          <span x-show="activeJob && activeJob.status !== 'running'"
+                x-text="'Exit code: ' + (activeJob?.exit_code ?? '—')"></span>
+        </footer>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// La API del panel está integrada en serve.py — misma URL base que el catálogo.
+const ADMIN_API = "";
+
+function controlPanel() {
+  return {
+    // Catálogo
+    scripts: [],
+    categories: [],
+    scriptsByCategory: {},
+    loadError: "",
+
+    // Selección actual
+    selected: null,
+    flagValues: {},     // {"--flag": value}
+
+    // Job activo + historial
+    activeJob: null,    // {id, label, status, exit_code, ...}
+    jobsHistory: [],    // [{id, label, status, ...}]
+    eventSource: null,
+    consoleLines: [],
+    autoscroll: true,
+    copiedMsg: "",
+
+    get running() {
+      return this.activeJob && this.activeJob.status === "running";
+    },
+    get basicFlags() {
+      return (this.selected?.flags || []).filter(f => !f.advanced);
+    },
+    get advancedFlags() {
+      return (this.selected?.flags || []).filter(f => f.advanced);
+    },
+
+    async init() {
+      try {
+        const r = await fetch(ADMIN_API + "/api/scripts");
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        this.scripts = data.scripts || [];
+        // Agrupar por categoría preservando orden de aparición.
+        const cats = [];
+        const grouped = {};
+        for (const s of this.scripts) {
+          if (!grouped[s.category]) {
+            grouped[s.category] = [];
+            cats.push(s.category);
+          }
+          grouped[s.category].push(s);
+        }
+        this.categories = cats;
+        this.scriptsByCategory = grouped;
+
+        // Restaurar selección de localStorage
+        const saved = localStorage.getItem("mw_selected_script");
+        if (saved && this.scripts.find(s => s.id === saved)) {
+          this.selectScript(saved);
+        } else if (this.scripts.length) {
+          this.selectScript(this.scripts[0].id);
+        }
+      } catch (e) {
+        this.loadError = e.message;
+      }
+    },
+
+    selectScript(id) {
+      const s = this.scripts.find(x => x.id === id);
+      if (!s) return;
+      this.selected = s;
+      localStorage.setItem("mw_selected_script", id);
+      // Cargar últimos valores de flags desde localStorage o defaults.
+      const saved = localStorage.getItem("mw_flags_" + id);
+      if (saved) {
+        try { this.flagValues = JSON.parse(saved); return; }
+        catch (e) { /* fall through */ }
+      }
+      this.resetFlags();
+    },
+
+    resetFlags() {
+      const values = {};
+      for (const f of (this.selected?.flags || [])) {
+        if (f.type === "bool") values[f.arg] = !!f.default;
+        else if (f.default !== null && f.default !== undefined) values[f.arg] = f.default;
+        else values[f.arg] = "";
+      }
+      this.flagValues = values;
+      this._persistFlags();
+    },
+
+    setFlag(arg, value) {
+      this.flagValues = { ...this.flagValues, [arg]: value };
+      this._persistFlags();
+    },
+
+    applyPreset(p) {
+      // Empieza con defaults y aplica los del preset encima.
+      this.resetFlags();
+      const values = { ...this.flagValues };
+      for (const [k, v] of Object.entries(p.values || {})) {
+        values[k] = v;
+      }
+      this.flagValues = values;
+      this._persistFlags();
+    },
+
+    _persistFlags() {
+      if (this.selected) {
+        localStorage.setItem("mw_flags_" + this.selected.id, JSON.stringify(this.flagValues));
+      }
+    },
+
+    _buildArgs() {
+      // Devuelve [cmd...] para preview Y dict de flags efectivos para enviar.
+      const flags = {};
+      const argv = [...(this.selected?.command || [])];
+      for (const f of (this.selected?.flags || [])) {
+        const v = this.flagValues[f.arg];
+        if (f.type === "bool") {
+          if (v) { flags[f.arg] = true; argv.push(f.arg); }
+        } else if (f.type === "int" || f.type === "float") {
+          if (v !== "" && v !== null && v !== undefined) {
+            flags[f.arg] = v;
+            argv.push(f.arg, String(v));
+          }
+        } else if (f.type === "str" || f.type === "csv" || f.type === "choice") {
+          const s = (v ?? "").toString().trim();
+          if (s) {
+            flags[f.arg] = s;
+            // Quote si tiene espacios
+            argv.push(f.arg, /\s/.test(s) ? `"${s}"` : s);
+          }
+        }
+      }
+      return { argv, flags };
+    },
+
+    previewCommand() {
+      if (!this.selected) return "";
+      return this._buildArgs().argv.join(" ");
+    },
+
+    async copyCommand() {
+      try {
+        await navigator.clipboard.writeText(this.previewCommand());
+        this.copiedMsg = "✅ Copiado";
+        setTimeout(() => this.copiedMsg = "", 1500);
+      } catch (e) {
+        this.copiedMsg = "❌ No se pudo copiar";
+        setTimeout(() => this.copiedMsg = "", 1500);
+      }
+    },
+
+    async runScript() {
+      if (!this.selected || this.running) return;
+      this.clearConsole();
+      const { flags } = this._buildArgs();
+      try {
+        const r = await fetch(ADMIN_API + "/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ script_id: this.selected.id, flags }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          this.consoleLines.push("[error] " + (data.error || "no se pudo lanzar"));
+          return;
+        }
+        this.attachToJob(data.job_id);
+      } catch (e) {
+        this.consoleLines.push("[error] " + e.message);
+      }
+    },
+
+    async attachToJob(jobId) {
+      // Cerrar stream actual
+      if (this.eventSource) {
+        this.eventSource.close();
+        this.eventSource = null;
+      }
+      this.clearConsole();
+
+      // Cargar SOLO la metadata del job (no las líneas — el SSE las entrega
+      // todas desde el principio al conectar).
+      try {
+        const r = await fetch(ADMIN_API + "/api/jobs/" + jobId);
+        if (r.ok) {
+          const j = await r.json();
+          delete j.lines;  // evita doble-render con el stream SSE
+          this.activeJob = j;
+          this._registerInHistory(j);
+        }
+      } catch (e) { /* ignore */ }
+
+      // Abrir SSE: el server reenvía todas las líneas bufferizadas + en vivo.
+      this.eventSource = new EventSource(ADMIN_API + "/api/jobs/" + jobId + "/stream");
+      this.eventSource.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.line !== undefined) {
+            this.consoleLines.push(data.line);
+            // Truncar si crece demasiado
+            if (this.consoleLines.length > 8000) {
+              this.consoleLines.splice(0, this.consoleLines.length - 6000);
+            }
+            this._scrollSoon();
+          }
+        } catch (e) { /* noop */ }
+      };
+      this.eventSource.addEventListener("end", (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (this.activeJob) {
+            this.activeJob.status = data.status;
+            this.activeJob.exit_code = data.exit_code;
+            this.activeJob.ended_at = data.ended_at;
+          }
+          // Re-render historial
+          this._refreshHistory();
+        } catch (e) { /* noop */ }
+        this.eventSource.close();
+        this.eventSource = null;
+      });
+      this.eventSource.onerror = () => {
+        // Cerrar silenciosamente; el server cierra al terminar.
+        if (this.eventSource) {
+          this.eventSource.close();
+          this.eventSource = null;
+        }
+      };
+    },
+
+    async stopJob() {
+      if (!this.activeJob) return;
+      try {
+        await fetch(ADMIN_API + "/api/jobs/" + this.activeJob.id + "/stop", { method: "POST" });
+      } catch (e) { /* ignore */ }
+    },
+
+    clearConsole() {
+      this.consoleLines = [];
+    },
+
+    _scrollSoon() {
+      if (!this.autoscroll) return;
+      requestAnimationFrame(() => {
+        const c = this.$refs.console;
+        if (c) c.scrollTop = c.scrollHeight;
+      });
+    },
+
+    lineClass(line) {
+      const s = String(line);
+      if (/\[ERROR/i.test(s) || /Traceback/.test(s) || /^\s*Error/.test(s)) return "err";
+      if (/\[WARN/i.test(s) || /^WARN/.test(s)) return "warn";
+      if (/\[OK\]/.test(s) || /✅/.test(s)) return "ok";
+      if (/\[INFO/.test(s) || /^==/.test(s)) return "info";
+      if (/^\[serve\.py/.test(s) || /^\[\d+\/\d+\]/.test(s)) return "meta";
+      return "";
+    },
+
+    _registerInHistory(j) {
+      // Inserta o actualiza j en jobsHistory
+      const idx = this.jobsHistory.findIndex(x => x.id === j.id);
+      const entry = {
+        id: j.id, label: j.label, script_id: j.script_id,
+        status: j.status, started_at: j.started_at, ended_at: j.ended_at,
+        exit_code: j.exit_code,
+      };
+      if (idx >= 0) this.jobsHistory[idx] = entry;
+      else this.jobsHistory.unshift(entry);
+      if (this.jobsHistory.length > 15) this.jobsHistory.length = 15;
+    },
+
+    async _refreshHistory() {
+      try {
+        const r = await fetch(ADMIN_API + "/api/jobs");
+        if (r.ok) {
+          const data = await r.json();
+          // Ordenar más recientes primero
+          this.jobsHistory = (data.jobs || []).reverse().slice(0, 15);
+        }
+      } catch (e) { /* ignore */ }
+    },
+
+    jobLabelShort(j) {
+      const label = j.label || j.script_id || j.id;
+      return label.length > 60 ? label.slice(0, 57) + "…" : label;
+    },
+
+    formatJobTime(j) {
+      try {
+        const d = new Date(j.started_at);
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) +
+          (j.exit_code !== null && j.exit_code !== undefined ? " · exit " + j.exit_code : "");
+      } catch (e) { return j.started_at || ""; }
+    },
+
+    jobStatusLabel() {
+      if (!this.activeJob) return "";
+      const m = {
+        running: "⏳ En ejecución…",
+        exited: "✅ Finalizado correctamente",
+        error: "❌ Falló",
+        killed: "⏹ Detenido por el usuario",
+      };
+      return m[this.activeJob.status] || this.activeJob.status;
+    },
+  };
+}
+</script>
+
+</body>
+</html>

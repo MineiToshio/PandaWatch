@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PandaWatch — Revisión de portadas</title>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
+          --muted: #71717a; --green: #22c55e; --red: #ef4444; --accent: #e84393;
+          --yellow: #eab308; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
+         color: var(--text); padding: 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.3rem; }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; line-height: 1.5; }
+  .stats { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+          padding: 0.6rem 1rem; font-size: 0.85rem; }
+  .actions { margin-bottom: 1.5rem; display: flex; gap: 0.8rem; flex-wrap: wrap; }
+  button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+           padding: 0.5rem 1.2rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+  button:hover { opacity: 0.9; }
+  button.outline { background: transparent; border: 1px solid var(--border); color: var(--text);
+                   font-weight: 400; }
+  button.danger { background: var(--red); }
+  button.success { background: var(--green); color: #000; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; }
+  .card { background: var(--card); border: 2px solid var(--yellow); border-radius: 10px;
+          overflow: hidden; transition: all 0.2s; }
+  .card.approved { border-color: var(--green); }
+  .card.rejected { border-color: var(--red); opacity: 0.5; }
+  .card-header { display: flex; justify-content: space-between; align-items: center;
+                 padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
+  .card-title { font-size: 0.8rem; font-weight: 600; overflow: hidden;
+                text-overflow: ellipsis; max-width: 65%; }
+  .card-title a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .card-title a:hover { text-decoration: underline; }
+  .card-status { font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.5rem;
+                 border-radius: 4px; white-space: nowrap; }
+  .card-status.ok { background: var(--green); color: #000; }
+  .card-status.bad { background: var(--red); color: #fff; }
+  .card-status.pending { background: var(--yellow); color: #000; }
+  .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .img-box { display: flex; flex-direction: column; align-items: center; padding: 0.5rem;
+             min-height: 190px; justify-content: center; }
+  .img-box img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 4px; }
+  .img-box .label { font-size: 0.65rem; color: var(--muted); margin-top: 0.3rem; text-align: center; }
+  .img-box .pixels { font-size: 0.7rem; font-weight: 600; }
+  .img-box .pixels.good { color: var(--green); }
+  .img-box .pixels.bad { color: var(--red); }
+  .gain { background: var(--green); color: #000; font-size: 0.65rem; font-weight: 700;
+          padding: 0.15rem 0.4rem; border-radius: 4px; margin-left: 0.3rem; }
+  .card-meta { padding: 0.5rem 0.8rem; font-size: 0.7rem; color: var(--muted);
+               border-top: 1px solid var(--border); line-height: 1.6; }
+  .card-meta .domain { color: var(--accent); }
+  .card-actions { padding: 0.5rem 0.8rem; border-top: 1px solid var(--border);
+                  display: flex; gap: 0.5rem; }
+  .card-actions button { font-size: 0.75rem; padding: 0.35rem 0.8rem; flex: 1; }
+  .card-actions button.active-approve { background: var(--green); color: #000; border: none; }
+  .card-actions button.active-reject { background: var(--red); color: #fff; border: none; }
+  .empty { text-align: center; padding: 3rem; color: var(--muted); }
+  .toast { position: fixed; bottom: 2rem; right: 2rem; padding: 0.8rem 1.5rem;
+           border-radius: 8px; font-weight: 600; font-size: 0.85rem;
+           display: none; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .toast.ok { background: var(--green); color: #000; }
+  .toast.err { background: var(--red); color: #fff; }
+
+  /* Modal de detalle */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000;
+                   display: flex; align-items: center; justify-content: center; padding: 1rem; }
+  .modal-content { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+                   max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto; }
+  .modal-header { padding: 1rem; border-bottom: 1px solid var(--border);
+                  display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+  .modal-header h2 { font-size: 1.1rem; font-weight: 700; }
+  .modal-header .close { background: none; border: none; color: var(--muted); font-size: 1.5rem;
+                         cursor: pointer; padding: 0; line-height: 1; }
+  .modal-header .close:hover { color: var(--text); }
+  .modal-body { padding: 1rem; }
+  .modal-body .cover-img { max-width: 180px; border-radius: 6px; margin-bottom: 1rem; }
+  .modal-body .field { margin-bottom: 0.6rem; }
+  .modal-body .field-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
+                             color: var(--muted); font-weight: 600; }
+  .modal-body .field-value { font-size: 0.85rem; margin-top: 0.15rem; }
+  .modal-body .signals { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+  .modal-body .signal-chip { background: rgba(232,67,147,0.15); color: var(--accent);
+                             font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px; }
+  .modal-body .source-link { display: block; padding: 0.4rem 0.6rem; margin-top: 0.3rem;
+                             border: 1px solid var(--border); border-radius: 6px; font-size: 0.75rem;
+                             color: var(--accent); text-decoration: none; word-break: break-all; }
+  .modal-body .source-link:hover { border-color: var(--accent); background: rgba(232,67,147,0.05); }
+  .modal-body .extras-list { list-style: disc; padding-left: 1.2rem; font-size: 0.8rem; color: var(--text); }
+  .modal-body .desc { font-size: 0.75rem; color: var(--muted); font-style: italic;
+                      white-space: pre-wrap; margin-top: 0.3rem; max-height: 150px; overflow-y: auto; }
+</style>
+</head>
+<body x-data="previewApp()">
+
+  <nav style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem;
+              padding-bottom:1rem; border-bottom:1px solid var(--border);">
+    <a href="./index.html"
+       style="color:var(--muted); font-size:0.85rem; text-decoration:none; display:flex;
+              align-items:center; gap:0.4rem; transition:color 0.15s;"
+       onmouseover="this.style.color='var(--accent)'"
+       onmouseout="this.style.color='var(--muted)'">
+      &larr; Catálogo
+    </a>
+    <span style="font-size:0.8rem; color:var(--muted);">PandaWatch</span>
+  </nav>
+
+  <h1>Revisión de portadas</h1>
+  <p class="subtitle">
+    Portadas mejoradas con <b>baja confianza</b> (imagen original muy pequeña para verificar por hash).<br>
+    Hacé clic en el título para ver el detalle del item. Aprobá o rechazá cada una individualmente.
+  </p>
+
+  <template x-if="!loaded">
+    <p class="empty">Cargando...</p>
+  </template>
+
+  <template x-if="loaded && entries.length === 0">
+    <p class="empty">No hay items pendientes de revisión.<br>
+    Todas las mejoras fueron de alta confianza (verificadas por hash).</p>
+  </template>
+
+  <template x-if="loaded && entries.length > 0">
+    <div>
+      <div class="stats">
+        <div class="stat">Pendientes: <b x-text="entries.length" style="color:var(--yellow)"></b></div>
+        <div class="stat" x-show="decidedCount() > 0">
+          Ya decididas: <b x-text="decidedCount()" style="color:var(--green)"></b>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="outline success" @click="bulkAction('approved')">Aprobar todas</button>
+        <button class="outline danger" @click="bulkAction('rejected')">Rechazar todas</button>
+      </div>
+
+      <div class="grid">
+        <template x-for="(e, i) in entries" :key="e.slug">
+          <div class="card" :class="e.status">
+            <div class="card-header">
+              <span class="card-title">
+                <a @click.prevent="openDetail(e.slug)"
+                   :title="(e.title_original || e.title) + ' — ver detalle'"
+                   x-text="e.title || e.slug"></a>
+              </span>
+              <span class="card-status"
+                    :class="e.status === 'approved' ? 'ok' : e.status === 'rejected' ? 'bad' : 'pending'"
+                    x-text="e.status === 'approved' ? 'Aprobada' : e.status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
+            </div>
+            <div class="comparison" @click="openCompare(e)" style="cursor:pointer;" title="Clic para ver en grande">
+              <div class="img-box">
+                <img :src="'../data/images/' + e.old_image" alt="Anterior"
+                     onerror="this.style.opacity=0.3">
+                <div class="label">Anterior</div>
+                <div class="pixels bad" x-text="formatPx(e.old_pixels)"></div>
+              </div>
+              <div class="img-box">
+                <img :src="e.new_image && e.new_image !== '[dry-run]' ? '../data/images/' + e.new_image : e.new_url"
+                     alt="Nueva"
+                     onerror="this.src=e.new_url">
+                <div class="label">Nueva <span class="gain" x-text="'x' + (e.new_pixels / e.old_pixels).toFixed(1)"></span></div>
+                <div class="pixels good" x-text="formatPx(e.new_pixels)"></div>
+              </div>
+            </div>
+            <div class="card-meta">
+              <span x-text="e.publisher"></span> &middot; <span x-text="e.country"></span><br>
+              <template x-if="e.domain">
+                <span>Fuente: <span class="domain" x-text="e.domain"></span></span>
+              </template>
+              <template x-if="e.page_title">
+                <span> &middot; <span x-text="e.page_title.substring(0, 80)"></span></span>
+              </template>
+            </div>
+            <div class="card-actions">
+              <button :class="e.status === 'approved' ? 'active-approve' : 'outline'"
+                      @click="setStatus(i, 'approved')">
+                Aprobar
+              </button>
+              <button :class="e.status === 'rejected' ? 'active-reject' : 'outline'"
+                      :style="e.status !== 'rejected' ? 'border-color:var(--red); color:var(--red)' : ''"
+                      @click="setStatus(i, 'rejected')">
+                Rechazar
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <!-- Modal de comparación de imágenes en grande -->
+  <template x-if="compareEntry">
+    <div class="modal-overlay" @click.self="compareEntry = null" @keydown.escape.window="compareEntry = null">
+      <div style="background:var(--card); border:1px solid var(--border); border-radius:12px;
+                  max-width:90vw; width:900px; max-height:90vh; overflow-y:auto;">
+        <div style="padding:0.8rem 1rem; border-bottom:1px solid var(--border);
+                    display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-weight:700; font-size:0.95rem;" x-text="compareEntry.title"></span>
+            <span style="color:var(--muted); font-size:0.75rem; margin-left:0.5rem;"
+                  x-text="compareEntry.publisher + ' · ' + compareEntry.country"></span>
+          </div>
+          <button class="close" @click="compareEntry = null" style="background:none; border:none;
+                  color:var(--muted); font-size:1.5rem; cursor:pointer; padding:0;">&times;</button>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1rem;">
+          <div style="text-align:center;">
+            <img :src="'../data/images/' + compareEntry.old_image"
+                 style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
+                        border:2px solid var(--red);"
+                 onerror="this.style.opacity=0.3">
+            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
+              Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
+            </div>
+          </div>
+          <div style="text-align:center;">
+            <img :src="compareEntry.new_image && compareEntry.new_image !== '[dry-run]'
+                       ? '../data/images/' + compareEntry.new_image : compareEntry.new_url"
+                 style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
+                        border:2px solid var(--green);"
+                 onerror="this.src=compareEntry.new_url">
+            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;">
+              Nueva — <span x-text="formatPx(compareEntry.new_pixels)"></span>
+              <span class="gain" x-text="'x' + (compareEntry.new_pixels / compareEntry.old_pixels).toFixed(1)"></span>
+            </div>
+          </div>
+        </div>
+        <div style="padding:0 1rem 0.8rem; font-size:0.7rem; color:var(--muted);">
+          Fuente: <span style="color:var(--accent);" x-text="compareEntry.domain"></span>
+          <template x-if="compareEntry.page_title">
+            <span> · <span x-text="compareEntry.page_title.substring(0, 80)"></span></span>
+          </template>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Modal de detalle del item -->
+  <template x-if="modalItem">
+    <div class="modal-overlay" @click.self="modalItem = null" @keydown.escape.window="modalItem = null">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h2 x-text="modalItem.title"></h2>
+            <template x-if="modalItem.title_original && modalItem.title_original !== modalItem.title">
+              <p style="font-size:0.8rem; color:var(--muted); font-style:italic; margin-top:0.2rem;">
+                <span style="font-size:0.7rem; color:var(--border);">原題:</span>
+                <span x-text="modalItem.title_original"></span>
+              </p>
+            </template>
+          </div>
+          <button class="close" @click="modalItem = null">&times;</button>
+        </div>
+        <div class="modal-body">
+          <img class="cover-img"
+               :src="modalItem.image_local ? '../data/images/' + modalItem.image_local : modalItem.image_url"
+               :alt="modalItem.title"
+               onerror="this.style.display='none'">
+
+          <template x-for="[label, value] in modalFields()" :key="label">
+            <div class="field" x-show="value">
+              <div class="field-label" x-text="label"></div>
+              <div class="field-value" x-text="value"></div>
+            </div>
+          </template>
+
+          <template x-if="modalItem.signal_types && modalItem.signal_types.length">
+            <div class="field">
+              <div class="field-label">Señales detectadas</div>
+              <div class="signals">
+                <template x-for="s in modalItem.signal_types" :key="s">
+                  <span class="signal-chip" x-text="s"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="Array.isArray(modalItem.extras) && modalItem.extras.length">
+            <div class="field">
+              <div class="field-label">Extras / regalos de primera edición</div>
+              <ul class="extras-list">
+                <template x-for="ex in modalItem.extras" :key="ex.description">
+                  <li x-text="(ex.description_es || ex.description) + (ex.release_date ? ' (' + ex.release_date + ')' : '')"></li>
+                </template>
+              </ul>
+            </div>
+          </template>
+
+          <template x-if="modalItem.description_es || modalItem.description">
+            <div class="field">
+              <div class="field-label">Descripción</div>
+              <div class="desc" x-text="(modalItem.description_es || modalItem.description || '').slice(0, 600)"></div>
+            </div>
+          </template>
+
+          <div class="field">
+            <div class="field-label">URL fuente</div>
+            <a class="source-link" :href="modalItem.url" target="_blank" rel="noopener"
+               x-text="modalItem.url"></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <div class="toast" x-ref="toast"></div>
+
+<script>
+function previewApp() {
+  return {
+    entries: [],
+    allEntries: [],
+    loaded: false,
+    modalItem: null,
+    compareEntry: null,
+    itemsBySlug: {},
+
+    async init() {
+      // Cargar items.jsonl para el modal de detalle
+      try {
+        const r = await fetch('../data/items.jsonl', { cache: 'no-store' });
+        if (r.ok) {
+          const text = await r.text();
+          const items = text.trim().split('\n').map(l => JSON.parse(l));
+          items.forEach(it => {
+            if (it.slug) this.itemsBySlug[it.slug] = it;
+          });
+        }
+      } catch {}
+
+      // Cargar preview
+      try {
+        const r = await fetch('../data/cover_preview.json?t=' + Date.now(), { cache: 'no-store' });
+        if (r.ok) {
+          const data = await r.json();
+          this.allEntries = data.map(e => ({ ...e, status: e.status || 'pending' }));
+          this.entries = this.allEntries.filter(e => e.status === 'pending');
+        }
+      } catch {}
+      this.loaded = true;
+    },
+
+    decidedCount() {
+      return this.allEntries.filter(e => e.status !== 'pending').length;
+    },
+
+    formatPx(px) {
+      if (!px) return '?';
+      if (px >= 1_000_000) return (px / 1_000_000).toFixed(1) + 'M px';
+      if (px >= 1_000)     return (px / 1_000).toFixed(0) + 'k px';
+      return px + ' px';
+    },
+
+    openDetail(slug) {
+      const item = this.itemsBySlug[slug];
+      if (item) {
+        this.modalItem = item;
+      }
+    },
+
+    openCompare(entry) {
+      this.compareEntry = entry;
+    },
+
+    modalFields() {
+      const it = this.modalItem;
+      if (!it) return [];
+      return [
+        ['Serie', it.series_display],
+        ['Edición', it.edition_display],
+        ['Volumen', it.volume],
+        ['Publisher', it.publisher],
+        ['País', it.country],
+        ['Idioma', it.language],
+        ['ISBN', it.isbn],
+        ['Precio', it.price],
+        ['Fecha', it.release_date],
+        ['Autor', it.author],
+        ['Tipo', it.product_type],
+        ['Score', it.score],
+        ['Fuente', it.source],
+      ].filter(([, v]) => v);
+    },
+
+    async setStatus(index, status) {
+      const entry = this.entries[index];
+      entry.status = status;
+      const title = entry.title;
+      await this.save(title + ' → ' + (status === 'approved' ? 'aprobada' : 'rechazada'));
+      this.entries.splice(index, 1);
+    },
+
+    async bulkAction(status) {
+      const label = status === 'approved' ? 'aprobar' : 'rechazar';
+      if (!confirm(`¿${label.charAt(0).toUpperCase() + label.slice(1)} las ${this.entries.length} pendientes?`)) return;
+      this.entries.forEach(e => e.status = status);
+      await this.save(`todas (${label})`);
+      this.entries = [];
+    },
+
+    async save(label) {
+      try {
+        const r = await fetch('/api/save-cover-preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.allEntries),
+        });
+        if (r.ok) {
+          this.showToast(label, 'ok');
+        } else {
+          this.showToast('Error al guardar', 'err');
+        }
+      } catch (err) {
+        this.showToast('Error: ' + err.message, 'err');
+      }
+    },
+
+    showToast(msg, cls) {
+      const t = this.$refs.toast;
+      t.textContent = msg;
+      t.className = 'toast ' + cls;
+      t.style.display = 'block';
+      setTimeout(() => t.style.display = 'none', 3000);
+    },
+  };
+}
+</script>
+</body>
+</html>

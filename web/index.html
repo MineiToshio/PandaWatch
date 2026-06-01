@@ -101,6 +101,8 @@
   .breadcrumb a:hover { color: var(--accent); }
 
   [x-cloak] { display: none !important; }
+  /* Reported warning badge — shown on cards and detail page */
+  .badge-reported { display: inline-flex; align-items: center; gap: 3px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 9999px; }
 </style>
 </head>
 <body x-data="mangaApp()" x-init="init()" class="min-h-screen">
@@ -130,8 +132,25 @@
       </p>
       <p class="text-sm text-gray-500" x-show="loading">Cargando datos…</p>
     </div>
-    <div class="text-right text-sm text-gray-500" x-show="!loading && view !== 'volume'">
-      <span x-text="filtered.length"></span> resultados visibles
+    <div class="flex items-center gap-4">
+      <div class="text-right text-sm text-gray-500" x-show="!loading && view !== 'volume'">
+        <span x-text="filtered.length"></span> resultados visibles
+      </div>
+      <a href="./cover-preview.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300"
+         title="Revisar portadas mejoradas con baja confianza">
+        🖼 Revisión de portadas
+      </a>
+      <a href="./image-manager.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300"
+         title="Gestionar imagenes del catalogo — eliminar, reemplazar, agregar">
+        🖼 Gestor de imagenes
+      </a>
+      <a href="./panel.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300"
+         title="Panel de control — ejecutar scripts (requiere admin server en port 8001)">
+        ⚙️ Panel de control
+      </a>
     </div>
   </div>
 </header>
@@ -383,6 +402,9 @@
                   </template>
                 </div>
                 <div class="p-3 flex-1 flex flex-col">
+                  <template x-if="ed.leader.series_display">
+                    <p class="text-[11px] text-pink-600 font-medium truncate mb-0.5" x-text="ed.leader.series_display"></p>
+                  </template>
                   <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-1">
                     <template x-if="ed.tomoCount > 1">
                       <span x-text="ed.display"></span>
@@ -391,6 +413,9 @@
                       <span x-text="ed.leader.title"></span>
                     </template>
                   </h3>
+                  <template x-if="isEditionReported(ed)">
+                    <div class="mb-1"><span class="badge-reported">⚠ Reportado</span></div>
+                  </template>
                   <template x-if="ed.tomoCount > 1">
                     <p class="text-xs text-gray-500 mb-2">
                       Desde tomo <span x-text="ed.leader.volume || '?'"></span>
@@ -454,7 +479,13 @@
                 </template>
               </div>
               <div class="p-3 flex-1 flex flex-col">
+                <template x-if="item.series_display">
+                  <p class="text-[11px] text-pink-600 font-medium truncate mb-0.5" x-text="item.series_display"></p>
+                </template>
                 <h3 class="font-semibold text-sm leading-snug line-clamp-2 mb-2" x-text="item.title"></h3>
+                <template x-if="isReported(item.url)">
+                  <div class="mb-1"><span class="badge-reported">⚠ Reportado</span></div>
+                </template>
                 <div class="mt-auto space-y-1 text-xs text-gray-600">
                   <div class="flex items-center gap-1">
                     <span>🌍</span>
@@ -547,6 +578,9 @@
       <!-- Header -->
       <div class="border-b border-gray-200 px-6 py-4 flex items-start justify-between gap-4">
         <div class="flex-1 min-w-0">
+          <template x-if="selectedItem.series_display">
+            <p class="text-xs text-pink-600 font-semibold uppercase tracking-wide mb-0.5" x-text="selectedItem.series_display"></p>
+          </template>
           <div class="flex items-start gap-2">
             <h2 class="text-xl font-bold flex-1" x-text="selectedItem.title"></h2>
             <button @click="copyTitle()"
@@ -580,13 +614,20 @@
         <span class="px-3 py-1 rounded-full text-sm font-bold flex-shrink-0" :class="scoreClass(selectedItem.score)" x-text="selectedItem.score"></span>
       </div>
 
+      <!-- Banner: reportado -->
+      <template x-if="isReported(selectedItem.url)">
+        <div class="mx-6 mt-4 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800 flex items-center gap-3">
+          <span class="text-xl flex-shrink-0">⚠️</span>
+          <div><strong>Este ítem ha sido reportado.</strong> Se registró feedback negativo sobre este ítem.</div>
+        </div>
+      </template>
+
       <!-- Body -->
       <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-[200px_1fr] gap-6">
         <div>
           <!-- Carrusel: si el item tiene `images[]` con >1 imagen,
-               navegamos entre ellas con flechas y dots. La primera siempre
-               es kind=cover; las siguientes pueden ser extras (marcapáginas,
-               cofres, pósters, etc.) con su descripción opcional. -->
+               navegamos entre ellas con flechas y dots. La primera (posición 0)
+               es siempre la portada; kind solo distingue gallery vs extra. -->
           <template x-if="itemImages(selectedItem).length > 1">
             <div class="relative">
               <img
@@ -616,9 +657,8 @@
               </div>
               <!-- Etiqueta tipo + descripción -->
               <div class="mt-2 text-xs text-gray-600 text-center min-h-[1rem]">
-                <span x-show="itemImages(selectedItem)[modalImageIdx] && itemImages(selectedItem)[modalImageIdx].kind && itemImages(selectedItem)[modalImageIdx].kind !== 'cover'"
-                      class="inline-block px-2 py-0.5 bg-pink-50 text-pink-700 rounded-full mr-1"
-                      x-text="(itemImages(selectedItem)[modalImageIdx] || {}).kind"></span>
+                <span class="inline-block px-2 py-0.5 bg-pink-50 text-pink-700 rounded-full mr-1"
+                      x-text="modalImageIdx === 0 ? 'Portada' : ((itemImages(selectedItem)[modalImageIdx] || {}).kind === 'extra' ? 'Extra' : 'Galería')"></span>
                 <span x-text="(itemImages(selectedItem)[modalImageIdx] || {}).description || ''"></span>
               </div>
             </div>
@@ -713,28 +753,104 @@
         </div>
       </template>
 
-      <!-- Feedback -->
-      <div class="px-6 pb-3" x-show="feedbackOpen" x-cloak>
-        <div class="border border-red-200 bg-red-50 rounded-lg p-3">
-          <label class="block text-xs uppercase tracking-wider text-red-700 font-semibold mb-1">
-            ¿Por qué es una mala elección?
-          </label>
-          <textarea x-model="feedbackReason" rows="3" :disabled="feedbackSending"
-                    placeholder="Ej: no es manga, es un cómic occidental; o el título está roto; o es merchandising…"
-                    class="w-full px-3 py-2 text-sm border border-red-200 rounded-md focus:outline-none focus:border-red-400 disabled:bg-gray-100"></textarea>
+      <!-- Unified curation panel (👎 opens this) -->
+      <div class="px-6 pb-3" x-show="curationOpen" x-cloak>
+        <div class="border rounded-lg p-3 transition-colors"
+             :class="curationAction === 'feedback' ? 'border-red-200 bg-red-50' : 'border-blue-200 bg-blue-50'">
+          <!-- Action selector chips -->
+          <div class="flex flex-wrap gap-1.5 mb-2">
+            <button @click="curationAction = 'feedback'"
+                    class="px-2.5 py-1 text-xs rounded-full border transition-colors"
+                    :class="curationAction === 'feedback' ? 'bg-red-600 text-white border-red-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'">
+              Mala elecci&oacute;n
+            </button>
+            <button @click="curationAction = 'move'"
+                    class="px-2.5 py-1 text-xs rounded-full border transition-colors"
+                    :class="curationAction === 'move' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'">
+              Mover a otra edici&oacute;n
+            </button>
+            <button @click="curationAction = 'merge'"
+                    class="px-2.5 py-1 text-xs rounded-full border transition-colors"
+                    :class="curationAction === 'merge' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'">
+              Duplicado (merge)
+            </button>
+            <button @click="curationAction = 'remove'"
+                    class="px-2.5 py-1 text-xs rounded-full border transition-colors"
+                    :class="curationAction === 'remove' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'">
+              No va aqu&iacute;
+            </button>
+          </div>
+
+          <!-- Feedback: just reason -->
+          <template x-if="curationAction === 'feedback'">
+            <div>
+              <label class="block text-xs uppercase tracking-wider text-red-700 font-semibold mb-1">
+                &iquest;Por qu&eacute; es una mala elecci&oacute;n?
+              </label>
+            </div>
+          </template>
+
+          <!-- Move: edition search -->
+          <template x-if="curationAction === 'move'">
+            <div>
+              <label class="block text-xs uppercase tracking-wider text-blue-700 font-semibold mb-1">Mover a edici&oacute;n:</label>
+              <input type="text" x-model="curationSearch" @input.debounce.300ms="searchEditions()"
+                     placeholder="Buscar edici&oacute;n por nombre de serie..."
+                     class="w-full px-3 py-2 text-sm border border-blue-200 rounded-md focus:outline-none focus:border-blue-400 bg-white">
+              <div x-show="curationResults.length > 0" class="mt-1 max-h-40 overflow-y-auto border border-blue-100 rounded-md bg-white">
+                <template x-for="ed in curationResults" :key="ed.edition_key">
+                  <button @click="curationTarget = ed.edition_key; curationTargetDisplay = ed.series_display + ' — ' + ed.edition_display"
+                          class="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 border-b border-blue-50 last:border-0"
+                          :class="curationTarget === ed.edition_key ? 'bg-blue-100 font-semibold' : ''">
+                    <span x-text="ed.series_display"></span>
+                    <span class="text-gray-500" x-text="' — ' + ed.edition_display"></span>
+                    <span class="text-xs text-gray-400 ml-1" x-text="'(' + ed.volume_count + ' vols)'"></span>
+                  </button>
+                </template>
+              </div>
+              <div x-show="curationTarget" class="mt-1 text-xs text-blue-700">
+                Destino: <strong x-text="curationTargetDisplay"></strong>
+              </div>
+            </div>
+          </template>
+
+          <!-- Merge: duplicate URL -->
+          <template x-if="curationAction === 'merge'">
+            <div>
+              <label class="block text-xs uppercase tracking-wider text-blue-700 font-semibold mb-1">URL del item duplicado:</label>
+              <input type="text" x-model="curationDuplicateOf"
+                     placeholder="Pega la URL del item con el que se duplica..."
+                     class="w-full px-3 py-2 text-sm border border-blue-200 rounded-md focus:outline-none focus:border-blue-400 bg-white">
+            </div>
+          </template>
+
+          <!-- Remove: explanation -->
+          <template x-if="curationAction === 'remove'">
+            <div>
+              <p class="text-xs text-blue-700 mb-1">Se separar&aacute; este item de su edici&oacute;n actual y quedar&aacute; sin agrupar.</p>
+            </div>
+          </template>
+
+          <!-- Reason (shared by all actions) -->
+          <textarea x-model="curationReason" rows="2"
+                    class="w-full mt-2 px-3 py-2 text-sm border rounded-md focus:outline-none bg-white"
+                    :class="curationAction === 'feedback' ? 'border-red-200 focus:border-red-400' : 'border-blue-200 focus:border-blue-400'"
+                    :placeholder="curationAction === 'feedback' ? 'Ej: no es manga, es un cómic occidental; o el título está roto...' : 'Motivo (opcional)...'"></textarea>
+
+          <!-- Submit row -->
           <div class="mt-2 flex justify-between items-center gap-2">
             <span class="text-xs"
-                  :class="feedbackError ? 'text-red-700' : (feedbackSent ? 'text-green-700' : 'text-gray-500')"
-                  x-text="feedbackError || (feedbackSent ? '✓ Eliminado del catálogo' : '')"></span>
+                  :class="curationError ? 'text-red-700' : (curationSent ? 'text-green-700' : 'text-gray-500')"
+                  x-text="curationError || (curationSent ? '✓ Aplicado' : '')"></span>
             <div class="flex gap-2">
-              <button @click="cancelFeedback()" :disabled="feedbackSending"
-                      class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50">
+              <button @click="closeCuration()" class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100">
                 Cancelar
               </button>
-              <button @click="submitFeedback()" :disabled="feedbackSending || !feedbackReason.trim()"
-                      class="px-3 py-1.5 text-sm bg-red-600 text-white rounded-md font-semibold hover:opacity-90 disabled:opacity-50">
-                <span x-show="!feedbackSending">Enviar</span>
-                <span x-show="feedbackSending">Enviando…</span>
+              <button @click="submitCuration()" :disabled="curationSending || !canSubmitCuration()"
+                      class="px-3 py-1.5 text-sm text-white rounded-md font-semibold hover:opacity-90 disabled:opacity-50"
+                      :class="curationAction === 'feedback' ? 'bg-red-600' : 'bg-blue-600'">
+                <span x-show="!curationSending">Aplicar</span>
+                <span x-show="curationSending">Aplicando...</span>
               </button>
             </div>
           </div>
@@ -749,10 +865,10 @@
                   class="px-3 py-2 rounded-md text-sm border border-gray-300 hover:bg-gray-100 text-gray-700">
             ← Volver
           </button>
-          <button @click="toggleFeedback()"
-                  :title="feedbackOpen ? 'Cerrar feedback' : 'Marcar como mala elección'"
+          <button @click="toggleCuration()"
+                  :title="curationOpen ? 'Cerrar panel' : 'Curar / reportar item'"
                   class="px-3 py-2 rounded-md text-sm border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                  :class="feedbackOpen ? 'bg-red-50 border-red-300 text-red-700' : 'text-gray-500'">
+                  :class="curationOpen ? 'bg-red-50 border-red-300 text-red-700' : 'text-gray-500'">
             👎
           </button>
           <a :href="selectedItem.url" target="_blank" rel="noopener" class="px-4 py-2 bg-accent text-white rounded-md text-sm font-semibold hover:opacity-90">
@@ -770,6 +886,7 @@ function mangaApp() {
     loading: true,
     error: null,
     items: [],
+    reportedUrls: {},
     selectedItem: null,
     // Fase 2 — carrusel: índice de la imagen actual en el modal. Se resetea
     // a 0 cada vez que se abre un item nuevo (ver openItem / closeModal).
@@ -810,6 +927,7 @@ function mangaApp() {
 
     async init() {
       await this.loadItems();
+      this.loadReportedUrls();
       this._loadStateFromUrl();
       // hashchange: manual edits a URL bar. popstate: botón back/forward del
       // browser (pushState entries no disparan hashchange si la URL completa
@@ -852,6 +970,19 @@ function mangaApp() {
         this.error = e.message;
         this.loading = false;
       }
+    },
+
+    async loadReportedUrls() {
+      try {
+        const res = await fetch("../data/feedback.jsonl");
+        if (!res.ok) return;
+        const text = await res.text();
+        const urls = {};
+        text.trim().split("\n").filter(Boolean).forEach(line => {
+          try { const o = JSON.parse(line); if (o.url) urls[o.url] = true; } catch (e) {}
+        });
+        this.reportedUrls = urls;
+      } catch (e) { /* feedback.jsonl may not exist yet */ }
     },
 
     // Mantener en sync con TRACKING_PARAMS en scripts/manga_watch.py
@@ -1348,7 +1479,12 @@ function mangaApp() {
     _loadStateFromUrl() {
       try {
         const h = (window.location.hash || '').replace(/^#\/?/, '');
-        const pageQ = parseInt(new URL(window.location.href).searchParams.get('page') || '0', 10);
+        const u2 = new URL(window.location.href);
+        const pageQ = parseInt(u2.searchParams.get('page') || '0', 10);
+        const searchQ = u2.searchParams.get('q') || '';
+        if (searchQ) {
+          this.filters.search = searchQ;
+        }
         if (!h) {
           this.view = 'catalog';
           this.currentEditionKey = '';
@@ -1385,57 +1521,116 @@ function mangaApp() {
       } catch (e) { /* ignore */ }
     },
 
-    // --- Feedback ---
-    feedbackOpen: false,
-    feedbackReason: "",
-    feedbackSending: false,
-    feedbackSent: false,
-    feedbackError: "",
-    _resetFeedback() {
-      this.feedbackOpen = false;
-      this.feedbackReason = "";
-      this.feedbackSending = false;
-      this.feedbackSent = false;
-      this.feedbackError = "";
+    // --- Curation (unified: feedback + move + merge + remove) ---
+    curationOpen: false,
+    curationAction: "feedback",
+    curationSearch: "",
+    curationResults: [],
+    curationTarget: "",
+    curationTargetDisplay: "",
+    curationDuplicateOf: "",
+    curationReason: "",
+    curationSending: false,
+    curationSent: false,
+    curationError: "",
+    // Legacy aliases so existing code doesn't break
+    get feedbackOpen() { return this.curationOpen && this.curationAction === "feedback"; },
+    get feedbackSent() { return this.curationSent; },
+    _resetCuration() {
+      this.curationOpen = false;
+      this.curationAction = "feedback";
+      this.curationSearch = "";
+      this.curationResults = [];
+      this.curationTarget = "";
+      this.curationTargetDisplay = "";
+      this.curationDuplicateOf = "";
+      this.curationReason = "";
+      this.curationSending = false;
+      this.curationSent = false;
+      this.curationError = "";
     },
-    toggleFeedback() {
-      if (this.feedbackOpen) {
-        this._resetFeedback();
+    _resetFeedback() { this._resetCuration(); },
+    toggleFeedback() { this.toggleCuration(); },
+    cancelFeedback() { this._resetCuration(); },
+    toggleCuration() {
+      if (this.curationOpen) {
+        this._resetCuration();
       } else {
-        this.feedbackOpen = true;
-        this.feedbackSent = false;
-        this.feedbackError = "";
+        this.curationOpen = true;
+        this.curationAction = "feedback";
+        this.curationSent = false;
+        this.curationError = "";
       }
     },
-    cancelFeedback() { this._resetFeedback(); },
-    async submitFeedback() {
-      const reason = (this.feedbackReason || "").trim();
-      if (!reason || !this.selectedItem) return;
-      this.feedbackSending = true;
-      this.feedbackError = "";
+    closeCuration() { this._resetCuration(); },
+    async searchEditions() {
+      const q = (this.curationSearch || "").trim();
+      if (q.length < 2) { this.curationResults = []; return; }
       try {
-        const removedUrl = this.selectedItem.url;
-        const res = await fetch("/api/feedback", {
+        const res = await fetch("/api/editions/search?q=" + encodeURIComponent(q));
+        const data = await res.json();
+        this.curationResults = data.results || [];
+      } catch { this.curationResults = []; }
+    },
+    canSubmitCuration() {
+      if (this.curationAction === "feedback") return !!this.curationReason.trim();
+      if (this.curationAction === "move") return !!this.curationTarget;
+      if (this.curationAction === "merge") return !!this.curationDuplicateOf.trim();
+      if (this.curationAction === "remove") return true;
+      return false;
+    },
+    async submitCuration() {
+      if (!this.selectedItem || !this.canSubmitCuration()) return;
+      this.curationSending = true;
+      this.curationError = "";
+      const itemUrl = this.selectedItem.url;
+      const reason = this.curationReason.trim();
+      try {
+        let endpoint, body;
+        if (this.curationAction === "feedback") {
+          endpoint = "/api/feedback";
+          body = { title: this.selectedItem.title || "", url: itemUrl, reason };
+        } else if (this.curationAction === "move") {
+          endpoint = "/api/curation/move";
+          body = { url: itemUrl, to_edition: this.curationTarget, reason };
+        } else if (this.curationAction === "merge") {
+          endpoint = "/api/curation/merge";
+          body = { url: itemUrl, duplicate_of: this.curationDuplicateOf.trim(), reason };
+        } else {
+          endpoint = "/api/curation/remove";
+          body = { url: itemUrl, reason };
+        }
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: this.selectedItem.title || "",
-            url: removedUrl || "",
-            reason,
-          }),
+          body: JSON.stringify(body),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        this.feedbackSent = true;
-        this.feedbackReason = "";
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        this.curationSent = true;
+        if (this.curationAction === "feedback") {
+          this.reportedUrls = { ...this.reportedUrls, [itemUrl]: true };
+        }
         setTimeout(() => {
-          if (this.feedbackSent) this._resetFeedback();
+          if (this.curationSent) this._resetCuration();
         }, 2000);
       } catch (e) {
-        this.feedbackError = "No se pudo guardar: " + e.message;
+        this.curationError = "Error: " + e.message;
       } finally {
-        this.feedbackSending = false;
+        this.curationSending = false;
       }
     },
+
+    isReported(url) {
+      return !!(url && this.reportedUrls[url]);
+    },
+
+    isEditionReported(ed) {
+      if (!ed || !Array.isArray(ed.items)) return false;
+      return ed.items.some(it => this.isReported(it.url));
+    },
+
+    // submitFeedback removed — unified into submitCuration()
 
     // --- Paginación ---
     goToPage(n) {

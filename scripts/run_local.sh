@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 #
-# run_local.sh — lanza los dos servers locales en paralelo:
-#   - Catálogo (público, deployable):  http://localhost:8000/
-#   - Panel de control (LOCAL, admin): http://localhost:8001/
+# run_local.sh — lanza el servidor unificado de Manga Watch.
 #
-# Ctrl+C detiene ambos.
+#   Catálogo + Panel de control: http://localhost:8000/
+#   Panel de control:            http://localhost:8000/web/panel.html
+#
+# Ctrl+C lo detiene.
 #
 # Variables opcionales:
-#   PUBLIC_PORT=8000
-#   ADMIN_PORT=8001
-#   ADMIN_BIND=127.0.0.1   # ⚠️ Solo cambialo a 0.0.0.0 si sabés qué hacés
-#                          # — cualquiera en tu red podría ejecutar scripts.
+#   PORT=8000
 
 set -u
 cd "$(dirname "$0")/.."
@@ -21,26 +19,12 @@ if [ ! -x "$VENV_PY" ]; then
     exit 1
 fi
 
-PUBLIC_PORT="${PUBLIC_PORT:-8000}"
-ADMIN_PORT="${ADMIN_PORT:-8001}"
-ADMIN_BIND="${ADMIN_BIND:-127.0.0.1}"
+PORT="${PORT:-8000}"
 
-echo "==> Lanzando server público (catálogo)   en http://localhost:${PUBLIC_PORT}/"
-"$VENV_PY" scripts/serve.py --port "$PUBLIC_PORT" &
-PID_PUBLIC=$!
-
-echo "==> Lanzando server admin (panel local)  en http://localhost:${ADMIN_PORT}/  [bind=${ADMIN_BIND}]"
-"$VENV_PY" scripts/admin_serve.py --port "$ADMIN_PORT" --bind "$ADMIN_BIND" &
-PID_ADMIN=$!
-
+echo "==> Lanzando Manga Watch en http://localhost:${PORT}/"
+echo "    Panel de control: http://localhost:${PORT}/web/panel.html"
 echo
-echo "    Catálogo:    http://localhost:${PUBLIC_PORT}/"
-echo "    Admin:       http://localhost:${ADMIN_PORT}/"
-echo
-echo "    Ctrl+C para detener ambos."
+echo "    Ctrl+C para detener."
 echo
 
-# Cleanup on exit
-trap 'echo; echo "[run_local] deteniendo servers..."; kill "$PID_PUBLIC" "$PID_ADMIN" 2>/dev/null; wait 2>/dev/null; exit 0' INT TERM
-
-wait
+exec "$VENV_PY" scripts/serve.py --port "$PORT"

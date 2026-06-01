@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestor de Imagenes - PandaWatch</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f0f0f; --bg2: #1a1a1a; --bg3: #252525; --bg4: #333;
+      --text: #e8e8e8; --text2: #999; --text3: #666;
+      --accent: #e85d75; --accent2: #ff7a8f;
+      --green: #4ade80; --yellow: #facc15; --red: #f87171; --blue: #60a5fa;
+      --radius: 10px; --radius-sm: 6px;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent2); }
+    [x-cloak] { display: none !important; }
+
+    .header { padding: 16px 24px; background: var(--bg2); border-bottom: 1px solid var(--bg3); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+    .header .stats { font-size: 13px; color: var(--text2); }
+    .nav-link { font-size: 13px; color: var(--text2); }
+    .controls { padding: 12px 24px; background: var(--bg2); border-bottom: 1px solid var(--bg3); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border-radius: 20px; font-size: 12px; border: 1px solid var(--bg4); background: var(--bg3); color: var(--text2); cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .chip:hover { border-color: var(--accent); color: var(--text); }
+    .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .chip .count { font-weight: 600; }
+
+    .search-input { background: var(--bg3); border: 1px solid var(--bg4); border-radius: 20px; padding: 6px 14px; color: var(--text); font-size: 13px; outline: none; width: 220px; }
+    .search-input:focus { border-color: var(--accent); }
+    .search-input::placeholder { color: var(--text3); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; padding: 20px 24px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); } }
+
+    .card { background: var(--bg2); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: transform .15s, box-shadow .15s; border: 1px solid transparent; position: relative; }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.4); border-color: var(--bg4); }
+    .card-img { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: var(--bg3); display: block; }
+    .card-img-placeholder { width: 100%; aspect-ratio: 2/3; background: var(--bg3); display: flex; align-items: center; justify-content: center; font-size: 40px; color: var(--text3); }
+    .card-info { padding: 8px 10px; }
+    .card-title { font-size: 12px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text); }
+    .card-meta { font-size: 10px; color: var(--text2); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+    .quality-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .q-good { background: var(--green); } .q-medium { background: var(--yellow); } .q-low { background: var(--red); } .q-none { background: var(--text3); }
+    .card-badge { position: absolute; top: 6px; right: 6px; font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.7); color: var(--text2); }
+
+    /* Overlay */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.95); z-index: 1000; display: flex; flex-direction: column; overflow: hidden; }
+    .overlay-header { padding: 10px 20px; display: flex; align-items: center; gap: 12px; background: var(--bg2); border-bottom: 1px solid var(--bg3); flex-shrink: 0; }
+    .overlay-header h2 { font-size: 15px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overlay-body { flex: 1; overflow-y: auto; padding: 20px; }
+
+    .btn { padding: 7px 14px; border-radius: var(--radius-sm); font-size: 12px; border: 1px solid var(--bg4); background: var(--bg3); color: var(--text); cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-accent:hover { background: var(--accent2); border-color: var(--accent2); }
+    .btn-danger { border-color: var(--red); color: var(--red); }
+    .btn-danger:hover { background: var(--red); color: #fff; }
+    .btn-sm { padding: 4px 8px; font-size: 11px; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-icon { width: 30px; height: 30px; padding: 0; justify-content: center; border-radius: 50%; }
+
+    /* Preview area */
+    .preview-area { display: flex; gap: 20px; flex-wrap: wrap; }
+    .preview-main { flex: 1; min-width: 280px; }
+    .preview-img-wrap { background: var(--bg3); border-radius: var(--radius); overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 300px; max-height: 55vh; position: relative; cursor: zoom-in; }
+    .preview-img-wrap img { max-width: 100%; max-height: 55vh; object-fit: contain; }
+    .preview-img-wrap .no-img { color: var(--text3); font-size: 60px; }
+    .preview-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,.85); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: var(--text2); display: flex; gap: 8px; align-items: center; pointer-events: none; }
+    .preview-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.6); border: none; color: #fff; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+    .preview-nav:hover { background: var(--accent); }
+    .preview-nav.prev { left: 8px; }
+    .preview-nav.next { right: 8px; }
+    .preview-actions { flex: 0 0 260px; }
+    @media (max-width: 700px) { .preview-actions { flex: 1 1 100%; } }
+
+    .action-group { margin-bottom: 14px; }
+    .action-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); margin-bottom: 6px; }
+    .action-group .btn { display: flex; width: 100%; margin-bottom: 5px; }
+
+    /* Filmstrip */
+    .filmstrip-header { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; }
+    .filmstrip-header span { font-size: 12px; color: var(--text3); }
+    .filmstrip { display: flex; gap: 8px; overflow-x: auto; padding: 12px 0 8px; scrollbar-width: thin; scrollbar-color: var(--bg4) transparent; }
+    .filmstrip-item { flex: 0 0 110px; position: relative; cursor: grab; border-radius: var(--radius-sm); overflow: hidden; border: 2px solid transparent; transition: border-color .15s, opacity .15s, transform .15s; }
+    .filmstrip-item.active { border-color: var(--accent); }
+    .filmstrip-item:hover { border-color: var(--text3); }
+    .filmstrip-item.active:hover { border-color: var(--accent); }
+    .filmstrip-item.dragging { opacity: .4; transform: scale(.95); }
+    .filmstrip-item.drag-over { border-color: var(--blue); border-style: dashed; }
+    .filmstrip-img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--bg3); }
+    .filmstrip-kind { position: absolute; top: 4px; left: 4px; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.8); color: var(--text2); }
+    .filmstrip-idx { position: absolute; top: 4px; right: 4px; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.8); color: var(--text3); }
+    .filmstrip-actions { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 2px; padding: 5px 4px; background: linear-gradient(transparent, rgba(0,0,0,.9)); opacity: 0; transition: opacity .15s; }
+    .filmstrip-item:hover .filmstrip-actions { opacity: 1; }
+    .filmstrip-btn { width: 24px; height: 24px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--bg4); color: var(--text2); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 11px; transition: all .15s; }
+    .filmstrip-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .filmstrip-btn.danger:hover { background: var(--red); border-color: var(--red); }
+    .filmstrip-btn.cover:hover { background: var(--green); border-color: var(--green); }
+    .filmstrip-add { flex: 0 0 110px; border: 2px dashed var(--bg4); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; min-height: 80px; cursor: pointer; transition: border-color .15s; }
+    .filmstrip-add:hover { border-color: var(--accent); }
+
+    /* Image detail bar under filmstrip */
+    .img-detail-bar { background: var(--bg2); border: 1px solid var(--bg3); border-radius: var(--radius-sm); padding: 10px 14px; margin-top: 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .img-detail-bar label { font-size: 11px; color: var(--text3); }
+    .img-detail-bar select, .img-detail-bar input[type=text] { background: var(--bg3); border: 1px solid var(--bg4); border-radius: 4px; padding: 4px 8px; color: var(--text); font-size: 12px; outline: none; }
+    .img-detail-bar select:focus, .img-detail-bar input[type=text]:focus { border-color: var(--accent); }
+    .img-detail-bar .desc-input { flex: 1; min-width: 150px; }
+
+    /* Lightbox */
+    .lightbox { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.96); display: flex; align-items: center; justify-content: center; }
+    .lightbox img { max-width: 92vw; max-height: 90vh; object-fit: contain; }
+    .lightbox-close { position: fixed; top: 16px; right: 20px; background: none; border: none; color: #fff; font-size: 28px; cursor: pointer; z-index: 5001; opacity: .7; transition: opacity .15s; }
+    .lightbox-close:hover { opacity: 1; }
+    .lightbox-badge { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.8); padding: 6px 16px; border-radius: 20px; font-size: 12px; color: var(--text2); z-index: 5001; }
+    .lightbox-nav { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.1); border: none; color: #fff; width: 44px; height: 44px; border-radius: 50%; cursor: pointer; font-size: 22px; z-index: 5001; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+    .lightbox-nav:hover { background: var(--accent); }
+    .lightbox-nav.prev { left: 16px; }
+    .lightbox-nav.next { right: 16px; }
+
+    /* Modal */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .modal { background: var(--bg2); border-radius: var(--radius); max-width: 600px; width: 100%; max-height: 80vh; overflow-y: auto; border: 1px solid var(--bg3); }
+    .modal-header { padding: 14px 18px; border-bottom: 1px solid var(--bg3); display: flex; align-items: center; justify-content: space-between; }
+    .modal-header h3 { font-size: 14px; font-weight: 500; }
+    .modal-body { padding: 18px; }
+    .modal-footer { padding: 12px 18px; border-top: 1px solid var(--bg3); display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+
+    .url-input-group { display: flex; gap: 8px; margin-bottom: 12px; }
+    .url-input { flex: 1; background: var(--bg3); border: 1px solid var(--bg4); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--text); font-size: 13px; outline: none; }
+    .url-input:focus { border-color: var(--accent); }
+    .url-input::placeholder { color: var(--text3); }
+
+    .scrape-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; max-height: 45vh; overflow-y: auto; padding: 4px; }
+    .scrape-item { position: relative; border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: border-color .15s; }
+    .scrape-item.selected { border-color: var(--accent); }
+    .scrape-item:hover { border-color: var(--text3); }
+    .scrape-item.selected:hover { border-color: var(--accent); }
+    .scrape-item img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--bg3); }
+    .scrape-item .check { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0; transition: opacity .15s; }
+    .scrape-item.selected .check { opacity: 1; }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; z-index: 6000; background: var(--bg2); border: 1px solid var(--bg3); border-radius: var(--radius); padding: 12px 18px; font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+    .toast.success { border-color: var(--green); color: var(--green); }
+    .toast.error { border-color: var(--red); color: var(--red); }
+
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--bg4); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .pagination { padding: 16px 24px; display: flex; justify-content: center; gap: 6px; }
+    .page-btn { padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12px; border: 1px solid var(--bg4); background: var(--bg3); color: var(--text2); cursor: pointer; }
+    .page-btn:hover { border-color: var(--accent); color: var(--text); }
+    .page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    .detail-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin-bottom: 12px; }
+    .detail-meta dt { color: var(--text3); }
+    .detail-meta dd { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .progress-bar { height: 3px; background: var(--bg4); border-radius: 2px; overflow: hidden; margin-top: 8px; }
+    .progress-bar-fill { height: 100%; background: var(--accent); transition: width .2s; }
+
+    .kbd { display: inline-block; padding: 1px 5px; border-radius: 3px; background: var(--bg4); color: var(--text3); font-size: 10px; font-family: monospace; border: 1px solid var(--text3); }
+
+    /* Item info panel */
+    .item-info-panel { background: var(--bg2); border: 1px solid var(--bg3); border-radius: var(--radius); padding: 14px 16px; margin-top: 14px; }
+    .item-info-panel h4 { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .5px; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; font-size: 12px; }
+    @media (min-width: 900px) { .info-grid { grid-template-columns: 1fr 1fr 1fr; } }
+    .info-field { }
+    .info-field .info-label { color: var(--text3); font-size: 10px; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
+    .info-field .info-value { color: var(--text); word-break: break-word; }
+    .info-field .info-value.muted { color: var(--text3); }
+    .signal-chip { display: inline-block; padding: 1px 6px; border-radius: 3px; background: var(--bg4); color: var(--text2); font-size: 10px; margin: 1px 2px; }
+    .info-desc { grid-column: 1 / -1; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--bg3); }
+    .info-desc .info-value { color: var(--text2); line-height: 1.5; font-size: 12px; max-height: 80px; overflow-y: auto; }
+  </style>
+</head>
+<body x-data="imageManager()" x-init="init()" @keydown.window="handleKey($event)">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>Gestor de Imagenes</h1>
+    <span class="stats" x-text="`${filtered.length} items`"></span>
+    <span style="flex:1"></span>
+    <a href="/" class="nav-link">Catalogo</a>
+    <a href="/panel.html" class="nav-link">Panel</a>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="chip" :class="{ active: filter === 'all' }" @click="setFilter('all')">
+      Todas <span class="count" x-text="counts.all"></span>
+    </button>
+    <button class="chip" :class="{ active: filter === 'no_image' }" @click="setFilter('no_image')">
+      Sin imagen <span class="count" x-text="counts.no_image"></span>
+    </button>
+    <button class="chip" :class="{ active: filter === 'low' }" @click="setFilter('low')">
+      Baja calidad <span class="count" x-text="counts.low"></span>
+    </button>
+    <button class="chip" :class="{ active: filter === 'medium' }" @click="setFilter('medium')">
+      Calidad media <span class="count" x-text="counts.medium"></span>
+    </button>
+    <button class="chip" :class="{ active: filter === 'upscaled' }" @click="setFilter('upscaled')">
+      Escaladas (PNG) <span class="count" x-text="counts.upscaled"></span>
+    </button>
+    <button class="chip" :class="{ active: filter === 'single' }" @click="setFilter('single')">
+      1 sola foto <span class="count" x-text="counts.single"></span>
+    </button>
+    <span style="flex:1"></span>
+    <input type="text" class="search-input" placeholder="Buscar por titulo..." x-model="search" @input.debounce.300ms="applyFilter()">
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading" style="padding:40px; text-align:center">
+    <div class="spinner" style="width:32px; height:32px; border-width:3px"></div>
+    <p style="margin-top:12px; color:var(--text2); font-size:13px">Cargando catalogo...</p>
+  </div>
+
+  <!-- Grid -->
+  <div class="grid" x-show="!loading">
+    <template x-for="item in paged" :key="item.url">
+      <div class="card" @click="selectItem(item)">
+        <template x-if="coverSrc(item)">
+          <img class="card-img" :src="coverSrc(item)" loading="lazy" :alt="item.title"
+               @error="$el.style.display='none'; $el.nextElementSibling.style.display='flex'">
+        </template>
+        <div class="card-img-placeholder" :style="coverSrc(item) ? 'display:none' : ''">&#128218;</div>
+        <span class="card-badge" x-text="(item.images||[]).length + ' img'"></span>
+        <div class="card-info">
+          <div class="card-title" x-text="item.title"></div>
+          <div class="card-meta">
+            <span class="quality-dot" :class="qualityClass(item)"></span>
+            <span x-text="qualityLabel(item)"></span>
+            <span x-show="item._fileSize" x-text="formatSize(item._fileSize)"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pagination" x-show="totalPages > 1">
+    <button class="page-btn" @click="page = Math.max(1, page-1)" :disabled="page <= 1">&laquo;</button>
+    <template x-for="p in pageNumbers()" :key="p">
+      <button class="page-btn" :class="{ active: p === page }" @click="typeof p === 'number' && (page = p)" x-text="p" :disabled="typeof p !== 'number'"></button>
+    </template>
+    <button class="page-btn" @click="page = Math.min(totalPages, page+1)" :disabled="page >= totalPages">&raquo;</button>
+  </div>
+
+  <!-- ==================== DETAIL OVERLAY ==================== -->
+  <div class="overlay" x-show="selected" x-cloak>
+
+    <div class="overlay-header">
+      <button class="btn btn-sm" @click="closeDetail()">&#x2190; Volver</button>
+      <button class="btn btn-icon btn-sm" title="Item anterior" @click="goToPrevItem()" :disabled="!hasPrevItem()">&#x25C0;</button>
+      <button class="btn btn-icon btn-sm" title="Item siguiente" @click="goToNextItem()" :disabled="!hasNextItem()">&#x25B6;</button>
+      <h2 x-text="selected?.title || ''"></h2>
+      <span style="font-size:12px; color:var(--text3)" x-text="(selected?.images||[]).length + ' img'"></span>
+      <a :href="selected?.url" target="_blank" class="btn btn-sm" title="Abrir pagina fuente" style="font-size:11px">&#8599; Fuente</a>
+      <button class="btn btn-accent btn-sm" @click="saveChanges()" :disabled="saving || !dirty">
+        <span x-show="saving" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+        <span x-text="saving ? 'Guardando...' : (dirty ? 'Guardar cambios' : 'Sin cambios')"></span>
+      </button>
+    </div>
+
+    <div class="overlay-body" x-show="selected">
+      <!-- Item meta (compact) -->
+      <dl class="detail-meta">
+        <dt>Serie</dt><dd x-text="selected?.series_display || selected?.series_key || '-'"></dd>
+        <dt>Edicion</dt><dd x-text="selected?.edition_display || selected?.edition_key || '-'"></dd>
+        <dt>Publisher</dt><dd x-text="selected?.publisher || '-'"></dd>
+        <dt>Pais</dt><dd x-text="selected?.country || '-'"></dd>
+      </dl>
+
+      <!-- Preview + actions -->
+      <div class="preview-area">
+        <div class="preview-main">
+          <div class="preview-img-wrap" @click="openLightbox()">
+            <template x-if="currentPreviewSrc()">
+              <img :src="currentPreviewSrc()" :alt="selected?.title || ''"
+                   @load="imgDims = { w: $el.naturalWidth, h: $el.naturalHeight }">
+            </template>
+            <template x-if="!currentPreviewSrc()">
+              <div class="no-img">&#128218;</div>
+            </template>
+            <!-- Prev/Next arrows on preview -->
+            <button class="preview-nav prev" @click.stop="prevImage()" x-show="(selected?.images||[]).length > 1">&#x2039;</button>
+            <button class="preview-nav next" @click.stop="nextImage()" x-show="(selected?.images||[]).length > 1">&#x203A;</button>
+            <div class="preview-badge" x-show="currentImage()">
+              <span x-text="kindLabel(currentImage()?.kind, previewIdx)"></span>
+              <span x-text="(previewIdx+1) + '/' + (selected?.images||[]).length"></span>
+              <span x-show="imgDims.w" x-text="imgDims.w + 'x' + imgDims.h + 'px'"></span>
+              <span x-show="currentImage()?._fileSize" x-text="formatSize(currentImage()._fileSize)"></span>
+            </div>
+          </div>
+        </div>
+        <div class="preview-actions">
+          <div class="action-group">
+            <div class="action-group-title">Agregar imagenes</div>
+            <button class="btn" @click="showAddUrlModal = true">
+              + Agregar por URL
+            </button>
+            <button class="btn" @click="scrapeUrl = selected?.url || ''; showScrapeModal = true">
+              &#128230; Importar desde pagina web
+            </button>
+          </div>
+          <div class="action-group" x-show="currentImage()">
+            <div class="action-group-title">Imagen seleccionada (#<span x-text="previewIdx+1"></span>)</div>
+            <button class="btn" @click="replaceIdx = previewIdx; showReplaceModal = true">
+              &#x1F504; Reemplazar por URL
+            </button>
+            <button class="btn" @click="setAsCover()" x-show="previewIdx > 0">
+              &#x2B06; Usar como portada
+            </button>
+            <button class="btn" @click="moveImage(-1)" x-show="previewIdx > 0">
+              &#x25C0; Mover a la izquierda
+            </button>
+            <button class="btn" @click="moveImage(1)" x-show="previewIdx < (selected?.images||[]).length - 1">
+              &#x25B6; Mover a la derecha
+            </button>
+            <button class="btn btn-danger" @click="deleteCurrentImage()">
+              &#x2715; Eliminar imagen
+            </button>
+          </div>
+          <div class="action-group" x-show="(selected?.images||[]).length > 1">
+            <div class="action-group-title">Acciones masivas</div>
+            <button class="btn btn-danger" @click="deleteAllExceptCover()">
+              Eliminar todas excepto portada
+            </button>
+          </div>
+          <div style="font-size:10px; color:var(--text3); margin-top:8px;">
+            <span class="kbd">&#x2190;</span> <span class="kbd">&#x2192;</span> navegar &middot;
+            <span class="kbd">Esc</span> volver &middot;
+            click en imagen = zoom
+          </div>
+        </div>
+      </div>
+
+      <!-- Filmstrip -->
+      <div class="filmstrip-header">
+        <span>Imagenes (<span x-text="(selected?.images||[]).length"></span>):</span>
+        <span style="font-size:10px; color:var(--text3)">Arrastra para reordenar</span>
+      </div>
+      <div class="filmstrip">
+        <template x-for="(img, idx) in (selected?.images || [])" :key="idx + '-' + (img.local||img.url)">
+          <div class="filmstrip-item" :class="{ active: previewIdx === idx, dragging: dragIdx === idx, 'drag-over': dragOverIdx === idx && dragIdx !== idx }"
+               @click="previewIdx = idx"
+               draggable="true"
+               @dragstart="onDragStart($event, idx)"
+               @dragend="onDragEnd()"
+               @dragover.prevent="onDragOver(idx)"
+               @dragleave="onDragLeave(idx)"
+               @drop.prevent="onDrop(idx)">
+            <img class="filmstrip-img" :src="imgSrc(img)" loading="lazy" :alt="img.kind || 'image'"
+                 @error="$el.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 150%22><rect fill=%22%23333%22 width=%22100%22 height=%22150%22/><text x=%2250%22 y=%2280%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2216%22>?</text></svg>'">
+            <span class="filmstrip-kind" x-text="kindLabel(img.kind, idx)"></span>
+            <span class="filmstrip-idx" x-text="idx + 1"></span>
+            <div class="filmstrip-actions" @click.stop>
+              <button class="filmstrip-btn cover" title="Usar como portada" @click="setAsCoverIdx(idx)" x-show="idx > 0">&#x2B06;</button>
+              <button class="filmstrip-btn" title="Reemplazar" @click="replaceIdx=idx; showReplaceModal=true">&#x1F504;</button>
+              <button class="filmstrip-btn danger" title="Eliminar" @click="deleteImage(idx)">&#x2715;</button>
+            </div>
+          </div>
+        </template>
+        <div class="filmstrip-add" @click="showAddUrlModal = true">
+          <span style="font-size:24px; color:var(--text3)">+</span>
+        </div>
+      </div>
+
+      <!-- Image detail bar (kind + description editor) -->
+      <div class="img-detail-bar" x-show="currentImage()">
+        <div>
+          <label>Tipo:</label>
+          <select @change="currentImage().kind = $el.value; markDirty()" x-model="currentImage()?.kind">
+            <option value="gallery">Galeria</option>
+            <option value="extra">Extra</option>
+          </select>
+        </div>
+        <div style="flex:1; display:flex; gap:6px; align-items:center">
+          <label>Descripcion:</label>
+          <input type="text" class="desc-input" placeholder="Ej: Contraportada, Postal de regalo..."
+                 :value="currentImage()?.description || ''"
+                 @input="currentImage().description = $el.value; markDirty()">
+        </div>
+      </div>
+
+      <!-- Full item info panel -->
+      <div class="item-info-panel" x-show="selected">
+        <h4>Informacion del item</h4>
+        <div class="info-grid">
+          <div class="info-field">
+            <div class="info-label">Titulo</div>
+            <div class="info-value" x-text="selected?.title || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Titulo original</div>
+            <div class="info-value" :class="{ muted: !selected?.title_original || selected?.title_original === selected?.title }"
+                 x-text="selected?.title_original && selected?.title_original !== selected?.title ? selected.title_original : '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Serie</div>
+            <div class="info-value" x-text="selected?.series_display || selected?.series_key || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Edicion</div>
+            <div class="info-value" x-text="selected?.edition_display || selected?.edition_key || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Volumen</div>
+            <div class="info-value" x-text="selected?.volume || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Publisher</div>
+            <div class="info-value" x-text="selected?.publisher || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Pais</div>
+            <div class="info-value" x-text="selected?.country || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Idioma</div>
+            <div class="info-value" x-text="selected?.language || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">ISBN</div>
+            <div class="info-value" x-text="selected?.isbn || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Precio</div>
+            <div class="info-value" x-text="selected?.price || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Fecha lanzamiento</div>
+            <div class="info-value" x-text="selected?.release_date || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Autor</div>
+            <div class="info-value" x-text="selected?.author || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Score</div>
+            <div class="info-value" x-text="selected?.score || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Rareza</div>
+            <div class="info-value" x-text="selected?.rarity || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Tipo producto</div>
+            <div class="info-value" x-text="selected?.product_type || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Stock</div>
+            <div class="info-value" x-text="selected?.stock_type || '-'"></div>
+          </div>
+          <div class="info-field">
+            <div class="info-label">Detectado</div>
+            <div class="info-value" x-text="selected?.detected_at ? selected.detected_at.slice(0,10) : '-'"></div>
+          </div>
+          <div class="info-field" style="grid-column: 1 / -1">
+            <div class="info-label">Signals</div>
+            <div class="info-value">
+              <template x-if="selected?.signal_types?.length">
+                <span>
+                  <template x-for="s in selected.signal_types" :key="s">
+                    <span class="signal-chip" x-text="s"></span>
+                  </template>
+                </span>
+              </template>
+              <template x-if="!selected?.signal_types?.length">
+                <span class="muted">-</span>
+              </template>
+            </div>
+          </div>
+          <div class="info-desc" x-show="selected?.description_es || selected?.description">
+            <div class="info-label">Descripcion</div>
+            <div class="info-value" x-text="selected?.description_es || selected?.description || ''"></div>
+          </div>
+          <!-- Sources (all siblings in same cluster) -->
+          <div style="grid-column: 1 / -1; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--bg3)">
+            <div class="info-label" style="margin-bottom: 6px" x-text="'Fuentes (' + siblings.length + ')'"></div>
+            <div style="display:flex; flex-direction:column; gap:4px">
+              <template x-for="sib in siblings" :key="sib.url">
+                <div style="display:flex; align-items:center; gap:10px; padding:5px 8px; background:var(--bg3); border-radius:4px; font-size:12px;">
+                  <a :href="sib.url" target="_blank" rel="noopener" style="color:var(--accent); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; gap:5px">
+                    <span style="flex-shrink:0">&#8599;</span>
+                    <span x-text="sib.source || 'Desconocida'"></span>
+                  </a>
+                  <span style="color:var(--text2); flex-shrink:0" x-text="sib.price || ''"></span>
+                  <span style="color:var(--text3); flex-shrink:0; font-size:11px" x-text="sib.country || ''"></span>
+                  <span style="color:var(--text3); flex-shrink:0; font-size:10px" x-show="sib.url === selected?.url">&#x2022; actual</span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== LIGHTBOX ==================== -->
+  <div class="lightbox" x-show="lightboxOpen" x-cloak
+       @click.self="lightboxOpen = false" @keydown.escape.window="lightboxOpen = false">
+    <button class="lightbox-close" @click="lightboxOpen = false">&#x2715;</button>
+    <button class="lightbox-nav prev" @click="prevImage()" x-show="(selected?.images||[]).length > 1">&#x2039;</button>
+    <button class="lightbox-nav next" @click="nextImage()" x-show="(selected?.images||[]).length > 1">&#x203A;</button>
+    <img :src="currentPreviewSrc()" :alt="selected?.title || ''">
+    <div class="lightbox-badge">
+      <span x-text="kindLabel(currentImage()?.kind, previewIdx)"></span> &middot;
+      <span x-text="(previewIdx+1) + '/' + (selected?.images||[]).length"></span>
+      <template x-if="imgDims.w">
+        <span x-text="' &middot; ' + imgDims.w + 'x' + imgDims.h + 'px'"></span>
+      </template>
+    </div>
+  </div>
+
+  <!-- ==================== ADD BY URL MODAL ==================== -->
+  <div class="modal-backdrop" x-show="showAddUrlModal" x-cloak @click.self="showAddUrlModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Agregar imagen por URL</h3>
+        <button class="btn btn-sm" @click="showAddUrlModal = false">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--text2); margin-bottom:12px">
+          Pega la URL directa de la imagen. Se descargara al espejo local automaticamente.
+        </p>
+        <div class="url-input-group">
+          <input type="text" class="url-input" placeholder="https://example.com/image.jpg" x-model="addUrl"
+                 @keydown.enter="addImageByUrl()">
+          <button class="btn btn-accent" @click="addImageByUrl()" :disabled="!addUrl.trim() || downloading">
+            <span x-show="downloading" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Agregar
+          </button>
+        </div>
+        <p style="font-size:12px; color:var(--text2); margin-bottom:8px">
+          O pega varias URLs (una por linea):
+        </p>
+        <textarea class="url-input" rows="4" style="width:100%; resize:vertical; border-radius:var(--radius-sm)"
+                  placeholder="https://example.com/img1.jpg&#10;https://example.com/img2.jpg"
+                  x-model="addUrlsMulti"></textarea>
+        <div style="margin-top:8px; display:flex; align-items:center; gap:12px">
+          <button class="btn btn-accent" @click="addMultipleUrls()" :disabled="!addUrlsMulti.trim() || downloading">
+            <span x-show="downloading" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Agregar todas
+          </button>
+          <span x-show="bulkProgress.total > 0" style="font-size:12px; color:var(--text2)"
+                x-text="bulkProgress.done + '/' + bulkProgress.total + ' descargadas'"></span>
+        </div>
+        <div class="progress-bar" x-show="bulkProgress.total > 0">
+          <div class="progress-bar-fill" :style="'width:' + (bulkProgress.total ? (bulkProgress.done/bulkProgress.total*100) : 0) + '%'"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== REPLACE MODAL ==================== -->
+  <div class="modal-backdrop" x-show="showReplaceModal" x-cloak @click.self="showReplaceModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Reemplazar imagen #<span x-text="replaceIdx + 1"></span></h3>
+        <button class="btn btn-sm" @click="showReplaceModal = false">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px; text-align:center">
+          <img :src="imgSrc((selected?.images||[])[replaceIdx])" style="max-height:150px; border-radius:var(--radius-sm); border:1px solid var(--bg4)"
+               x-show="(selected?.images||[])[replaceIdx]">
+        </div>
+        <div class="url-input-group">
+          <input type="text" class="url-input" placeholder="https://example.com/new-image.jpg" x-model="replaceUrl"
+                 @keydown.enter="replaceImage()">
+          <button class="btn btn-accent" @click="replaceImage()" :disabled="!replaceUrl.trim() || downloading">
+            <span x-show="downloading" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Reemplazar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCRAPE / IMPORT MODAL ==================== -->
+  <div class="modal-backdrop" x-show="showScrapeModal" x-cloak @click.self="showScrapeModal = false">
+    <div class="modal" style="max-width:750px">
+      <div class="modal-header">
+        <h3>Importar imagenes desde pagina web</h3>
+        <button class="btn btn-sm" @click="showScrapeModal = false">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--text2); margin-bottom:12px">
+          Ingresa la URL de la pagina. Se extraeran todas las imagenes.
+        </p>
+        <div class="url-input-group">
+          <input type="text" class="url-input" placeholder="https://example.com/product/manga-vol-1" x-model="scrapeUrl"
+                 @keydown.enter="scrapePageImages()">
+          <button class="btn btn-accent" @click="scrapePageImages()" :disabled="!scrapeUrl.trim() || scraping">
+            <span x-show="scraping" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Buscar
+          </button>
+        </div>
+        <template x-if="scrapeResults.length > 0">
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; color:var(--text2)" x-text="scrapeResults.length + ' imagenes encontradas'"></span>
+              <div style="display:flex; gap:6px">
+                <button class="btn btn-sm" @click="selectAllScrape()">Seleccionar todas</button>
+                <button class="btn btn-sm" @click="deselectAllScrape()">Deseleccionar</button>
+              </div>
+            </div>
+            <div class="scrape-grid">
+              <template x-for="(img, idx) in scrapeResults" :key="idx">
+                <div class="scrape-item" :class="{ selected: img._selected }" @click="img._selected = !img._selected">
+                  <img :src="img.url" loading="lazy" :alt="img.alt || ''"
+                       @error="$el.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2212%22>Error</text></svg>'">
+                  <div class="check">&#x2713;</div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+        <template x-if="scrapeResults.length === 0 && scrapeSearched">
+          <p style="text-align:center; color:var(--text3); padding:20px; font-size:13px">
+            No se encontraron imagenes en la pagina.
+          </p>
+        </template>
+      </div>
+      <div class="modal-footer" x-show="scrapeResults.length > 0">
+        <span style="font-size:12px; color:var(--text2)" x-text="scrapeResults.filter(i => i._selected).length + ' seleccionadas'"></span>
+        <span x-show="bulkProgress.total > 0" style="font-size:12px; color:var(--text2)"
+              x-text="bulkProgress.done + '/' + bulkProgress.total"></span>
+        <button class="btn btn-accent" @click="addSelectedScrapeImages()" :disabled="downloading || scrapeResults.filter(i => i._selected).length === 0">
+          <span x-show="downloading" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+          Agregar seleccionadas
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" :class="toast.type" x-show="toast.show" x-cloak x-text="toast.msg"></div>
+
+  <script>
+  function imageManager() {
+    return {
+      items: [], filtered: [], fileSizes: {}, selected: null, originalImages: null,
+      page: 1, perPage: 60,
+      filter: 'all', search: '',
+      counts: { all: 0, no_image: 0, low: 0, medium: 0, upscaled: 0, single: 0 },
+      previewIdx: 0, dirty: false, imgDims: { w: 0, h: 0 },
+      lightboxOpen: false,
+      showAddUrlModal: false, showReplaceModal: false, showScrapeModal: false,
+      addUrl: '', addUrlsMulti: '', replaceUrl: '', replaceIdx: 0,
+      scrapeUrl: '', scrapeResults: [], scrapeSearched: false,
+      dragIdx: -1, dragOverIdx: -1,
+      loading: true, saving: false, downloading: false, scraping: false,
+      bulkProgress: { done: 0, total: 0 },
+      toast: { show: false, msg: '', type: 'success' },
+
+      get totalPages() { return Math.ceil(this.filtered.length / this.perPage); },
+      get paged() { const s = (this.page - 1) * this.perPage; return this.filtered.slice(s, s + this.perPage); },
+
+      async init() {
+        try {
+          const [ir, sr] = await Promise.all([fetch('../data/items.jsonl'), fetch('/api/image-file-sizes')]);
+          const text = await ir.text();
+          this.items = text.trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+          this.fileSizes = await sr.json();
+          for (const item of this.items) {
+            item._fileSize = this.fileSizes[item.image_local || ''] || 0;
+            item._quality = this.getQuality(item);
+            if (item.images) for (const img of item.images) img._fileSize = this.fileSizes[img.local || ''] || 0;
+          }
+          this.computeCounts();
+          this.applyFilter();
+        } catch (e) {
+          this.showToast('Error cargando datos: ' + e.message, 'error');
+        } finally { this.loading = false; }
+      },
+
+      getQuality(item) {
+        if (!item.image_local) return 'none';
+        const sz = item._fileSize || 0;
+        if (sz === 0) return 'none';
+        if (sz < 50000) return 'low';
+        if (sz < 200000) return 'medium';
+        return 'good';
+      },
+      isUpscaled(item) { return (item.image_local || '').endsWith('.png'); },
+
+      computeCounts() {
+        const c = { all: 0, no_image: 0, low: 0, medium: 0, upscaled: 0, single: 0 };
+        for (const item of this.items) {
+          c.all++;
+          if (item._quality === 'none') c.no_image++;
+          else if (item._quality === 'low') c.low++;
+          else if (item._quality === 'medium') c.medium++;
+          if (this.isUpscaled(item)) c.upscaled++;
+          if ((item.images || []).length <= 1) c.single++;
+        }
+        this.counts = c;
+      },
+
+      setFilter(f) { this.filter = f; this.page = 1; this.applyFilter(); },
+
+      applyFilter() {
+        let r = this.items;
+        const q = this.search.trim().toLowerCase();
+        if (q) r = r.filter(i => [i.title, i.title_original, i.series_key, i.series_display].some(f => (f||'').toLowerCase().includes(q)));
+        switch (this.filter) {
+          case 'no_image': r = r.filter(i => i._quality === 'none'); break;
+          case 'low': r = r.filter(i => i._quality === 'low'); break;
+          case 'medium': r = r.filter(i => i._quality === 'medium'); break;
+          case 'upscaled': r = r.filter(i => this.isUpscaled(i)); break;
+          case 'single': r = r.filter(i => (i.images || []).length <= 1); break;
+        }
+        const qO = { none: 0, low: 1, medium: 2, good: 3 };
+        r.sort((a, b) => (qO[a._quality] || 0) - (qO[b._quality] || 0));
+        this.filtered = r;
+        this.page = 1;
+      },
+
+      // ==================== NAVIGATION ====================
+
+      siblings: [],
+      selectItem(item) {
+        this.selected = JSON.parse(JSON.stringify(item));
+        if ((!this.selected.images || !this.selected.images.length) && (this.selected.image_url || this.selected.image_local)) {
+          this.selected.images = [{ url: this.selected.image_url || '', local: this.selected.image_local || '', kind: 'gallery', description: '' }];
+        }
+        this.originalImages = JSON.parse(JSON.stringify(this.selected.images || []));
+        this.previewIdx = 0; this.dirty = false; this.imgDims = { w: 0, h: 0 };
+        this.siblings = this._computeSiblings();
+      },
+      closeDetail() {
+        if (this.dirty && !confirm('Hay cambios sin guardar. Salir?')) return;
+        this.selected = null; this.originalImages = null; this.dirty = false; this.lightboxOpen = false;
+      },
+
+      selectedFilteredIdx() {
+        if (!this.selected) return -1;
+        return this.filtered.findIndex(i => i.url === this.selected.url);
+      },
+      hasPrevItem() { return this.selectedFilteredIdx() > 0; },
+      hasNextItem() { const idx = this.selectedFilteredIdx(); return idx >= 0 && idx < this.filtered.length - 1; },
+      goToPrevItem() {
+        if (this.dirty && !confirm('Hay cambios sin guardar. Continuar?')) return;
+        const idx = this.selectedFilteredIdx();
+        if (idx > 0) this.selectItem(this.filtered[idx - 1]);
+      },
+      goToNextItem() {
+        if (this.dirty && !confirm('Hay cambios sin guardar. Continuar?')) return;
+        const idx = this.selectedFilteredIdx();
+        if (idx >= 0 && idx < this.filtered.length - 1) this.selectItem(this.filtered[idx + 1]);
+      },
+
+      handleKey(e) {
+        if (this.showAddUrlModal || this.showReplaceModal || this.showScrapeModal) return;
+        if (!this.selected) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); this.prevImage(); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); this.nextImage(); }
+        else if (e.key === 'Escape') { e.preventDefault(); if (this.lightboxOpen) this.lightboxOpen = false; else this.closeDetail(); }
+      },
+
+      prevImage() {
+        if (!this.selected?.images?.length) return;
+        this.previewIdx = (this.previewIdx - 1 + this.selected.images.length) % this.selected.images.length;
+        this.imgDims = { w: 0, h: 0 };
+      },
+      nextImage() {
+        if (!this.selected?.images?.length) return;
+        this.previewIdx = (this.previewIdx + 1) % this.selected.images.length;
+        this.imgDims = { w: 0, h: 0 };
+      },
+
+      openLightbox() { if (this.currentPreviewSrc()) this.lightboxOpen = true; },
+
+      markDirty() { this.dirty = true; },
+
+      // ==================== IMAGE SOURCES ====================
+
+      coverSrc(item) { return item.image_local ? '../data/images/' + item.image_local : item.image_url || ''; },
+      imgSrc(img) { if (!img) return ''; return img.local ? '../data/images/' + img.local : img.url || ''; },
+      currentImage() { return this.selected?.images?.[this.previewIdx] || null; },
+      currentPreviewSrc() { return this.imgSrc(this.currentImage()); },
+
+      qualityClass(item) { return { good: 'q-good', medium: 'q-medium', low: 'q-low', none: 'q-none' }[item._quality || 'none']; },
+      qualityLabel(item) { return { good: 'Buena', medium: 'Media', low: 'Baja', none: 'Sin imagen' }[item._quality || 'none']; },
+      kindLabel(kind, idx) { if (idx === 0) return 'Portada'; return kind === 'extra' ? 'Extra' : 'Galeria'; },
+      formatSize(bytes) { if (!bytes) return ''; if (bytes < 1024) return bytes + ' B'; if (bytes < 1048576) return (bytes / 1024).toFixed(0) + ' KB'; return (bytes / 1048576).toFixed(1) + ' MB'; },
+
+      _computeSiblings() {
+        if (!this.selected) return [];
+        const ck = this.selected.cluster_key;
+        if (!ck || ck.startsWith('url:')) return [this.selected];
+        const sibs = this.items.filter(i => i.cluster_key === ck);
+        sibs.sort((a, b) => (a.url === this.selected.url ? -1 : b.url === this.selected.url ? 1 : 0));
+        return sibs.length ? sibs : [this.selected];
+      },
+
+      pageNumbers() {
+        const t = this.totalPages;
+        if (t <= 7) return Array.from({length: t}, (_, i) => i + 1);
+        const p = [1]; let lo = Math.max(2, this.page - 1), hi = Math.min(t - 1, this.page + 1);
+        if (lo > 2) p.push('...'); for (let i = lo; i <= hi; i++) p.push(i);
+        if (hi < t - 1) p.push('...'); if (t > 1) p.push(t); return p;
+      },
+
+      // ==================== ACTIONS ====================
+
+      deleteImage(idx) {
+        if (!this.selected?.images) return;
+        this.selected.images.splice(idx, 1);
+        if (this.previewIdx >= this.selected.images.length) this.previewIdx = Math.max(0, this.selected.images.length - 1);
+        this.markDirty();
+      },
+      deleteCurrentImage() { this.deleteImage(this.previewIdx); },
+      deleteAllExceptCover() {
+        if (!this.selected?.images || !confirm('Eliminar todas excepto la portada?')) return;
+        this.selected.images = this.selected.images.slice(0, 1);
+        this.previewIdx = 0; this.markDirty();
+      },
+
+      setAsCover() { this.setAsCoverIdx(this.previewIdx); },
+      setAsCoverIdx(idx) {
+        if (!this.selected?.images || idx <= 0) return;
+        const [img] = this.selected.images.splice(idx, 1);
+        this.selected.images.unshift(img);
+        this.previewIdx = 0; this.markDirty();
+        this.showToast('Imagen movida a portada', 'success');
+      },
+
+      moveImage(dir) {
+        if (!this.selected?.images) return;
+        const newIdx = this.previewIdx + dir;
+        if (newIdx < 0 || newIdx >= this.selected.images.length) return;
+        const imgs = this.selected.images;
+        [imgs[this.previewIdx], imgs[newIdx]] = [imgs[newIdx], imgs[this.previewIdx]];
+        this.previewIdx = newIdx; this.markDirty();
+      },
+
+      onDragStart(e, idx) {
+        this.dragIdx = idx;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(idx));
+      },
+      onDragEnd() { this.dragIdx = -1; this.dragOverIdx = -1; },
+      onDragOver(idx) { if (this.dragIdx >= 0) this.dragOverIdx = idx; },
+      onDragLeave(idx) { if (this.dragOverIdx === idx) this.dragOverIdx = -1; },
+      onDrop(targetIdx) {
+        const srcIdx = this.dragIdx;
+        if (srcIdx < 0 || srcIdx === targetIdx || !this.selected?.images) { this.dragIdx = -1; this.dragOverIdx = -1; return; }
+        const imgs = this.selected.images;
+        const [moved] = imgs.splice(srcIdx, 1);
+        imgs.splice(targetIdx, 0, moved);
+        if (this.previewIdx === srcIdx) this.previewIdx = targetIdx;
+        else if (srcIdx < this.previewIdx && targetIdx >= this.previewIdx) this.previewIdx--;
+        else if (srcIdx > this.previewIdx && targetIdx <= this.previewIdx) this.previewIdx++;
+        this.dragIdx = -1; this.dragOverIdx = -1;
+        this.markDirty();
+        this.showToast('Imagen movida', 'success');
+      },
+
+      async addImageByUrl() {
+        const url = this.addUrl.trim();
+        if (!url) return;
+        this.downloading = true;
+        try {
+          const resp = await fetch('/api/image-manager/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: url }) });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Download failed');
+          if (data.file_size) this.fileSizes[data.local] = data.file_size;
+          if (!this.selected.images) this.selected.images = [];
+          this.selected.images.push({ url: data.url, local: data.local, kind: 'gallery', description: '', _fileSize: data.file_size || this.fileSizes[data.local] || 0 });
+          this.previewIdx = this.selected.images.length - 1;
+          this.addUrl = ''; this.markDirty();
+          this.showToast('Imagen agregada', 'success');
+        } catch (e) { this.showToast('Error: ' + e.message, 'error'); }
+        finally { this.downloading = false; }
+      },
+
+      async addMultipleUrls() {
+        const urls = this.addUrlsMulti.trim().split('\n').map(u => u.trim()).filter(Boolean);
+        if (!urls.length) return;
+        this.downloading = true; this.bulkProgress = { done: 0, total: urls.length };
+        let added = 0;
+        try {
+          for (const url of urls) {
+            try {
+              const resp = await fetch('/api/image-manager/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: url }) });
+              const data = await resp.json();
+              if (resp.ok) {
+                if (data.file_size) this.fileSizes[data.local] = data.file_size;
+                if (!this.selected.images) this.selected.images = [];
+                this.selected.images.push({ url: data.url, local: data.local, kind: 'gallery', description: '', _fileSize: data.file_size || this.fileSizes[data.local] || 0 });
+                added++;
+              }
+            } catch {}
+            this.bulkProgress.done++;
+          }
+          if (added > 0) { this.previewIdx = this.selected.images.length - 1; this.addUrlsMulti = ''; this.markDirty(); }
+          this.showToast(`${added}/${urls.length} imagenes agregadas`, added > 0 ? 'success' : 'error');
+        } finally { this.downloading = false; this.bulkProgress = { done: 0, total: 0 }; }
+      },
+
+      async replaceImage() {
+        const url = this.replaceUrl.trim();
+        if (!url || this.replaceIdx < 0) return;
+        this.downloading = true;
+        try {
+          const resp = await fetch('/api/image-manager/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: url }) });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Download failed');
+          if (data.file_size) this.fileSizes[data.local] = data.file_size;
+          const img = this.selected.images[this.replaceIdx];
+          if (img) { img.url = data.url; img.local = data.local; img._fileSize = data.file_size || 0; }
+          this.replaceUrl = ''; this.showReplaceModal = false; this.markDirty();
+          this.showToast('Imagen reemplazada', 'success');
+        } catch (e) { this.showToast('Error: ' + e.message, 'error'); }
+        finally { this.downloading = false; }
+      },
+
+      // ==================== SCRAPE ====================
+
+      async scrapePageImages() {
+        const url = this.scrapeUrl.trim();
+        if (!url) return;
+        this.scraping = true; this.scrapeResults = []; this.scrapeSearched = false;
+        try {
+          const resp = await fetch('/api/image-manager/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_url: url }) });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Scrape failed');
+          this.scrapeResults = (data.images || []).map(img => ({ ...img, _selected: false }));
+          this.scrapeSearched = true;
+          if (this.scrapeResults.length > 0) this.showToast(this.scrapeResults.length + ' imagenes encontradas', 'success');
+        } catch (e) { this.showToast('Error: ' + e.message, 'error'); this.scrapeSearched = true; }
+        finally { this.scraping = false; }
+      },
+      selectAllScrape() { this.scrapeResults.forEach(i => i._selected = true); },
+      deselectAllScrape() { this.scrapeResults.forEach(i => i._selected = false); },
+
+      async addSelectedScrapeImages() {
+        const sel = this.scrapeResults.filter(i => i._selected);
+        if (!sel.length) return;
+        this.downloading = true; this.bulkProgress = { done: 0, total: sel.length };
+        let added = 0;
+        try {
+          for (const img of sel) {
+            try {
+              const resp = await fetch('/api/image-manager/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: img.url }) });
+              const data = await resp.json();
+              if (resp.ok) {
+                if (data.file_size) this.fileSizes[data.local] = data.file_size;
+                if (!this.selected.images) this.selected.images = [];
+                this.selected.images.push({ url: data.url, local: data.local, kind: 'gallery', description: img.alt || '', _fileSize: data.file_size || this.fileSizes[data.local] || 0 });
+                added++;
+              }
+            } catch {}
+            this.bulkProgress.done++;
+          }
+          if (added > 0) { this.previewIdx = this.selected.images.length - 1; this.markDirty(); }
+          this.showScrapeModal = false; this.scrapeResults = [];
+          this.showToast(`${added}/${sel.length} imagenes importadas`, added > 0 ? 'success' : 'error');
+        } finally { this.downloading = false; this.bulkProgress = { done: 0, total: 0 }; }
+      },
+
+      // ==================== SAVE ====================
+
+      async saveChanges() {
+        if (!this.selected || !this.dirty) return;
+        this.saving = true;
+        try {
+          const cleanImages = (this.selected.images || []).map(img => ({ url: img.url || '', local: img.local || '', kind: img.kind || 'gallery', description: img.description || '' }));
+          const resp = await fetch('/api/image-manager/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_url: this.selected.url, images: cleanImages }) });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Save failed');
+          const orig = this.items.find(i => i.url === this.selected.url);
+          if (orig) {
+            orig.images = cleanImages;
+            if (cleanImages.length > 0) { orig.image_url = cleanImages[0].url; orig.image_local = cleanImages[0].local; }
+            else { orig.image_url = ''; orig.image_local = ''; }
+            orig._fileSize = this.fileSizes[orig.image_local || ''] || 0;
+            orig._quality = this.getQuality(orig);
+          }
+          this.originalImages = JSON.parse(JSON.stringify(cleanImages));
+          this.dirty = false; this.computeCounts();
+          const del = data.deleted_files?.length || 0;
+          this.showToast('Cambios guardados' + (del ? ` (${del} archivo${del>1?'s':''} eliminado${del>1?'s':''} del disco)` : ''), 'success');
+        } catch (e) { this.showToast('Error guardando: ' + e.message, 'error'); }
+        finally { this.saving = false; }
+      },
+
+      showToast(msg, type = 'success') {
+        this.toast = { show: true, msg, type };
+        setTimeout(() => { this.toast.show = false; }, 3000);
+      },
+    };
+  }
+  </script>
+</body>
+</html>
