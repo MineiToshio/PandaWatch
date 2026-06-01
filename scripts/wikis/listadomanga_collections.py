@@ -877,7 +877,7 @@ def _merge_extras_into_items(
                 images_list.append({
                     "url": cover_url,
                     "local": "",
-                    "kind": "cover",
+                    "kind": "gallery",
                     "description": "",
                 })
                 cand.image_url = cover_url  # alias del primer kind=cover
@@ -1166,7 +1166,7 @@ def parse_collection_page(
                 cand.images = [{
                     "url": parsed["image_url"],
                     "local": "",
-                    "kind": "cover",
+                    "kind": "gallery",
                     "description": "",
                 }]
             candidates.append(cand)
@@ -1261,7 +1261,7 @@ def parse_collection_page(
             images_list.append({
                 "url": cover_url,
                 "local": "",
-                "kind": "cover",
+                "kind": "gallery",
                 "description": "",
             })
 

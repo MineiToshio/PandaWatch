@@ -714,7 +714,7 @@ def _build_candidate(
         # 1) Cover = variant elegida.
         if image_url and image_url not in seen_urls:
             images_list.append({
-                "url": image_url, "kind": "cover", "description": ""
+                "url": image_url, "kind": "gallery", "description": ""
             })
             seen_urls.add(image_url)
         # 2) Resto del gallery como entries kind=gallery, en orden BBM.
