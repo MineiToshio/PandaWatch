@@ -18,3 +18,6 @@ data/diagnostics/
 reports/
 logs/
 .claude/scheduled_tasks.lock
+
+# Artefacto regenerable de la cola de revisión de portadas (familia items.jsonl)
+data/cover_preview.json
