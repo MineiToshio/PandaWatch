@@ -1,28 +1,35 @@
-import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { formatDate, PRODUCT_TYPE_LABELS } from '@/lib/format'
 import type { Item } from '@/lib/types'
+
+const RARITY_LABELS: Record<string, string> = {
+  common:     'Accessible',
+  rare:       'Rare',
+  super_rare: 'Super Rare',
+  ultra_rare: 'Ultra Rare',
+}
+
+function validPrice(price?: string): string | undefined {
+  if (!price) return undefined
+  const n = parseFloat(price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0')
+  return n > 0 ? price : undefined
+}
 
 type Row = {
   label: string
   value: string | number | null | undefined
-  render?: () => React.ReactNode
 }
 
 export function MetaTable({ item }: { item: Item }) {
   const rows: Row[] = [
     { label: 'ISBN',          value: item.isbn },
-    { label: 'Precio',        value: item.price },
+    { label: 'Precio',        value: validPrice(item.price) },
     { label: 'Lanzamiento',   value: item.release_date && formatDate(item.release_date) },
     { label: 'Autor',         value: item.author },
     { label: 'Editorial',     value: item.publisher },
     { label: 'País',          value: item.country },
     { label: 'Idioma',        value: item.language },
     { label: 'Tipo',          value: item.product_type && (PRODUCT_TYPE_LABELS[item.product_type] ?? item.product_type) },
-    {
-      label: 'Puntuación',
-      value: item.score,
-      render: item.score !== undefined ? () => <ScoreBadge score={item.score!} /> : undefined,
-    },
+    { label: 'Rareza',        value: item.rarity ? (RARITY_LABELS[item.rarity] ?? item.rarity) : undefined },
     { label: 'Detectado',     value: item.detected_at && formatDate(item.detected_at) },
     {
       label: 'Estandarizado',
@@ -40,16 +47,16 @@ export function MetaTable({ item }: { item: Item }) {
         Datos del producto
       </h2>
       <dl style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {rows.map(({ label, value, render }) => (
+        {rows.map(({ label, value }) => (
           <div key={label} style={{ display: 'flex', gap: 8 }}>
             <dt style={{
               fontSize: 12, color: 'var(--color-text-tertiary)',
-              width: 112, flexShrink: 0, paddingTop: render ? 8 : 0,
+              width: 112, flexShrink: 0,
             }}>
               {label}
             </dt>
             <dd style={{ fontSize: 13, color: 'var(--color-text-primary)', margin: 0 }}>
-              {render ? render() : String(value)}
+              {String(value)}
             </dd>
           </div>
         ))}

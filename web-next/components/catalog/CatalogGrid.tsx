@@ -4,9 +4,10 @@ import { EmptyState } from './EmptyState'
 
 type CatalogGridProps = {
   clusters: Cluster[]
+  from?: string
 }
 
-export function CatalogGrid({ clusters }: CatalogGridProps) {
+export function CatalogGrid({ clusters, from }: CatalogGridProps) {
   if (clusters.length === 0) {
     return <EmptyState />
   }
@@ -18,7 +19,7 @@ export function CatalogGrid({ clusters }: CatalogGridProps) {
     >
       <div className="catalog-grid-inner">
         {clusters.map(cluster => (
-          <EditionCard key={cluster.clusterKey} cluster={cluster} />
+          <EditionCard key={cluster.clusterKey} cluster={cluster} from={from} />
         ))}
       </div>
     </div>

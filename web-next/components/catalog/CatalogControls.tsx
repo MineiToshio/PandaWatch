@@ -12,6 +12,9 @@ type CatalogControlsProps = {
   sort: SortKey
   page: number
   pages: number
+  totalTomos: number
+  totalEditions: number
+  totalObras: number
   children: React.ReactNode
 }
 
@@ -22,6 +25,9 @@ export function CatalogControls({
   sort,
   page,
   pages,
+  totalTomos,
+  totalEditions,
+  totalObras,
   children,
 }: CatalogControlsProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -54,6 +60,9 @@ export function CatalogControls({
           sort={sort}
           page={page}
           pages={pages}
+          totalTomos={totalTomos}
+          totalEditions={totalEditions}
+          totalObras={totalObras}
           onOpenFilters={() => setDrawerOpen(true)}
         />
         {children}

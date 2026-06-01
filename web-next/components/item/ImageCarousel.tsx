@@ -6,11 +6,13 @@ import { ChevronLeft, ChevronRight, BookOpen, X } from 'lucide-react'
 import type { ItemImage } from '@/lib/types'
 
 const KIND_LABELS: Record<string, string> = {
-  cover:         'Portada',
   gallery:       'Galería',
   extra:         'Extra',
-  variant_cover: 'Portada Alternativa',
-  back_cover:    'Contraportada',
+}
+
+function kindLabelForIdx(img: ItemImage, idx: number): string {
+  if (idx === 0) return 'Portada'
+  return KIND_LABELS[img.kind] ?? img.kind ?? 'Galería'
 }
 
 function getInitialSrc(img: ItemImage): string | null {
@@ -140,7 +142,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
 
   const current = images[idx]
   const isLocal = Boolean(src?.startsWith('/images/'))
-  const kindLabel = KIND_LABELS[current.kind] ?? current.kind
+  const kindLabel = kindLabelForIdx(current, idx)
 
   return (
     <>

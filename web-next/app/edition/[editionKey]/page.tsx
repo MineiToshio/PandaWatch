@@ -9,8 +9,9 @@ type Props = {
   searchParams: Promise<{ from?: string }>
 }
 
-export default async function EditionPage({ params }: Props) {
+export default async function EditionPage({ params, searchParams }: Props) {
   const { editionKey } = await params
+  const { from } = await searchParams
   const clusters = loadEditionClusters(editionKey)
 
   if (!clusters.length) notFound()
@@ -20,7 +21,7 @@ export default async function EditionPage({ params }: Props) {
 
   return (
     <main style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 16px 64px' }}>
-      <BackLink href="/" label="Catálogo" />
+      <BackLink href={from || '/'} label="Catálogo" />
       <EditionHeader
         cluster={firstCluster}
         totalVolumes={clusters.length}

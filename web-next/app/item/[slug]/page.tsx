@@ -21,11 +21,18 @@ export default async function ItemPage({ params, searchParams }: Props) {
 
   const { canonical, items } = cluster
 
-  // Back navigation: ?from=edition:<editionKey> or default to catalog
-  const backHref = from?.startsWith('edition:') ? `/edition/${from.slice(8)}` : '/'
-  const backLabel = from?.startsWith('edition:')
-    ? (cluster.editionDisplay || cluster.seriesDisplay || 'Edición')
-    : 'Catálogo'
+  // Back navigation:
+  //   from=edition:<editionKey>  → back to the edition page
+  //   from=/?q=...&page=N        → back to catalog preserving filters + page
+  //   (absent)                   → catalog root
+  let backHref = '/'
+  let backLabel = 'Catálogo'
+  if (from?.startsWith('edition:')) {
+    backHref = `/edition/${from.slice(8)}`
+    backLabel = cluster.editionDisplay || cluster.seriesDisplay || 'Edición'
+  } else if (from) {
+    backHref = from
+  }
 
   const hasExtras = (canonical.extras?.length ?? 0) > 0
   const hasMultipleSources = items.length > 1

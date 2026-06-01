@@ -18,10 +18,13 @@ type SortBarProps = {
   sort: SortKey
   page: number
   pages: number
+  totalTomos: number
+  totalEditions: number
+  totalObras: number
   onOpenFilters: () => void
 }
 
-export function SortBar({ total, sort, page, pages, onOpenFilters }: SortBarProps) {
+export function SortBar({ total, sort, page, pages, totalTomos, totalEditions, totalObras, onOpenFilters }: SortBarProps) {
   const router   = useRouter()
   const pathname = usePathname()
   const params   = useSearchParams()
@@ -46,15 +49,22 @@ export function SortBar({ total, sort, page, pages, onOpenFilters }: SortBarProp
         flexShrink: 0,
       }}
     >
-      {/* Count + page info */}
-      <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-        {total.toLocaleString('es')} ediciones
+      {/* Stats: tomos · ediciones · obras · pág */}
+      <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 0 }}>
+        <Stat value={totalTomos} label="tomos" />
+        <Sep />
+        <Stat value={totalEditions} label="ediciones" />
+        <Sep />
+        <Stat value={totalObras} label="obras" />
         {pages > 1 && (
-          <span style={{ color: 'var(--color-text-tertiary)' }}>
-            {' '}· pág. {page}/{pages}
-          </span>
+          <>
+            <Sep />
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>
+              pág. {page}/{pages}
+            </span>
+          </>
         )}
-      </span>
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {/* Sort select */}
@@ -103,6 +113,25 @@ export function SortBar({ total, sort, page, pages, onOpenFilters }: SortBarProp
       </div>
 
     </div>
+  )
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+        {value.toLocaleString('es')}
+      </span>
+      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 3 }}>
+        {label}
+      </span>
+    </span>
+  )
+}
+
+function Sep() {
+  return (
+    <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', margin: '0 6px' }}>·</span>
   )
 }
 

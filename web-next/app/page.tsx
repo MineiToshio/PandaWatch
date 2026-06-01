@@ -23,6 +23,21 @@ export default async function CatalogPage({
   const editions    = groupByEdition(sorted)
   const { items, total, pages, page } = paginate(editions, fp.page)
 
+  const totalTomos    = filtered.length
+  const totalEditions = editions.length
+  const totalObras    = new Set(
+    filtered.map(c => c.canonical.series_key).filter(Boolean)
+  ).size
+
+  // Build the catalog URL to pass as ?from= in detail-page links,
+  // so BackLink can return to the exact same filtered/paginated state.
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(rawParams)) {
+    if (Array.isArray(v)) v.forEach(val => qs.append(k, val))
+    else qs.append(k, v)
+  }
+  const catalogFrom = qs.toString() ? `/?${qs.toString()}` : '/'
+
   return (
     <CatalogControls
       facets={facets}
@@ -31,8 +46,11 @@ export default async function CatalogPage({
       sort={fp.sort}
       page={page}
       pages={pages}
+      totalTomos={totalTomos}
+      totalEditions={totalEditions}
+      totalObras={totalObras}
     >
-      <CatalogGrid clusters={items} />
+      <CatalogGrid clusters={items} from={catalogFrom} />
       {pages > 1 && <Pagination total={pages} current={page} />}
     </CatalogControls>
   )

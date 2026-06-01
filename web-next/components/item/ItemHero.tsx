@@ -1,9 +1,47 @@
 import { ImageCarousel } from '@/components/item/ImageCarousel'
 import { SignalChip } from '@/components/modules/SignalChip'
-import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import { formatDate } from '@/lib/format'
 import type { Cluster } from '@/lib/types'
+
+const RARITY_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  common: {
+    label: 'Accessible',
+    color: '#9CA3AF',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+        <circle cx={12} cy={12} r={10} />
+      </svg>
+    ),
+  },
+  rare: {
+    label: 'Rare',
+    color: '#8BA8F8',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+      </svg>
+    ),
+  },
+  super_rare: {
+    label: 'Super Rare',
+    color: '#C4A8FF',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
+      </svg>
+    ),
+  },
+  ultra_rare: {
+    label: 'Ultra Rare',
+    color: '#FDE68A',
+    icon: (
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M6 3h12l4 6-10 13L2 9z" />
+      </svg>
+    ),
+  },
+}
 
 export function ItemHero({ cluster }: { cluster: Cluster }) {
   const { canonical, signalTypes } = cluster
@@ -11,7 +49,7 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
   const images = canonical.images?.length
     ? canonical.images
     : (canonical.image_url || canonical.image_local)
-      ? [{ url: canonical.image_url ?? '', local: canonical.image_local, kind: 'cover' as const }]
+      ? [{ url: canonical.image_url ?? '', local: canonical.image_local, kind: 'gallery' as const }]
       : []
 
   return (
@@ -89,19 +127,45 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             )}
           </div>
 
-          {/* Score + signal chips */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {canonical.score !== undefined && (
-              <ScoreBadge score={canonical.score} showLabel />
-            )}
-            {signalTypes.map(s => (
-              <SignalChip key={s} signal={s} size="md" />
-            ))}
-          </div>
+          {/* Signal chips */}
+          {signalTypes.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {signalTypes.map(s => (
+                <SignalChip key={s} signal={s} size="md" />
+              ))}
+            </div>
+          )}
+
+          {/* Rarity badge — same visual as EditionCard's RarityBadge */}
+          {canonical.rarity && RARITY_META[canonical.rarity] && (() => {
+            const rm = RARITY_META[canonical.rarity!]
+            return (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 8px',
+                  borderRadius: 5,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  fontFamily: 'var(--font-display)',
+                  color: rm.color,
+                  background: 'rgba(20,17,14,0.82)',
+                  backdropFilter: 'blur(6px)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  alignSelf: 'flex-start',
+                }}
+              >
+                {rm.icon}
+                {rm.label}
+              </div>
+            )
+          })()}
 
           {/* Key purchase info */}
           <div style={{ paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {canonical.price && (
+            {canonical.price && parseFloat(canonical.price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0') > 0 && (
               <p style={{ fontSize: 24, fontWeight: 700, color: 'var(--vermillion-500)', margin: 0 }}>
                 {canonical.price}
               </p>

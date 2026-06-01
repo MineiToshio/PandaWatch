@@ -4,38 +4,65 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 
 export function SearchBar() {
-  const router   = useRouter()
-  const pathname = usePathname()
-  const params   = useSearchParams()
+  const router     = useRouter()
+  const pathname   = usePathname()
+  const params     = useSearchParams()
 
   const [focused, setFocused] = useState(false)
-  const [query, setQuery] = useState(params.get('q') ?? '')
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [query, setQuery]     = useState(params.get('q') ?? '')
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const focusedRef   = useRef(false)   // ref copy so useEffect can read it synchronously
+  const inputRef     = useRef<HTMLInputElement>(null)
 
-  // Sync if URL changes externally (back/forward)
+  // Sync URL → input only when the user is NOT actively typing.
+  // Without this guard, router.replace() triggers params to change which
+  // calls setQuery() mid-keystroke, clobbering whatever the user typed.
   useEffect(() => {
-    setQuery(params.get('q') ?? '')
+    if (!focusedRef.current) {
+      setQuery(params.get('q') ?? '')
+    }
   }, [params])
+
+  function commit(value: string) {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = null
+    const next = new URLSearchParams(params.toString())
+    if (value.trim()) {
+      next.set('q', value.trim())
+    } else {
+      next.delete('q')
+    }
+    next.delete('page')
+    router.replace(`${pathname}?${next.toString()}`)
+  }
 
   function handleChange(value: string) {
     setQuery(value)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      const next = new URLSearchParams(params.toString())
-      if (value.trim()) {
-        next.set('q', value.trim())
-      } else {
-        next.delete('q')
-      }
-      next.delete('page')
-      router.replace(`${pathname}?${next.toString()}`)
-    }, 300)
+    debounceRef.current = setTimeout(() => commit(value), 600)
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commit(query)
+    }
+  }
+
+  function handleFocus() {
+    focusedRef.current = true
+    setFocused(true)
+  }
+
+  function handleBlur() {
+    focusedRef.current = false
+    setFocused(false)
   }
 
   function handleClear() {
     setQuery('')
     if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = null
     const next = new URLSearchParams(params.toString())
     next.delete('q')
     next.delete('page')
@@ -80,8 +107,9 @@ export function SearchBar() {
         placeholder="Buscar por manga, serie, editorial, ISBN…"
         value={query}
         onChange={(e) => handleChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onKeyDown={handleKeyDown}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         style={{
           flex: 1,
           border: 'none',

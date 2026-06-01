@@ -2,7 +2,6 @@ import Link from 'next/link'
 import type { Cluster } from '@/lib/types'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
-import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { formatDate } from '@/lib/format'
 
 type ItemCardProps = {
@@ -63,12 +62,6 @@ export function ItemCard({ cluster, from }: ItemCardProps) {
           </div>
         )}
 
-        {/* Score badge — top right */}
-        {canonical.score !== undefined && (
-          <div style={{ position: 'absolute', top: 6, right: 6 }}>
-            <ScoreBadge score={canonical.score} />
-          </div>
-        )}
       </div>
 
       {/* Info section */}
@@ -90,7 +83,7 @@ export function ItemCard({ cluster, from }: ItemCardProps) {
           {canonical.title || 'Sin título'}
         </p>
 
-        {canonical.price && (
+        {canonical.price && parseFloat(canonical.price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0') > 0 && (
           <p
             style={{
               fontSize: 12,

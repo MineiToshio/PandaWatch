@@ -1,6 +1,5 @@
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
-import { ScoreBadge } from '@/components/modules/ScoreBadge'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import type { Cluster } from '@/lib/types'
 
@@ -114,26 +113,11 @@ export function EditionHeader({ cluster, totalVolumes, signalTypes }: EditionHea
             </h2>
           )}
 
-          {/* Volume count + score */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              marginTop: 10,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 13,
-                color: 'var(--color-text-tertiary)',
-              }}
-            >
+          {/* Volume count */}
+          <div style={{ marginTop: 10 }}>
+            <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
               {totalVolumes} {totalVolumes === 1 ? 'tomo' : 'tomos'}
             </span>
-            {canonical.score !== undefined && (
-              <ScoreBadge score={canonical.score} />
-            )}
           </div>
 
           {/* Signal chips */}

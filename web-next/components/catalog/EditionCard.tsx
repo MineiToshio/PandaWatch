@@ -6,17 +6,21 @@ import { CountryFlag } from '@/components/modules/CountryFlag'
 
 type EditionCardProps = {
   cluster: Cluster
+  from?: string
 }
 
-export function EditionCard({ cluster }: EditionCardProps) {
+export function EditionCard({ cluster, from }: EditionCardProps) {
   const { canonical, signalTypes, volumeCount, countries, slug } = cluster
   const leaves = Math.min(volumeCount, 3) as 1 | 2 | 3
 
   // Multi-volume editions → /edition/[editionKey]
   // Single-volume editions + standalone items → /item/[slug]  (FRD-003)
-  const href = (cluster.editionKey && volumeCount > 1)
+  const baseHref = (cluster.editionKey && volumeCount > 1)
     ? `/edition/${cluster.editionKey}`
     : (slug ? `/item/${slug}` : '#')
+  const href = (from && baseHref !== '#')
+    ? `${baseHref}?from=${encodeURIComponent(from)}`
+    : baseHref
 
   // Show at most 2 signal chips to keep card compact
   const visibleSignals = signalTypes.slice(0, 2)
