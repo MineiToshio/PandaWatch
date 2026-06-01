@@ -17,7 +17,6 @@ export type Item = {
   publisher?: string
   country?: string
   language?: string
-  score?: number
   signal_types?: string[]
   product_type?: string
   source_class?: string
@@ -77,12 +76,9 @@ export type Facets = {
   productTypes: FacetOption[]
   sourceClasses: FacetOption[]
   signalTypes: FacetOption[]
-  scoreRange: { min: number; max: number }
 }
 
 export type SortKey =
-  | 'score_desc'
-  | 'score_asc'
   | 'date_desc'
   | 'date_asc'
   | 'title_asc'
@@ -97,7 +93,6 @@ export type FilterParams = {
   source_class?: string[]
   signal_types?: string[]
   rarity?: string[]
-  min_score?: number
   only_limited?: boolean
   sort: SortKey
   page: number

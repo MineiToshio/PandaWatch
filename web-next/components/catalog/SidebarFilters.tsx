@@ -102,8 +102,7 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
     (current.signal_types?.length ?? 0) > 0 ||
     (current.rarity?.length ?? 0) > 0 ||
     (current.publisher?.length ?? 0) > 0 ||
-    current.only_limited ||
-    (current.min_score !== undefined && current.min_score > 0)
+    current.only_limited
 
   const content = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

@@ -27,10 +27,6 @@
   .img-wrap { aspect-ratio: 3 / 4; overflow: hidden; background: #f3f3ee; position: relative; }
   .img-wrap img { width: 100%; height: 100%; object-fit: cover; }
   .img-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: #bbb; font-size: 2.5em; }
-  /* Score badge colors */
-  .score-high { background: #fee2e2; color: #b91c1c; }
-  .score-mid  { background: #fef3c7; color: #92400e; }
-  .score-low  { background: #f3f4f6; color: #4b5563; }
   /* Limited badge */
   .badge-limited { background: linear-gradient(90deg, #f97316, #fb7185); color: white; }
   /* Smooth scrollbar */
@@ -324,13 +320,6 @@
       </button>
     </div>
 
-    <div>
-      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
-        Score mínimo: <span x-text="filters.minScore" class="accent font-bold"></span>
-      </label>
-      <input type="range" min="0" max="200" step="5" x-model.number="filters.minScore" class="w-full accent-pink-500">
-    </div>
-
     <div class="pt-2 border-t border-gray-200">
       <label class="flex items-center gap-2 text-sm cursor-pointer">
         <input type="checkbox" x-model="filters.onlyLimited" class="rounded text-pink-500 focus:ring-pink-300">
@@ -351,8 +340,6 @@
       <div class="flex items-center gap-2 text-sm">
         <label class="text-gray-500">Ordenar:</label>
         <select x-model="sort" class="px-3 py-1.5 border border-gray-300 rounded-md text-sm">
-          <option value="score_desc">Score (↓ alto)</option>
-          <option value="score_asc">Score (↑ bajo)</option>
           <option value="detected_desc">Detección (más reciente)</option>
           <option value="detected_asc">Detección (más antiguo)</option>
           <option value="title_asc">Título A→Z</option>
@@ -384,8 +371,6 @@
                     <img :src="coverSrc(ed.leader)" :data-fallback="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="onCoverError($event)">
                   </template>
                   <div class="img-placeholder" :style="(ed.leader.image_local || ed.leader.image_url) ? 'display:none' : ''">📚</div>
-                  <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
-                        :class="scoreClass(ed.leader.score)" x-text="ed.leader.score"></span>
                   <template x-if="ed.tomoCount > 1">
                     <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
                       <span x-text="ed.tomoCount"></span> tomos
@@ -467,8 +452,6 @@
                   <img :src="coverSrc(item)" :data-fallback="item.image_url" :alt="item.title" loading="lazy" @error="onCoverError($event)">
                 </template>
                 <div class="img-placeholder" :style="(item.image_local || item.image_url) ? 'display:none' : ''">📚</div>
-                <span class="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold"
-                      :class="scoreClass(item.score)" x-text="item.score"></span>
                 <template x-if="item.volume">
                   <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
                     Tomo <span x-text="item.volume"></span>
@@ -611,7 +594,6 @@
             </template>
           </p>
         </div>
-        <span class="px-3 py-1 rounded-full text-sm font-bold flex-shrink-0" :class="scoreClass(selectedItem.score)" x-text="selectedItem.score"></span>
       </div>
 
       <!-- Banner: reportado -->
@@ -899,7 +881,7 @@ function mangaApp() {
 
     page: 1,
     perPage: 60,
-    sort: "score_desc",
+    sort: "detected_desc",
     filters: {
       search: "",
       country: "",
@@ -909,7 +891,6 @@ function mangaApp() {
       sourceClass: "",
       signalTypes: [],
       rarities: [],
-      minScore: 20,
       onlyLimited: false,
     },
     detailFields: [
@@ -1020,12 +1001,15 @@ function mangaApp() {
     },
 
     dedupByUrl(items) {
+      // Completitud: prioriza el item con más metadata (ISBN > imagen > precio)
+      // para elegir el representante del cluster. Reemplaza la selección por score.
+      const comp = (x) => (x.isbn ? 100 : 0) + (x.image_url ? 10 : 0) + (x.price ? 5 : 0);
       const pickWinner = (a, b) => {
         if (!a) return b;
         if (!b) return a;
-        const sa = a.score || 0, sb = b.score || 0;
-        if (sb > sa) return b;
-        if (sb < sa) return a;
+        const ca = comp(a), cb = comp(b);
+        if (cb > ca) return b;
+        if (cb < ca) return a;
         return (b.detected_at || "") > (a.detected_at || "") ? b : a;
       };
 
@@ -1042,7 +1026,6 @@ function mangaApp() {
         stock_type:   item.stock_type || "",
         detected_at:  item.detected_at || "",
         release_date: item.release_date || "",
-        score:        item.score || 0,
       });
 
       const byUrl = new Map();
@@ -1115,7 +1098,6 @@ function mangaApp() {
             }
           }
           if (mergedExtras.length) merged.extras = mergedExtras;
-          merged.score = group.reduce((m, it) => Math.max(m, it.score || 0), 0);
           merged.sources = group.map(sourceEntry);
           merged.sources.sort((a, b) => {
             const ca = a.url === canonical.url ? 0 : 1;
@@ -1185,7 +1167,6 @@ function mangaApp() {
           const itemSigs = Array.isArray(i.signal_types) ? i.signal_types : [];
           if (!f.signalTypes.some(s => itemSigs.includes(s))) return false;
         }
-        if ((i.score || 0) < f.minScore) return false;
         if (f.rarities && f.rarities.length > 0) {
           if (!f.rarities.includes(i.rarity)) return false;
         }
@@ -1197,14 +1178,12 @@ function mangaApp() {
     get sorted() {
       const arr = [...this.filtered];
       const cmp = {
-        score_desc: (a, b) => (b.score || 0) - (a.score || 0),
-        score_asc:  (a, b) => (a.score || 0) - (b.score || 0),
         detected_desc: (a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""),
         detected_asc:  (a, b) => (a.detected_at || "").localeCompare(b.detected_at || ""),
         title_asc:  (a, b) => (a.title || "").localeCompare(b.title || ""),
         title_desc: (a, b) => (b.title || "").localeCompare(a.title || ""),
       };
-      return arr.sort(cmp[this.sort] || cmp.score_desc);
+      return arr.sort(cmp[this.sort] || cmp.detected_desc);
     },
 
     // Parsea un valor de "volume" a número para comparar.
@@ -1234,7 +1213,7 @@ function mangaApp() {
     // Agrupa items.sorted por edition_key. Items sin edition_key son
     // grupos singleton (su propia URL como key). Devuelve un array de
     // grupos { edition_key, display, leader, tomoCount, volumeRange }.
-    // El leader es el tomo de menor número (parseado); en empate, mayor score.
+    // El leader es el tomo de menor número (parseado); en empate, mayor completitud.
     get editions() {
       const arr = this.sorted;
       const groups = new Map();
@@ -1250,12 +1229,14 @@ function mangaApp() {
       const editionList = [];
       for (const ek of order) {
         const g = groups.get(ek);
-        // Leader: menor volumen numérico; tie-break por score desc, luego detected desc.
+        // Leader: menor volumen numérico; tie-break por completitud (ISBN/imagen/
+        // precio) desc, luego detected desc.
+        const comp = (x) => (x.isbn ? 100 : 0) + (x.image_url ? 10 : 0) + (x.price ? 5 : 0);
         const leader = [...g].sort((a, b) => {
           const va = this._volumeNumber(a.volume);
           const vb = this._volumeNumber(b.volume);
           if (va !== vb) return va - vb;
-          if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+          if (comp(b) !== comp(a)) return comp(b) - comp(a);
           return (b.detected_at || "").localeCompare(a.detected_at || "");
         })[0];
         // Display de la edición: "{series_display} {edition_display}".
@@ -1328,12 +1309,6 @@ function mangaApp() {
       }
       const start = (this.page - 1) * this.perPage;
       return this._activeList.slice(start, start + this.perPage);
-    },
-
-    scoreClass(score) {
-      if (score >= 70) return "score-high";
-      if (score >= 35) return "score-mid";
-      return "score-low";
     },
 
     coverSrc(item) {
@@ -1678,7 +1653,7 @@ function mangaApp() {
       this.filters = {
         search: "", country: "", publisher: "", language: "",
         productType: "", sourceClass: "", signalTypes: [], rarities: [],
-        minScore: 20, onlyLimited: false,
+        onlyLimited: false,
       };
       this.page = 1;
       this._syncStateToUrl();

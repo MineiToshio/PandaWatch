@@ -12,7 +12,6 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     title: 'Test Manga 1',
     cluster_key: 'isbn:9780000000001',
     standardized_at: '2026-01-01T00:00:00Z',
-    score: 50,
     signal_types: ['special_edition'],
     country: 'Japan',
     language: 'ja',
@@ -52,7 +51,6 @@ const berserkItem = makeItem({
   title: 'Berserk Deluxe 1',
   title_original: 'ベルセルク デラックス 1',
   series_display: 'Berserk',
-  score: 120,
   signal_types: ['deluxe', 'hardcover'],
   country: 'Japan',
   language: 'ja',
@@ -77,7 +75,6 @@ const berserkCluster = makeCluster({
 const opBoxItem = makeItem({
   title: 'One Piece Box Set 1',
   series_display: 'One Piece',
-  score: 90,
   signal_types: ['box_set'],
   country: 'France',
   language: 'fr',
@@ -103,7 +100,6 @@ const demonSlayerItem = makeItem({
   title: 'Demon Slayer Limited 23',
   title_original: '鬼滅の刃 23 特装版',
   series_display: 'Demon Slayer',
-  score: 75,
   signal_types: ['limited', 'bonus'],
   country: 'Spain',
   language: 'es',
@@ -129,7 +125,6 @@ const demonSlayerCluster = makeCluster({
 const regularItem = makeItem({
   title: 'Generic Manga 5',
   series_display: 'Generic Manga',
-  score: 20,
   signal_types: [],
   country: 'Italy',
   language: 'it',
@@ -154,7 +149,6 @@ const regularCluster = makeCluster({
 
 const noDateItem = makeItem({
   title: 'Obscure Artbook',
-  score: 60,
   signal_types: ['artbook'],
   country: 'Japan',
   language: 'ja',
@@ -177,7 +171,7 @@ const noDateCluster = makeCluster({
 const ALL_CLUSTERS = [berserkCluster, opBoxCluster, demonSlayerCluster, regularCluster, noDateCluster]
 
 const baseParams: FilterParams = {
-  sort: 'score_desc',
+  sort: 'date_desc',
   page: 1,
 }
 
@@ -223,15 +217,6 @@ describe('filterClusters', () => {
     expect(result[0].slug).toBe('berserk-darkhorse-deluxe-1')
   })
 
-  it('filters by min_score', () => {
-    const result = filterClusters(ALL_CLUSTERS, { ...baseParams, min_score: 80 })
-    // berserk (120) and opBox (90) pass; rest are below 80
-    expect(result).toHaveLength(2)
-    expect(result.map(c => c.slug).sort()).toEqual(
-      ['berserk-darkhorse-deluxe-1', 'one-piece-glenat-boxset-1'].sort()
-    )
-  })
-
   it('only_limited=true — cluster with no limited signal excluded', () => {
     const result = filterClusters(
       [regularCluster],
@@ -255,18 +240,6 @@ describe('filterClusters', () => {
 // ---------------------------------------------------------------------------
 
 describe('sortClusters', () => {
-  it('score_desc puts highest score first', () => {
-    const result = sortClusters(ALL_CLUSTERS, 'score_desc')
-    expect(result[0].canonical.score).toBe(120) // berserk
-    expect(result[result.length - 1].canonical.score).toBe(20) // regular
-  })
-
-  it('score_asc puts lowest score first', () => {
-    const result = sortClusters(ALL_CLUSTERS, 'score_asc')
-    expect(result[0].canonical.score).toBe(20) // regular
-    expect(result[result.length - 1].canonical.score).toBe(120) // berserk
-  })
-
   it('date_desc puts most recent first; items without date go last', () => {
     const result = sortClusters(ALL_CLUSTERS, 'date_desc')
     // demonSlayer 2024-03-15, regular 2022-06-01, others no date

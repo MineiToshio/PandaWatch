@@ -31,9 +31,8 @@ export function parseFilterParams(
     source_class: getArr('source_class'),
     signal_types: getArr('signal_types'),
     rarity: getArr('rarity'),
-    min_score: params.min_score ? Number(params.min_score) : undefined,
     only_limited: params.only_limited === 'true',
-    sort: (params.sort as SortKey) || 'score_desc',
+    sort: (params.sort as SortKey) || 'date_desc',
     page: params.page ? Number(params.page) : 1,
   }
 }
@@ -82,9 +81,6 @@ export function filterClusters(
     if (params.rarity?.length && !params.rarity.includes(item.rarity ?? ''))
       return false
 
-    // Min score
-    if (params.min_score && (item.score || 0) < params.min_score) return false
-
     // Only limited
     if (params.only_limited && !c.signalTypes.some(s => LIMITED_SIGNALS.has(s)))
       return false
@@ -95,14 +91,10 @@ export function filterClusters(
 
 export function sortClusters(
   clusters: Cluster[],
-  sort: SortKey = 'score_desc'
+  sort: SortKey = 'date_desc'
 ): Cluster[] {
   return [...clusters].sort((a, b) => {
     switch (sort) {
-      case 'score_desc':
-        return (b.canonical.score || 0) - (a.canonical.score || 0)
-      case 'score_asc':
-        return (a.canonical.score || 0) - (b.canonical.score || 0)
       case 'date_desc': {
         const da = a.canonical.release_date || ''
         const db = b.canonical.release_date || ''

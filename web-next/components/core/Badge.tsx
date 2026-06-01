@@ -1,22 +1,12 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { cn } from '@/lib/styles'
-import { scoreLevel } from '@/lib/format'
 
 type BadgeVariant = 'green' | 'yellow' | 'orange' | 'red' | 'neutral'
 
 export type BadgeProps = {
   children?: ReactNode
-  score?: number
   variant?: BadgeVariant
   className?: string
-}
-
-function deriveVariant(score: number): BadgeVariant {
-  const level = scoreLevel(score)
-  if (level === 'green')  return 'green'
-  if (level === 'amber')  return 'yellow'
-  if (level === 'orange') return 'orange'
-  return 'red'
 }
 
 // Hex values aligned with the PandaWatch design system tokens
@@ -52,10 +42,9 @@ const variantStyles: Record<BadgeVariant, CSSProperties> = {
   },
 }
 
-export function Badge({ children, score, variant, className }: BadgeProps) {
-  const resolvedVariant =
-    variant ?? (score !== undefined ? deriveVariant(score) : 'neutral')
-  const label = children ?? score
+export function Badge({ children, variant, className }: BadgeProps) {
+  const resolvedVariant = variant ?? 'neutral'
+  const label = children
 
   return (
     <span

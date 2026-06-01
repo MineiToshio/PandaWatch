@@ -14,13 +14,6 @@ export function formatDate(dateStr: string): string {
   }
 }
 
-export function scoreLevel(score: number): 'green' | 'amber' | 'orange' | 'low' {
-  if (score >= 200) return 'green'
-  if (score >= 100) return 'amber'
-  if (score >= 50)  return 'orange'
-  return 'low'
-}
-
 export const PRODUCT_TYPE_LABELS: Record<string, string> = {
   manga:    'Manga',
   boxset:   'Cofre / Box Set',

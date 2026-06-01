@@ -42,8 +42,15 @@ function resolveMinPrice(items: Item[]): string | undefined {
   return String(Math.min(...prices))
 }
 
+// Completitud de un item: prioriza el que tiene más metadata para elegir el
+// representante canónico de un cluster (reemplaza la antigua selección por
+// score). Mismo criterio que el dedup del pipeline Python (ISBN > imagen > precio).
+function completeness(item: Item): number {
+  return (item.isbn ? 100 : 0) + (item.image_url ? 10 : 0) + (item.price ? 5 : 0)
+}
+
 function buildCluster(items: Item[]): Cluster {
-  const sorted = [...items].sort((a, b) => (b.score || 0) - (a.score || 0))
+  const sorted = [...items].sort((a, b) => completeness(b) - completeness(a))
   const canonical = sorted[0]
   const volumes = new Set(items.map(i => i.volume).filter(Boolean))
 
@@ -138,8 +145,8 @@ export function groupByEdition(clusters: Cluster[]): Cluster[] {
       const entry = result[idx]
       entry.volumeCount += 1
 
-      // Promote to canonical if this cluster's item has a higher score
-      if ((cluster.canonical.score ?? 0) > (entry.canonical.score ?? 0)) {
+      // Promote to canonical if this cluster's item is more complete (ISBN/image/price)
+      if (completeness(cluster.canonical) > completeness(entry.canonical)) {
         entry.canonical = cluster.canonical
         entry.slug = cluster.slug
       }
@@ -164,8 +171,6 @@ export function buildFacets(clusters: Cluster[]): Facets {
       .sort((a, b) => b.count - a.count)
   }
 
-  const scores = clusters.map(c => c.canonical.score || 0)
-
   return {
     countries: count(clusters.flatMap(c => c.countries)),
     languages: count(clusters.flatMap(c => c.languages)),
@@ -181,9 +186,5 @@ export function buildFacets(clusters: Cluster[]): Facets {
       )
     ),
     signalTypes: count(clusters.flatMap(c => c.signalTypes)),
-    scoreRange: {
-      min: scores.length ? Math.min(...scores) : 0,
-      max: scores.length ? Math.max(...scores) : 0,
-    },
   }
 }

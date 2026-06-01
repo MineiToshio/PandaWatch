@@ -5,8 +5,6 @@ import { SlidersHorizontal } from 'lucide-react'
 import type { SortKey } from '@/lib/types'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'score_desc',  label: 'Puntuación ↓' },
-  { value: 'score_asc',   label: 'Puntuación ↑' },
   { value: 'date_desc',   label: 'Más reciente' },
   { value: 'date_asc',    label: 'Más antiguo' },
   { value: 'title_asc',   label: 'Título A–Z' },
