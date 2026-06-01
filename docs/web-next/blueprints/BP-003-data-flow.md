@@ -64,8 +64,14 @@ function groupIntoClusters(items: Item[]): Cluster[] {
   return Array.from(groups.values()).map(buildCluster)
 }
 
+// ⚠️ Actualizado 2026-06-01: el score se eliminó de la UI y del ordenamiento.
+// El canónico ya NO se elige por score sino por COMPLETITUD (ISBN > imagen >
+// precio). Los tipos abajo conservan el snippet original por referencia
+// histórica, pero en el código real: Item ya no tiene `score`, Facets ya no
+// tiene `scoreRange`, SortKey ya no tiene `score_desc`/`score_asc`, y
+// FilterParams ya no tiene `min_score`. El default de sort es `date_desc`.
 function buildCluster(items: Item[]): Cluster {
-  // canonical = highest score
+  // canonical = item más completo (ISBN > imagen > precio); antes: highest score
   const canonical = items.sort((a, b) => b.score - a.score)[0]
   
   return {

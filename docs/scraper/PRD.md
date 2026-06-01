@@ -11,7 +11,7 @@
 | Fase | Estado | Descripción |
 |---|---|---|
 | Fase 1 — Búsquedas dirigidas multi-keyword | ✅ Completo | `search_template + keywords` en sources.yml; N fuentes virtuales por editorial |
-| Fase 2 — Wikis comunitarias | ✅ Completo | 17 wikis implementados (ver lista abajo) |
+| Fase 2 — Wikis comunitarias | ✅ Completo | 19 wikis implementados (ver lista abajo) |
 | Fase 3 — Sitemap mining | ✅ Completo | Mangavariant (~2700 entries), listadomanga lista.php (~3432 colecciones) |
 | Fase 4 — LLM enrichment | ✅ Completo | Skills `/standardize-catalog` + `/enrich-series-aliases` |
 
@@ -21,9 +21,9 @@
 
 | Métrica | Valor |
 |---|---|
-| Items totales | **10.103** |
-| Fuentes habilitadas | **76 / 138** (45 deshabilitadas: cero yield o duplicadas por wikis) |
-| Wikis disponibles | **17** |
+| Items totales | **10.329** |
+| Fuentes habilitadas | **67 / 138** (71 deshabilitadas: cero yield o duplicadas por wikis; audit 2026-06-01 deshabilitó 8 más — 4 JS muertas + 4 feeds de noticias) |
+| Wikis disponibles | **19** |
 | Países representados | **13** (JP, IT, FR, ES, DE, US, VN, MX, BR, TH, AR, TW, LatAm) |
 | Top países | Japón 3.758, Italia 2.182, Francia 1.295, España 1.279, Alemania 841 |
 | Cobertura ISBN | ~48% |
@@ -47,7 +47,7 @@ independientemente de si está disponible hoy para comprar. Las URLs de referenc
 
 ## Fuentes y wikis activos
 
-### Wikis (17)
+### Wikis (19)
 | Wiki | Mercado | Qué cubre |
 |---|---|---|
 | listadomanga | ES | Calendario mensual de novedades |
@@ -67,10 +67,12 @@ independientemente de si está disponible hoy para comprar. Las URLs de referenc
 | prhcomics | US/CA | Hardcovers + box sets EN (PRH) |
 | kinokuniya | US | Exclusivos Kinokuniya USA |
 | yenpress | US | Calendario mensual Yen Press collector's + deluxe |
+| viz | US | Catálogo completo de ediciones especiales EN vía calendario (box sets, deluxe, definitive, artbooks; cubre franquicias Shueisha en inglés) |
+| shueisha | JP | Suplemento JP-native de One Piece (artbooks/databooks; el catálogo JP no es generalizable — ver SOURCES.md) |
 | whakoom | ES/LatAm | Spider 3-nivel (opt-in, Cloudflare-throttled) |
 
 ### Fuentes directas
-76 fuentes habilitadas en `sources.yml` cubriendo retailers oficiales, tiendas,
+67 fuentes habilitadas en `sources.yml` cubriendo retailers oficiales, tiendas,
 y bases de datos comunitarias. Ver `docs/scraper/SOURCES.md` para la guía completa.
 
 ---

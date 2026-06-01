@@ -697,6 +697,42 @@ Otros candidates futuros para "source de referencia":
 - Wikis de fandom (MyAnimeList, AniList, BakaUpdates).
 - Catálogos editoriales sin e-commerce (editorial homepages).
 
+## Recipe: wiki calendario-driven (patrón VIZ / Yen Press)
+
+Para un editor que publica un **calendario mensual server-rendered**, el
+discovery generalizado NO necesita listas hardcodeadas por serie: se itera
+mes a mes y se pre-filtra. Patrón (ver `scripts/wikis/viz_artbooks.py` y
+`yenpress_calendar.py`):
+
+1. `iter_year_months(yf, mf, yt, mt)` genera los pares (año, mes) del rango
+   (clamp al primer año con datos — VIZ arranca en 2013).
+2. Por cada mes, fetch `…/calendar/{YYYY}/{M}` y junta los links de producto.
+3. **Pre-filtro barato por la URL** antes de hitear cada detail page: en VIZ,
+   el slug y el sufijo del path codifican la edición (segmento `art-book`,
+   sufijo `/hardcover`, keywords `box-set`/`deluxe`/`definitive`/`collector`/
+   `anniversary`/`color-walk`). Así se descartan los miles de paperbacks
+   regulares sin gastar requests. Omnibus/3-in-1 pelados NO califican solos
+   (gotcha #18) — el gate `is_collectible_edition` aguas abajo termina de filtrar.
+4. Fetch del detail page solo para los que califican → metadata (og:title,
+   ISBN, precio, portada CDN). La **fecha sale del mes del calendario** si el
+   detail page no la expone (caso VIZ).
+5. Dedup por ISBN cross-month.
+
+VIZ es además el editor oficial EN de Shueisha (Shonen Jump), así que este
+parser cubre las franquicias de Shueisha en inglés sin tocar el sitio JP.
+
+### Cuándo NO vale generalizar: listados JS-only sin filtro
+
+Antes de invertir en generalizar un sitio, verificá que el **listado** sea
+discoverable. Lección Shueisha (auditoría 2026-06-01): `shueisha.co.jp` tiene
+el **detail page** server-rendered (`contents.html?isbn=` funciona), pero el
+**listado/buscador inyecta los productos por JavaScript** y no expone filtro
+de ediciones especiales (限定版/特装版/画集). Sin ejecutar el JS (Playwright) +
+reverse-engineering del XHR no hay forma de DESCUBRIR qué existe. Si además
+el contenido solapa con fuentes que ya tenés (sumikko/booksprivilege cubren
+las limitadas JP), no vale el esfuerzo: `shueisha_books.py` quedó como
+suplemento de seeds ISBN hardcodeados, no como crawler de catálogo.
+
 ## Recipe: search discovery (Gemini API + DuckDuckGo)
 
 `scripts/retrofit/search_discovery.py` cubre el gap de discovery que

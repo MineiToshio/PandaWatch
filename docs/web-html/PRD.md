@@ -30,10 +30,14 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 
 ### Exploración del catálogo
 
-- **Grilla de items** con foto, título, score, país, editorial, tipo de producto
+- **Grilla de items** con foto, título, país, editorial, tipo de producto
 - **Búsqueda** por título (substring, case-insensitive, indexa `title` + `title_original` + `series_display`)
-- **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, score mínimo, solo stock limitado, signal types (multi-select chips)
-- **Ordenamiento**: por score, fecha de detección, o título A-Z
+- **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, rareza, solo stock limitado, signal types (multi-select chips)
+- **Ordenamiento**: por fecha de detección (default), o título A-Z
+
+> **Removido (2026-06-01):** el score se eliminó de la UI — del grid, del filtro
+> "score mínimo", del ordenamiento y de los badges de las cards. El scoring interno
+> del pipeline (gate de coleccionables) se mantiene, pero no es user-facing.
 - **Paginación** con contador de items que matchean los filtros
 - **Modal de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción en español (`description_es` con fallback a `description` si no hay traducción)
 - **Multi-source view**: un producto con N fuentes se muestra como 1 card consolidada; el modal lista todas las fuentes con sus precios y URLs
@@ -49,7 +53,7 @@ Dos paneles en el footer del modal de detalle, unificados en `data/feedback.json
 
 - **Botón lápiz (curación)**: acciones operativas sobre items, con efecto inmediato + log
   - **Mover a otra edición** (`action: "move"`): buscador autocomplete de ediciones existentes por nombre de serie. Cambia `edition_key`, `cluster_key`, `series_key` del item. Log incluye `from_edition` y `to_edition`.
-  - **Duplicado / merge** (`action: "merge"`): pegar URL del item duplicado. Fusiona los dos items (mejor score gana, campos faltantes se completan, imágenes se combinan, el duplicado se elimina de items.jsonl). Log incluye `kept_url` y `dropped_url`.
+  - **Duplicado / merge** (`action: "merge"`): pegar URL del item duplicado. Fusiona los dos items (gana el más completo — ISBN > imagen > precio, antes era "mejor score"; campos faltantes se completan, imágenes se combinan, el duplicado se elimina de items.jsonl). Log incluye `kept_url` y `dropped_url`.
   - **No va aquí / remover** (`action: "remove"`): separa el item de su edición actual, queda standalone (`edition_key=""`, `cluster_key="url:..."`). Log incluye `from_edition`.
   - Las 3 acciones se loguean en `data/feedback.jsonl` (misma fuente de verdad que el 👎) con campo `action` para que el skill `/review-feedback` las procese
   - Endpoint de búsqueda: `GET /api/editions/search?q=<query>` retorna ediciones matching por nombre
@@ -109,7 +113,7 @@ Se abre al hacer clic en un item del grid. Muestra:
 - **Panel de información del item** (bajo la barra de edición):
   Grid de 3 columnas (desktop) / 2 columnas (mobile) con TODOS los campos
   del item: título, título original, serie, edición, volumen, publisher,
-  país, idioma, ISBN, precio, fecha de lanzamiento, autor, score, rareza,
+  país, idioma, ISBN, precio, fecha de lanzamiento, autor, rareza,
   tipo de producto, stock, fuente, fecha de detección, signal types (como
   chips), y descripción completa (description_es con fallback a description).
   Permite al usuario saber exactamente qué item está editando y qué buscar
@@ -161,7 +165,7 @@ Tres mecanismos:
 ### Presentación
 
 - Paleta: fondo claro `#fafaf7`, acento rosa `#d63384`
-- Cards con imagen aspect-ratio 3:4, badges de score (rojo/amarillo/gris), badge ⚠️ para stock limitado
+- Cards con imagen aspect-ratio 3:4, badge ⚠️ para stock limitado (los badges de score se removieron 2026-06-01)
 - Sidebar de filtros sticky a 256px en desktop, full-width en mobile
 - Carrusel multi-imagen en modal con flechas + dots + descripción del extra
 

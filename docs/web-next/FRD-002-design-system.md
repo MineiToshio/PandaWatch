@@ -248,7 +248,7 @@ Located in `components/modules/`. App-specific components.
 | `Header` | `Header.tsx` | Sticky header: panda mark + wordmark + search |
 | `SearchBar` | `SearchBar.tsx` | Client Component (focus state) — used by `Header` |
 | `SignalChip` | `SignalChip.tsx` | Signal type tags (no emoji — Lucide icons only) |
-| `ScoreBadge` | `ScoreBadge.tsx` | Circular score display (component exists but **not rendered** in the public UI as of 2026-05-30) |
+| ~~`ScoreBadge`~~ | — | **ELIMINADO 2026-06-01** junto con todo el score de la UI (sort + visual). El archivo `ScoreBadge.tsx` se borró; `Badge` quedó como chip genérico por variante (sin derivación por score). |
 | `CountryFlag` | `CountryFlag.tsx` | Country + flag |
 
 **SearchBar behaviour (updated 2026-05-30):**

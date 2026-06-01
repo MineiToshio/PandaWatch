@@ -145,7 +145,13 @@ type ChipProps = {
 }
 ```
 
-#### `Badge` (score range)
+#### `Badge` (variant chip)
+
+> ⚠️ **Actualizado 2026-06-01:** `ScoreBadge` se eliminó (archivo borrado) junto
+> con todo el score de la UI. `Badge` quedó como chip genérico por `variant`
+> (sin derivación por score). Las referencias a `<ScoreBadge />` en los árboles
+> de componentes de este doc son históricas.
+
 ```tsx
 type BadgeProps = {
   children: React.ReactNode

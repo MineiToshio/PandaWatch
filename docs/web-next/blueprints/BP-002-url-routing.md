@@ -59,11 +59,15 @@ Params (all optional, all have defaults):
   product_type string[]     Filter by product type
   source_class string[]     Filter by source class
   signal_types string[]     Filter by signal types (AND logic)
-  min_score    number       Minimum score (default: 0)
+  rarity       string[]     Filter by rarity (common/rare/super_rare/ultra_rare)
   only_limited boolean      "true" to show only limited/special editions
-  sort         string       Sort key (default: score_desc)
+  sort         string       Sort key (default: date_desc)
   page         number       Page number (default: 1)
 ```
+
+> ⚠️ **Actualizado 2026-06-01:** se eliminó el param `min_score` (number) y las
+> sort keys de score (`score_desc`/`score_asc`). El default de `sort` pasó de
+> `score_desc` a `date_desc`. Ver BP-003 y el changelog de CLAUDE.md.
 
 **Shareable URLs:** Yes. All filter state in URL.
 

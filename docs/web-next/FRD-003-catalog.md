@@ -89,8 +89,10 @@ Each card shows:
   "+N". Single-row clip is intentional to preserve uniform card height.
 - **Hover state** — slight lift (`-translate-y-1`) + shadow elevation change
 
-**Removed:** Score badge was removed from EditionCard 2026-05-30. Score is an
-internal metric, not user-facing.
+**Removed:** Score badge was removed from EditionCard 2026-05-30. El score se
+eliminó por completo de la UI y del ordenamiento el 2026-06-01 (saturaba ~26%
+del catálogo en una sola banda, perdió sentido como ranking). El scoring interno
+del pipeline (gate de coleccionables) se mantiene, pero NO es user-facing.
 
 > **Uniform card height:** every card (single or stacked) is exactly the same
 > size. The cover is a fixed `aspect-ratio: 2/3` and the info block below it has
@@ -121,8 +123,11 @@ All filters update the URL via `router.replace()`. The page Server Component rea
 | Product type | multi-select | Checkbox list |
 | Source class | multi-select | Checkbox list (official / curated / community / unknown) |
 | Signal types | multi-chip | `Chip` row, click to toggle; multiple selection = AND filter |
-| Min score | range slider | 0–300, label shows current value |
+| Rareza | multi-chip | Common / Rare / Super Rare / Ultra Rare |
 | Solo limitadas | toggle | Shortcut for `signal_types ⊇ {limited, special_edition, ...}` |
+
+> **Removido (2026-06-01):** el filtro "Min score" (range slider) se eliminó
+> junto con el score de la UI.
 
 **Active filter summary:** When any filter is active, a "Limpiar filtros" link
 appears below the title. Each active filter shows as a dismissible tag.
@@ -149,12 +154,14 @@ Number style: semibold (`font-weight: 600`), `color-text-primary`. Label style: 
 `color-text-tertiary`. Separated by `·`. Pagination `pág. N/M` on the same line.
 
 Sort options (select dropdown):
-- Mejor puntuación (score desc) — default
-- Menor puntuación (score asc)
-- Más recientes (date desc)
+- Más recientes (date desc) — **default** (era "score desc" hasta 2026-06-01)
 - Más antiguos (date asc)
 - Título A→Z
 - Título Z→A
+
+> **Removido (2026-06-01):** las opciones "Mejor/Menor puntuación (score)" se
+> eliminaron. El canónico de cada cluster ahora se elige por completitud
+> (ISBN > imagen > precio) en vez de por score.
 
 ### FR-5: Pagination
 
@@ -168,7 +175,7 @@ Sort options (select dropdown):
 All filter state is encoded in URL search params:
 
 ```
-/?q=berserk&country=JP&country=FR&signal_types=box_set&min_score=100&sort=date_desc&page=2
+/?q=berserk&country=JP&country=FR&signal_types=box_set&rarity=super_rare&sort=date_desc&page=2
 ```
 
 Arrays use repeated params (`country=JP&country=FR`).
