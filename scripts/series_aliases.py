@@ -131,18 +131,51 @@ def canonical_series_key(
 
     # 2) Buscar current_series_key / current_display normalizados en el lookup.
     lookup = _build_lookup()
-    for candidate in (current_series_key, current_display):
-        if not candidate:
+    for candidate_val in (current_series_key, current_display):
+        if not candidate_val:
             continue
-        n = _normalize(candidate)
+        n = _normalize(candidate_val)
         if n in lookup:
             return lookup[n]
-        # También probar slug form (guiones)
         slug = re.sub(r"\s+", "-", n)
         if slug in lookup:
             return lookup[slug]
 
-    # 3) Sin match
+    # 3) Prefix-matching: probar prefijos progresivamente más cortos del
+    # series_key contra el lookup. Cubre el caso común donde el heurístico
+    # del scraper deja qualifiers de edición pegados al slug
+    # (ej. "fullmetal-alchemist-ultimate-deluxe" → "fullmetal-alchemist").
+    # Guard: solo se corta un segmento si es un qualifier de edición conocido
+    # (deluxe, variant, limited, etc.) — NO si es una palabra potencialmente
+    # significativa de la serie (gaiden, origins, zero, etc.). Esto evita
+    # que "naruto-gaiden" colapse a "naruto".
+    _EDITION_SUFFIXES = frozenset({
+        "deluxe", "kanzenban", "perfect", "ultimate", "maximum", "master",
+        "library", "prestige", "variant", "limited", "special", "collector",
+        "artbook", "fanbook", "guidebook", "boxset", "coffret", "cofanetto",
+        "integral", "omnibus", "grimorio", "grimoire", "anniversary",
+        "celebration", "steelbox", "slipcase", "color", "regular", "lore",
+        "hardcover", "softcover", "premium", "exclusive", "bundle", "pack",
+        "box", "set", "edition", "edicion", "edizione",
+    })
+    if current_series_key and "-" in current_series_key:
+        parts = current_series_key.split("-")
+        min_parts = max(1, len(parts) * 3 // 5)
+        for end in range(len(parts) - 1, min_parts - 1, -1):
+            dropped = parts[end]
+            if dropped.lower() not in _EDITION_SUFFIXES:
+                continue
+            prefix = "-".join(parts[:end])
+            if len(prefix) < 3:
+                break
+            n_prefix = _normalize(prefix)
+            if n_prefix in lookup:
+                return lookup[n_prefix]
+            slug_prefix = re.sub(r"\s+", "-", n_prefix)
+            if slug_prefix in lookup:
+                return lookup[slug_prefix]
+
+    # 4) Sin match
     return current_series_key, current_display
 
 

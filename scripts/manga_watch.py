@@ -321,12 +321,10 @@ class Candidate:
     # Fase 1). Vacío hasta que mirror_candidate_images lo descarga. image_url
     # queda como provenance + fallback. Ver "Image storage" en CLAUDE.md.
     image_local: str = ""
-    # images: carrusel de imágenes asociadas al item (Fase 2 del parser
-    # listadomanga-collections — schema aditivo). Cada elemento es
-    # {url, local, kind, description} donde kind ∈ {cover, extra,
-    # variant_cover, back_cover, gallery}. El primero (kind=cover) es la
-    # portada principal y mantiene sincronía con image_url / image_local
-    # como aliases (no breaking para consumidores existentes). Cuando hay
+    # images: carrusel de imágenes asociadas al item. Cada elemento es
+    # {url, local, kind, description} donde kind ∈ {gallery, extra}.
+    # images[0] es la portada (por posición, no por kind) y mantiene
+    # sincronía con image_url / image_local. Cuando hay
     # más de un elemento el dashboard renderiza un carrusel; si está vacío,
     # el frontend cae al image_url/image_local single.
     images: list[dict[str, str]] = field(default_factory=list)
@@ -1058,6 +1056,12 @@ def extract_image_url(card: Any, source_url: str) -> str:
     return best_url if best_score >= 0 else ""
 
 
+# ⚠️ EL ORDEN DE ESTA LISTA ES LA PRIORIDAD (de más específico a menos).
+# `derive_product_type` devuelve el PRIMER ptype cuya keyword matchee, así que
+# un "Artbook Box Set" resuelve a `artbook` (no `boxset`) porque artbook va
+# antes. No reordenes sin entender el efecto: un cambio de orden reclasifica
+# items y exige correr `scripts/retrofit/rescore.py`. Cubierto por
+# test_derive_product_type_priority_artbook_over_boxset.
 PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("artbook", [
         "artbook", "art book", "art-book",
@@ -1590,10 +1594,8 @@ def _extract_images_from_detail_soup(
     """Extrae el carrusel/galería de imágenes de una página de detalle.
 
     Devuelve lista de dicts `{url, kind, description}`. El primer elemento
-    es siempre `kind=cover` (la portada principal del producto); el resto
-    son `kind=gallery` (vistas adicionales: contraportada, lomo, contenido
-    interior, extras de la edición especial cuando el sitio las expone en
-    el carrusel).
+    (posición 0) es la portada; el resto son vistas adicionales. `kind`
+    solo distingue `gallery` (default) vs `extra` (bonus/cofre/regalo).
 
     Estrategias en cascada, mergeadas y dedupeadas por URL canónica:
       1) JSON-LD schema.org `image` (string, dict, lista) — la cover/feed
@@ -1637,7 +1639,7 @@ def _extract_images_from_detail_soup(
         seen.add(norm)
         out.append({
             "url": url,
-            "kind": "cover" if not out else (kind_hint or "gallery"),
+            "kind": kind_hint or "gallery",
             "description": (alt or "").strip()[:120],
         })
 
@@ -1889,11 +1891,10 @@ def fetch_metadata_from_detail(
     1 HTTP request opt-in (--fetch-details).
 
     El campo `images` es una lista de dicts `{url, kind, description}`
-    representando el carrusel completo del producto: cover + tomas adicionales
-    (contraportada, lomo, interior, extras de la edición). Cuando el sitio
-    sólo expone una imagen, la lista contiene un único elemento `kind=cover`
-    sincronizado con `image_url`. Los consumidores que ya sólo lean
-    `image_url` siguen funcionando (backwards-compatible).
+    representando el carrusel completo del producto. images[0] es la portada
+    (por convención de posición, no por kind). Cuando el sitio sólo expone
+    una imagen, la lista contiene un único elemento sincronizado con
+    `image_url`. `kind` solo distingue `gallery` vs `extra`.
     """
     result: dict[str, Any] = {
         "author": "", "image_url": "", "isbn": "",
@@ -1970,11 +1971,7 @@ def fetch_metadata_from_detail(
             for im in gallery
         )
         if not already_present:
-            gallery.insert(0, {"url": cover_url, "kind": "cover", "description": ""})
-            # Demote any subsequent kind=cover to gallery so solo el primero quede como cover.
-            for im in gallery[1:]:
-                if im.get("kind") == "cover":
-                    im["kind"] = "gallery"
+            gallery.insert(0, {"url": cover_url, "kind": "gallery", "description": ""})
     elif gallery:
         result["image_url"] = gallery[0]["url"]
     result["images"] = gallery
@@ -2079,20 +2076,16 @@ LIMITED_STOCK_KEYWORDS = (
 
 
 _ULTRA_RARE_KEYWORDS = (
-    # Numbered copies — X/Y ratios (denominadores comunes)
-    "/100", "/150", "/200", "/250", "/300", "/400",
-    "/500", "/600", "/750", "/800", "/1000", "/1200", "/2000", "/2500",
     # Explicit numbering language (multilingual)
     "numbered edition", "numéroté", "numérotée",
     "numerado", "numerada", "numerato", "numerata",
-    # Signed (multilingual)
-    "signed by", "autograph",
-    "firmado", "firmada", "firmato", "firmata",
+    # Signed — ES/FR/DE/PT (no double-meaning issue in these languages)
+    "signed by",
+    "firmado", "firmada",       # ES: always means signed
     "signé", "signiert", "autografado",
-    # Events across markets
+    # Events across markets — only explicitly exclusive keywords
     "event exclusive", "event only", "event-only",
     "comiket", "jump festa", "anime expo exclusive",
-    "lucca comics", "lucca c&g",
     "wonder festival", "wonfes",
     "nuit one piece", "noche one piece",
     "japan expo exclusive",
@@ -2100,6 +2093,30 @@ _ULTRA_RARE_KEYWORDS = (
     "lottery", "ichiban kuji", "last one prize",
     "ultra limited", "ultra limitata", "ultra-limitée",
     "抽選", "くじ",
+)
+
+# Regex patterns for ultra_rare that need more context than a bare keyword.
+_ULTRA_RARE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Numbered copies: X/Y where X is a digit and Y is a common print-run
+    # denominator. Bare "/200" matched "2007/2008" (year range, gotcha).
+    re.compile(r'\d\s*/\s*(?:100|150|200|250|300|400|500|600|750|800|1000|1200|2000|2500)\b'),
+    # "autograph" — require word boundary (avoids substring in unrelated text)
+    re.compile(r'\bautograph(?:ed|e[sd])?\b', re.I),
+)
+# NOTE: Italian "firmato/a" intentionally excluded. In IT descriptions it
+# commonly means "by" (authored), not "signed by" — e.g. "il capolavoro
+# firmato One e Yusuke Murata". Genuinely signed IT items are caught via
+# _PRINT_RUN_RE ("limitata a 100 copie") or other ultra_rare keywords.
+# Spanish "firmado/a" stays in _ULTRA_RARE_KEYWORDS — no double meaning.
+
+# Explicit print-run regex: "limited to N copies" (multilingual).
+# Used for both ultra_rare (N <= 500) and super_rare (N <= 2500).
+_PRINT_RUN_RE = re.compile(
+    r'(?:limited|limitata?|limitée?|limitad[oa]|limitiert)'
+    r'\s+(?:a|to|à|auf)\s+'
+    r'(\d[\d.,]*)\s*'
+    r'(?:cop[iíy]e?s?|exempla[ir]res?|esemplari|st[üu]ck|unidades|pi[èe]ces)',
+    re.I,
 )
 
 # Keywords que indican tirada única explícita. NO suben a ultra_rare — solo
@@ -2119,6 +2136,11 @@ _SINGLE_RUN_KEYWORDS = (
     "初版限定", "初回限定", "shokai gentei",
     # Event-tied editions (aniversario/celebración con extras)
     "celebration edition",
+    # Lucca Comics — items sold/premiered at the festival are one-time prints
+    # but without explicit print runs we can't distinguish 50 from 5000 copies.
+    # Block common (not catalog) but don't push to ultra_rare. Items with
+    # explicit print runs still reach ultra_rare via _PRINT_RUN_RE.
+    "lucca comics", "lucca c&g",
     # Anniversary / milestone editions — tirada event-tied, no catálogo permanente
     "anniversary edition", "édition anniversaire", "edizione anniversario",
     "edición aniversario", "aniversario",
@@ -2162,6 +2184,10 @@ _COMMON_CATALOG_RULES: tuple[tuple[str, re.Pattern[str] | None], ...] = (
     # ES — sin límite declarado, retail estándar
     ("norma editorial", None),          # Norma — retail estándar, sin límite
     ("distrito manga",  None),          # Distrito — retail estándar
+    ("milky way",       None),          # Milky Way — Grimorio, hardcovers, ongoing
+    ("ivrea",           None),          # Ivrea España + Argentina — catálogo estándar
+    ("ecc ediciones",   None),          # ECC — catálogo manga (DC filtrado por blacklist)
+    ("arechi",          None),          # Arechi Manga — ediciones premium ongoing
     # FR — líneas de catálogo permanentes (no per-volume collectors)
     ("glénat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
     ("glenat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
@@ -2176,8 +2202,8 @@ _COMMON_CATALOG_RULES: tuple[tuple[str, re.Pattern[str] | None], ...] = (
     ("carlsen",         re.compile(r"massiv|sammelschuber", re.I)),
     # IT — líneas multi-volumen deluxe con reprints documentados (Panini/Planet Manga)
     ("panini",          re.compile(r"master.?edition|deluxe|taniguchi|ultimate", re.I)),
-    # ES — Planeta Cómic líneas ongoing
-    ("planeta",         re.compile(r"perfect.?edition|kanzenban|deluxe", re.I)),
+    # ES — Planeta Cómic líneas ongoing (incl. box sets = catálogo estándar)
+    ("planeta",         re.compile(r"perfect.?edition|kanzenban|deluxe|box.?set", re.I)),
     # DE — altraverse CEs son per-volume pero las top-tier se reimprimen;
     # Carlsen Perfect Edition / box sets son catálogo (no "Sonderausgabe" sueltas)
     ("carlsen",         re.compile(r"perfect.?edition|box.?set", re.I)),
@@ -2203,6 +2229,17 @@ def _is_reference_only_source(source: str) -> bool:
     return any(r in src for r in _REFERENCE_ONLY_SOURCES)
 
 
+def _extract_print_run(text: str) -> int | None:
+    """Extract explicit print run from text, e.g. 'limited to 216 copies' → 216."""
+    m = _PRINT_RUN_RE.search(text)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", "").replace(".", ""))
+    except (ValueError, AttributeError):
+        return None
+
+
 def derive_rarity_tier(
     signal_types: list[str],
     source: str,
@@ -2214,8 +2251,9 @@ def derive_rarity_tier(
 
     Tiers (orden de evaluación):
     1. ultra_rare: edición numerada/firmada, exclusiva de evento, lotería,
-       O retailer_exclusive + lore_edition juntos.
-    2. super_rare: retailer_exclusive solo; tokuten JP (BooksPrivilege).
+       O print run explícito ≤ 500.
+    2. super_rare: retailer_exclusive (solo o + lore_edition); tokuten JP;
+       O print run explícito ≤ 2500.
     3. common: publisher × edition pattern de catálogo permanente, SIN señales
        de escasez, SIN keywords de tirada única, Y NO solo de fuente de referencia.
     4. rare: default conservador para todo lo demás.
@@ -2225,11 +2263,14 @@ def derive_rarity_tier(
     sigs = set(signal_types or [])
     text = f"{title} {description}".lower()
     src = (source or "").lower()
+    print_run = _extract_print_run(text)
 
     # --- Tier 4: Ultra Rare ---
     if any(kw in text for kw in _ULTRA_RARE_KEYWORDS):
         return "ultra_rare"
-    if "retailer_exclusive" in sigs and "lore_edition" in sigs:
+    if any(pat.search(text) for pat in _ULTRA_RARE_PATTERNS):
+        return "ultra_rare"
+    if print_run is not None and print_run <= 500:
         return "ultra_rare"
 
     # --- Tier 3: Super Rare ---
@@ -2237,15 +2278,16 @@ def derive_rarity_tier(
         return "super_rare"
     if any(t in src for t in _TOKUTEN_SOURCES):
         return "super_rare"
+    if print_run is not None and print_run <= 2500:
+        return "super_rare"
 
     # --- Tier 1: Common (catálogo permanente) ---
-    # 4 condiciones deben cumplirse simultáneamente:
-    #   a) Sin señales de escasez en signal_types
-    #   b) Publisher × title matchea una regla de catálogo permanente
-    #   c) Sin keywords de tirada única en título/descripción
-    #   d) No proviene exclusivamente de fuente de referencia (sin verificación de stock)
+    # "bonus" excluded: color pages, postcards, first-print extras are standard
+    # features of kanzenban/collector formats, not scarcity markers. Genuinely
+    # scarce bonuses (tokuten, retailer-exclusive) are caught by super_rare
+    # checks above (retailer_exclusive signal, BooksPrivilege source, etc.).
     _SCARCITY_SIGS = frozenset({
-        "limited", "retailer_exclusive", "bonus", "variant_cover",
+        "limited", "retailer_exclusive", "variant_cover",
     })
     if not (sigs & _SCARCITY_SIGS):
         if _matches_common_catalog(publisher or "", title or ""):
@@ -3015,6 +3057,10 @@ _VOLUME_EXTRACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Volumen entre paréntesis (común en JP: "タイトル（15）", "Title (10)")
     # Acepta paréntesis half-width y full-width.
     re.compile(r"[（(]\s*(\d{1,4})\s*[）)]"),
+    # Trailing bare number: "Berserk Deluxe 1", "One Piece 98".
+    # Última prioridad. Guards: no captura años (1900-2099), ni ISBNs (>4 dígitos).
+    # Requiere espacio antes del número para no capturar sufijos pegados ("abc123").
+    re.compile(r"\s(\d{1,3})\s*$"),
 )
 
 # Palabras a stripear del título para obtener `series_name`. Cubren markers
@@ -3137,14 +3183,19 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     """Devuelve la clave de agrupación para deduplicar items entre fuentes.
 
     Estrategia en cascada (más autoritativo primero):
-    1. ISBN → "isbn:<isbn>". ISBN es unique per edición/mercado.
-    2. `edition_key` + `volume` → "edition:<edition_key>|<volume>". El
+    1. `edition_key` + `volume` → "edition:<edition_key>|<volume>". El
        edition_key lo asigna `/standardize-catalog` (LLM-verified) o el
        heurístico del scraper, y representa la misma edición + publisher
        + mercado. Dos items con el MISMO edition_key + volume son el mismo
-       producto físico aunque vengan de fuentes distintas (Whakoom +
-       ListadoManga + retailer). Crucial para boxes/artbooks sin volumen
-       donde la regla #3 (fuzzy con volume requerido) los dejaba aislados.
+       producto físico aunque vengan de fuentes distintas — incluso si
+       uno tiene ISBN y otro no (ej. PRH Comics con ISBN + Dark Horse
+       Direct sin ISBN → mismo tomo, una sola card). El edition_key ya
+       codifica publisher+market en su slug por construcción
+       (`gon-norma-collector` vs `gon-glenat-collector`), por eso no
+       necesita campos extra. El ISBN se preserva como metadata del item
+       para búsqueda y enrichment, pero no como discriminante de grupo.
+    2. ISBN → "isbn:<isbn>". Fallback para items sin edition_key. ISBN es
+       unique per edición/mercado.
     3. Si NO hay ISBN ni edition_key, pero podemos derivar
        `(language, series, volume)` con una serie de >= 3 caracteres →
        fuzzy combinando esos + variant_tier + publisher.
@@ -3153,9 +3204,6 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     `variant_tier` y `publisher` son discriminantes para EVITAR juntar
     "OP100 normal" con "OP100 Celebration" (distinto tier) o ediciones de
     publishers distintos. Idioma es discriminante para no mezclar mercados.
-    El edition_key ya incluye publisher+market en su slug por construcción
-    (ej. `gon-norma-collector` vs `gon-glenat-collector`), por eso no
-    necesita campos extra en la tier-2 key.
 
     Antes este campo era `variant_sig = ",".join(sorted(signal_types))`. El
     problema: dos fuentes con descripciones distintas detectan signal_types
@@ -3163,11 +3211,7 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     `_variant_tier` colapsa esa varianza eligiendo solo el tier más
     específico — más tolerante, sigue diferenciando tomo-regular vs especial.
     """
-    isbn = (item.get("isbn") or "").strip()
-    if isbn:
-        return f"isbn:{isbn}"
-
-    # Tier 2: edition_key (set by skill /standardize-catalog o por el
+    # Tier 1: edition_key (set by skill /standardize-catalog o por el
     # heurístico de candidate_to_json). Cuando dos items comparten
     # edition_key, son por definición la misma edición/publisher/market.
     # Volume los distingue (tomo 1 vs tomo 2 de la misma edición).
@@ -3175,6 +3219,11 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     if edition_key:
         volume = (item.get("volume") or "").strip()
         return f"edition:{edition_key}|{volume}"
+
+    # Tier 2: ISBN — para items sin edition_key (pre-standardize o legacy).
+    isbn = (item.get("isbn") or "").strip()
+    if isbn:
+        return f"isbn:{isbn}"
 
     title = item.get("title") or ""
     language = (item.get("language") or "").strip().lower()
@@ -5058,6 +5107,61 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "hakusensha": "hakusensha",
     "gentosha": "gentosha",
     "mag garden": "maggarden",
+    # Publishers JP adicionales
+    "ichijinsha": "ichijinsha",
+    "一迅社": "ichijinsha",
+    "futabasha": "futabasha",
+    "双葉社": "futabasha",
+    "takeshobo": "takeshobo",
+    "竹書房": "takeshobo",
+    "tokuma": "tokuma",
+    "徳間書店": "tokuma",
+    "ascii media works": "asciimw",
+    "ascii media": "asciimw",
+    "frontier works": "frontier",
+    "shogakukan": "shogakukan",
+    "小学館": "shogakukan",
+    # Publishers IT adicionales
+    "j-pop": "jpop",
+    "j pop": "jpop",
+    "jpop": "jpop",
+    "dynit": "dynit",
+    "edizioni bd": "edizionibd",
+    "001 edizioni": "001edizioni",
+    "goen": "goen",
+    "gp manga": "gpmanga",
+    "gp publishing": "gpmanga",
+    "magic press": "magicpress",
+    "coconino": "coconino",
+    "tora": "tora",
+    "dokusho": "dokusho",
+    "tokyo manga": "tokyomangasha",
+    "tokyomanga": "tokyomangasha",
+    # Publishers FR adicionales
+    "noeve": "noeve",
+    "noeve grafx": "noeve",
+    # Publishers US/EN adicionales
+    "yen press": "yenpress",
+    "seven seas": "sevenseas",
+    "titan comics": "titan",
+    "titan manga": "titan",
+    "titan": "titan",
+    "inklore": "inklore",
+    "vertical": "vertical",
+    "udon": "udon",
+    # Publishers ES adicionales
+    "distrito manga": "distrito",
+    "distrito": "distrito",
+    # Publishers BR adicionales
+    "mpeg": "mpeg",
+    # Publishers VN/TH adicionales
+    "kim dong": "kim-dong",
+    "kim đồng": "kim-dong",
+    "luckpim": "luckpim",
+    "ipm": "ipm",
+    "isan manga": "isan",
+    "nxb tre": "nxb",
+    "nxb trẻ": "nxb",
     # Publishers alemanes (DACH)
     "carlsen": "carlsen",
     "egmont manga": "egmont",
@@ -5070,6 +5174,7 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "loewe": "loewe",
     "reprodukt": "reprodukt",
     "altraverse": "altraverse",
+    "universe": "universe",
 }
 
 
@@ -5097,6 +5202,88 @@ def _slugify_kebab(s: str) -> str:
     s = "".join(c for c in s if not _ud.combining(c))
     s = re.sub(r"[^a-z0-9]+", "-", s)
     return s.strip("-")
+
+
+# --- Edition slug refinement: language/title-aware ---
+# Title keywords que refinan el edition_slug más allá del tier genérico.
+# Orden: más específico primero. Cada regla: (regex, slug_resultado).
+_EDITION_SLUG_TITLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bmaximum\b", re.I), "maximum"),
+    (re.compile(r"\bperfect\s+edition\b", re.I), "perfect"),
+    (re.compile(r"\bultimate\b", re.I), "ultimate"),
+    (re.compile(r"\bmaster\s+edition\b", re.I), "master"),
+    (re.compile(r"\blibrary\s+edition\b", re.I), "library"),
+    (re.compile(r"\bprestige\b", re.I), "prestige"),
+    (re.compile(r"\bgrimorio\b", re.I), "grimorio"),
+    (re.compile(r"\bgrimoire\b", re.I), "grimoire"),
+    (re.compile(r"\bintegral[e]?\b", re.I), "integral"),
+    (re.compile(r"\bcollector\b", re.I), "collector"),
+    (re.compile(r"\bcoleccionista\b", re.I), "collector"),
+    (re.compile(r"\banniversary\b|\baniversario\b|\banniversaire\b", re.I), "anniversary"),
+    (re.compile(r"\bcelebration\b", re.I), "celebration"),
+    (re.compile(r"\bsteelbox\b|\bsteelbook\b", re.I), "steelbox"),
+    (re.compile(r"\bslipcase\b", re.I), "slipcase"),
+    (re.compile(r"\bcofanetto\b", re.I), "cofanetto"),
+    (re.compile(r"\bcoffret\b", re.I), "coffret"),
+)
+
+# Language → slug para tiers ambiguos (box_set, kanzenban)
+_EDITION_SLUG_LANG_MAP: dict[str, dict[str, str]] = {
+    "box_set": {
+        "fr": "coffret",
+        "it": "cofanetto",
+    },
+    "kanzenban": {
+        "it": "perfect",  # Panini IT "Perfect Edition" line
+    },
+}
+
+
+def _refine_edition_slug(
+    tier: str, title: str, language: str, pub_slug: str,
+) -> str:
+    """Refina el edition_slug usando contexto de idioma y título.
+
+    El tier viene de _variant_tier (genérico). Esta función lo especializa
+    consultando el título por keywords de edición nombrada (Maximum, Perfect,
+    Grimorio, etc.) y el idioma para slugs culturales (coffret/cofanetto).
+    """
+    if not tier:
+        return "regular"
+
+    title_lc = (title or "").lower()
+
+    # 1) Title-keyword refinement (más específico que el tier genérico)
+    for pat, slug in _EDITION_SLUG_TITLE_RULES:
+        if pat.search(title_lc):
+            return slug
+
+    # 2) Language-aware refinement para tiers ambiguos
+    lang = (language or "")[:2].lower()
+    lang_map = _EDITION_SLUG_LANG_MAP.get(tier)
+    if lang_map and lang in lang_map:
+        return lang_map[lang]
+
+    # 3) Publisher-specific refinement
+    if tier == "kanzenban" and pub_slug == "panini":
+        if "ultimate" in title_lc:
+            return "ultimate"
+        if "perfect" in title_lc:
+            return "perfect"
+
+    # 4) Fallback al mapa estático
+    static_map = {
+        "artbook": "artbook",
+        "omnibus": "omnibus",
+        "box_set": "boxset",
+        "kanzenban": "kanzenban",
+        "lore_edition": "lore",
+        "variant_cover": "variant",
+        "deluxe": "deluxe",
+        "limited": "limited",
+        "special": "special",
+    }
+    return static_map.get(tier, "regular")
 
 
 def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
@@ -5155,35 +5342,35 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     # 3) Publisher slug
     pub_slug = _publisher_slug(candidate.publisher or "")
 
-    # 4) Edition slug from signal_types (reusa _variant_tier)
+    # 3b) Try canonical series resolution (aliases.yml) — if it matches,
+    # we have high confidence in the series_key.
+    from series_aliases import canonical_series_key as _csk, is_canonical_key as _ick
+    resolved_sk, resolved_sd = _csk(title, series_key, series_display)
+    series_resolved = (resolved_sk != series_key)
+    if series_resolved:
+        series_key = resolved_sk
+        series_display = resolved_sd
+
+    # 4) Edition slug from signal_types — language/title-aware refinement
     tier = _variant_tier(candidate.signal_types or [])
-    edition_slug_map = {
-        "artbook": "artbook",
-        "omnibus": "omnibus",
-        "box_set": "boxset",
-        "kanzenban": "kanzenban",
-        "lore_edition": "lore",
-        "variant_cover": "variant",
-        "deluxe": "deluxe",
-        "limited": "limited",
-        "special": "special",
-    }
-    edition_slug = edition_slug_map.get(tier, "regular")
+    edition_slug = _refine_edition_slug(
+        tier, title, candidate.language or "", pub_slug,
+    )
 
     edition_key = f"{series_key}-{pub_slug}-{edition_slug}"
-    edition_name_map = {
-        "deluxe": "Deluxe",
-        "kanzenban": "Kanzenban",
-        "boxset": "Box Set",
-        "variant": "Variant",
-        "limited": "Limited",
-        "lore": "Special Edition",
-        "artbook": "Artbook",
-        "omnibus": "Omnibus",
-        "special": "Special",
-        "regular": "Regular",
+    _EDITION_NAME_MAP = {
+        "deluxe": "Deluxe", "kanzenban": "Kanzenban", "boxset": "Box Set",
+        "coffret": "Coffret", "cofanetto": "Cofanetto",
+        "variant": "Variant", "limited": "Limited", "lore": "Special Edition",
+        "artbook": "Artbook", "omnibus": "Omnibus", "special": "Special",
+        "regular": "Regular", "maximum": "Maximum", "perfect": "Perfect",
+        "ultimate": "Ultimate", "master": "Master", "library": "Library",
+        "prestige": "Prestige", "grimorio": "Grimorio", "grimoire": "Grimoire",
+        "integral": "Integral", "collector": "Collector",
+        "anniversary": "Anniversary", "celebration": "Celebration",
+        "steelbox": "Steelbox", "slipcase": "Slipcase",
     }
-    edition_name = edition_name_map.get(edition_slug, "Regular")
+    edition_name = _EDITION_NAME_MAP.get(edition_slug, edition_slug.title())
     publisher_display = candidate.publisher or ""
     edition_display = (
         f"{edition_name} ({publisher_display})" if publisher_display else edition_name
@@ -5193,6 +5380,20 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     parts = [series_display.strip(), edition_name if edition_slug != "regular" else "", volume]
     title_standardized = " ".join(p for p in parts if p).strip()
 
+    # 6) Confidence tier for /standardize-catalog routing
+    #   Tier 1: series resolved in aliases + known publisher + unambiguous edition
+    #   Tier 2: series resolved but edition ambiguous OR publisher unknown
+    #   Tier 3: series NOT resolved (unknown series, CJK-only, etc.)
+    is_canonical = series_resolved or _ick(series_key)
+    pub_known = pub_slug != "unknown"
+    edition_unambiguous = edition_slug not in ("lore", "special", "regular")
+    if is_canonical and pub_known and edition_unambiguous:
+        confidence_tier = 1
+    elif is_canonical:
+        confidence_tier = 2
+    else:
+        confidence_tier = 3
+
     return {
         "series_key": series_key,
         "series_display": series_display,
@@ -5200,6 +5401,7 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
         "edition_display": edition_display,
         "volume": volume,
         "title_standardized": title_standardized,
+        "confidence_tier": confidence_tier,
     }
 
 
@@ -5247,25 +5449,12 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         images_list = [{
             "url": candidate.image_url,
             "local": candidate.image_local,
-            "kind": "cover",
+            "kind": "gallery",
             "description": "",
         }]
     elif images_list:
-        # Si hay un cover explícito en images[], moverlo al frente. Si NO hay
-        # cover (todos los elementos son kind=extra/variant_cover/etc.),
-        # NO promover artificialmente — mantenemos el kind original. Esto
-        # respeta el caso "tomo creado desde extras" (Fase 2 from_extras)
-        # donde la única imagen disponible es del extra (cofre/marcapáginas)
-        # y semánticamente NO es una cover.
-        cover_idx = next(
-            (i for i, im in enumerate(images_list) if im.get("kind") == "cover"),
-            -1,
-        )
-        if cover_idx > 0:
-            images_list.insert(0, images_list.pop(cover_idx))
-        # Sincronizar image_url/image_local con el primer elemento (sea cover
-        # o extra). image_url tiene el rol legacy de "alguna imagen visible";
-        # el dashboard puede consumirla aunque kind no sea cover.
+        # Sincronizar image_url/image_local con el primer elemento.
+        # images[0] es siempre la portada por convención de posición.
         first = images_list[0]
         if first.get("url") and not row["image_url"]:
             row["image_url"] = first["url"]
@@ -5915,17 +6104,16 @@ def mirror_candidate_images(
         c for c in candidates
         if c.status in {"new", "changed"} and c.image_url and not c.image_local
     ]
-    # images[] extras (Fase 2 listadomanga-collections): cada elemento
-    # con kind != cover y sin `local` poblado se mira como target. Cada
-    # tarea descarga UNA imagen extra de UN Candidate.
+    # images[] non-cover (idx > 0): cada elemento sin `local` poblado
+    # se mira como target. idx=0 ya cubierta por image_url arriba.
     extra_targets: list[tuple[Candidate, int]] = []
     for c in candidates:
         if c.status not in {"new", "changed"}:
             continue
         imgs = getattr(c, "images", None) or []
         for idx, im in enumerate(imgs):
-            if im.get("kind") == "cover":
-                continue  # cover ya cubierta por image_url
+            if idx == 0:
+                continue
             if im.get("url") and not im.get("local"):
                 extra_targets.append((c, idx))
 
@@ -5980,11 +6168,9 @@ def mirror_candidate_images(
     for cand, filename in cover_results:
         if filename:
             cand.image_local = filename
-            # Sincronizar también en images[] si existe el cover ahí.
-            for im in (getattr(cand, "images", None) or []):
-                if im.get("kind") == "cover" and im.get("url") == cand.image_url:
-                    im["local"] = filename
-                    break
+            imgs = getattr(cand, "images", None) or []
+            if imgs and imgs[0].get("url") == cand.image_url:
+                imgs[0]["local"] = filename
             downloaded += 1
         else:
             failed += 1
@@ -6055,6 +6241,10 @@ def _run_wiki_bootstrap(
         from wikis.kinokuniya import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "yenpress":
         from wikis.yenpress_calendar import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "shueisha":
+        from wikis.shueisha_books import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "viz":
+        from wikis.viz_artbooks import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -6574,7 +6764,10 @@ def run(args: argparse.Namespace) -> int:
                 if diagnostic.enabled and entry is not None:
                     entry["pages_visited"] = pages_visited
                 pages_note = f" ({pages_visited} págs)" if pages_visited > 1 else ""
-                _safe_print(f"    [{source.name[:30]:30s}] candidatos con señales: {len(scored)}{pages_note}")
+                # Nombre completo (sin truncar) para que source_health.py pueda
+                # mapear la línea a la entrada de sources.yml. Ver gotcha de
+                # observabilidad / scripts/audit/source_health.py.
+                _safe_print(f"    [{source.name}] candidatos con señales: {len(scored)}{pages_note}")
 
         except requests.HTTPError as exc:
             message = f"{source.name}: HTTP error {exc}"
@@ -6825,7 +7018,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sources", default="sources.yml", help="Archivo YAML con fuentes. Default: sources.yml")
     parser.add_argument("--data-dir", default="data", help="Directorio de datos. Default: data")
     parser.add_argument("--reports-dir", default="reports", help="Directorio de reportes Markdown. Default: reports")
-    parser.add_argument("--min-score", type=int, default=30, help="Score mínimo. Default: 30, recomendado para incluir artbooks")
+    parser.add_argument("--min-score", type=int, default=20, help="Score mínimo. Default: 20 (coincide con el umbral del dashboard y con los scripts canónicos scrape_delta/scrape_full).")
     parser.add_argument("--max-items-per-source", type=int, default=80, help="Máximo candidatos por fuente. Default: 80")
     parser.add_argument(
         "--max-pages",
@@ -6933,7 +7126,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress"],
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz"],
         help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), booksprivilege (agregador JP de 店舗特典/extras de tienda: por cada release lista los bonus de cada retailer japonés — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN, etc. — que no aparecen en el catálogo regular), sumikko (catálogo curado JP de 限定版/特装版 — ~3178 ediciones limitadas y especiales con ISBN, complementario a booksprivilege que es store-bonus; sumikko se enfoca en la edición en sí: acrylic stand付き, 小冊子付き, 缶バッジ付き, BOX, etc.), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(

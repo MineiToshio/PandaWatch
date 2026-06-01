@@ -538,7 +538,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://kibookediciones.com/novedades"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: 0 items en corpus, fuente JS (Playwright caro), sin yield. Ver auditoría de fuentes.
     tags: ["manga", "official"]
 
   - name: "ES - Pika Ediciones"
@@ -616,7 +616,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.viz.com/blog"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: feed de noticias, 0 items coleccionables en corpus. Los exclusivos VIZ llegan vía US - VIZ Collector's Guide. Ver auditoría de fuentes.
     tags: ["manga", "official", "news"]
 
   - name: "US - Kodansha USA News"
@@ -637,7 +637,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://yenpress.com/news"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: feed de noticias, 0 items coleccionables. Yen Press llega vía wiki yenpress (calendario). Ver auditoría de fuentes.
     tags: ["manga", "official", "news"]
 
   - name: "US - Seven Seas News"
@@ -647,7 +647,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://sevenseasentertainment.com/news/"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: feed de noticias, 0 items coleccionables en corpus. Ver auditoría de fuentes.
     tags: ["manga", "official", "news"]
 
   - name: "US - Seven Seas Box Sets"
@@ -657,7 +657,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://sevenseasentertainment.com/category/box-set/"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: 0 items en corpus, fuente JS (Playwright caro), sin yield. Box sets de Seven Seas ya llegan vía PRH Comics. Ver auditoría de fuentes.
     tags: ["manga", "boxset", "official"]
 
   - name: "US - Seven Seas RSS"
@@ -667,7 +667,7 @@ sources:
     source_class: "official"
     kind: "rss"
     url: "https://sevenseasentertainment.com/feed/"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: RSS de noticias, 0 items coleccionables en corpus. Ver auditoría de fuentes.
     tags: ["rss", "manga", "official"]
 
   - name: "US - Dark Horse Direct Manga"
@@ -1064,7 +1064,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://www.meian-plus.fr/accueil"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: 0 items en corpus, fuente JS (Playwright caro), sin yield. Ver auditoría de fuentes.
     tags: ["manga", "store", "official"]
 
   - name: "FR - Akata"
@@ -1087,7 +1087,7 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://www.dupuis.com/label/FR/5/vega_dupuis.html"
-    enabled: true
+    enabled: false  # disabled 2026-06-01: 0 items en corpus, fuente JS (Playwright caro), sin yield. Ver auditoría de fuentes.
     tags: ["manga", "official"]
 
   - name: "FR - ActuaLitté Mangas RSS"
