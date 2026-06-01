@@ -146,7 +146,10 @@ count_lines() {
 if [ "$SKIP_SCRAPE" != "1" ]; then
     phase_header 1 "Scrape principal (sources YAML, JS+fetch-details, workers=${SCRAPE_WORKERS})"
     P1_START=$(date +%s)
-    PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    # Fase 1 envuelta en timeout (90 min): una fuente HTTP colgada NO debe
+    # bloquear el resto del pipeline. La escritura incremental por fuente
+    # (flush_source_candidates) preserva lo ya scrapeado si el timeout dispara.
+    _run_timed 5400 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --enable-js \
         --fuzzy-keywords \
         --max-pages 5 \
@@ -312,15 +315,39 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         > "$LOG_DIR/02m-yenpress.log" 2>&1
     echo "    duración: $(($(date +%s) - P2M_START))s — items: $(count_lines)"
 
-    # 2n (OPT-IN). Whakoom spider (Cloudflare risk)
+    # 2n. shueisha (JP — artbooks, magazines, databooks nuevos).
+    # Modo delta: --wiki-from con YYYY-MM reciente (year_from >= 2020 activa
+    # el modo delta interno del parser, que sólo trae volúmenes nuevos).
+    echo ">>> [2n] shueisha books (JP — delta: new Magazine/Color Walk volumes)"
+    P2N_START=$(date +%s)
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki shueisha \
+        --wiki-from "$LISTADO_CAL_FROM" \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02n-shueisha.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
+
+    # 2o. viz artbooks (US — small catalog, quick).
+    echo ">>> [2o] viz artbooks (US — Color Walk Compendium, companion books)"
+    P2O_START=$(date +%s)
+    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki viz \
+        --wiki-from "$LISTADO_CAL_FROM" \
+        --sleep-seconds 1.0 \
+        --min-score 20 \
+        > "$LOG_DIR/02o-viz.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
+
+    # 2p (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
-        echo ">>> [2n] whakoom spider (OPT-IN, riesgo Cloudflare)"
+        echo ">>> [2p] whakoom spider (OPT-IN, riesgo Cloudflare)"
         P2N_START=$(date +%s)
         _run_timed 3600 "$VENV_PY" scripts/manga_watch.py \
             --bootstrap-wiki whakoom \
             --sleep-seconds 2.0 \
             --min-score 20 \
-            > "$LOG_DIR/02n-whakoom.log" 2>&1
+            > "$LOG_DIR/02p-whakoom.log" 2>&1
         echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
     else
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"

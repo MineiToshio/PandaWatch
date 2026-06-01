@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """source_health.py — auditoría de salud de las sources del scraper.
 
-Lee los logs de los últimos N runs (logs/overnight-*, logs/retry-*) y
-reporta:
+Lee los logs de los últimos N runs (logs/scrape-delta-*, logs/scrape-full-*,
+y los legacy logs/overnight-*, logs/retry-*) y reporta:
 - Sources con 0 candidatos en los últimos N runs seguidos → "probable
   selector roto o sitio cambió HTML".
 - Sources con tasa de errores HTTP > 50% → "probable bloqueo o caída".
@@ -30,19 +30,36 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/audit → scripts
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import load_sources  # type: ignore
+# El módulo `manga_watch` puede resolver al wrapper de la raíz del repo
+# (manga_watch.py, que sólo reexporta parse_args/run) cuando la raíz está en
+# sys.path — p.ej. bajo pytest. En ese caso `load_sources` no existe ahí;
+# caemos al paquete real scripts.manga_watch. Ver gotcha de import dual.
+try:
+    from manga_watch import load_sources  # type: ignore
+except ImportError:
+    from scripts.manga_watch import load_sources  # type: ignore
 
 
 # Regex para parsear líneas de log del scraper.
-# Formato típico:
-#   [12/184] ES - Listado Manga Calendario :: https://www.listadomanga.es/calendario.php
+#
+# Formato ACTUAL (manga_watch.py emite source + candidatos en UNA línea):
+#   [ES - Listado Manga Calendario] candidatos con señales: 5 (3 págs)
+#   [ERROR] ES - Misión Tokyo: error inesperado Page.goto: Timeout ...
+#   [SKIP-js] ES - Kibook Novedades: requiere JavaScript
+#
+# Formato LEGACY (overnight runs antiguos, source en línea propia):
+#   [12/184] ES - Listado Manga Calendario :: https://...
 #       candidatos con señales: 5 (3 págs)
-# o:
-#   [ERROR] ES - Misión Tokyo: error inesperado Page.goto: Timeout 30000ms exceeded.
+_CANDIDATES_COMBINED_RE = re.compile(
+    r"^\s*\[(?P<name>.+?)\]\s+candidatos con señales:\s*(?P<n>\d+)"
+)
 _SOURCE_LINE_RE = re.compile(r"^\s*\[(\d+)/(\d+)\]\s+([^:]+?)\s*::\s*(\S+)\s*$")
 _CANDIDATES_RE = re.compile(r"^\s+candidatos con señales:\s*(\d+)")
 _ERROR_RE = re.compile(r"^\[ERROR\]\s+([^:]+):\s+(.+)$")
 _SKIP_RE = re.compile(r"^\[SKIP-(\w+)\]\s+([^:]+):\s+(.+)$")
+
+# Nombres entre corchetes que NO son sources (markers de estado del scraper).
+_NON_SOURCE_BRACKETS = {"ERROR", "OK", "WARN", "INFO", "SKIP"}
 
 
 def collect_run_dirs(log_root: Path, last_n: int = 10) -> list[Path]:
@@ -51,7 +68,7 @@ def collect_run_dirs(log_root: Path, last_n: int = 10) -> list[Path]:
     for d in log_root.iterdir():
         if not d.is_dir():
             continue
-        if d.name.startswith(("overnight-", "retry-")):
+        if d.name.startswith(("overnight-", "retry-", "scrape-delta-", "scrape-full-")):
             candidates.append((d.stat().st_mtime, d))
     candidates.sort(reverse=True)
     return [d for _, d in candidates[:last_n]]
@@ -77,6 +94,16 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
             continue
         current_source: str | None = None
         for line in content.splitlines():
+            # Formato ACTUAL: source + candidatos en una sola línea.
+            m_comb = _CANDIDATES_COMBINED_RE.match(line)
+            if m_comb:
+                name = m_comb.group("name").strip()
+                if name not in _NON_SOURCE_BRACKETS and not name.startswith("SKIP-"):
+                    if name not in sources:
+                        sources[name] = {"candidates": None, "error": None, "skipped": None}
+                    sources[name]["candidates"] = int(m_comb.group("n"))
+                continue
+            # Formato LEGACY: header de source en su propia línea.
             m_src = _SOURCE_LINE_RE.match(line)
             if m_src:
                 current_source = m_src.group(3).strip()
@@ -273,7 +300,11 @@ def main() -> int:
 
     runs = collect_run_dirs(log_root, last_n=args.last_n)
     if not runs:
-        print(f"[ERROR] sin runs en {log_root}/overnight-* o /retry-*", file=sys.stderr)
+        print(
+            f"[ERROR] sin runs en {log_root}/ (busca scrape-delta-*, scrape-full-*, "
+            f"overnight-*, retry-*)",
+            file=sys.stderr,
+        )
         return 1
 
     parsed = [(run, parse_run_log(run)) for run in runs]

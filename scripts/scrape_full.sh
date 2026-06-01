@@ -156,7 +156,10 @@ count_lines() {
 if [ "$SKIP_SCRAPE" != "1" ]; then
     phase_header 1 "Scrape principal (sources YAML, JS+fetch-details, workers=${SCRAPE_WORKERS})"
     P1_START=$(date +%s)
-    PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    # Fase 1 envuelta en timeout (3 h): una fuente HTTP colgada NO debe
+    # bloquear el resto del pipeline full. La escritura incremental por fuente
+    # (flush_source_candidates) preserva lo ya scrapeado si el timeout dispara.
+    _run_timed 10800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --enable-js \
         --fuzzy-keywords \
         --max-pages 5 \
@@ -348,16 +351,38 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         > "$LOG_DIR/02n-yenpress.log" 2>&1
     echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
 
-    # 2o (OPT-IN). Whakoom spider (Cloudflare risk)
+    # 2o. shueisha (JP — catálogo completo artbooks, magazines, databooks).
+    echo ">>> [2o] shueisha books (JP — full: all series chains + standalone)"
+    P2O_START=$(date +%s)
+    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki shueisha \
+        --wiki-from 2000-01 \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02o-shueisha.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
+
+    # 2p. viz artbooks (US — catálogo completo, chico).
+    echo ">>> [2p] viz artbooks (US — full catalog)"
+    P2P_START=$(date +%s)
+    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki viz \
+        --wiki-from 2000-01 \
+        --sleep-seconds 1.0 \
+        --min-score 20 \
+        > "$LOG_DIR/02p-viz.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2P_START))s — items: $(count_lines)"
+
+    # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
-        echo ">>> [2o] whakoom spider (OPT-IN, riesgo Cloudflare)"
-        P2O_START=$(date +%s)
+        echo ">>> [2q] whakoom spider (OPT-IN, riesgo Cloudflare)"
+        P2Q_START=$(date +%s)
         _run_timed 3600 "$VENV_PY" scripts/manga_watch.py \
             --bootstrap-wiki whakoom \
             --sleep-seconds 2.0 \
             --min-score 20 \
-            > "$LOG_DIR/02o-whakoom.log" 2>&1
-        echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
+            > "$LOG_DIR/02q-whakoom.log" 2>&1
+        echo "    duración: $(($(date +%s) - P2Q_START))s — items: $(count_lines)"
     else
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"
     fi
