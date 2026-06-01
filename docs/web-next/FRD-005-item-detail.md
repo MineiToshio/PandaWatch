@@ -1,7 +1,7 @@
 # FRD-005: Item Detail Page
 
-**Version:** 1.0  
-**Status:** Implemented (2026-05-28)  
+**Version:** 1.2  
+**Status:** Implemented (updated 2026-05-30)  
 **Author:** Architecture session 2026-05-27  
 **Related:** [BP-002](blueprints/BP-002-url-routing.md), [BP-004](blueprints/BP-004-component-hierarchy.md), [WO-006](work-orders/WO-006-item-detail.md)
 
@@ -61,9 +61,11 @@ If a slug is not found, the page returns 404 via `notFound()`.
                         Series Display
                         Edition Display — Vol. N
                         Publisher · Country · Language
-                        
-                        [Score badge]  [Signal chips]
-                        
+
+                        [Signal chips]
+
+                        [Rarity badge]
+
                         Precio: €XX.XX
                         Fecha: DD/MM/YYYY
                         ISBN: XXXXXXXXXXXXXXXXX
@@ -72,6 +74,18 @@ If a slug is not found, the page returns 404 via `notFound()`.
 
 On mobile: carousel on top, metadata below (stacked layout).
 On desktop: carousel on left (40%), metadata on right (60%).
+
+**Rarity badge (glassy mode):** rendered as an inline pill below the signal chips using
+the glassy display mode (dark background `rgba(20,17,14,0.82)` + `backdrop-filter: blur(6px)`,
+border `1px solid rgba(255,255,255,0.12)`, bright-on-dark foreground). Includes SVG icon
+matching the tier (circle / star / sparkle / gem). Hidden when `rarity` is absent.
+See FRD-002 FR-3 for the full glassy-mode spec.
+
+**Score badge removed:** `ScoreBadge` is no longer rendered in `ItemHero` (removed 2026-05-30).
+
+**Price hidden when zero/absent:** the price line is only rendered when
+`parseFloat(price) > 0`. A price of `"0"`, `"0.00"`, `"0,00"`, or any string that parses
+to zero or `NaN` is suppressed. Same rule applies in `MetaTable` and `ItemCard`.
 
 ### FR-3: Image carousel (Client Component)
 
@@ -155,17 +169,19 @@ Full metadata in a clean definition list:
 | Label | Field |
 |---|---|
 | ISBN | `isbn` (formatted as ISBN-13 with dashes if possible) |
-| Precio | `price` (from best source) |
-| Fecha de lanzamiento | `release_date` (formatted DD/MM/YYYY) |
+| Precio | `price` — hidden when zero or absent (see FR-2 note) |
+| Lanzamiento | `release_date` (formatted DD/MM/YYYY) |
 | Autor | `author` |
 | Editorial | `publisher` |
 | País | `country` + flag emoji |
 | Idioma | `language` |
 | Tipo | `product_type` (translated to Spanish) |
-| Clase de fuente | `source_class` |
-| Puntuación | `score` with ScoreBadge |
+| Rareza | `rarity` translated: common → "Accessible", rare → "Rare", super_rare → "Super Rare", ultra_rare → "Ultra Rare" |
 | Detectado | `detected_at` (formatted) |
 | Estandarizado | `standardized_at` (formatted, or "Pendiente" if null) |
+
+**Removed:** "Puntuación" row (`score` + `ScoreBadge`) was removed 2026-05-30. Score is an
+internal signal-detection metric, not a user-facing quality indicator.
 
 ### FR-8: Sources table
 

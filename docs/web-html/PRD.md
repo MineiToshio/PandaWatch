@@ -40,11 +40,123 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 
 ### Curación de datos
 
-- **Botón 👎 en el modal**: registra feedback sobre un item (datos erróneos, clasificación equivocada, etc.)
+Dos paneles en el footer del modal de detalle, unificados en `data/feedback.jsonl`:
+
+- **Botón 👎 (feedback)**: registra feedback sobre un item (datos erróneos, clasificación equivocada, etc.)
   - El item **NO se elimina** del catálogo — sigue visible
-  - Appendea la entrada a `data/feedback.jsonl` con `url`, `title`, `reason`, `submitted_at`
-  - Muestra confirmación "Feedback enviado" y cierra el panel sin navegar
+  - Appendea la entrada con `action: "feedback"`, `url`, `title`, `reason`, `submitted_at`
   - Sirve como cola de revisión para corregir datos incorrectos, no para eliminar items
+
+- **Botón lápiz (curación)**: acciones operativas sobre items, con efecto inmediato + log
+  - **Mover a otra edición** (`action: "move"`): buscador autocomplete de ediciones existentes por nombre de serie. Cambia `edition_key`, `cluster_key`, `series_key` del item. Log incluye `from_edition` y `to_edition`.
+  - **Duplicado / merge** (`action: "merge"`): pegar URL del item duplicado. Fusiona los dos items (mejor score gana, campos faltantes se completan, imágenes se combinan, el duplicado se elimina de items.jsonl). Log incluye `kept_url` y `dropped_url`.
+  - **No va aquí / remover** (`action: "remove"`): separa el item de su edición actual, queda standalone (`edition_key=""`, `cluster_key="url:..."`). Log incluye `from_edition`.
+  - Las 3 acciones se loguean en `data/feedback.jsonl` (misma fuente de verdad que el 👎) con campo `action` para que el skill `/review-feedback` las procese
+  - Endpoint de búsqueda: `GET /api/editions/search?q=<query>` retorna ediciones matching por nombre
+  - Endpoints de escritura: `POST /api/curation/{move,merge,remove}`
+
+### Gestor de imagenes (`/image-manager.html`)
+
+Herramienta dedicada para gestionar las portadas e imagenes de galería del catálogo.
+Accesible desde el header del dashboard (botón "Gestor de imagenes") o
+directamente en `/image-manager.html`. Dark theme, Alpine.js, sin Tailwind.
+
+#### Vista principal (grid)
+
+- **Grid de items** con indicadores de calidad visual (dot verde/amarillo/rojo/gris),
+  tamaño del archivo de la portada en KB/MB, y badge de cantidad de imágenes
+- **Filtros por calidad** (chips): Todas, Sin imagen, Baja calidad (<50 KB),
+  Calidad media (50-200 KB), Escaladas PNG, 1 sola foto
+- **Búsqueda** por título, title_original, series_key, series_display
+- **Paginación** (60 items por página) con controles de navegación
+- **Ordenamiento automático**: worst quality first (sin imagen > baja > media > buena)
+
+#### Vista de detalle (overlay full-screen)
+
+Se abre al hacer clic en un item del grid. Muestra:
+
+- **Header** con título, contador de imágenes, botón "Fuente" (abre URL
+  del item en nueva pestaña), y botón "Guardar cambios" con dirty tracking
+- **Navegación entre items**: botones Prev/Next en el header para saltar al
+  item anterior/siguiente del grid filtrado sin volver a la grilla. Confirma
+  si hay cambios sin guardar
+- **Imagen grande** (preview) con:
+  - Badge informativo: kind (Portada/Galeria/Extra/Variante/Contra) +
+    posición (1/3) + dimensiones reales en píxeles (776x1000px) + tamaño (63 KB)
+  - Flechas de navegación izquierda/derecha sobre la imagen
+  - **Click = lightbox**: abre la imagen a pantalla completa (92vw x 90vh)
+    con fondo oscuro, botón X, flechas, y badge inferior
+- **Panel de acciones** (sidebar derecha en desktop, debajo en mobile):
+  - Agregar por URL / Importar desde página web
+  - Reemplazar por URL (imagen seleccionada)
+  - **Usar como portada**: mueve la imagen a posición 0 y cambia su kind a "cover"
+  - **Mover a la izquierda / derecha**: reordena imágenes en el array
+  - Eliminar imagen / Eliminar todas excepto portada
+- **Filmstrip** (tira de thumbnails):
+  - Cada thumbnail muestra kind label (Portada/Galeria/etc.) y número de posición
+  - Click = seleccionar para preview
+  - Hover = botones de acción (usar como portada, reemplazar, eliminar)
+  - **Drag & drop**: arrastrar thumbnails para reordenar (HTML5 Drag API).
+    Visual feedback: el item arrastrado se vuelve semitransparente, el target
+    muestra borde azul punteado. Hint "Arrastra para reordenar" visible
+  - Botón "+" al final para agregar nueva imagen
+- **Barra de edición** (bajo el filmstrip):
+  - **Dropdown de tipo**: cambia el kind de la imagen seleccionada
+    (`gallery` o `extra`). La portada se determina por posición (images[0]),
+    no por kind
+  - **Input de descripción**: editar inline la descripción de cada imagen
+    (ej: "Contraportada", "Postal de regalo", "Tomo 3 interior")
+- **Panel de información del item** (bajo la barra de edición):
+  Grid de 3 columnas (desktop) / 2 columnas (mobile) con TODOS los campos
+  del item: título, título original, serie, edición, volumen, publisher,
+  país, idioma, ISBN, precio, fecha de lanzamiento, autor, score, rareza,
+  tipo de producto, stock, fuente, fecha de detección, signal types (como
+  chips), y descripción completa (description_es con fallback a description).
+  Permite al usuario saber exactamente qué item está editando y qué buscar
+  como reemplazo (por ISBN, título original, etc.)
+
+#### Teclado
+
+| Tecla | Acción |
+|---|---|
+| `←` `→` | Navegar entre imágenes del filmstrip |
+| `Escape` | Cerrar lightbox, o cerrar detalle (con confirmación si hay cambios) |
+
+Los atajos se desactivan cuando el foco está en un input/textarea/select.
+
+#### Agregar imágenes
+
+Tres mecanismos:
+
+1. **Por URL** (modal): pegar una URL directa de imagen. Se descarga al espejo
+   local (`data/images/`) automáticamente vía `POST /api/image-manager/download`
+2. **Multi-URL** (textarea en el mismo modal): pegar varias URLs, una por línea.
+   Se descargan secuencialmente con **barra de progreso** ("3/10 descargadas")
+3. **Importar desde página web** (modal de scrape): ingresar la URL de una página
+   (pre-llenada con la URL del item para conveniencia). El servidor fetchea el HTML,
+   extrae todas las `<img>` URLs, y las muestra en un grid de selección con
+   checkboxes. Botones "Seleccionar todas" / "Deseleccionar". Las imágenes
+   seleccionadas se descargan al espejo con barra de progreso
+
+#### Persistencia
+
+- **Dirty tracking**: el botón "Guardar cambios" solo se activa cuando hay
+  modificaciones pendientes. Si el usuario intenta cerrar o navegar a otro item
+  con cambios sin guardar, se muestra confirmación
+- **Escritura atómica**: `POST /api/image-manager/save` reescribe la fila del
+  item en `items.jsonl` vía tmp + rename. Sincroniza `image_url` / `image_local`
+  con la primera imagen del array (la portada)
+- **Sync en memoria**: tras guardar, el item en la grilla se actualiza
+  inmediatamente (sin recargar toda la página)
+
+#### API endpoints (`scripts/serve.py`)
+
+| Endpoint | Método | Descripción |
+|---|---|---|
+| `/api/image-file-sizes` | GET | `{filename: size_bytes}` de todos los archivos en `data/images/` |
+| `/api/image-manager/save` | POST | Guarda `images[]` modificado de un item (body: `{item_url, images}`) |
+| `/api/image-manager/download` | POST | Descarga imagen por URL al espejo local (body: `{image_url}`) |
+| `/api/image-manager/scrape` | POST | Extrae `<img>` URLs de una página web (body: `{page_url}`) |
 
 ### Presentación
 

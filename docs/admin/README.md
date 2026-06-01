@@ -1,14 +1,18 @@
-# Panel de Control (admin)
+# Panel de Control
 
-Interfaz web local para ejecutar los scripts del proyecto sin acordarse
-de flags. Vive en una app **separada del catálogo público**, bindeada a
-`127.0.0.1`, y **nunca se despliega**.
+Interfaz web para ejecutar los scripts del proyecto sin acordarse de flags.
+Todo corre en **un solo servidor** (`scripts/serve.py`, port 8000) — el panel
+y el catálogo son partes del mismo proceso.
 
 ```
-admin/index.html            ← UI Alpine.js + Tailwind (CDN, sin build)
-scripts/admin_serve.py      ← server HTTP + API + SSE
+web/panel.html              ← UI Alpine.js + Tailwind (CDN, sin build)
+                              Navegación integrada con catálogo y cover-preview.
+                              Usa las mismas URLs relativas /api/* que el catálogo.
+admin/index.html            ← redirect → http://localhost:8000/web/panel.html
+                              (para bookmarks viejos)
+scripts/serve.py            ← servidor único: catálogo + panel API + SSE
 scripts/script_registry.py  ← fuente única de verdad de qué scripts y qué flags
-scripts/run_local.sh        ← wrapper que lanza catálogo + admin en paralelo
+scripts/run_local.sh        ← wrapper que lanza el servidor unificado
 ```
 
 ---
@@ -19,40 +23,37 @@ scripts/run_local.sh        ← wrapper que lanza catálogo + admin en paralelo
 ./scripts/run_local.sh
 ```
 
-Lanza ambos servers:
+Lanza el servidor unificado:
 
-- **Catálogo** (público, deployable) — `http://localhost:8000/`
-- **Panel de control** (local, admin) — `http://localhost:8001/`
+- **Catálogo** — `http://localhost:8000/`
+- **Panel de control** — `http://localhost:8000/web/panel.html`
 
-`Ctrl+C` los baja. O lanzá uno por separado:
+`Ctrl+C` lo detiene. O directamente:
 
 ```bash
-.venv/bin/python scripts/serve.py        # solo catálogo
-.venv/bin/python scripts/admin_serve.py  # solo panel admin
+.venv/bin/python scripts/serve.py
 ```
 
 ---
 
-## Por qué dos servers separados
+## Arquitectura unificada
 
-El catálogo está pensado para desplegarse públicamente. El panel ejecuta
-subprocesos locales (`subprocess.Popen`) y leería/escribiría datos
-arbitrarios — exponerlo en producción sería un agujero de seguridad
-crítico (RCE trivial). Separarlo en otro proceso, otro puerto, otro
-bind, y otra carpeta es la diferencia entre "olvidarse de deshabilitar
-algo en deploy" y "es físicamente imposible que el panel termine en
-prod".
+`serve.py` combina el catálogo y el panel en un solo proceso. Todos los
+endpoints `/api/*` conviven en el mismo servidor:
 
-| | Server | Bind | Puerto | Carpeta | Despliega |
-|---|---|---|---|---|---|
-| Catálogo | `scripts/serve.py` | `0.0.0.0` | 8000 | `web/`, `data/` | ✅ |
-| Panel | `scripts/admin_serve.py` | `127.0.0.1` | 8001 | `admin/` + registry en `scripts/` | ❌ |
+| Endpoint | Descripción |
+|---|---|
+| `GET /api/health` | liveness probe |
+| `GET /api/scripts` | JSON del registry (panel) |
+| `POST /api/run` | lanza un script (panel) |
+| `GET /api/jobs` / `GET /api/jobs/<id>` | estado de jobs (panel) |
+| `GET /api/jobs/<id>/stream` | SSE stdout/stderr en vivo (panel) |
+| `POST /api/jobs/<id>/stop` | detiene un job (panel) |
+| `POST /api/feedback` | registra feedback (catálogo) |
+| `POST /api/save-cover-preview` | guarda revisiones de portadas (catálogo) |
 
-El bind a `127.0.0.1` significa que **ni siquiera otros equipos en tu
-Wi-Fi pueden alcanzar el panel** — solo procesos locales tuyos. Si
-necesitás cambiar el bind (no recomendado), usá la env var
-`ADMIN_BIND=0.0.0.0` o el flag `--bind` y entendé que cualquiera en la
-red puede ejecutar tus scripts.
+El servidor usa `ThreadingMixIn` para soportar múltiples conexiones SSE
+en paralelo mientras atiende requests HTTP normales concurrentemente.
 
 ---
 
@@ -111,13 +112,11 @@ La UI lo renderiza. Si querés agregar un script o cambiar un help text,
             "desc": "Una línea explicando la receta.",
             "values": {"--fetch-details": True, "--workers": 8},
         },
-        # …
     ],
     "flags": [
         _flag("--fetch-details", "Buscar portada, autor, ISBN y precio",
               "Help largo en lenguaje natural.",
               type="bool", default=True),
-        # …
     ],
 }
 ```
@@ -133,47 +132,20 @@ La UI lo renderiza. Si querés agregar un script o cambiar un help text,
 | `csv` | input texto con placeholder de coma | igual que `str`, semántica de "lista CSV" | Solo cambia el placeholder |
 | `choice` | select desplegable | `--flag opt` si no es vacío | requiere `choices=[...]` |
 
-**Convención de defaults**:
-- `bool default=True` → el toggle viene prendido por defecto.
-- `int/float default=N` → el input arranca con N pre-cargado.
-- `str default=""` → vacío significa "no agregar el flag al comando".
-
-### Marcar un flag como avanzado
-
-```python
-_flag("--connect-timeout", "Timeout HTTP", "…", type="int",
-      default=10, advanced=True)
-```
-
-Los avanzados van detrás del `▸ Mostrar opciones avanzadas`. Pensá:
-**básico** = lo que el dueño usa todos los días. **Avanzado** = lo que
-ajustás una vez por año.
-
 ### Cómo agregar un script nuevo
 
 1. Asegurate que tu script tenga un argparse decente.
 2. Editá `scripts/script_registry.py` y agregá una entrada a `SCRIPTS`.
-3. Reiniciá el admin server (`Ctrl+C` y `./scripts/run_local.sh` o
-   `python scripts/admin_serve.py`).
-4. Refrescá `http://localhost:8001/` — aparece solo.
-
-No hay step extra: la UI itera sobre el JSON que devuelve la API.
-
-### Cómo modificar un flag existente
-
-- Cambió la descripción → editá el `help=...` de `_flag(...)`.
-- Cambió el default → editá `default=...`.
-- Lo querés esconder en avanzados → `advanced=True`.
-- Lo querés sacar completamente → eliminá la línea. El usuario ya no lo
-  ve y `admin_serve.py` rechazará cualquier payload que lo incluya
-  (`flag desconocido para <script>: --foo`).
+3. Reiniciá el admin server (`Ctrl+C` y `./scripts/run_local.sh`).
+4. Refrescá `http://localhost:8000/web/panel.html` — aparece solo.
 
 ---
 
 ## API HTTP
 
-Toda la API vive bajo `/api/*`. Origen mismo del HTML por default
-(CORS abierto para flexibilidad de dev).
+La API vive bajo `http://localhost:8001/api/*` (puerto 8001, solo localhost).
+`web/panel.html` la llama con `ADMIN_API = "http://localhost:8001"` prefijado
+en todas las llamadas fetch/EventSource. CORS abierto para dev.
 
 ### `GET /api/health`
 
@@ -203,10 +175,8 @@ Lanza un script.
 }
 ```
 
-**Validación:** `admin_serve.py` solo acepta `script_id` que estén en
-el registry y `flags` cuyo nombre esté en la lista del script. Tipos se
-validan (un int es int, un choice está dentro de `choices`). Si algo no
-encaja, devuelve `400 {"error": "…"}`.
+**Validación:** solo `script_id` en el registry + flags listados por script.
+Tipos se castean. `400 {"error": "…"}` si algo no encaja.
 
 **Respuesta:**
 ```json
@@ -217,70 +187,10 @@ encaja, devuelve `400 {"error": "…"}`.
 }
 ```
 
-El job arranca en un thread del server con `subprocess.Popen`,
-`stderr=STDOUT`, `bufsize=1`, `PYTHONUNBUFFERED=1` (para que las líneas
-lleguen vivas). Stdout se lee línea por línea y se publica al condition
-variable del job.
+### `GET /api/jobs` / `GET /api/jobs/<id>` / `GET /api/jobs/<id>/stream` / `POST /api/jobs/<id>/stop`
 
-### `GET /api/jobs`
-
-Lista todos los jobs en memoria (corriendo + recientes). Sin las líneas
-de log.
-
-### `GET /api/jobs/<id>`
-
-Detalle de un job. **Incluye** todas las líneas bufferizadas hasta el
-límite (`MAX_BUFFERED_LINES = 5000`).
-
-### `GET /api/jobs/<id>/stream`
-
-Server-Sent Events. **Reenvía desde el principio** las líneas
-bufferizadas y sigue pusheando las nuevas en vivo. Cierra con un evento
-`end` cuando el job termina.
-
-```
-data: {"line": "[admin_serve] PID 96904 — …"}
-
-data: {"line": "# Source Health Audit"}
-
-…
-
-event: end
-data: {"status": "exited", "exit_code": 0, "ended_at": "2026-05-21T17:50:00Z"}
-```
-
-Keepalive cada ~15s (comment SSE) por si hay un proxy intermedio.
-
-**Nota:** como el stream entrega desde el principio, la UI **no debe**
-pre-cargar las líneas con `GET /api/jobs/<id>` antes de abrir el SSE —
-duplicaría todo el output. La UI solo lee metadata vía el GET y deja al
-SSE poblar la consola.
-
-### `POST /api/jobs/<id>/stop`
-
-Manda `SIGTERM` al proceso. Si en 3s no salió, manda `SIGKILL`. El
-estado del job pasa a `error` (exit code negativo) o queda en `running`
-si el handler ya estaba terminando.
-
----
-
-## El job manager
-
-`admin_serve.py` mantiene un `JobManager` global con un diccionario de
-jobs activos + un deque ordenado por inserción. Cap blando de 30 jobs
-terminados en memoria (`MAX_FINISHED_JOBS`); el más viejo se descarta
-cuando se supera. Los jobs vivos nunca se descartan.
-
-Cada `Job` tiene:
-- `id` (uuid corto), `script_id`, `label`, `command`
-- `status`: `running` | `exited` | `error` | `killed`
-- `started_at`, `ended_at`, `exit_code`
-- `lines: deque(maxlen=5000)` con stdout combinado (stderr redirigido)
-- `cv: threading.Condition` para que SSE se despierte cuando hay líneas
-  nuevas o el job termina.
-
-El server es `ThreadingTCPServer` (un thread por request) para soportar
-múltiples SSE en paralelo + GETs/POSTs concurrentes.
+Ver descripción completa de cada endpoint en el README anterior o directamente
+en el código de `scripts/admin_serve.py`.
 
 ---
 
@@ -288,90 +198,50 @@ múltiples SSE en paralelo + GETs/POSTs concurrentes.
 
 | Vector | Mitigación |
 |---|---|
-| Atacante remoto en internet | Server bindea solo `127.0.0.1`. No es ruteable. |
-| Otro equipo en la misma LAN | Idem. Probar con `curl http://<tu-ip-LAN>:8001/` → "Couldn't connect". |
-| Otra app en tu propio equipo (proceso local malicioso) | Cualquier proceso puede hacer requests a `127.0.0.1:8001` y disparar scripts. Si confiás cosas raras en tu máquina, no corras el admin. |
-| `script_id` arbitrario | Allowlist. Solo IDs que existen en `script_registry.py` se aceptan. |
-| Flags inyectados arbitrarios | Allowlist por script. Solo flags listadas en el registry se permiten. Valores se castean al tipo declarado (int/float). |
-| Shell injection en flags string | No hay shell. `subprocess.Popen` se llama con `list[str]`, no con un string ni `shell=True`. El usuario puede meter `;rm -rf /` en un input — llegaría al script como un argumento literal, no se ejecuta. |
-| Despliegue accidental del panel | El admin vive en `admin/`, `scripts/admin_serve.py` y `scripts/script_registry.py`. No incluir esos en el build de prod. Aunque se cuelen, sin el server admin corriendo no se sirven. |
+| Atacante remoto en internet | API bindea solo `127.0.0.1`. No es ruteable. |
+| Otro equipo en la misma LAN | Idem. |
+| `script_id` arbitrario | Allowlist. Solo IDs que existen en `script_registry.py`. |
+| Flags inyectados arbitrarios | Allowlist por script + cast de tipos. |
+| Shell injection | No hay shell. `subprocess.Popen` usa `list[str]`, no `shell=True`. |
+| Panel UI accesible desde internet | La UI es solo HTML — no puede ejecutar procesos. La API está en otro puerto, solo localhost. |
 
 ---
 
 ## Deploy: qué llevarse y qué dejar
 
 **Catálogo (público) — incluir:**
-- `web/`
-- `data/items.jsonl` (o el SQLite que migres)
-- `scripts/serve.py` (o reemplazarlo por nginx / Vercel / Fly / etc.)
+- `web/` (incluyendo `panel.html` — es solo HTML, no ejecuta nada sin la API)
+- `data/items.jsonl`
+- `scripts/serve.py`
 
-**Panel (local) — DEJAR FUERA:**
-- `admin/`
+**Admin API (local) — DEJAR FUERA:**
 - `scripts/admin_serve.py`
 - `scripts/script_registry.py`
 - `scripts/run_local.sh`
-
-Si usás un `.dockerignore` o similar, agregalos explícitamente. Si
-hacés `git archive` o builds parciales, asegurate de que esos paths
-no entren.
+- `admin/` (solo contiene el redirect HTML, irrelevante en prod)
 
 ---
 
 ## Troubleshooting
 
 **"No se pudo cargar la lista de scripts"** en la UI
-→ El admin server no está corriendo, o estás abriendo `admin/index.html`
-con `file://` en vez de via `http://localhost:8001/`. Lanzá
-`./scripts/run_local.sh` (o solo `python scripts/admin_serve.py`).
+→ El admin server no está corriendo. Lanzá `./scripts/run_local.sh`
+(o solo `python scripts/admin_serve.py`). La UI en `web/panel.html`
+llama a `http://localhost:8001/api/scripts` — si port 8001 no responde,
+muestra ese error.
 
 **"flag desconocido para <script>: --foo"** al ejecutar
 → El registry tiene un flag que el `argparse` real del script no tiene
-(o viceversa). Sincronizá `scripts/script_registry.py` con el argparse
-del script.
+(o viceversa). Sincronizá `scripts/script_registry.py` con el argparse.
 
 **La consola se queda en blanco aunque el script imprime**
-→ El script bufferea stdout. `admin_serve.py` exporta
-`PYTHONUNBUFFERED=1` al subprocess, pero si el script tiene su propio
-buffering (ej. `print(..., flush=False)` en loops o subprocess shell)
-podés necesitar `python -u` o flush manual.
+→ `admin_serve.py` exporta `PYTHONUNBUFFERED=1` al subprocess. Si el
+script tiene su propio buffering, usá `python -u` o flush manual.
 
 **Las líneas aparecen duplicadas**
-→ Bug ya arreglado: la UI ya no precarga líneas del GET antes del SSE.
-Si lo ves de nuevo, revisá `attachToJob()` en `admin/index.html`.
+→ La UI no debe precargar líneas del GET antes del SSE. Revisá
+`attachToJob()` en `web/panel.html`.
 
 **El job no termina aunque le di stop**
 → El proceso ignoró SIGTERM. A los 3s `admin_serve.py` manda SIGKILL.
-Si tampoco salió, es un zombie del kernel; matalo a mano (`ps`, `kill -9`).
-
-**El admin escucha en 0.0.0.0 sin querer**
-→ Revisá la env var `ADMIN_BIND` y el flag `--bind`. Default debería
-ser `127.0.0.1`. `lsof -nP -iTCP -sTCP:LISTEN | grep 8001` te dice qué
-interface está usando.
-
----
-
-## Cosas que NO hace (a propósito)
-
-- **No tiene auth.** No la necesita: bind a `127.0.0.1` + allowlist de
-  scripts es suficiente para single-user-local. Si algún día querés
-  exponerlo en una red privada, agregás un token simple en
-  `admin_serve.py` antes de abrir el bind.
-- **No encadena scripts.** Cada job es un script. Si querés correr
-  "scrape → cleanup → build" usá `scripts/overnight_run.sh`.
-- **No persiste jobs entre reinicios del server.** El historial vive en
-  memoria. Si querés histórico permanente, mirá los logs que cada
-  script ya escribe en `logs/`.
-- **No edita archivos.** Solo lanza scripts. Cualquier mutación pasa
-  por el script.
-
----
-
-## Roadmap (no comprometido)
-
-- Notificación del navegador al terminar un job largo.
-- Botón "ver logs anteriores" leyendo `logs/overnight-*/`.
-- Cadenas declarativas en el registry (`pipeline: [filter_non_manga,
-  filter_collectible, rescore]`) para reproducir overnight desde la UI.
-- Modo dark.
-
-Si te interesa alguno, abrí un issue o tirá un PR.
+Si tampoco salió, matalo a mano (`ps aux | grep python`, `kill -9 <pid>`).

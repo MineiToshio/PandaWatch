@@ -63,7 +63,8 @@ Displays edition-level metadata extracted from the cluster set:
 | Country | `canonical.country` (with flag emoji) |
 | Total volumes | Count of distinct volumes in this edition |
 | Signal type chips | Union of all signal_types across the edition |
-| Score range | "Score: 150–280" (min–max across volumes) |
+
+**Removed:** "Score range" was removed 2026-05-30. Score is not user-facing.
 
 ### FR-3: Volume grid
 
@@ -75,10 +76,11 @@ volume number ascending. Items without a volume number appear last, sorted by
 - Cover image
 - Volume number badge (top-left corner of cover)
 - Title (volume-level title, not series title)
-- Price (first available source price)
+- Price — only when `parseFloat(price) > 0`; hidden when zero or absent
 - Release date
 - Signal type chips (up to 2, overflow as "+N")
-- Score badge
+
+**Removed:** Score badge was removed from ItemCard 2026-05-30.
 
 Clicking an ItemCard navigates to `/item/[slug]`.
 

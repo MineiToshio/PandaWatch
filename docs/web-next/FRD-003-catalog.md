@@ -77,15 +77,20 @@ Each card shows:
   `border-radius` automatically and **do not affect layout size**, so a
   stacked card occupies the same grid cell as a single card — see the
   uniform-height note below.
+- **Rarity badge** (top-left, glassy mode) — `RarityBadge` with
+  `background: rgba(20,17,14,0.82)` + `backdrop-filter: blur(6px)`. Hidden
+  when `rarity` is absent. Uses bright-on-dark foreground colors per tier.
 - **Title** — `canonical.series_display` or `canonical.title`
 - **Edition label** — `canonical.edition_display`
 - **Volume count badge** — "3 tomos" if more than 1 volume
 - **Country flag** emoji + publisher name
-- **Score badge** — color-coded
 - **Signal type chips** — up to 2 (`signalTypes.slice(0, 2)`), single row
   (`flex-wrap: nowrap` + `overflow: hidden`); remaining count rendered as
   "+N". Single-row clip is intentional to preserve uniform card height.
 - **Hover state** — slight lift (`-translate-y-1`) + shadow elevation change
+
+**Removed:** Score badge was removed from EditionCard 2026-05-30. Score is an
+internal metric, not user-facing.
 
 > **Uniform card height:** every card (single or stacked) is exactly the same
 > size. The cover is a fixed `aspect-ratio: 2/3` and the info block below it has
@@ -109,7 +114,7 @@ All filters update the URL via `router.replace()`. The page Server Component rea
 
 | Filter | Type | UI Control |
 |---|---|---|
-| Search | text | Input with 🔍 icon, debounce 300ms |
+| Search | text | Input with 🔍 icon, debounce 600ms + Enter fires immediately |
 | Country | multi-select | Checkbox list with country flag emoji + count |
 | Language | multi-select | Checkbox list with count |
 | Publisher | multi-select | Checkbox list with count (collapsed to top 8 + "ver más") |
@@ -130,8 +135,18 @@ appears below the title. Each active filter shows as a dismissible tag.
 Located above the grid:
 
 ```
-Showing 847 ediciones    [Sort: Mejor puntuación ▾]    [Page: < 1 2 3 ... 14 >]
+10.064 tomos · 5628 ediciones · 3225 obras · pág. 1/94    [Sort ▾]    [Filtros]
 ```
+
+All three counters reflect the **currently filtered** corpus (not the total corpus), so
+applying a filter updates all three numbers simultaneously.
+
+- **tomos** — `filtered.length` (distinct item clusters before `groupByEdition`)
+- **ediciones** — `editions.length` (distinct edition groups after `groupByEdition`)
+- **obras** — count of distinct `series_key` values across filtered clusters
+
+Number style: semibold (`font-weight: 600`), `color-text-primary`. Label style: 12px,
+`color-text-tertiary`. Separated by `·`. Pagination `pág. N/M` on the same line.
 
 Sort options (select dropdown):
 - Mejor puntuación (score desc) — default

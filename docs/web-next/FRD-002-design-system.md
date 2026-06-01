@@ -248,8 +248,22 @@ Located in `components/modules/`. App-specific components.
 | `Header` | `Header.tsx` | Sticky header: panda mark + wordmark + search |
 | `SearchBar` | `SearchBar.tsx` | Client Component (focus state) — used by `Header` |
 | `SignalChip` | `SignalChip.tsx` | Signal type tags (no emoji — Lucide icons only) |
-| `ScoreBadge` | `ScoreBadge.tsx` | Circular score display |
+| `ScoreBadge` | `ScoreBadge.tsx` | Circular score display (component exists but **not rendered** in the public UI as of 2026-05-30) |
 | `CountryFlag` | `CountryFlag.tsx` | Country + flag |
+
+**SearchBar behaviour (updated 2026-05-30):**
+
+- **Debounce:** 600ms after the last keystroke. Increased from 300ms to give users
+  time to finish typing without interruptions.
+- **Enter key:** fires the search immediately, cancelling any pending debounce timer.
+- **URL→input sync guard:** a `focusedRef` (React ref, not state) tracks whether the
+  input is focused. The `useEffect` that syncs `params → query` is guarded by
+  `if (!focusedRef.current)`, so a `router.replace()` triggered mid-typing never
+  overwrites the user's current input. Without this guard, the prior 300ms debounce
+  caused the URL to update, which changed `params`, which called `setQuery()`,
+  visibly deleting characters the user had typed after the debounce fired.
+- **Immediate clear:** the ✕ button clears both the input and the URL param instantly
+  (no debounce).
 
 **Header logo asset:** the panda mark is `public/panda-mark.png` (copied from the design
 bundle at `project/assets/panda-mark.png`). Rendered at 32×32 with `object-fit: contain`,

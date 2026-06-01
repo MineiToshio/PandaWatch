@@ -273,13 +273,12 @@ web/index.html ← Alpine.js dashboard (filters incl. signal_types
                  chip filter, search, multi-source modal)
     │
     ▼
-http://localhost:8000/ (via scripts/serve.py — PUBLIC, deployable)
-                       + POST /api/feedback for "this shouldn't be here"
-
-Operación: scripts/admin_serve.py (127.0.0.1:8001, LOCAL, no deployable)
-  + admin/index.html → Panel de Control web. Lee scripts/script_registry.py
-  y permite ejecutar cualquier script del repo desde una UI con
-  toggles + presets + logs en vivo (SSE). Detalle en docs/admin/README.md.
+http://localhost:8000/ (via scripts/serve.py — servidor ÚNICO)
+  + POST /api/feedback, POST /api/save-cover-preview (catálogo)
+  + GET /api/scripts, POST /api/run, GET+SSE /api/jobs/* (panel)
+  web/panel.html → Panel de Control. Lee scripts/script_registry.py
+  y permite ejecutar scripts con toggles + presets + logs en vivo (SSE).
+  Detalle en docs/admin/README.md.
 
 Orchestration: scripts/overnight_run.sh chains
   scrape (parallel) → wiki bootstraps →
@@ -406,28 +405,25 @@ scripts/
                                        cluster_key (not ISBN), embeds
                                        in web/index.html (or leaves []
                                        so the dashboard fetches live).
-  serve.py                           — PUBLIC HTTP server. Sirve web/
-                                       + data/ + redirige / → /web/ +
-                                       POST /api/feedback → registra
-                                       feedback en data/feedback.jsonl
-                                       (el item NO se elimina).
-                                       Bindea 0.0.0.0:8000. ES lo que se
-                                       despliega.
-  admin_serve.py                     — ADMIN HTTP server del Panel de
-                                       Control. Sirve admin/ + /api/scripts
-                                       + /api/run + /api/jobs/*/stream (SSE)
-                                       + /api/jobs/*/stop. Bindea
-                                       127.0.0.1:8001. NO desplegar.
+  serve.py                           — SERVIDOR ÚNICO. Sirve web/ + data/
+                                       + redirige / → /web/ + todos los
+                                       endpoints /api/* (catálogo y panel).
+                                       Threaded (ThreadingMixIn) para SSE
+                                       concurrente. Bindea 0.0.0.0:8000.
+  admin_serve.py                     — DEPRECATED. La funcionalidad fue
+                                       absorbida por serve.py. Se mantiene
+                                       el archivo pero no se usa en el
+                                       pipeline normal.
   script_registry.py                 — fuente única de verdad para el
                                        Panel de Control. Lista SCRIPTS con
                                        icon/name/what/when/flags/presets
                                        para cada script ejecutable. Lo
-                                       lee admin_serve.py vía /api/scripts.
+                                       importa serve.py vía /api/scripts.
                                        Agregás un script acá, aparece solo
                                        en la UI.
-  run_local.sh                       — wrapper que lanza serve.py +
-                                       admin_serve.py en paralelo
-                                       (Ctrl+C baja ambos).
+  run_local.sh                       — lanza el servidor unificado
+                                       serve.py en port 8000 (Ctrl+C
+                                       lo detiene).
   scrape_delta.sh                    — ⭐ CANÓNICO INCREMENTAL. Encadena
                                        todas las fases en modo delta
                                        (listadomanga via calendario.php
@@ -685,6 +681,27 @@ scripts/
                                        URLs sintéticas con query param
                                        `?item=<edition_slug>-<vol>` para
                                        unicidad por tomo — ver gotcha #27.)
+    shueisha_books.py                (JP — publicaciones especiales de One
+                                       Piece distribuidas por Shueisha:
+                                       artbooks Color Walk, números de
+                                       One Piece Magazine, databooks. ⚠️ NO es
+                                       un parser de catálogo general: es un
+                                       fetcher con listas HARDCODEADAS de
+                                       cadenas de serie + ISBNs standalone, hoy
+                                       todas de One Piece. Nombre engañoso —
+                                       tratar como "one-piece-shueisha". Modo
+                                       delta (year_from>=2020) trae sólo
+                                       volúmenes nuevos; full camina cada
+                                       serie desde el vol 1. Sin tests de
+                                       parser propios. Wired en scrape_delta
+                                       fase 2n / scrape_full fase 2o.)
+    viz_artbooks.py                  (US — companion books / Color Walk
+                                       Compendium en inglés vía viz.com. ⚠️
+                                       Igual que shueisha_books: fetcher con
+                                       listing pages + productos HARDCODEADOS,
+                                       hoy todos de One Piece. Sin tests de
+                                       parser. Wired en scrape_delta fase 2o /
+                                       scrape_full fase 2p.)
   retrofit/                          — utilities to apply changes to
                                        historic data.
     README.md
@@ -881,7 +898,32 @@ web/
   index.html                         — Alpine.js dashboard (PÚBLICO,
                                        deployable). Consume data/items.jsonl
                                        y POST /api/feedback.
+  cover-preview.html                 — revisión visual de portadas mejoradas
+                                       con baja confianza. Consume
+                                       data/cover_preview.json + POST
+                                       /api/save-cover-preview.
+  image-manager.html                 — gestor de imágenes del catálogo.
+                                       Grid filtrable por calidad (sin imagen,
+                                       baja, media, escalada, 1 foto). Click
+                                       en item abre galería full-screen con
+                                       filmstrip, eliminar/reemplazar/agregar
+                                       imágenes por URL, importar desde
+                                       página web (scrape + seleccionar +
+                                       descargar). Persiste cambios a
+                                       items.jsonl vía POST
+                                       /api/image-manager/save. Indicadores
+                                       de calidad vía GET
+                                       /api/image-file-sizes.
+  panel.html                         — Panel de control (HTML PÚBLICO pero
+                                       solo funcional con admin_serve.py en
+                                       port 8001). Llama a
+                                       http://localhost:8001/api/* vía CORS.
+                                       Reemplaza admin/index.html como UI.
   serve.sh                           — convenience wrapper for serve.py.
+admin/
+  index.html                         — redirect a
+                                       http://localhost:8000/web/panel.html
+                                       (para bookmarks viejos a port 8001).
 web-next/                            — Next.js 16 + Tailwind v4 app (NUEVO).
                                        Reemplazo del Alpine.js dashboard con
                                        arquitectura Server Components, rutas
@@ -921,11 +963,10 @@ web-next/                            — Next.js 16 + Tailwind v4 app (NUEVO).
                                        local se sirven estáticamente sin
                                        copiar ni cambiar el pipeline Python.
 admin/
-  index.html                         — Panel de Control Alpine.js (LOCAL,
-                                       no deployable). Consume /api/scripts,
-                                       /api/run, /api/jobs/*/stream del
-                                       admin_serve.py.
-tests/test_extraction.py             — pytest suite (398 tests, <2s).
+  index.html                         — redirect HTML → web/panel.html.
+                                       La UI del panel se movió a web/.
+                                       Ver docs/admin/README.md.
+tests/test_extraction.py             — pytest suite (502 tests, <2s).
 docs/
   README.md                          — Índice maestro: qué está en cada
                                        carpeta, tabla de componentes.
@@ -990,19 +1031,19 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | **10103** (9846 post-AnimeClick sprint → +741 Manga-Passion full → -665 BooksPrivilege cleanup → +93 PRH Comics → +38 Kinokuniya USA → +6 VIZ Collector's Guide → +45 Yen Press Calendar full histórico 2013-2026 = 10103 — neto; 45 YP items pendientes de `/standardize-catalog`) |
+| Total unique items (line in items.jsonl) | **10329** (10117 prev + 166 One Piece special publications vía shueisha/viz + 46 One Piece special volumes [research import fandom.com]; medido 2026-06-01) |
 | Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 574 |
 | `data/series_aliases.yml` entries | **2844** canonical works; 896 entries (31.5%) con aliases multilingüe poblados, el resto self-canonical mínimo |
 | Sources in YAML | 138 |
-| Sources enabled | **76 / 138** (audit 2026-05-25: 45 fuentes adicionales deshabilitadas — todas con 0 items en corpus: 15 Bluesky, noticias/blogs, fuentes con solape total con wikis, y 2 fuentes rotas 403) |
+| Sources enabled | **67 / 138** (audit 2026-06-01: −8 más deshabilitadas con 0 items en corpus — 4 fuentes JS muertas [Kibook, Meian Plus, Vega Dupuis, Seven Seas Box Sets; Playwright caro sin yield] + 4 feeds de noticias [Seven Seas News/RSS, VIZ Blog, Yen Press News]. Audit previo 2026-05-25: 45 deshabilitadas) |
 | Sources flagged `purity: mixed` | 17 |
 | Bluesky sources (`kind: bluesky`) | 15 (todos deshabilitados — 0 items en corpus, posts de anuncios sin señales coleccionables) |
-| Wikis disponibles (`--bootstrap-wiki`) | **17** (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm *con Layout C box-de-manga-no-brasil*, booksprivilege *JP tokuten*, **sumikko** *JP 限定版/特装版*, listadomanga-collections *Fase 1+2+3 completas*, **mangapassion** *DE Sonderausgaben + Variants*, **animeclick** *IT edizioni speciali*, **prhcomics** *US/CA hardcovers + box sets EN*, **kinokuniya** *US exclusivos Kinokuniya USA: variant covers + shikishi + extras*, **yenpress** *US calendario mensual collector's + box sets + hardcovers EN*) |
+| Wikis disponibles (`--bootstrap-wiki`) | **19** (listadomanga, listadomanga-blog, manga-sanctuary, otaku-calendar, manga-mexico, mangavariant, whakoom opt-in, socialanime, blogbbm *con Layout C box-de-manga-no-brasil*, booksprivilege *JP tokuten*, **sumikko** *JP 限定版/特装版*, listadomanga-collections *Fase 1+2+3 completas*, **mangapassion** *DE Sonderausgaben + Variants*, **animeclick** *IT edizioni speciali*, **prhcomics** *US/CA hardcovers + box sets EN*, **kinokuniya** *US exclusivos Kinokuniya USA: variant covers + shikishi + extras*, **yenpress** *US calendario mensual collector's + box sets + hardcovers EN*, **shueisha** *JP — One Piece artbooks/magazines/databooks; fetcher hardcodeado, ver nota*, **viz** *US — One Piece Color Walk Compendium/companion; fetcher hardcodeado*) |
 | Top sources | **Sumikko 2717 (top 1)**, Mangavariant 1606, **AnimeClick IT 1037**, ListadoManga colecciones 987, Manga-Sanctuary 947, **Manga-Passion DE 793**, SocialAnime Cofanetti 333, ListadoManga calendario 236, SocialAnime Variant 190, **PRH Comics 89**, KADOKAWA Store 86, Sanyodo 83, **Kinokuniya USA 39**, **Yen Press Calendar 45**, **VIZ Collector's Guide 6** |
 | Image coverage | 99.9% (~10062/10070) |
 | `image_local` coverage | ~99.8% (~10049/10070) |
 | `series_key` / `edition_key` / `standardized_at` coverage | ~99% / ~99% / **~99.6%** (45 YP Calendar items pendientes de `/standardize-catalog`) |
-| `slug` coverage | **100%** (10103/10103 — generado por `generate_slugs.py` 2026-05-27; 0 colisiones cross-cluster; 1 colisión resuelta con sufijo `-b` por ISBN duplicado con/sin guiones) |
+| `slug` coverage | **100%** (10329/10329 — re-corrido `generate_slugs.py --only-missing` 2026-06-01 para los items de imports recientes que habían quedado sin slug) |
 | `volume` coverage | ~84.0% (~8456/10070) |
 | Release date coverage | ~90.7% (~9138/10070) |
 | ISBN coverage | ~48.3% (~4862/10070) |
@@ -1015,7 +1056,7 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 | Imágenes con `local` descargado al espejo | ~10049 — 20444+ archivos en `data/images/` |
 | Items con al menos 1 image `kind=extra` | 139 |
 | Items con `extras[]` descriptivo | 133 |
-| Countries represented | 13 (Japón 3758, **Italia 2182**, Francia 1295, España 1279, **Alemania 841**, **Estados Unidos 295** ↑ por PRH Comics + Kinokuniya + VIZ + **Yen Press Calendar full (+45)**, Vietnam 139, México 103, Brasil 83, Tailandia 54, Argentina 38, Taiwán 7, España/LatAm 5) |
+| Countries represented | 13 (Japón 3758, **Italia 2182**, Francia 1295, España 1279, **Alemania 841**, **Estados Unidos 309** ↑ por DH Shopify expansion + DH Deluxe research import, Vietnam 139, México 103, Brasil 83, Tailandia 54, Argentina 38, Taiwán 7, España/LatAm 5) |
 
 Las bajadas de ISBN/Price/Author **NO son regresiones** — son el efecto
 esperado de añadir 2679 filas curadas que por diseño no tienen esos
@@ -1102,16 +1143,20 @@ JSONL via `candidate_to_json`. The same key is consumed by
 in `web/index.html`.
 
 Four cluster-key shapes, in priority order:
-1. **`isbn:<X>`** — authoritative, ISBN is unique per edition/market.
-2. **`edition:<edition_key>|<volume>`** — items que comparten el mismo
+1. **`edition:<edition_key>|<volume>`** — items que comparten el mismo
    `edition_key` (asignado por `/standardize-catalog` o el heurístico
    del scraper) y el mismo `volume` son por definición el mismo producto
-   físico (misma edición + publisher + mercado). Crucial para boxes,
-   artbooks y otros sin volumen donde la fuzzy regla (que exige volume)
-   los dejaba aislados — ver caso Gon más abajo. El edition_key ya
+   físico (misma edición + publisher + mercado). **Tiene prioridad sobre
+   ISBN** (cambio 2026-06-01): si una fuente tiene ISBN (ej. PRH Comics)
+   y otra no (ej. Dark Horse Direct), ambas mergean en una sola card
+   cuando comparten edition_key+volume. El ISBN se preserva como metadata
+   del item pero no como discriminante de grupo. El edition_key ya
    codifica publisher/market en su slug por construcción
    (`gon-norma-collector` vs `gon-glenat-collector`), por eso no
-   necesita campos extra.
+   necesita campos extra. Crucial para boxes, artbooks y otros sin volumen
+   donde la fuzzy regla (que exige volume) los dejaba aislados.
+2. **`isbn:<X>`** — fallback para items SIN edition_key (legacy,
+   pre-standardize). ISBN es unique per edición/mercado.
 3. **`fuzzy:<lang>|<series>|<vol>|<variant_tier>|<publisher>`** — para
    items SIN ISBN ni edition_key (pre-`/standardize-catalog`). Los cinco
    componentes deben ser significativos (series ≥ 3 chars, language
@@ -1162,7 +1207,9 @@ caían a `url:` aislados pese a ser el mismo producto. Con la tier
 y mergen en 1 sola card con `sources=[Whakoom, ListadoManga]`.
 Tests: `test_cluster_key_edition_key_merges_box_across_sources`,
 `test_cluster_key_edition_key_different_volumes_dont_merge`,
-`test_cluster_key_isbn_still_wins_over_edition_key`,
+`test_cluster_key_edition_key_wins_over_isbn`,
+`test_cluster_key_isbn_fallback_without_edition_key`,
+`test_cluster_key_prh_and_darkhorse_merge_same_volume`,
 `test_cluster_key_no_edition_key_falls_through_to_fuzzy`.
 
 When two items share a cluster_key:
@@ -1258,40 +1305,53 @@ to spot rotting selectors before they accumulate.
 skipped in the latest log and re-runs only those — fast triage
 without re-scraping everything.
 
-## Feedback desde el modal
+## Feedback y curación desde el modal
 
-El dashboard tiene un botón **👎** en el footer del modal de detalle.
-Al clickearlo se abre un textarea para describir qué está mal con el item
-(datos incorrectos, clasificación equivocada, etc.). Al enviar, se registra
-el feedback pero **el item NO se elimina** — sigue visible en el catálogo.
+El footer del modal de detalle tiene dos botones:
 
-**Flujo completo:**
+- **👎 (feedback)** — reportar un problema con el item (datos erróneos,
+  clasificación equivocada). El item NO se elimina.
+- **Lápiz (curación)** — 3 acciones operativas con efecto inmediato:
+  - **Mover a otra edición**: buscador autocomplete → cambia edition_key
+  - **Duplicado (merge)**: pegar URL del duplicado → fusiona y elimina
+  - **No va aquí (remover)**: separa el item de su edición actual
 
-1. JS hace `POST /api/feedback` con `{title, url, reason}`.
-2. `scripts/serve.py::_log_feedback(url, title, reason)`:
-   - Appendea `{url, title, reason, submitted_at}` a `data/feedback.jsonl`.
-   - NO toca `items.jsonl`.
-3. Devuelve `{"ok": true}` al JS.
-4. JS muestra confirmación "Feedback enviado" y cierra el panel tras 2 s.
-   El item permanece en la vista sin cambios.
+**Ambos botones escriben a `data/feedback.jsonl`** (única fuente de verdad).
+El campo `action` distingue el tipo:
+
+| `action` | Efecto en items.jsonl | Campos extra en log |
+|---|---|---|
+| `"feedback"` | Ninguno | (solo url, reason) |
+| `"move"` | Cambia edition_key, cluster_key, series_key | `from_edition`, `to_edition` |
+| `"merge"` | Fusiona 2 items, elimina el peor | `duplicate_of`, `kept_url`, `dropped_url` |
+| `"remove"` | Pone edition_key="" y cluster standalone | `from_edition` |
+
+**Endpoints:**
+- `POST /api/feedback` — feedback 👎 (existente, ahora con `action: "feedback"`)
+- `POST /api/curation/move` — `{url, to_edition, reason}`
+- `POST /api/curation/merge` — `{url, duplicate_of, reason}`
+- `POST /api/curation/remove` — `{url, reason}`
+- `GET /api/editions/search?q=<query>` — autocomplete de ediciones por nombre
 
 **`data/feedback.jsonl`** — schema (append-only):
 - `url` (str): URL del item.
-- `title` (str): título del item en el momento del feedback.
+- `action` (str): `"feedback"` | `"move"` | `"merge"` | `"remove"`.
 - `reason` (str): motivo escrito por el usuario.
 - `submitted_at` (ISO UTC): timestamp del envío.
-
-**Propósito de `feedback.jsonl`**: cola de revisión para corregir datos
-erróneos (campos mal extraídos, series_key incorrecto, portada equivocada,
-precio desactualizado, etc.) sin eliminar el item del catálogo.
+- Campos extra según action (ver tabla arriba).
+- Todos los campos del item original (spread del item encontrado en
+  items.jsonl, igual que antes).
 
 **Diseño.**
-- **Sin auth ni rate-limit.** Single-user, server local. El POST está
-  capado a 100 kB de body y exige los 3 campos no vacíos.
+- **Sin auth ni rate-limit.** Single-user, server local. Los POSTs están
+  capados a 100 kB de body.
 - Archivo gitignored.
+- El skill `/review-feedback` procesa TODAS las acciones: feedback puro
+  se analiza para proponer fixes; move/merge/remove se registran como
+  patrones para buscar casos similares en el corpus.
 
-**No modificar el comportamiento** sin actualizar el handler en
-`serve.py` y el `submitFeedback()` en `web/index.html` a la vez.
+**No modificar el comportamiento** sin actualizar los handlers en
+`serve.py` y los métodos en `web/index.html` a la vez.
 
 ## Conventions for code changes
 
@@ -1318,7 +1378,7 @@ Workflow when changing any of them:
    (`test_is_likely_manga_rejects_*`, `test_is_pure_novel_*`,
    `test_is_comic_not_manga_*`, `test_is_collectible_edition_*`).
 3. **Run `pytest tests/test_extraction.py -q`** — must stay green
-   (currently 398 tests).
+   (currently 502 tests).
 4. **Retrofit the corpus** with the right script:
    - `is_likely_manga` / `is_comic_not_manga` change → `filter_non_manga.py`
    - `is_pure_novel` change → `filter_non_manga.py` (covers novels too)
@@ -1601,6 +1661,41 @@ Ejemplos concretos:
   descarte).
 - Documentado y guardado en memoria persistente (`feedback_url_as_reference.md`)
   porque el owner lo flageó varias veces.
+
+## Convención `images[]` — portada por posición, kind simplificado
+
+**Regla (2026-06-01):** la portada se determina por **posición**, no por kind.
+
+```
+images[0]  →  siempre la portada (sincronizada con image_url / image_local)
+images[1+] →  galería, extras, vistas adicionales
+```
+
+**`kind` solo tiene 2 valores válidos:**
+
+| kind | Significado |
+|---|---|
+| `gallery` | Foto del producto (portada, contraportada, lomo, interior, vista lateral, variant cover) |
+| `extra` | Foto de un bonus/regalo/cofre que viene CON el producto (postal, marcapáginas, shikishi, acrylic stand) |
+
+**Valores ELIMINADOS (2026-06-01) — NO reintroducir:**
+- ~~`cover`~~ — reemplazado por convención de posición (images[0])
+- ~~`variant_cover`~~ — era gallery, nunca se usó (0 items en el corpus)
+- ~~`back_cover`~~ — era gallery, nunca se usó (0 items en el corpus)
+
+**Anti-patterns:**
+- ❌ `kind: "cover"` — usar `kind: "gallery"` y poner la imagen en posición 0
+- ❌ Chequear `if img.kind === "cover"` — usar `if idx === 0`
+- ❌ Agregar nuevos valores de kind sin necesidad real demostrada con datos
+
+**Dónde aplica:**
+- `items.jsonl` — cada entrada de `images[]`
+- `scripts/manga_watch.py` — extractor de imágenes, `candidate_to_json`
+- Todos los wikis en `scripts/wikis/`
+- Todos los retrofits en `scripts/retrofit/`
+- `web/image-manager.html` — dropdown de tipo solo muestra Gallery/Extra
+- `web/index.html` — etiqueta del carrusel por posición
+- `web-next/components/item/ImageCarousel.tsx` — `kindLabelForIdx` por posición
 
 ## Image storage — espejo local de portadas (Fase 1 + Fase 2)
 
@@ -2605,7 +2700,7 @@ Useful to skim with `git log --oneline` if you want full chronology.
 ## Quick sanity check before committing
 
 ```bash
-.venv/bin/python -m pytest tests/test_extraction.py -q    # must be green (398)
+.venv/bin/python -m pytest tests/test_extraction.py -q    # must be green (502)
 .venv/bin/python scripts/retrofit/filter_non_manga.py --dry-run   # expect 0 rejections if patterns are stable
 # If you touched filters:
 .venv/bin/python scripts/retrofit/filter_non_manga.py
@@ -2762,6 +2857,56 @@ These came up in conversation but were explicitly deferred:
 
 ---
 
+Last updated: 2026-06-01 (auditoría de ingesta — fixes de observabilidad, resiliencia y un bug de huérfanos) — Pasada de auditoría completa del pipeline de ingesta (3 subagentes en paralelo sobre fuentes/wikis, core de calidad, y skills de curación) seguida de la corrección de todos los hallazgos accionables. **Tests: 496 → 502 (+6). Corpus: 10329 (una sesión paralela importó +46 One Piece special volumes durante el trabajo). Sources enabled: 75 → 67.**
+
+**CRÍTICOS (cosas rotas en silencio):**
+1. **`scripts/audit/source_health.py` no veía ningún log actual** — `collect_run_dirs` sólo buscaba `overnight-*`/`retry-*`, pero los scripts canónicos escriben en `scrape-delta-*`/`scrape-full-*`; y el regex esperaba un formato de log de 2 líneas que `manga_watch.py` ya no emite (ahora source+candidatos van en UNA línea). Fix: añadidos los prefijos de directorio + nuevo `_CANDIDATES_COMBINED_RE` que parsea `    [Source Name] candidatos con señales: N`. Además `manga_watch.py` ahora emite el **nombre COMPLETO** de la fuente (antes truncaba a 30 chars, rompiendo el match contra sources.yml). Import dual robusto (`try manga_watch / except scripts.manga_watch`) para sobrevivir el wrapper de la raíz bajo pytest. La observabilidad de fuentes vuelve a funcionar (147 fuentes parseadas en la verificación). 2 tests nuevos.
+2. **Los timeouts anti-hang eran inertes** — ni `timeout` ni `gtimeout` estaban instalados (`_run_timed` degradaba a "sin límite"). Instalado `coreutils` (gtimeout disponible). **Y la Fase 1 (scrape de las 67 fuentes) no estaba envuelta en `_run_timed`** — el punto de mayor exposición. Ahora delta Fase 1 = 90 min, full Fase 1 = 3 h. Una fuente HTTP colgada ya no bloquea el pipeline (la escritura incremental por fuente preserva lo scrapeado).
+3. **Bug de huérfanos en `.claude/workflows/standardize-catalog.js`** — en la rama Tier 2 `accept_proposal=true` el merge leía `r.proposed_series_key` que NO existe en el output del agente (sólo estaba en el input) y el schema no obligaba a llenar `series_key` → items marcados `standardized_at` con keys VACÍAS = huérfanos invisibles al dedup y sin slug. Fix en 3 capas: (a) schema con los campos de output requeridos; (b) prompt que obliga a emitir siempre los valores finales; (c) merge Python con **fallback determinístico** a la propuesta heurística (`tier2.json`/`tier3.json`) cuando las keys llegan vacías, y **guard que deja el item PENDIENTE** (sin `standardized_at`) si no hay keys usables — se reintenta el próximo run en vez de crear un huérfano. Más un **reporte de integridad** al final del merge (`pending_before`, `left_pending`, `orphans`).
+
+**ROTOS por `set -u` (nunca corrieron bien por el pipeline canónico):**
+4. Las fases shueisha (2n/2o) y viz (2o/2p) de `scrape_delta.sh` y `scrape_full.sh` usaban `$THIS_YEAR`/`$THIS_MONTH` **sin definir** (abort con `set -u`) **y** pasaban `--wiki-from "$Y" "$M"` cuando el flag espera un único `YYYY-MM`. Fix: delta usa `--wiki-from "$LISTADO_CAL_FROM"`, full usa `--wiki-from 2000-01`. Ambos scripts pasan `bash -n`.
+
+**HOUSEKEEPING:**
+5. **166 items con `standardized_at` pero sin slug** (el import de One Piece special publications) → corrido `generate_slugs.py --only-missing`. Slug coverage de vuelta a 100% (10283/10283).
+6. **Podadas 8 fuentes enabled con 0 items** (4 JS muertas + 4 feeds de noticias) — ver fila "Sources enabled".
+7. **2 wikis sin documentar ni testear** (`shueisha_books.py`, `viz_artbooks.py`, untracked en git) → documentados en el file map con su advertencia (son fetchers HARDCODEADOS de One Piece con nombre engañoso, no parsers de catálogo). **Siguen untracked en git — pendiente `git add` por el owner.**
+8. **`min-score` default unificado** (argparse 30 → 20) para coincidir con los scripts canónicos y el dashboard, que ya usaban 20.
+9. **`PRODUCT_TYPE_KEYWORDS`** documentado: el orden de la lista ES la prioridad (no reordenar sin correr rescore). Test nuevo.
+10. **3 invariantes del corpus como tests guardianes**: ningún cluster_key mezcla 2 ISBNs distintos (anti over-merge), ningún item estandarizado con keys vacías (anti-huérfano), 100% slug coverage. Hoy el corpus cumple los 3.
+
+**Refactors grandes NO hechos (alto riesgo, recomendados como follow-up separado):** externalizar las ~300 regex de filtros a YAML versionado; partir el god-module `manga_watch.py` (7166 líneas); extraer la lógica de merge/dedup triplicada (SKILL.md × workflow.js) a `scripts/standardize_lib.py`; reconciliación cross-chunk determinística de `edition_key`; recalibrar el cap de score (2645 items saturan en 200-219); reactivar `validate-rarity` (82.7% del corpus es el default `rare`, `rarity_verified_at`=0). Tests de parser para `manga_sanctuary` (947 items, 0 tests) y para shueisha/viz.
+
+---
+
+Last updated: 2026-06-01 (cluster_key priority fix + DH Shopify expansion — edition_key > ISBN, +24 items netos) — Dos cambios sistémicos para resolver cards duplicadas y items faltantes cuando la misma edición aparece en múltiples fuentes con/sin ISBN:
+
+**1. Prioridad de cluster_key invertida: `edition_key|volume` > `isbn`** — Antes, ISBN era tier 1 y edition_key tier 2. Esto impedía que items de fuentes distintas mergearan cuando una tenía ISBN (PRH Comics) y otra no (Dark Horse Direct, Mangavariant, AnimeClick). Caso semilla: Hellsing Deluxe vol 1 aparecía como 2 cards (PRH con ISBN + DH sin ISBN). Ahora edition_key es tier 1: items que comparten `edition_key + volume` siempre mergean en una sola card, independientemente de ISBN. El ISBN se preserva como metadata (búsqueda, enrichment). 5061 cluster_keys refrescados, 18 cards consolidadas (36 items en 18 grupos). Tests: `test_cluster_key_edition_key_wins_over_isbn`, `test_cluster_key_isbn_fallback_without_edition_key`, `test_cluster_key_prh_and_darkhorse_merge_same_volume`.
+
+**2. Expansión de 3 productos Shopify multi-volumen de Dark Horse Direct** vía `expand_index_pages.py`:
+- **Hellsing Deluxe Hardcover** → 3 volumes (vol 1 mergea con PRH, vols 2-3 nuevos)
+- **Blade of the Immortal Deluxe Hardcover** → 10 volumes (todos nuevos, PRH no los tenía)
+- **Berserk Deluxe Hardcover** → 14 volumes (todos mergean con PRH existentes, 14 cards multi-source)
+
+3 parents eliminados, 27 volumes creados = +24 items netos. 4 productos single-product (Appleseed ×2, Oldboy ×2) no se expandieron (correctamente: son single-product, no multi-volume). Todos los 27 items estandarizados (series_key, edition_key, slug, standardized_at).
+
+**Impacto en ediciones afectadas:**
+- `/edition/hellsing-darkhorse-deluxe`: 2 cards (duplicadas) → **3 cards** (vol 1 merged con 2 sources + vols 2, 3 nuevos)
+- `/edition/berserk-darkhorse-deluxe`: 15 cards (14 PRH + 1 parent) → **14 cards** (cada vol con 2 sources merged)
+- `/edition/blade-of-the-immortal-darkhorse-deluxe`: 1 card (parent) → **10 cards** (vols 1-10 individuales)
+
+**3. Importación por research de 9 volúmenes DH Deluxe faltantes** — búsqueda web exhaustiva identificó 12 series DH Deluxe (44 volúmenes totales). De esos, 35 ya estaban en el catálogo tras la expansión; 9 eran genuinamente faltantes:
+- **Trigun Maximum Deluxe** vols 2-5 (ISBNs 9781506738734-65)
+- **Planetes Deluxe** vol 2 (ISBN 9781506750156)
+- **Lone Wolf and Cub Deluxe** vols 1-3 (ISBNs 9781506747613-37, ongoing series — Dec 2025 - Oct 2026)
+- **The Dunwich Horror Deluxe** (ISBN 9781506753485, manga de Gou Tanabe, upcoming Sep 2026)
+
+**4. Backfill de 16 ISBNs** a items existentes sin ISBN (Hellsing 2-3, Blade 1-10, Oldboy 1-2, Appleseed, Appleseed Companion) + 12 portadas PRH CDN descargadas.
+
+**Corpus**: 10103 → **10117** (+14 neto). **Estados Unidos**: 295 → **309**. Tests: **496/496** (+2 nuevos, 1 actualizado).
+
+---
+
 Last updated: 2026-05-28 (fetch_better_covers.py — DDG reemplazado por Tavily API; estrategia 2 ahora funciona) — La búsqueda web de `fetch_better_covers.py` fue migrada de DuckDuckGo HTML (bloqueado — retornaba HTTP 202 + redirect a homepage) a **Tavily Search API** con `include_images: True`, que devuelve URLs de imagen directas sin necesitar fetchear páginas individuales:
 
 **Estrategias actualizadas:**
@@ -2796,7 +2941,12 @@ Last updated: 2026-05-28 (campo `rarity` — classify + retrofit + dashboard fil
 
 **Nuevo campo `rarity`** en `items.jsonl`: `"common"` | `"rare"` | `"super_rare"` | `"ultra_rare"`. Sticky en `append_jsonl` — un re-scrape no pisa el valor asignado por web-search. Documentado en `_CURATED_FIELDS` (sticky logic, gotcha pattern).
 
-**`derive_rarity_tier(signal_types, source, description, title)`** — función en `manga_watch.py` (cerca de `derive_stock_type`). Reglas determinísticas: `ultra_rare` si keywords de edición numerada/firmada/evento/lotería, o `retailer_exclusive + lore_edition` juntos; `super_rare` si `retailer_exclusive` solo, o fuente BooksPrivilege (tokuten nunca vendido suelto); `rare` default conservador. `common` nunca se asigna aquí — requiere verificación de stock en tiempo real. Hookeado en `candidate_to_json` con sticky check (no pisa 'common').
+**`derive_rarity_tier(signal_types, source, description, title, publisher)`** — función en `manga_watch.py` (cerca de `derive_stock_type`). Reglas determinísticas en 4 tiers:
+- `ultra_rare`: keywords de edición numerada/firmada/evento/lotería; regex para copias numeradas X/Y (requiere dígito antes del `/` — "2007/2008" no matchea); print run explícito ≤ 500 vía `_PRINT_RUN_RE` ("limited to N copies" multilingual).
+- `super_rare`: `retailer_exclusive` (incluye combo con `lore_edition` — bajado de ultra_rare el 2026-05-30); fuente BooksPrivilege; print run explícito 501–2500.
+- `common`: publisher × edition pattern de catálogo permanente (`_COMMON_CATALOG_RULES`: US Dark Horse/Viz/Yen Press/Seven Seas; ES Norma/Distrito/Planeta incl. box sets; FR Glénat Prestige, Pika Masterpiece, Ki-oon coffrets, Kana Deluxe; DE Carlsen Massiv; IT Panini Master/Deluxe/Ultimate) SIN señales de escasez (`_SCARCITY_SIGS`) NI keywords de tirada única (`_SINGLE_RUN_KEYWORDS`) NI solo de fuente de referencia.
+- `rare`: default conservador.
+IT "firmato/a" excluido de keywords (en IT significa "by/authored by", no "signed by" — 12 falsos positivos en el corpus, gotcha 2026-05-30). ES "firmado/a" se mantiene (sin doble significado). Hookeado en `candidate_to_json` con sticky check (no pisa 'common').
 
 **`scripts/retrofit/set_rarity.py`** — aplica `derive_rarity_tier()` al corpus completo. Flags: `--dry-run`, `--force`. Default: salta items con rarity asignado. Registrado en Panel de Control (categoría Retrofit, 3 presets). Ver `scripts/retrofit/README.md`.
 
@@ -2806,6 +2956,24 @@ Last updated: 2026-05-28 (campo `rarity` — classify + retrofit + dashboard fil
 - ≥200k px (nítida): 3,217 items (32%)
 - 100k–200k px (media): 3,799 items (38%)
 - <100k px (baja): 2,773 items (28%) — dominados por AnimeClick IT (1,008) y ListadoManga colecciones (1,188) cuyas CDNs solo sirven miniaturas sin opción de versión mayor.
+
+Last updated: 2026-05-30 (derive_rarity_tier — 6 fixes de clasificación) — Revisión exhaustiva del sistema de rareza con 6 correcciones:
+
+**Fix 1: `/NNN` no matchea rangos de año.** Reemplazados los 14 bare strings `/100`...`/2500` por regex `r'\d\s*/\s*(?:100|...|2500)\b'` que exige un dígito antes del `/`. "2007/2008" ya no dispara ultra_rare (Naruto Boxset BBM falso positivo eliminado).
+
+**Fix 2: IT "firmato/a" excluido de ultra_rare.** En italiano "firmato da X" = "by X" (autoría), no "signed by X" (autógrafo). 12 falsos positivos corregidos: Violence Jack Ultimate 10-15, One-Punch Man Variant 33, Oneira Variant 1, Dungeon of Black Company Variant, Ruri Dragon Variant 1, Fake Fact Lips Break, Soul Sealer's 4, Endo Variant 2, Maiwai Variant 10, Nine Stones Deluxe 3. Items IT genuinamente firmados se capturan vía `_PRINT_RUN_RE` ("limitata a 100 copie"). ES "firmado/a" permanece (sin doble significado).
+
+**Fix 3: `retailer_exclusive + lore_edition` → super_rare (antes ultra_rare).** 9 items corregidos: Vagabond Definitive Edition, Witch Hat Grimoire, Nana 25th Anniversary (Kinokuniya USA); Blue Period, Call of the Night, Blue Box Canal BD, Black Clover Film, Blue Lock 7, Times of Botchan (Manga Dreams). Son variantes retail, no ediciones numeradas/firmadas/evento.
+
+**Fix 4: Detección de print run explícito.** Nueva `_PRINT_RUN_RE` multilingual ("limited to N copies", "limitata a N copie", "limitée à N exemplaires", etc.). N ≤ 500 → ultra_rare, N ≤ 2500 → super_rare. 36 items promovidos de rare a ultra_rare (incluyendo Berserk Eclipse Leipzig "limited to 216 copies" que el usuario reportó). 49 items de rare a super_rare por `retailer_exclusive` signal que ahora alcanza el check (antes se cortocircuitaba por combo con lore_edition).
+
+**Fix 5: Planeta Cómic box sets → common.** Regex de `_COMMON_CATALOG_RULES` extendido: `r"perfect.?edition|kanzenban|deluxe|box.?set"`. 10 box sets corregidos: Adolf, Barrage, Bloom Into You, Dragon Quest Illustrations, Kochikame, Message to Adolf, My Hero Academia 42, Nausicaä, Record of Lodoss War, See You in Memories.
+
+**Fix 6: `_ULTRA_RARE_PATTERNS` regex.** Nueva tupla para patterns que necesitan contexto: copias numeradas X/Y (regex), `\bautograph\b` con word boundary. Separado de `_ULTRA_RARE_KEYWORDS` (bare substring matching).
+
+**Impacto neto (función vs función, sin contar valores seteados por web-search):** 120 items cambian: -14 ultra_rare (falsos positivos), -9 ultra_rare→super_rare, +36 rare→ultra_rare (print runs), +49 rare→super_rare, +10 rare→common (Planeta box sets). Tests: 464 → **482** (+18 nuevos). Distribución proyectada si se corre `set_rarity.py --force`: los 120 cambios aplican; los ~1600 items clasificados por web-search validation (`/validate-rarity`) se reclasificarían por reglas determinísticas — correr sin `--force` para solo tocar items nuevos.
+
+---
 
 Last updated: 2026-05-28 (translate_descriptions integrado en /standardize-catalog — Step 7 nuevo) — El skill `/standardize-catalog` ahora incluye un Step 7 que corre `translate_descriptions.py` automáticamente después de `generate_slugs.py`. La lógica de targeting es implícita: los items recién scrapeados nunca tienen la key `description_es`, así que el script solo procesa los nuevos sin necesitar flags extra. El flujo quedó: Step 1 audit → Step 2 chunk → Step 3 subagents → Step 3.5 verify → Step 4 merge → Step 5 tests → Step 6 slugs → **Step 7 translate** → Step 8 cleanup. El anti-patterns section se actualizó con la regla "no saltear Step 7 ni para runs chicos". Sin cambios de código Python — solo el skill SKILL.md.
 
