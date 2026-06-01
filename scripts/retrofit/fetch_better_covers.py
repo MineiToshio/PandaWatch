@@ -190,12 +190,17 @@ def _same_cover(
         if diff > 0.25:  # más del 25% diferente → rechazar
             return False
 
-    # Perceptual hash
+    # Perceptual hash — relajar umbral para imágenes muy pequeñas.
+    # Cuando la original es < 30k px (~170×176), el escalado a 8×8 para
+    # aHash es tan lossy que la distancia sube 3-5 bits vs una imagen
+    # idéntica de mayor resolución. Relajamos +4 bits en esos casos.
     h1 = _ahash(original_bytes)
     h2 = _ahash(candidate_bytes)
     if h1 is not None and h2 is not None:
         dist = _hamming(h1, h2)
-        return dist <= max_hash_dist
+        orig_px = ow * oh if ow > 0 and oh > 0 else 0
+        effective_threshold = max_hash_dist + (4 if orig_px < 30_000 else 0)
+        return dist <= effective_threshold
 
     # Sin PIL: si aspect ratio OK, aceptamos
     return True
@@ -323,6 +328,48 @@ def _candidates_from_isbn_openlibrary(isbn: str, session: requests.Session) -> l
     return valid
 
 
+def _candidates_from_isbn_google_books(isbn: str, session: requests.Session) -> list[str]:
+    """
+    Google Books API — gratis, sin API key, 6 tamaños de cover.
+    Busca por ISBN y extrae `extraLarge` (~800×1200 px) o `large` (~575×800).
+    Sin cuota significativa (1,000 req/día sin key).
+    """
+    clean = str(isbn).replace("-", "").replace(" ", "")
+    if len(clean) not in (10, 13):
+        return []
+
+    try:
+        r = session.get(
+            f"https://www.googleapis.com/books/v1/volumes?q=isbn:{clean}&maxResults=1",
+            timeout=(5, 10),
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except Exception:
+        return []
+
+    items = data.get("items", [])
+    if not items:
+        return []
+
+    links = items[0].get("volumeInfo", {}).get("imageLinks", {})
+    candidates: list[str] = []
+
+    # Priorizar tamaños grandes → chicos
+    for size in ("extraLarge", "large", "medium"):
+        url = links.get(size, "")
+        if url:
+            # Google Books usa HTTP — forzar HTTPS
+            url = url.replace("http://", "https://")
+            # Quitar &edge=curl (efecto visual de página curvada)
+            url = url.replace("&edge=curl", "")
+            candidates.append(url)
+            break  # con el más grande basta
+
+    return candidates
+
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Query builder — construye la búsqueda óptima por item
@@ -405,21 +452,17 @@ def _build_search_query(item: dict) -> str:
 
     parts: list[str] = []
 
-    # Base: nombre de la serie (sin sufijos de edición)
-    if series:
-        parts.append(series)
-    elif title_orig and title_orig != title:
+    # Base: el título original tal como lo tiene indexado el retailer.
+    # NO le agregamos edition hints (artbook, boxset, etc.) porque:
+    # 1. El título ya los contiene cuando corresponde
+    # 2. Agregarlos duplica ("Artbook artbook") o confunde ("Special" → "artbook")
+    # 3. Google busca mejor con el nombre natural del producto
+    if title_orig and title_orig != title:
         parts.append(title_orig)
     elif title:
         parts.append(title)
-
-    # Tipo de edición en el idioma correcto
-    if edition_hint:
-        parts.append(edition_hint)
-
-    # Volumen
-    if volume:
-        parts.append(str(volume))
+    elif series:
+        parts.append(series)
 
     # Publisher simplificado
     if pub_short:
@@ -442,12 +485,10 @@ def _search_serper_for_cover(
     query: str,
     api_key: str,
     session: requests.Session,
-) -> list[str]:
+) -> list[dict]:
     """
     Usa Serper (Google Images API) para buscar portadas hi-res.
-    Recibe el query ya construido por _build_search_query().
-    Ventaja vs Tavily: devuelve dimensiones en el JSON — pre-filtra thumbnails.
-    2 500 queries gratis sin tarjeta de crédito. API key en serper.dev.
+    Devuelve lista de dicts con metadata: {url, page_title, domain, width, height}.
     """
 
     try:
@@ -463,17 +504,22 @@ def _search_serper_for_cover(
     except requests.RequestException:
         return []
 
-    result: list[str] = []
+    result: list[dict] = []
     for img in data.get("images", []):
         url = img.get("imageUrl", "")
         if not url or not _is_plausible_cover(url):
             continue
-        # Serper incluye dimensiones — pre-filtra thumbnails antes de descargar
         w = img.get("imageWidth", 0)
         h = img.get("imageHeight", 0)
         if w > 0 and h > 0 and w * h < 50_000:
             continue
-        result.append(url)
+        result.append({
+            "url": url,
+            "page_title": img.get("title", ""),
+            "domain": img.get("domain", ""),
+            "width": w,
+            "height": h,
+        })
         if len(result) >= 5:
             break
 
@@ -481,7 +527,156 @@ def _search_serper_for_cover(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Tavily search
+# Serper Lens (reverse image search via Google Lens)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SERPER_LENS_URL = "https://google.serper.dev/lens"
+
+# Dominios de baja calidad para reverse image search.
+# Estos NUNCA devuelven portadas hi-res útiles — son fotos de usuario,
+# ropa, SVGs, videos, o retailers genéricos que no venden manga.
+# Lista refinada con feedback real del usuario (2026-05-30).
+_LENS_LOW_QUALITY_DOMAINS = frozenset({
+    # Social media / UGC — fotos de usuario, memes, screenshots
+    "reddit.com", "redd.it", "facebook.com", "fbsbx.com",
+    "twitter.com", "x.com", "pbs.twimg.com",
+    "instagram.com", "pinterest.com", "pinimg.com",
+    "tiktok.com", "flickr.com",
+    # Video — thumbnails, no portadas
+    "youtube.com", "ytimg.com",
+    # Marketplaces de segunda mano — fotos de usuario, no portadas oficiales
+    "picclick.com", "picclickimg.com", "mercari.com", "mercdn.net",
+    # Retailers genéricos (no manga) — Lens matchea objetos visualmente similares
+    "target.com", "walmart.com", "nordstrom.com", "nordstrommedia.com",
+    "cettire.com",
+    # Herramientas de diseño / assets genéricos
+    "mediamodifier.com", "adobe.com", "stock.adobe.com",
+    # Documentos legales / servicios
+    "foreigndocumentsexpress.com",
+    # Libros no-manga
+    "goodreads.com", "gr-assets.com",
+    # Anime wallpapers / fan art (no portadas oficiales)
+    "zerochan.net", "donmai.us", "danbooru",
+    # Gaming / indie (no manga)
+    "itch.io",
+    # Fashion retailers
+    "wconcept.com", "redbubble.net", "redbubble.com",
+    # Google cache / thumbnails (siempre baja resolución)
+    "gstatic.com",
+})
+
+
+# Mapeo idioma → locale de Google (gl/hl) para Lens
+_LANG_TO_GL = {
+    "Español": "es", "Francés": "fr", "Italiano": "it",
+    "Japonés": "jp", "Portugués": "br", "Alemán": "de",
+    "Inglés": "us",
+}
+
+# Dominios preferidos por mercado — resultados de estos dominios van primero
+# porque son del mismo publisher/mercado que el item
+_MARKET_PREFERRED_DOMAINS = {
+    "es": ["normaeditorial.com", "normacomics.com", "panini.es", "planetadelibros.com",
+           "casadellibro.com", "buscalibre.com", "whakoom.com", "listadomanga.es",
+           "amazon.es", "agapea.com", "fnac.es"],
+    "fr": ["glenat.com", "kana.fr", "ki-oon.com", "meian.fr", "kurokawa.fr",
+           "amazon.fr", "fnac.com", "cultura.com", "bdfugue.com"],
+    "it": ["starcomics.com", "panini.it", "jpopedizioni.com", "amazon.it",
+           "mangadreams.it", "fumetto-online.it"],
+    "jp": ["amazon.co.jp", "rakuten.co.jp", "honto.jp", "kinokuniya.co.jp"],
+    "de": ["amazon.de", "carlsen.de", "manga-passion.de"],
+    "br": ["amazon.com.br", "panini.com.br"],
+}
+
+
+def _search_serper_lens(
+    image_url: str,
+    api_key: str,
+    session: requests.Session,
+    language: str = "",
+) -> list[dict]:
+    """
+    Reverse image search via Google Lens (Serper /lens endpoint).
+    Usa gl/hl locale para priorizar resultados del mercado correcto.
+    Devuelve resultados ordenados: primero los del mismo mercado, después el resto.
+    """
+    if not image_url or image_url.startswith("data:"):
+        return []
+
+    payload: dict = {"url": image_url}
+    gl = _LANG_TO_GL.get(language, "")
+    if gl:
+        payload["gl"] = gl
+        payload["hl"] = gl
+
+    try:
+        r = session.post(
+            _SERPER_LENS_URL,
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json=payload,
+            timeout=(8, 25),
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except requests.RequestException:
+        return []
+
+    result: list[dict] = []
+    for entry in data.get("organic", []):
+        url = entry.get("imageUrl", "")
+        if not url:
+            continue
+
+        # Filtrar dominios de baja calidad
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        if any(bad in domain for bad in _LENS_LOW_QUALITY_DOMAINS):
+            continue
+
+        # Filtrar por link de la página (no solo imageUrl domain)
+        page_link = entry.get("link", "")
+        if page_link:
+            page_domain = urlparse(page_link).netloc.lower()
+            if any(bad in page_domain for bad in _LENS_LOW_QUALITY_DOMAINS):
+                continue
+
+        # Debe tener extensión de imagen o ser de un CDN conocido
+        path = parsed.path.lower()
+        has_ext = any(path.endswith(e) or f"{e}?" in path or f"{e};" in path
+                      for e in (".jpg", ".jpeg", ".png", ".webp"))
+        is_cdn = any(h in domain for h in (
+            "amazon.com", "media-amazon", "whakoom.com", "normaeditorial.com",
+            "normacomics.com", "planetadelibros", "panini", "buscalibre",
+            "agapea.com", "casadellibro", "penguin", "abebooks.com",
+            "cdn.shopify", "woocommerce", "cloudfront.net",
+        ))
+        if not has_ext and not is_cdn:
+            continue
+
+        result.append({
+            "url": url,
+            "page_title": entry.get("title", ""),
+            "domain": entry.get("source", domain),
+            "link": page_link,
+        })
+
+    # Priorizar resultados del mismo mercado que el item
+    preferred = _MARKET_PREFERRED_DOMAINS.get(gl, [])
+    if preferred:
+        def _market_score(r: dict) -> int:
+            link = (r.get("link", "") + r.get("url", "")).lower()
+            for i, pref in enumerate(preferred):
+                if pref in link:
+                    return i  # más bajo = mejor
+            return 999
+        result.sort(key=_market_score)
+
+    return result[:8]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tavily search (fallback de texto)
 # ──────────────────────────────────────────────────────────────────────────────
 
 _TAVILY_API_URL = "https://api.tavily.com/search"
@@ -634,6 +829,69 @@ def _atomic_write(items_path: Path, rows: list[dict]) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Validación de página (scraping ligero para verificar publisher/volumen)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _validate_page_content(page_url: str, item: dict, session: requests.Session,
+                           verbose: bool = False) -> bool:
+    """
+    Fetchea la página del resultado de Lens y verifica que el texto mencione
+    el publisher o la serie del item. Descarta candidatas de editoriales equivocadas.
+    Timeout corto (5s) para no frenar el pipeline.
+    """
+    if not page_url:
+        return True  # sin URL de página, no podemos verificar → aceptar
+
+    publisher = item.get("publisher", "").lower()
+    series = item.get("series_display", "").lower()
+    title_orig = item.get("title_original", "").lower()
+    volume = str(item.get("volume", ""))
+
+    # Palabras clave del publisher que deberían aparecer en la página
+    pub_keywords = [w for w in publisher.split() if len(w) >= 4]
+    # Palabras clave de la serie (al menos 1 debe aparecer)
+    series_keywords = [w for w in series.split() if len(w) >= 4]
+
+    try:
+        r = session.get(page_url, timeout=(3, 5), headers={
+            "User-Agent": _UA,
+            "Accept": "text/html",
+        })
+        if r.status_code != 200:
+            return True  # no pudimos verificar → aceptar
+        # Solo leer los primeros 50KB de texto
+        text = r.text[:50_000].lower()
+    except Exception:
+        return True  # timeout/error → aceptar (no penalizar)
+
+    # Verificar que la página mencione la serie
+    if series_keywords:
+        series_match = sum(1 for w in series_keywords if w in text)
+        if series_match == 0:
+            if verbose:
+                print(f"      page validation: serie '{series[:30]}' no encontrada", flush=True)
+            return False
+
+    # Verificar volumen si lo tiene
+    if volume and volume.isdigit():
+        # Buscar el número del volumen en contexto de "vol", "tome", "tomo", "n°", "#"
+        import re
+        vol_patterns = [
+            rf'\b(?:vol|volume|tomo|tome|n[°ºo]|#)\s*\.?\s*{re.escape(volume)}\b',
+            rf'\b{re.escape(volume)}\b',  # al menos el número debe aparecer
+        ]
+        # Con el primer pattern (estricto) es suficiente si matchea
+        # Si no matchea, verificamos que el número al menos aparezca
+        if not re.search(vol_patterns[0], text) and not re.search(vol_patterns[1], text):
+            if verbose:
+                print(f"      page validation: volumen {volume} no encontrado", flush=True)
+            return False
+
+    return True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Leer estado actual del image_local
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -723,6 +981,26 @@ def _try_candidates(
 # Procesamiento principal
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _text_matches_item(page_title: str, item: dict) -> bool:
+    """Verifica que el título de la página de la candidata sea relevante al item."""
+    if not page_title:
+        return True  # sin metadata, no podemos verificar → aceptar
+    pt = page_title.lower()
+    series = item.get("series_display", "").lower()
+    title_orig = item.get("title_original", "").lower()
+    # Al menos el nombre de la serie (o parte significativa) debe aparecer en el título de la página
+    series_words = [w for w in series.split() if len(w) >= 4]
+    if series_words:
+        matches = sum(1 for w in series_words if w in pt)
+        return matches >= max(1, len(series_words) // 2)
+    # Si no tenemos series_display, probar con title_original
+    title_words = [w for w in title_orig.split() if len(w) >= 4]
+    if title_words:
+        matches = sum(1 for w in title_words if w in pt)
+        return matches >= max(1, len(title_words) // 2)
+    return True
+
+
 def _process_item(
     item: dict,
     session: requests.Session,
@@ -735,61 +1013,210 @@ def _process_item(
     tavily_key: str,
     dry_run: bool,
     verbose: bool,
-) -> Optional[tuple[str, str]]:
+    preview: bool = False,
+) -> Optional[dict]:
     """
-    Retorna (new_image_url, new_image_local) si se mejoró el item, None si no.
-    Orden de estrategias:
-      1. ISBN → Amazon CDN + PRH CDN + OpenLibrary (gratis, sin cuota)
-      2. Sin ISBN → Serper (2 500 gratis) → Tavily (1 000/mes)
+    Busca una portada mejor para el item.
+    Retorna un dict con los datos del resultado (para preview o aplicación directa).
+    None si no encontró mejora.
     """
     signals = item.get("signal_types", [])
 
-    # Saltar variantes/exclusivos
     if _SKIP_SIGNALS & set(signals):
         return None
 
-    # Verificar que la imagen actual es pequeña
     curr_px = _get_current_pixels(item, images_dir)
-    if curr_px >= min_pixels:
-        return None  # ya tiene buena calidad
+    is_upscaled_item = _is_upscaled(item, images_dir)
+    if curr_px >= min_pixels and not is_upscaled_item:
+        return None
 
     isbn = item.get("isbn", "")
     title = item.get("title", "")
     publisher = item.get("publisher", "")
 
-    candidates: list[str] = []
+    # Candidatas: lista de {url, page_title, domain} o URLs planas
+    search_results: list[dict] = []
+    plain_candidates: list[str] = []
 
-    # Estrategia 1a: Amazon CDN + PRH CDN (rápido, sin cuota)
+    # Estrategia 1a: Amazon CDN + PRH CDN
     if isbn:
-        candidates.extend(_candidates_from_isbn(isbn, session))
+        for u in _candidates_from_isbn(isbn, session):
+            plain_candidates.append(u)
 
-    # Estrategia 1b: OpenLibrary — siempre que haya ISBN, se añade al final de la lista
-    # (así se prueba aunque Amazon/PRH fallen por píxeles)
+    # Estrategia 1b: OpenLibrary
     if isbn:
-        ol = _candidates_from_isbn_openlibrary(isbn, session)
-        if ol:
+        for u in _candidates_from_isbn_openlibrary(isbn, session):
+            plain_candidates.append(u)
+
+    # Estrategia 1c: Google Books API (extraLarge ~800×1200, gratis sin key)
+    if isbn:
+        gb = _candidates_from_isbn_google_books(isbn, session)
+        if gb:
             if verbose:
-                print(f"  OpenLibrary: {len(ol)} candidata(s) disponible(s)")
-            candidates.extend(ol)
+                print(f"  Google Books: {len(gb)} candidata(s)", flush=True)
+            plain_candidates.extend(gb)
 
-    # Estrategia 2: búsqueda web para ítems sin ISBN (o ISBN sin mejora en CDN)
-    if not candidates and not no_search and (title or publisher):
+    # Estrategia 2: reverse image search (Google Lens via Serper /lens)
+    # Preferido sobre text search — Google ya hace el matching visual,
+    # las candidatas son la MISMA portada en mayor resolución.
+    image_url = item.get("image_url", "")
+    language = item.get("language", "")
+    query = ""
+    if not plain_candidates and not no_search and serper_key and image_url:
+        if verbose:
+            gl = _LANG_TO_GL.get(language, "")
+            print(f"  Lens: {image_url[:50]} (gl={gl or 'auto'})", flush=True)
+        search_results = _search_serper_lens(image_url, serper_key, session, language)
+        if verbose and search_results:
+            print(f"  Lens devolvió {len(search_results)} candidatas", flush=True)
+
+    # Estrategia 3 (fallback): text search si Lens no encontró nada
+    if not plain_candidates and not search_results and not no_search and (title or publisher):
         query = _build_search_query(item)
         if verbose:
-            print(f"  Query: {query}", flush=True)
-        # Orden: Serper (2500 gratis) → Tavily (1000/mes)
+            print(f"  Text fallback: {query}", flush=True)
         if serper_key:
-            candidates.extend(_search_serper_for_cover(query, serper_key, session))
-        if not candidates and tavily_key:
-            candidates.extend(_search_tavily_for_cover(query, tavily_key, session))
+            search_results = _search_serper_for_cover(query, serper_key, session)
+        if not search_results and tavily_key:
+            for u in _search_tavily_for_cover(query, tavily_key, session):
+                search_results.append({"url": u, "page_title": "", "domain": ""})
 
-    if not candidates:
+    # Unir candidatas: CDN primero, luego búsqueda (Lens o texto)
+    # Marcamos el origen para saber qué verificación aplicar
+    all_candidates: list[dict] = []
+    for u in plain_candidates:
+        all_candidates.append({"url": u, "page_title": "", "domain": "", "via": "cdn"})
+    for sr in search_results:
+        sr.setdefault("via", "lens" if not query else "text")
+        all_candidates.append(sr)
+
+    if not all_candidates:
         return None
 
-    return _try_candidates(
-        item, candidates, session, images_dir,
-        min_gain, max_hash_dist, dry_run, verbose,
-    )
+    # Evaluar candidatas
+    orig_bytes = _get_current_bytes(item, images_dir)
+    orig_px = _get_pixels_from_bytes(orig_bytes) if orig_bytes else curr_px
+
+    for cand in all_candidates:
+        url = cand["url"]
+        data = _fetch(url, session)
+        if not data:
+            continue
+        ext = _extension_from_magic(data)
+        if not ext:
+            continue
+        cand_px = _get_pixels_from_bytes(data)
+        if cand_px <= 0:
+            continue
+        # Para upscaleados: aceptar candidatas más chicas en px si son imágenes
+        # reales (no pastel). Un JPG real de 200k px se ve mejor que un PNG
+        # waifu2x de 600k px. Umbral: al menos 50k px (= imagen usable).
+        effective_gain = min_gain
+        if is_upscaled_item and cand_px >= 50_000:
+            effective_gain = 0  # aceptar cualquier imagen real ≥ 50k px
+        if orig_px > 0 and effective_gain > 0 and cand_px < orig_px * effective_gain:
+            if verbose:
+                print(f"    skip {url[:60]}: {cand_px}px vs {orig_px}px (no mejora)", flush=True)
+            continue
+
+        via = cand.get("via", "text")
+        confidence = "high"
+
+        if via == "lens":
+            # Lens: Google ya hizo el matching visual.
+            # Verificación en 2 capas:
+            #   1. Aspect ratio (descarta banners, cuadrados, etc.)
+            #   2. Validación de página (fetchea la URL de la página y verifica
+            #      que mencione la serie/publisher — descarta editoriales equivocadas)
+            confidence = "low"
+            if orig_bytes:
+                ow, oh = _get_dims_from_bytes(orig_bytes)
+                cw, ch = _get_dims_from_bytes(data)
+                if ow > 0 and oh > 0 and cw > 0 and ch > 0:
+                    orig_ar = _aspect_ratio(ow, oh)
+                    cand_ar = _aspect_ratio(cw, ch)
+                    if abs(orig_ar - cand_ar) / orig_ar > 0.30:
+                        if verbose:
+                            print(f"    skip {url[:60]}: aspect ratio diff ({orig_ar:.2f} vs {cand_ar:.2f})", flush=True)
+                        continue
+            # Validar contenido de la página del resultado
+            page_link = cand.get("link", "")
+            if page_link and not _validate_page_content(page_link, item, session, verbose):
+                if verbose:
+                    print(f"    skip {url[:60]}: página no menciona serie/publisher", flush=True)
+                continue
+        elif via == "cdn":
+            # CDN determinístico (Amazon/PRH/OpenLibrary): hash confiable
+            if orig_bytes and orig_px > 0:
+                if not _same_cover(orig_bytes, data, max_hash_dist):
+                    if verbose:
+                        print(f"    skip {url[:60]}: hash diff demasiado grande", flush=True)
+                    continue
+        else:
+            # Text search: hash si imagen grande, aspect ratio si chica
+            if orig_bytes and orig_px > 0:
+                if orig_px >= 30_000:
+                    if not _same_cover(orig_bytes, data, max_hash_dist):
+                        if verbose:
+                            print(f"    skip {url[:60]}: hash diff demasiado grande", flush=True)
+                        continue
+                else:
+                    confidence = "low"
+                    ow, oh = _get_dims_from_bytes(orig_bytes)
+                    cw, ch = _get_dims_from_bytes(data)
+                    if ow > 0 and oh > 0 and cw > 0 and ch > 0:
+                        orig_ar = _aspect_ratio(ow, oh)
+                        cand_ar = _aspect_ratio(cw, ch)
+                        if abs(orig_ar - cand_ar) / orig_ar > 0.25:
+                            if verbose:
+                                print(f"    skip {url[:60]}: aspect ratio diff", flush=True)
+                            continue
+
+        if verbose:
+            tag = "✓" if confidence == "high" else "⚠"
+            print(f"    MEJOR [{tag}]: {url[:60]} → {cand_px}px (vs {orig_px}px)")
+
+        # Guardar la imagen (siempre — necesitamos el archivo para display/comparación)
+        filename = _save_image(data, images_dir) if not dry_run else "[dry-run]"
+
+        return {
+            "new_url": url,
+            "new_local": filename or "[failed]",
+            "candidate_pixels": cand_px,
+            "current_pixels": orig_px,
+            "page_title": cand.get("page_title", ""),
+            "domain": cand.get("domain", ""),
+            "query": query,
+            "confidence": confidence,
+        }
+
+    return None
+
+
+_PREVIEW_PATH = _HERE / "data" / "cover_preview.json"
+
+
+def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
+    """Aplica una mejora directamente sobre el item dict."""
+    item["image_url"] = new_url
+    if item.get("images"):
+        if item["images"]:
+            item["images"][0]["url"] = new_url
+            item["images"][0]["local"] = new_local
+    if new_local != "[dry-run]":
+        item["image_local"] = new_local
+
+
+def _is_upscaled(item: dict, images_dir: Path) -> bool:
+    """Detecta si la imagen actual es un PNG upscaleado por waifu2x (look pastel)."""
+    local = item.get("image_local", "")
+    if not local or not local.endswith(".png"):
+        return False
+    # Los upscaleados de waifu2x producen PNGs grandes (> 200k px)
+    # a partir de fuentes chicas. Si la image_url original es de un CDN
+    # que sirve thumbnails, probablemente fue upscaleada.
+    px = _get_current_pixels(item, images_dir)
+    return px >= 200_000
 
 
 def run(
@@ -799,13 +1226,14 @@ def run(
     min_gain: float = DEFAULT_MIN_GAIN,
     max_hash_dist: int = DEFAULT_MAX_HASH_DIST,
     no_search: bool = False,
+    include_upscaled: bool = False,
     serper_key: str = "",
     tavily_key: str = "",
     dry_run: bool = False,
+    preview: bool = False,
     limit: int = 0,
     verbose: bool = False,
 ) -> None:
-    # Auto-cargar keys desde .env si no se pasaron explícitamente
     _load_dotenv()
     if not serper_key:
         serper_key = os.environ.get("SERPER_API_KEY", "")
@@ -814,23 +1242,46 @@ def run(
 
     items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
 
-    # Candidatos: imagen chica, sin signals que excluyen
-    candidates_idx = [
-        i for i, item in enumerate(items)
-        if _SKIP_SIGNALS.isdisjoint(item.get("signal_types", []))
-        and _get_current_pixels(item, images_dir) < min_pixels
-        and _get_current_pixels(item, images_dir) > 0  # tiene imagen
-    ]
+    def _is_candidate(i: int) -> bool:
+        item = items[i]
+        if not _SKIP_SIGNALS.isdisjoint(item.get("signal_types", [])):
+            return False
+        px = _get_current_pixels(item, images_dir)
+        if px <= 0:
+            return False
+        # Candidato normal: imagen chica
+        if px < min_pixels:
+            return True
+        # Candidato extra: imagen upscaleada (pastel) — buscar reemplazo real
+        if include_upscaled and _is_upscaled(item, images_dir):
+            return True
+        return False
 
-    total = len(candidates_idx)
+    all_candidates_idx = [i for i in range(len(items)) if _is_candidate(i)]
+
+    total = len(all_candidates_idx)
+
+    # --limit aplica a items que realmente necesitan búsqueda web (sin ISBN),
+    # no a los que solo hacen CDN check local. Así no se desperdician créditos.
     if limit > 0:
-        candidates_idx = candidates_idx[:limit]
+        candidates_idx: list[int] = []
+        search_count = 0
+        for idx in all_candidates_idx:
+            has_isbn = bool(items[idx].get("isbn"))
+            candidates_idx.append(idx)
+            if not has_isbn:
+                search_count += 1
+                if search_count >= limit:
+                    break
+    else:
+        candidates_idx = all_candidates_idx
 
     with_isbn = sum(1 for i in candidates_idx if items[i].get("isbn"))
     without_isbn = len(candidates_idx) - with_isbn
 
+    mode_label = "PREVIEW" if preview else ("dry-run" if dry_run else "escritura")
     print(f"Candidatos: {len(candidates_idx)}/{total} (con ISBN: {with_isbn}, sin: {without_isbn})", flush=True)
-    print(f"Modo: {'dry-run' if dry_run else 'escritura'}, min_gain={min_gain}×, max_hash_dist={max_hash_dist}", flush=True)
+    print(f"Modo: {mode_label}, min_gain={min_gain}×, max_hash_dist={max_hash_dist}", flush=True)
     if no_search:
         print("  --no-search activo: solo CDN lookup por ISBN + OpenLibrary", flush=True)
     else:
@@ -845,29 +1296,18 @@ def run(
             print("  ⚠️  Sin API de búsqueda — solo CDN ISBN + OpenLibrary", flush=True)
     print(flush=True)
 
-    if not dry_run:
+    if not dry_run and not preview:
         backup_and_rotate(items_path, "fetch-better-covers")
 
     session = requests.Session()
     session.headers.update({"User-Agent": _UA})
 
-    improved = 0
+    applied_high = 0  # alta confianza → aplicadas directo
+    applied_low = 0   # baja confianza → aplicadas + van a preview
     skipped = 0
     errors = 0
-    flush_count = 0  # cuántas mejoras se han guardado a disco
-
-    def _apply_improvement(idx: int, new_url: str, new_local: str) -> None:
-        """Aplica una mejora directamente sobre la lista items[] en memoria."""
-        item = items[idx]
-        item["image_url"] = new_url
-        if item.get("images"):
-            for img_entry in item["images"]:
-                if img_entry.get("kind") == "cover":
-                    img_entry["url"] = new_url
-                    img_entry["local"] = new_local
-                    break
-        if new_local != "[dry-run]":
-            item["image_local"] = new_local
+    flush_count = 0
+    preview_entries: list[dict] = []
 
     for pos, idx in enumerate(candidates_idx):
         item = items[idx]
@@ -875,23 +1315,63 @@ def run(
         if verbose:
             print(f"[{pos+1}/{len(candidates_idx)}] {title}", flush=True)
         elif pos % 50 == 0:
-            print(f"  {pos}/{len(candidates_idx)} procesados... ({improved} mejorados)", flush=True)
+            total_applied = applied_high + applied_low
+            print(f"  {pos}/{len(candidates_idx)} procesados... ({total_applied} mejorados)", flush=True)
 
         try:
             result = _process_item(
                 item, session, images_dir,
                 min_pixels, min_gain, max_hash_dist,
-                no_search, serper_key, tavily_key, dry_run, verbose,
+                no_search, serper_key, tavily_key,
+                dry_run=dry_run, verbose=verbose,
             )
             if result:
-                improved += 1
-                new_url, new_local = result
-                if not dry_run:
-                    _apply_improvement(idx, new_url, new_local)
-                    _atomic_write(items_path, items)  # flush inmediato
-                    flush_count += 1
-                if verbose:
-                    print(f"  ✓ mejorado → guardado ({flush_count} total)", flush=True)
+                new_url = result["new_url"]
+                new_local = result["new_local"]
+                confidence = result.get("confidence", "high")
+
+                if confidence == "high":
+                    # Alta confianza: aplicar directo sin review
+                    applied_high += 1
+                    if not dry_run:
+                        old_local = item.get("image_local", "")
+                        _apply_improvement(item, new_url, new_local)
+                        _atomic_write(items_path, items)
+                        flush_count += 1
+                    if verbose:
+                        print(f"  ✓ aplicada [alta confianza] ({flush_count})", flush=True)
+                else:
+                    # Baja confianza: aplicar PERO agregar a preview para revisión
+                    applied_low += 1
+                    old_local = item.get("image_local", "")
+                    old_url = item.get("image_url", "")
+                    if not dry_run:
+                        _apply_improvement(item, new_url, new_local)
+                        _atomic_write(items_path, items)
+                        flush_count += 1
+                    preview_entries.append({
+                        "slug": item.get("slug", ""),
+                        "title": item.get("title", ""),
+                        "title_original": item.get("title_original", ""),
+                        "series_display": item.get("series_display", ""),
+                        "publisher": item.get("publisher", ""),
+                        "country": item.get("country", ""),
+                        "old_image": old_local,
+                        "old_url": old_url,
+                        "old_pixels": result["current_pixels"],
+                        "new_image": new_local,
+                        "new_url": new_url,
+                        "new_pixels": result["candidate_pixels"],
+                        "page_title": result.get("page_title", ""),
+                        "domain": result.get("domain", ""),
+                        "query": result.get("query", ""),
+                        "status": "pending",
+                    })
+                    _PREVIEW_PATH.write_text(
+                        json.dumps(preview_entries, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+                    if verbose:
+                        print(f"  ⚠ aplicada [baja confianza → preview] ({len(preview_entries)})", flush=True)
             else:
                 skipped += 1
         except Exception as e:
@@ -899,13 +1379,90 @@ def run(
             if verbose:
                 print(f"  ERROR: {e}", flush=True)
 
-    print()
+    total_applied = applied_high + applied_low
+    print(flush=True)
     print(f"✓ Resultado:")
-    print(f"  Mejoradas:  {improved}")
-    print(f"  Sin mejora: {skipped}")
-    print(f"  Errores:    {errors}")
+    print(f"  Aplicadas (alta confianza):  {applied_high}")
+    print(f"  Aplicadas (baja confianza):  {applied_low} → revisar en preview")
+    print(f"  Sin mejora:                  {skipped}")
+    print(f"  Errores:                     {errors}")
     if not dry_run:
         print(f"  Guardados:  {flush_count} flushes a items.jsonl")
+    if applied_low > 0:
+        print(f"\n  ⚠  {applied_low} items necesitan revisión visual:")
+        print(f"  Preview:    {_PREVIEW_PATH}")
+        print(f"  Abrir:      http://localhost:8000/web/cover-preview.html")
+        print(f"  Después:    .venv/bin/python scripts/retrofit/fetch_better_covers.py --apply-preview")
+
+
+def apply_preview(items_path: Path, images_dir: Path) -> None:
+    """
+    Procesa el preview JSON con 3 estados por item:
+    - APPROVED: ya está aplicada la nueva. Borra la imagen vieja (cleanup).
+    - REJECTED: revierte a la imagen vieja. Borra la imagen nueva.
+    - PENDING:  no se toca. Queda en el preview para decidir después.
+    """
+    if not _PREVIEW_PATH.exists():
+        print(f"No hay preview en {_PREVIEW_PATH}.")
+        return
+
+    preview = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
+    approved = [e for e in preview if e.get("status") == "approved"]
+    rejected = [e for e in preview if e.get("status") == "rejected"]
+    pending  = [e for e in preview if e.get("status", "pending") == "pending"]
+
+    print(f"Preview: {len(preview)} items — {len(approved)} aprobados, "
+          f"{len(rejected)} rechazados, {len(pending)} pendientes", flush=True)
+
+    if not approved and not rejected:
+        print("Nada que procesar (todo pendiente).")
+        return
+
+    items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
+    backup_and_rotate(items_path, "fetch-better-covers")
+
+    items_by_slug: dict[str, list[dict]] = {}
+    for item in items:
+        s = item.get("slug", "")
+        if s:
+            items_by_slug.setdefault(s, []).append(item)
+
+    reverted = 0
+    cleaned_old = 0
+    cleaned_new = 0
+
+    for entry in rejected:
+        slug = entry.get("slug", "")
+        for item in items_by_slug.get(slug, []):
+            _apply_improvement(item, entry["old_url"], entry["old_image"])
+            reverted += 1
+        new_file = images_dir / entry.get("new_image", "")
+        old_file = entry.get("old_image", "")
+        if new_file.name and new_file.name != old_file and new_file.exists():
+            new_file.unlink()
+            cleaned_new += 1
+
+    for entry in approved:
+        old_file = images_dir / entry.get("old_image", "")
+        new_file = entry.get("new_image", "")
+        if old_file.name and old_file.name != new_file and old_file.exists():
+            old_file.unlink()
+            cleaned_old += 1
+
+    _atomic_write(items_path, items)
+
+    print(f"✓ Resultado:")
+    print(f"  Aprobados:              {len(approved)} (imagen vieja eliminada: {cleaned_old})")
+    print(f"  Rechazados (revertidos): {reverted} (imagen nueva eliminada: {cleaned_new})")
+
+    if pending:
+        # Guardar solo los pendientes para futura revisión
+        _PREVIEW_PATH.write_text(
+            json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  Pendientes:             {len(pending)} (siguen en preview para después)")
+    else:
+        _PREVIEW_PATH.unlink()
+        print(f"  Preview limpiado (todo procesado).")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -938,6 +1495,11 @@ def main() -> None:
              f"(default: {DEFAULT_MAX_HASH_DIST}/64)",
     )
     ap.add_argument(
+        "--include-upscaled", action="store_true",
+        help="Incluir imágenes PNG upscaleadas por waifu2x como candidatas. "
+             "Busca reemplazos reales hi-res para portadas con look pastel.",
+    )
+    ap.add_argument(
         "--no-search", action="store_true",
         help="Solo CDN lookup por ISBN + OpenLibrary, sin búsqueda web",
     )
@@ -950,6 +1512,15 @@ def main() -> None:
         "--tavily-key", default="",
         help="Tavily API key (si no se pasa, se lee TAVILY_API_KEY del .env). "
              "Fallback si no hay Serper key. 1 000 queries/mes gratis.",
+    )
+    ap.add_argument(
+        "--preview", action="store_true",
+        help="Buscar candidatas y generar preview HTML para revisión visual. "
+             "No modifica items.jsonl. Abrir http://localhost:8000/web/cover-preview.html",
+    )
+    ap.add_argument(
+        "--apply-preview", action="store_true",
+        help="Aplicar las mejoras aprobadas del preview a items.jsonl",
     )
     ap.add_argument(
         "--dry-run", action="store_true",
@@ -965,6 +1536,10 @@ def main() -> None:
     )
     args = ap.parse_args()
 
+    if args.apply_preview:
+        apply_preview(Path(args.items), Path(args.images_dir))
+        return
+
     run(
         items_path=Path(args.items),
         images_dir=Path(args.images_dir),
@@ -972,6 +1547,8 @@ def main() -> None:
         min_gain=args.min_gain,
         max_hash_dist=args.max_hash_dist,
         no_search=args.no_search,
+        include_upscaled=args.include_upscaled,
+        preview=args.preview,
         serper_key=args.serper_key,
         tavily_key=args.tavily_key,
         dry_run=args.dry_run,

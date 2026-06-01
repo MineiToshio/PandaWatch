@@ -7,7 +7,7 @@ Image storage Fase 1, pasos restantes (ver "Image storage" en CLAUDE.md):
    - **Cover**: si tiene `image_url` y le falta `image_local`, descarga
      la portada a data/images/ y setea `image_local`.
    - **Gallery** (multi-imagen, 2026-05-26): para cada entry en
-     `images[]` con `kind != cover` que tenga `url` pero le falte
+     `images[]` (idx > 0) que tenga `url` pero le falte
      `local`, descarga la imagen y setea `images[i].local`. El scrape
      (`manga_watch.py::mirror_candidate_images`) ya lo hace para items
      nuevos; este retrofit cubre el corpus histórico que recién recibió
@@ -100,9 +100,9 @@ def _run_backfill(
     se actualizaron.
 
     Procesa dos clases de targets:
-    1) **Cover**: items con `image_url` y sin `image_local` (single).
-    2) **Gallery**: items con `images[]` cuyos elementos `kind != cover`
-       tienen `url` pero no `local`. Una imagen gallery = un download.
+    1) **Cover**: items con `image_url` y sin `image_local` (portada = images[0]).
+    2) **Gallery**: items con `images[]` (idx > 0) que tienen `url` pero
+       no `local`. Una imagen gallery = un download.
     """
     # 1) Cover targets (comportamiento original).
     cover_targets = [
@@ -119,7 +119,7 @@ def _run_backfill(
         for idx, im in enumerate(imgs):
             if not isinstance(im, dict):
                 continue
-            if im.get("kind") == "cover":
+            if idx == 0:
                 continue
             if im.get("url") and not im.get("local"):
                 gallery_targets.append((it, idx))
@@ -184,16 +184,13 @@ def _run_backfill(
             consumers, filename = fut.result()
             done += 1
             if filename:
-                for kind, it, idx in consumers:
-                    if kind == "cover":
+                for role, it, idx in consumers:
+                    if role == "cover":
                         it["image_local"] = filename
-                        # También sincronizar el primer images[] kind=cover
-                        # si coincide en URL (mantiene paridad con el scrape).
-                        for im in (it.get("images") or []):
-                            if im.get("kind") == "cover" and im.get("url") == it["image_url"]:
-                                im["local"] = filename
-                                break
-                    else:  # gallery
+                        imgs = it.get("images") or []
+                        if imgs and imgs[0].get("url") == it["image_url"]:
+                            imgs[0]["local"] = filename
+                    else:
                         it["images"][idx]["local"] = filename
                 updated += len(consumers)
             else:

@@ -348,20 +348,15 @@ def _apply_upgrade(
         # Sincronizar también images[0] si existe y era el mismo URL
         imgs = item.get("images") or []
         if imgs and isinstance(imgs[0], dict):
-            old_kind = imgs[0].get("kind", "cover")
-            if old_kind == "cover":
-                imgs[0]["url"] = new_url
-                imgs[0]["local"] = new_local
+            imgs[0]["url"] = new_url
+            imgs[0]["local"] = new_local
     elif campo.startswith("img:"):
         idx = int(campo.split(":")[1])
         imgs = item.get("images") or []
         if idx < len(imgs) and isinstance(imgs[idx], dict):
             imgs[idx]["url"] = new_url
             imgs[idx]["local"] = new_local
-            # Belt-and-suspenders: if this is the cover image (idx=0, kind=cover),
-            # also sync the top-level image_url / image_local fields so they don't
-            # diverge from images[0].
-            if idx == 0 and imgs[0].get("kind", "cover") == "cover":
+            if idx == 0:
                 if derive_original_url(item.get("image_url") or ""):
                     item["image_url"] = new_url
                     item["image_local"] = new_local

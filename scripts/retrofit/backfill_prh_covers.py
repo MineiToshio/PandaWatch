@@ -202,7 +202,7 @@ def _apply(item: dict, new_url: str, new_local: str) -> None:
     item["image_url"] = new_url
     item["image_local"] = new_local
     imgs = item.get("images") or []
-    if imgs and isinstance(imgs[0], dict) and imgs[0].get("kind", "cover") == "cover":
+    if imgs and isinstance(imgs[0], dict):
         imgs[0]["url"] = new_url
         imgs[0]["local"] = new_local
 
