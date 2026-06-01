@@ -14,11 +14,5 @@
       "runtimeArgs": ["scripts/serve.py", "--port", "8000"],
       "port": 8000
     },
-    {
-      "name": "manga-watch-admin",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["scripts/admin_serve.py", "--port", "8001", "--bind", "127.0.0.1"],
-      "port": 8001
-    }
   ]
 }
