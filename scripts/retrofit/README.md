@@ -32,6 +32,23 @@ no se beneficia automáticamente.
 | `generate_slugs.py` | Genera el campo `slug` en items.jsonl para la ruta `/item/[slug]` del app Next.js (`web-next/`). Prioridad: `isbn:{X}` cluster_key → `{edition_key}-{vol}` → `{edition_key}` solo → `isbn-{isbn}` → `item-{sha1(url)[:12]}` fallback. Resuelve colisiones con sufijos `-b`/`-c` (el más antiguo conserva el slug limpio). Idempotente: solo actualiza `slug` si está vacío o si `edition_key`/`volume` cambió. Flags: `--dry-run`, `--only-missing`, `--verbose`. | Como **último paso del skill `/standardize-catalog`** (después de escribir items.jsonl con sus campos canónicos). No corre automáticamente en el pipeline de scrape; solo cuando se estandarizan items nuevos. Ver docs/app/FRD-006-slug-generation.md. |
 | `set_rarity.py` | Aplica el campo `rarity` (`common` / `rare` / `super_rare` / `ultra_rare`) a todos los items usando `derive_rarity_tier()` de manga_watch.py. Solo toca items sin valor asignado (o todos con `--force`). Respeta valores asignados por web-search (p. ej. `common` nunca se degrada). Flags: `--dry-run`, `--force`. | Después de un scrape grande que agregó items nuevos sin `rarity`, o cuando se modifican las reglas de `derive_rarity_tier()`. |
 | `translate_descriptions.py` | Popula `description_es` y `extras[].description_es` con la traducción al español de los campos `description` / `extras[].description`. Primario: **Google Translate** (gratis, sin API key). Opcional: **DeepL** (mejor calidad si `DEEPL_API_KEY` está en `.env`; plan gratuito = crédito único de 1M chars, no se renueva). `description` original no se modifica. Idempotente: salta items que ya tienen `description_es` (salvo `--force`). Requiere `pip install deep-translator langdetect`. Opcional: `pip install deepl`. | Después de cada scrape grande que agregó items con descripción en idioma extranjero. Sin clave DeepL igualmente funciona. |
+| `apply_approvals.py` | Re-materializa el log durable `data/approvals.jsonl` (las cards aprobadas desde el dashboard — golden records) sobre `items.jsonl`. Reduce el log al estado final por `cluster_key` (last-wins) y re-aplica `approved_at`/`approved_by` (match por cluster_key, fallback url). Idempotente. Flags: `--dry-run`, `--approvals`, `--items`. | Tras **reconstruir `items.jsonl` de cero** (re-scrape/import) cuando se perdieron los `approved_at`. Las aprobaciones viven también en el JSONL, este log es el respaldo durable. Registrado en Panel de Control. |
+| `consolidate_sources.py` | Modelo **1-fila-por-producto**: agrupa por `cluster_key` y colapsa las filas duplicadas del mismo producto (misma edición encontrada en varias fuentes con URLs distintas) en UNA sola fila con `sources[]` (todas las fuentes), imágenes union (portada canónica primera) y extras union. Delega en `manga_watch.consolidate_by_cluster` (la misma primitiva que usa `append_jsonl` al ingestar). Idempotente. | Después de `/standardize-catalog` (reasigna edition_key → nuevos clusters), o si ves cards duplicadas del mismo producto. Corre como paso `[4g]` del pipeline. Registrado en Panel de Control. |
+| `sync_cover_images.py` | Saneamiento integral de imágenes (contrapartida-de-datos del extractor, gotcha #31). Por item: **(1)** portada mala — si `image_url` es placeholder/banner (`visuel_defaut`, banner "Lista de Mangas" Panini MX) promueve la 1ª imagen real de `images[]` o la limpia (→ 📚); **(2)** `images[0]` == portada — re-sincroniza con `image_url`/`image_local` (bug 2026-06-02 Dark Horse: card y carrusel mostraban fotos distintas); **(3)** basura — elimina duplicados exactos (Panini `[cover,cover,cover]`), dups http/https, y BASURA por patrón de URL (KADOKAWA `top_bar_banner`/`bnr_*`, avatares AnimeClick `/bundles/accommon/`+`/avatar/`, íconos Funside `icona_lucchetto`, `nowprinting` e-hon, `adulte` manga-sanctuary, `/images/site/yomi/` otakucalendar, `img_star`) **O por ARCHIVO LOCAL** (`_compute_junk_local`: 0 bytes, <6KB píxeles/íconos, o el mismo archivo compartido por ≥4 OBRAS distintas = placeholder/banner reusado — con guard que NO marca portadas reales de obras fragmentadas en varios series_key); **(4)** productos relacionados — descarta galerías que son otros tomos/series (Star Comics `/fumetti-cover/thumbnail/`, Manga-Sanctuary `/objet/150/`), dejando solo la portada. Salta aprobados (`--include-approved`). Idempotente. Flags: `--dry-run`, `--include-approved`. | Cuando card y carrusel muestran fotos distintas, hay imágenes repetidas / banners / avatares, o carruseles con fotos de otras series. Registrado en Panel de Control. |
+
+## ⚠️ Aprobaciones (golden records) — los retrofits las RESPETAN
+
+Los items que el owner aprobó desde el dashboard llevan `approved_at` (ver
+"Aprobación humana" en CLAUDE.md). **Todos los retrofits que reescriben campos
+descriptivos** (`rescore`, `clean_titles`, `filter_non_manga`,
+`filter_collectible`, `set_rarity`, `backfill_metadata`,
+`translate_descriptions`) **saltean los items aprobados por defecto** — no los
+re-derivan ni re-filtran. Los dos filtros (`filter_non_manga`,
+`filter_collectible`) además SIEMPRE conservan un item aprobado (nunca lo
+rechazan). Flag `--include-approved` para forzar el procesamiento de aprobados
+cuando realmente lo querés. El guard usa `is_approved()` de `manga_watch.py`.
+Si agregás un retrofit nuevo que reescribe metadata descriptiva, sumá el mismo
+guard.
 
 ## Cuándo NO los necesitás
 
@@ -140,6 +157,10 @@ Todos los retrofits existentes ya usan `backup_and_rotate()`. Si agregás uno nu
 .venv/bin/python scripts/retrofit/generate_slugs.py --dry-run    # preview sin escribir
 .venv/bin/python scripts/retrofit/generate_slugs.py --only-missing  # solo items sin slug (normal)
 .venv/bin/python scripts/retrofit/generate_slugs.py --verbose    # con log de cada asignación
+
+# Re-aplicar aprobaciones (golden records) tras reconstruir items.jsonl
+.venv/bin/python scripts/retrofit/apply_approvals.py --dry-run   # cuántas se re-aplicarían
+.venv/bin/python scripts/retrofit/apply_approvals.py             # re-materializa desde approvals.jsonl
 ```
 
 Cada script llama a `backup_and_rotate(items_path, "nombre-script")` antes

@@ -167,6 +167,10 @@ def _parse_post(post: Any, current_date: str, source: Source) -> Candidate | Non
             if v and v.strip():
                 image_url = urljoin(BASE_URL, v.strip())
                 break
+    # El thumbnail por defecto (placeholder "sin imagen") no es portada — dejarlo
+    # vacío para que el dashboard muestre el placeholder 📚 (ver gotcha #6).
+    if "visuel_defaut" in image_url:
+        image_url = ""
 
     # Description: combinamos publisher + edition + type para que detect_signals
     # tenga contexto sobre si es coleccionista o regular.

@@ -221,8 +221,11 @@ def _run_gc(
         print("[GC] data/images/ no existe todavía — nada que limpiar.")
         return 0
 
-    # Referenciadas = cover (`image_local`) + cada gallery (`images[i].local`).
-    # Sin la unión, los archivos de gallery quedarían marcados como orphans.
+    # Referenciadas = cover (`image_local`) + gallery (`images[i].local`) +
+    # CADA fuente (`sources[i].image_local`, modelo 1-fila-por-producto). Sin
+    # incluir sources[], el GC borraría fotos que una fuente sí usa (58 archivos
+    # de ese tipo detectados el 2026-06-02). Si solo mirara cover, los de gallery
+    # quedarían como orphans.
     referenced: set[str] = set()
     for it in items:
         if "_raw" in it:
@@ -232,6 +235,9 @@ def _run_gc(
         for im in (it.get("images") or []):
             if isinstance(im, dict) and im.get("local"):
                 referenced.add(im["local"])
+        for s in (it.get("sources") or []):
+            if isinstance(s, dict) and s.get("image_local"):
+                referenced.add(s["image_local"])
     on_disk = [p for p in images_dir.iterdir() if p.is_file()]
     orphans = [p for p in on_disk if p.name not in referenced]
 
