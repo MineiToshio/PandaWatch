@@ -261,8 +261,10 @@ manga_watch.py (scraper)  ←─── ThreadPoolExecutor(--workers N)
     On by default; --skip-image-download para saltearlo.
     │
     ▼
-data/items.jsonl  ← upsert by URL (1 line per unique URL).
-                    Every row carries `cluster_key` for grouping.
+data/items.jsonl  ← 1 fila por PRODUCTO (cluster_key) con sources[].
+                    append_jsonl: upsert por URL + consolidación por
+                    cluster_key. Un producto re-encontrado suma su fuente
+                    a sources[], no agrega fila. Ver decisión #1.
 data/images/      ← espejo local de portadas (image_local apunta acá)
 data/state.json   ← cache of seen URLs (for incremental detection)
     │
@@ -326,6 +328,15 @@ data/
                                        El item NO se elimina del catálogo.
                                        Cola de entrada para el skill
                                        `/review-feedback`.
+  approvals.jsonl                    — gitignored. Log durable (append-only)
+                                       de las cards aprobadas desde el
+                                       dashboard (👍/✓). Cada aprobación
+                                       también setea `approved_at` en
+                                       items.jsonl; este log permite
+                                       re-materializarlas tras reconstruir
+                                       el catálogo vía
+                                       retrofit/apply_approvals.py. Ver
+                                       sección "Aprobación humana".
   images/                            — gitignored. Espejo local de
                                        portadas (Image storage Fase 1):
                                        1 archivo por imagen, nombre
@@ -820,6 +831,58 @@ scripts/
                                        'common' nunca se degrada a 'rare').
                                        Flags: --dry-run, --force.
                                        Registrado en Panel de Control.
+    apply_approvals.py               — re-materializa el log durable
+                                       data/approvals.jsonl sobre items.jsonl
+                                       (golden records). Para usar tras una
+                                       reconstrucción del catálogo de cero,
+                                       cuando se perdieron los `approved_at`.
+                                       Match por cluster_key (fallback url).
+                                       Idempotente. Flags: --dry-run.
+                                       Registrado en Panel de Control.
+    sync_cover_images.py             — saneamiento integral de imágenes del
+                                       corpus (contrapartida-de-datos del
+                                       extractor; ver gotcha #31). Hace, en
+                                       orden, por cada item:
+                                       (1) PORTADA MALA: si image_url es un
+                                       placeholder/banner conocido (visuel_defaut
+                                       de Manga-Sanctuary, banner "Lista de
+                                       Mangas" de Panini MX), promueve la 1ª
+                                       imagen real de images[] a portada, o la
+                                       limpia (→ 📚) si no hay.
+                                       (2) images[0] == PORTADA: re-sincroniza
+                                       images[0] con image_url/image_local (la
+                                       que muestra la card). Bug 2026-06-02:
+                                       tomos Dark Horse Deluxe mostraban en el
+                                       carrusel una foto genérica de la tienda
+                                       en vez de la portada PRH por ISBN.
+                                       (3) BASURA: elimina duplicados exactos
+                                       (Panini [cover,cover,cover]), dups
+                                       http/https, banners y avatares de UI
+                                       (KADOKAWA top_bar_banner/bnr_*, avatares
+                                       AnimeClick /bundles/accommon/ + /avatar/,
+                                       íconos Funside icona_lucchetto).
+                                       (4) PRODUCTOS RELACIONADOS: descarta
+                                       galerías que son otros tomos/series, no
+                                       fotos propias del producto (Star Comics
+                                       /fumetti-cover/thumbnail/, Manga-Sanctuary
+                                       /objet/150/). Deja solo la portada.
+                                       Salta aprobados (--include-approved).
+                                       Idempotente. Flags: --dry-run,
+                                       --include-approved. Registrado en Panel
+                                       de Control.
+    consolidate_sources.py           — modelo 1-fila-por-producto: colapsa
+                                       filas que comparten cluster_key (mismo
+                                       producto en varias fuentes con URLs
+                                       distintas) en UNA fila con sources[]
+                                       (todas las fuentes), imágenes union
+                                       (portada canónica primera) y extras
+                                       union. Delega en manga_watch.
+                                       consolidate_by_cluster (la primitiva que
+                                       también usa append_jsonl al ingestar).
+                                       Idempotente. Corre como paso [4g] del
+                                       pipeline tras la estandarización (que
+                                       reasigna edition_key → nuevos clusters).
+                                       Flags: --dry-run. Panel de Control.
     translate_descriptions.py        — traduce description → description_es
                                        y extras[].description →
                                        extras[].description_es usando
@@ -886,9 +949,11 @@ scripts/
                                        subagentes en paralelo (chunks ~150)
                                        que asignan series_key/edition_key,
                                        estandarizan título, mueven non-manga
-                                       a blacklist, deduplican. Solo procesa
-                                       items nuevos — los antiguos llevan
-                                       timestamp y se saltean. Ver gotcha #21.
+                                       a blacklist, y consolidan duplicados
+                                       FUSIONANDO sources[] (vía
+                                       consolidate_by_cluster, no borrando).
+                                       Solo procesa items nuevos — los antiguos
+                                       llevan timestamp y se saltean. Ver gotcha #21.
   evaluate-sources/SKILL.md          — Skill manual: evalúa fuentes candidatas
                                        ANTES de implementarlas. Input: lista de
                                        URLs en cualquier formato. Evalúa content
@@ -932,6 +997,13 @@ web/
                                        /api/image-manager/save. Indicadores
                                        de calidad vía GET
                                        /api/image-file-sizes.
+                                       Deep-link `?item=<url>&return=<url>`:
+                                       abre directo el editor de ese item
+                                       (botón "🖼️ Editar imágenes" del
+                                       detalle/cards en index.html) y muestra
+                                       "← Volver al detalle" para el round-trip
+                                       (al volver, index.html recarga y se ven
+                                       las imágenes nuevas).
   panel.html                         — Panel de control (HTML PÚBLICO pero
                                        solo funcional con admin_serve.py en
                                        port 8001). Llama a
@@ -1089,11 +1161,41 @@ something broke.
 
 ## The 7 design decisions you MUST understand
 
-### 1. Storage = JSONL with upsert-by-URL semantics
+### 1. Storage = JSONL, UNA fila por PRODUCTO con `sources[]` (no por URL)
 
-`data/items.jsonl` is NOT append-only anymore. It's an upsert table:
-**one line per unique URL** (normalized via `normalize_url_for_dedup`).
-`append_jsonl()` does read-modify-write, ~50ms for 3000 items.
+**Cambio 2026-06-02 (decisión del owner):** `data/items.jsonl` ahora guarda
+**una línea por PRODUCTO físico** (cluster), no por URL. Cada fila lleva un
+array **`sources[]`** con todas las fuentes donde se encontró el producto
+(cada entrada: `name`, `url`, `price`, `country`, `stock_type`,
+`image_url`, etc. — ver `source_entry()`).
+
+Cuando el scraper re-encuentra un producto que ya existe (otra fuente, otra
+URL), **NO agrega una fila nueva**: suma esa fuente al array `sources[]` de la
+fila existente. `append_jsonl()` implementa esto:
+1. Upsert por URL normalizada (refresca la fila de esa URL exacta).
+2. `sources[]` es sticky+merge: preserva las fuentes hermanas y refresca/agrega
+   la propia (un re-scrape de UNA fuente no borra las demás).
+3. **Consolidación final por `cluster_key`**: colapsa filas que comparten
+   producto (mismo `cluster_key`, URLs distintas) en UNA, vía
+   `consolidate_by_cluster()` → `merge_cluster()`.
+
+**`merge_cluster()` / `consolidate_by_cluster()` / `source_entry()` en
+`manga_watch.py` son la FUENTE ÚNICA DE VERDAD del merge.** Las usan
+`append_jsonl` (ingesta), `build_web` (embed) y el retrofit
+`consolidate_sources.py`. NUNCA reimplementar el merge en otro lado — la
+divergencia entre sitios de merge causó los bugs de fotos de 2026-06-02.
+
+`merge_cluster` elige la canónica (aprobada > estandarizada > ISBN > imagen >
+precio), rellena campos faltantes desde cualquier miembro, une `sources[]`
+(dedup por URL), une `images[]` con la **portada canónica primera** (carrusel[0]
+== card) y une `extras[]`.
+
+**Gotcha — `cluster_key` no es estable hasta estandarizar:** el heurístico del
+scraper a veces deja `edition_key` vacío → `cluster_key=url:` (standalone), y
+recién `/standardize-catalog` le asigna el `edition_key` real (cambiando el
+cluster_key). Por eso `consolidate_sources.py` corre como **paso final del
+pipeline** (fase `[4g]` de scrape_delta/full), DESPUÉS de la estandarización,
+para re-consolidar las filas que recién ahí comparten producto. Es idempotente.
 
 History is NOT preserved (we used to be append-only, with 2.5x bloat).
 If we need price history later, that's a separate event log.
@@ -1153,11 +1255,18 @@ Sources currently marked mixed (`purity: mixed`):
 
 ### 4. Multi-source grouping by `cluster_key` (ISBN → edition_key → fuzzy → url) — tier-based variant discriminant
 
-`items.jsonl` keeps one line per unique URL. **Multi-source aggregation
-is done at presentation by `cluster_key`**, computed once per row by
-`derive_cluster_key(item)` in `manga_watch.py` and stored in the
-JSONL via `candidate_to_json`. The same key is consumed by
-`build_web.py` (`_group_by_cluster_key`) and the JS `dedupByUrl()`
+**Actualización 2026-06-02:** desde el cambio a 1-fila-por-producto (decisión
+#1), la agregación multi-fuente se **materializa al ingestar** (`append_jsonl`
+→ `consolidate_by_cluster`), guardando `sources[]` en la fila. La presentación
+(`build_web` + dashboard `dedupByUrl`) **igual agrupa por `cluster_key` como red
+de seguridad** y une los `sources[]` guardados — así una fila ya consolidada +
+cualquier fila suelta del mismo producto colapsan sin perder fuentes. El
+`cluster_key` sigue siendo el discriminante; lo que cambió es DÓNDE vive el
+array de fuentes (ahora en disco, antes solo en presentación).
+
+`cluster_key` se computa por fila con `derive_cluster_key(item)` en
+`manga_watch.py` y se guarda en el JSONL vía `candidate_to_json`. La misma
+clave la consume `build_web.py` (`_group_by_cluster_key`) y el JS `dedupByUrl()`
 in `web/index.html`.
 
 Four cluster-key shapes, in priority order:
@@ -1325,8 +1434,10 @@ without re-scraping everything.
 
 ## Feedback y curación desde el modal
 
-El footer del modal de detalle tiene dos botones:
+El footer del modal de detalle tiene tres botones:
 
+- **👍 / ✓ (aprobar)** — marcar la card como correcta (golden record). Ver
+  sección "Aprobación humana" abajo.
 - **👎 (feedback)** — reportar un problema con el item (datos erróneos,
   clasificación equivocada). El item NO se elimina.
 - **Lápiz (curación)** — 3 acciones operativas con efecto inmediato:
@@ -1370,6 +1481,59 @@ El campo `action` distingue el tipo:
 
 **No modificar el comportamiento** sin actualizar los handlers en
 `serve.py` y los métodos en `web/index.html` a la vez.
+
+## Aprobación humana (golden records) — `approved_at`
+
+El owner puede marcar una card como **correcta y definitiva** desde el
+dashboard. Es el patrón *golden record / human-in-the-loop*: un item
+aprobado queda **congelado** (los procesos automáticos no lo tocan) y sirve
+de **referencia** de "dato bien hecho". Es el equivalente humano de
+`standardized_at` (que es el "verificado por el robot").
+
+**Schema** (campos nuevos en cada fila de `items.jsonl`, sticky en
+`append_jsonl`, parte de `_CURATED_FIELDS`):
+- `approved_at` (ISO UTC) — su presencia = aprobado. Ausente/`""` = sin revisar.
+- `approved_by` — `"owner"`.
+
+**Granularidad = por card (cluster).** Aprobar marca TODAS las filas del
+`cluster_key` del item clickeado (clusters `url:` standalone → sólo esa fila).
+
+**UI** (`web/index.html`): botón 👍/✓ en el footer del modal **y** toggle
+rápido (candado) al hover en la card del catálogo (ediciones de 1 tomo +
+grid de tomos). Badge ✓ verde en cards aprobadas. Filtro sidebar "Estado de
+revisión" (Todos / ✓ Aprobados / Sin revisar) vía `filters.approval`.
+
+**Congelado** (lo que da el valor — ver `is_approved()` en `manga_watch.py`):
+- `append_jsonl`: si el item existente está aprobado, **se congela toda la
+  metadata descriptiva** y sólo se refrescan los campos volátiles de mercado
+  `_VOLATILE_FIELDS = (price, stock_type, sources, detected_at)`.
+- Retrofits (`rescore`, `clean_titles`, `filter_non_manga`,
+  `filter_collectible`, `set_rarity`, `backfill_metadata`,
+  `translate_descriptions`): **saltean items aprobados por defecto**; flag
+  `--include-approved` para forzar. Los filtros SIEMPRE conservan (nunca
+  rechazan) un item aprobado.
+- Skills (`/standardize-catalog`, `/review-feedback`,
+  `/enrich-series-aliases`): excluyen items aprobados del set a modificar;
+  los pueden **leer como ejemplos de referencia** pero NUNCA los sobreescriben.
+
+**Endpoints:**
+- `POST /api/approve` `{url, approved: bool, reason?}` — setea/limpia
+  `approved_at`/`approved_by` en todo el cluster del item, reescribe
+  `items.jsonl` atómico, y appendea a `data/approvals.jsonl`.
+- `POST /api/approve-edition` `{edition_key, approved: bool, reason?}` —
+  aprobación masiva: marca/limpia TODOS los tomos de la edición en una sola
+  reescritura atómica + una entrada de log por cluster. Lo usa el botón
+  "✓ Aprobar toda la edición" de la vista de edición (toggle: aprueba todo
+  si falta alguno, desaprueba todo si ya estaban todos).
+
+**Durabilidad:** cada aprobación se loguea a `data/approvals.jsonl` (append-only,
+gitignored). Si se reconstruye `items.jsonl` de cero,
+`scripts/retrofit/apply_approvals.py` re-materializa los flags desde el log
+(match por `cluster_key`, fallback `url`). Idempotente.
+
+**`data/approvals.jsonl`** — schema (append-only): `cluster_key`, `url`,
+`action` (`"approve"`|`"unapprove"`), `approved_at`, `approved_by`, `reason`,
+`submitted_at`, + snapshot (`series_key`, `edition_key`, `title`, `volume`).
 
 ## Conventions for code changes
 
@@ -1689,6 +1853,26 @@ images[0]  →  siempre la portada (sincronizada con image_url / image_local)
 images[1+] →  galería, extras, vistas adicionales
 ```
 
+**El carrusel es a nivel CLUSTER, no por fila (2026-06-02).** Un producto
+(cluster) puede tener varias filas (una por fuente: PRH + Dark Horse, etc.),
+cada una con su `images[]`. El carrusel del detalle muestra la **UNION** de
+`images[]` de todas las filas del cluster, deduplicada por URL (sin esquema ni
+query). **Invariante crítico**: la portada de la fila canónica (la que muestra
+la card, `merged.image_url`) va **SIEMPRE primera** en la union — si no, el
+carrusel podía empezar con la foto de otra fuente y discrepar de la card (bug
+2026-06-02: Hellsing/Blade Deluxe mostraban portada PRH en la card y foto
+genérica de Dark Horse en el carrusel). Este merge vive en TRES lugares que
+DEBEN coincidir: `web/index.html` (`dedupByUrl`), `scripts/build_web.py`
+(`_merged_canonical`), y `web-next/components/item/ItemHero.tsx`. Si tocás uno,
+tocá los tres.
+
+**El gestor de imágenes (`web/image-manager.html`) opera a nivel CLUSTER.**
+Carga la misma union que el detalle (no solo la fila abierta) y al guardar
+**propaga el set editado a TODAS las filas del cluster** (endpoint
+`_update_item_images` en serve.py, resuelve el cluster por `cluster_key`; los
+clusters `url:` standalone solo tocan su fila). Así detalle y gestor muestran
+siempre lo mismo y borrar/agregar una foto no reaparece desde una fila hermana.
+
 **`kind` solo tiene 2 valores válidos:**
 
 | kind | Significado |
@@ -1827,7 +2011,7 @@ Serving en Fase 2: dominio propio (como el `ASSETS_PUBLIC_BASE_URL` de
 PandaTrack), **no** el URL `r2.dev` (está rate-limited, es sólo para
 dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
 
-## The 33 known gotchas
+## The 34 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -2513,12 +2697,29 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
       `<main>`, `<article.product>`) y restringe los selectores de
       gallery a ese subtree.
     - Filtro post-extracción de "mismo folder que la cover": si la cover
-      tiene un parent path con >=2 segmentos, las URLs gallery que NO
-      contienen ese stem se descartan SOLO cuando se detectan >=2
-      outliers (señal de contaminación real). Si hay <=1 outlier, se
-      asume site con paths heterogéneos legítimos y no se filtra.
+      tiene un parent path con >=2 segmentos, las URLs gallery cuyo
+      **directorio padre NO es exactamente igual** al de la cover se
+      descartan SOLO cuando se detectan >=2 outliers (señal de
+      contaminación real). Si hay <=1 outlier, se asume site con paths
+      heterogéneos legítimos y no se filtra.
     - Cap default en 6 imágenes (raro un producto real con más fotos
       distintas; protege contra explosión de un site mal estructurado).
+
+    **Fix 2026-06-01 — comparación por directorio EXACTO, no substring.**
+    El filtro original usaba `stem in im["url"]` (substring). Esto fallaba
+    cuando los "productos relacionados" viven en un SUBdirectorio del
+    folder de la cover: Star Comics sirve la cover en
+    `/files/immagini/fumetti-cover/<X>` y el carrusel de "otros volúmenes"
+    en `/files/immagini/fumetti-cover/thumbnail/<Y>`. El parent de la cover
+    (`.../fumetti-cover`) es substring del path del subdirectorio
+    (`.../fumetti-cover/thumbnail/...`), así que los thumbnails pasaban el
+    filtro y contaminaban el carrusel. Caso real: "One Piece 20th
+    Anniversary Limited Edition Silver 1" arrastraba thumbnails de My Hero
+    Academia, Deadrock, Detective Conan, Kagurabachi, Tenkaichi. El fix
+    compara el **directorio padre exacto** (`_parent_dir(url) ==
+    cover_parent`) en vez de substring, descartando subdirectorios. Los
+    casos de folders hermanos (Norma `/0001/44/` vs `/0001/35/`) siguen
+    funcionando porque parents distintos != iguales.
 
     **Edge case: wikis con URLs sintéticas** (`listadomanga-collections`
     con `?item=`, `blogbbm` con `?bbm-entry=`). Estos wikis emiten
@@ -2539,6 +2740,7 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     Tests: `test_extract_images_scope_filters_related_products`,
     `test_extract_images_respects_limit`,
     `test_extract_images_no_filter_when_paths_shallow`,
+    `test_extract_images_star_comics_drops_related_products_subfolder`,
     `test_backfill_images_skips_synthetic_urls`.
 
 32. **`flush_source_candidates()` — escritura incremental para sobrevivir
@@ -2644,6 +2846,34 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     Si el timeout dispara con frecuencia en un wiki, investigar: ¿creció
     el catálogo del sitio? ¿hay anti-bot nuevo? ¿hay una request hung?
     Luego ajustar el timeout o añadir sleeps al parser.
+
+34. **`serve.py` es threaded — toda escritura a `items.jsonl` DEBE ir bajo
+    `@_serialized` (lock global), o se pierden cambios por race.**
+
+    El server (`ThreadedTCPServer(ThreadingMixIn, ...)`) atiende requests en
+    threads paralelos. Los endpoints que modifican `items.jsonl`
+    (`_apply_approve`, `_apply_approve_edition`, `_apply_move`,
+    `_apply_remove`, `_apply_merge_items`, `_update_item_images`) hacen
+    **read-modify-write del archivo ENTERO**: `_load_items()` → mutar →
+    `_write_items()`. Sin serializar, dos requests concurrentes (clics
+    rápidos: aprobar varios items, o aprobar + curar) leen ambos el estado
+    viejo y el último `_write_items` gana, **borrando los cambios del otro**.
+
+    Síntoma real reportado (2026-06-02): el owner aprobaba varios items y
+    "después de unas interacciones se borraban, quedaban sólo unas". No era
+    un borrado — eran writes que se pisaban.
+
+    Fix: decorador `@_serialized` (envuelve la función en `with _ITEMS_LOCK`)
+    sobre las 6 funciones mutadoras. Serializa la sección crítica
+    load→modify→write completa (lockear sólo `_write_items` NO alcanza: la
+    lectura stale pasa antes del lock). **Regla para endpoints nuevos**: si
+    tu handler reescribe `items.jsonl`, decoralo con `@_serialized`. NO
+    decores funciones que se llamen entre sí (Lock no reentrante → deadlock);
+    `_log_feedback` queda sin lock a propósito (sólo lee + appendea a
+    feedback.jsonl, y lo llaman funciones que ya tienen el lock).
+
+    Test de regresión: `test_serve_concurrent_approvals_do_not_clobber`
+    (25 threads aprobando en paralelo → los 25 deben persistir).
 
 ## When the user reports "this item shouldn't be here"
 
@@ -2872,6 +3102,127 @@ These came up in conversation but were explicitly deferred:
   colecciones conocidas (ids 1606, 3020, 6090, 6242, 2688) + dry-run
   comparado contra items.jsonl actual, se decide si avanzar Fase 2
   inmediatamente o esperar feedback del corpus.
+
+---
+
+Last updated: 2026-06-02 (GC del disco — borrados 6043 huérfanos / 1068 MB; fix CRÍTICO del set de referenciados) — El owner pidió borrar TODOS los archivos huérfanos de `data/images/`. **Fix crítico antes de borrar:** el GC de `mirror_images._run_gc` solo contaba `image_local` + `images[].local` como referenciados — con el modelo 1-fila-por-producto, cada fila guarda `sources[]` con su propio `image_local`, y había **58 archivos referenciados SOLO por `sources[].image_local`** que el GC habría borrado por error. Ahora el set de referenciados incluye `sources[i].image_local` (regla permanente: cualquier campo que apunte a un archivo local DEBE estar en el set del GC). Además, esos 58 eran mayormente basura (píxeles/wallpapers) que la purga anterior limpió de image_local/images[] pero NO de sources[]; se agregó `_clean_sources_junk()` a `sync_cover_images` (vacía sources[].image_local/image_url basura) para que queden huérfanos de verdad. Verificado pre-borrado: 0 items `_raw`, `cover_preview.json` no referencia archivos locales, set de referenciados completo. **Resultado: 21973 → 15930 archivos en disco (6043 borrados, 1068 MB liberados), 0 huérfanos, 0 referencias rotas.** 535 tests. El GC NO está wireado al pipeline (borrado es destructivo); correr `mirror_images --gc-delete` manualmente cuando se acumulen orphans (las portadas reemplazadas por upgrade_image_resolution/fetch_better_covers/purga de basura generan orphans con el tiempo).
+
+---
+
+Last updated: 2026-06-02 (barrido masivo de imágenes basura — placeholders/píxeles/banners/ads) — El owner reportó muchas portadas que son íconos de estrella, banners o placeholders. Se amplió `sync_cover_images` con detección de basura por ARCHIVO LOCAL (además de por patrón de URL): `_compute_junk_local()` marca como basura los archivos (a) de 0 bytes, (b) <6KB (píxeles 1×1 de 43B, íconos, garabatos), y (c) el MISMO archivo compartido por **≥4 OBRAS DISTINTAS** (bytes idénticos desde URLs distintas = placeholder/banner reusado). **Guard anti-falso-positivo:** se cuentan OBRAS distintas (prefijo de título), no series_key — así una obra fragmentada en varios series_key que comparte su portada REAL no se marca (validado: "A Tale of the Secret Saint" NO se tocó). Los 9 archivos grandes detectados se inspeccionaron visualmente y eran 100% basura (anuncio de fundas Funside ×35 obras, placeholder blanco listadomanga ×13, "now printing" e-hon, aviso `adulte.png` manga-sanctuary, banners otakucalendar, banner Amazon Prime, póster feria Jump SQ, póster festival Amiens). `_fix_bad_cover`/`_rebuild` ahora remueven basura por URL O por archivo local: si la portada es basura, promueven la 1ª imagen real de la galería o limpian a 📚; las entradas basura de galería se descartan. **Resultado: 234 items corregidos (163 portadas, 71 galerías), 0 referencias a basura restantes, 0 portadas con URL basura.** Items sin imagen (📚): 46 → 208 (los que su única "foto" era un placeholder, ahora muestran el ícono limpio). Nuevos patrones en `IMAGE_URL_BAD_PATTERNS`: `nowprinting`, `/img/adulte`, `/images/site/yomi/`, `img_star`. **Tests: 532 → 535** (+3: detección junk-local + guard de obra fragmentada + promoción sobre junk). Los archivos basura quedan huérfanos en disco (un `mirror_images --gc-delete` los puede purgar después; no urgente).
+
+---
+
+Last updated: 2026-06-02 (espejo local de imágenes completado al 99.5% + sync de images[0].local) — Auditoría a pedido del owner ("¿están todas las fotos descargadas?"). Hallazgos y fixes: **(a)** ~2015 portadas de Mangavariant tenían los bytes descargados (`row.image_local`) pero el campo `images[0].local` vacío → el carrusel hotlinkeaba la 1ª foto en vez de usar la copia local. `sync_cover_images._rebuild` ahora sincroniza `images[0].local` con `image_local` cuando son la misma imagen (durable). **(b)** Bajadas 28 imágenes que faltaban (mirror_images backfill). **(c)** 9 de 13 portadas con URL muerta (404 — Manga-Sanctuary cambió rutas de imágenes) recuperadas por ISBN vía Amazon CDN (recuperación acotada reusando los helpers de `fetch_better_covers`: `_candidates_from_isbn` + OpenLibrary + Google Books; cuando NO hay imagen original, `fetch_better_covers` salta el chequeo de hash y acepta la candidata por ISBN). **(d)** Patrones nuevos en `IMAGE_URL_BAD_PATTERNS`: `img_star` (ícono de rating honto.jp) + `/img/bnr/` (banner promo Rakuten) que se colaban como portada. **(e)** 1 galería con URL basura (`https://mangame.it` home) eliminada. **Estado final: portadas 10252/10304 (99.50%) espejadas, galería idx>0 100% local, 0 refs rotas.** Quedan 4 portadas sin recuperar (URL fuente 404 + sin cover en Amazon/OpenLibrary/Google Books por ISBN: Go Nagai Artbook 2, Re:Zero Intégral Coffret 1, Radiant Coffret 4, Übel Blatt Deluxe 4) — requieren URL directa manual o web-search con API key. **Diagnóstico clave documentado:** el mirror baja la URL directa de `image_url` (no necesita HTML); cuando falla es porque esa URL da 404 (imagen movida/borrada en la fuente), no por falta de acceso. Tests 532.
+
+---
+
+Last updated: 2026-06-02 (web-next ajustado al modelo 1-fila-por-producto — tabla de Fuentes leía cluster.items) — Tras el refactor, web-next quedó con un gap: derivaba las fuentes y los facets de país/editorial de `cluster.items` (las filas agrupadas), pero ahora hay 1 sola fila por producto con las fuentes en `sources[]`. Síntoma: la tabla "Fuentes" del item detail mostraba "Fuentes (1)" en productos multi-fuente (p.ej. Hellsing PRH+Dark Horse), perdiendo las hermanas. **Fixes:** (a) tipo `SourceEntry` + campo `Item.sources?` en lib/types.ts; (b) `SourcesList` recibe `sources: SourceEntry[]` (no `items`), renderiza name/url/price/release_date/stock_type; (c) item page pasa `canonical.sources` (fallback a derivar de items si legacy), `hasMultipleSources = sources.length > 1`; (d) `lib/data.ts buildCluster` une country/publisher/language desde `canonical.sources[]` además de las filas (facets/badges no pierden países de fuentes hermanas). El carrusel (ItemHero) ya estaba bien — une las imágenes de cluster.items, y la fila consolidada ya trae el `images[]` completo. **Verificado en vivo (puerto 3001):** item Hellsing Deluxe 1 → carrusel 2 imágenes navegables (ambas renderizan, wrap OK), **FUENTES (2)** con PRH $54.99 + Dark Horse $44.99; catálogo 60 cards con 60 imágenes cargadas (0 rotas); edición hellsing-darkhorse-deluxe con 3 tomos. 0 errores de consola (solo warnings preexistentes de next/image `sizes`). type-check limpio, 14 tests web-next verdes. Docs: FRD-005 (tabla de fuentes), esta entrada.
+
+---
+
+Last updated: 2026-06-02 (REFACTOR de almacenamiento — 1 fila por PRODUCTO con sources[], dedup al ingestar) — El owner aclaró que su intención original (especificada temprano) era: cuando el scraper re-encuentra un producto ya existente, NO agregar una fila nueva, sino sumar la fuente al array `sources[]` de la fila existente. El repo en cambio guardaba 1 fila por URL y fusionaba al MOSTRAR (merge en presentación) — lo que generaba filas duplicadas del mismo producto y fue la raíz de todos los bugs de fotos recientes. Decisión confirmada vía AskUserQuestion: **refactor completo a 1-fila-por-producto**. Hecho por etapas con verificación:
+
+**Etapa 1 — Consolidación de datos.** Nuevo `scripts/retrofit/consolidate_sources.py`: agrupa items.jsonl por `cluster_key` y colapsa los duplicados de producto en 1 fila con `sources[]` guardado. Corpus: 10324 → **10304 filas** (20 productos multi-fuente colapsados; cada fila ahora tiene su `sources[]`). Backup en data/backups/.
+
+**Etapa 2 — Dedup al ingestar (durable).** `append_jsonl` ahora: (a) `sources[]` sticky+merge (un re-scrape de UNA fuente preserva las hermanas y refresca la propia); (b) consolidación final por `cluster_key` antes de escribir (`consolidate_by_cluster`) — un producto re-encontrado con otra URL suma su fuente en vez de crear fila. **Fuente única de verdad del merge:** `merge_cluster()` / `consolidate_by_cluster()` / `source_entry()` en manga_watch.py — las usan append_jsonl, build_web (delega) y el retrofit. Eliminé la lógica de merge duplicada de build_web (era un 2º sitio que podía divergir — la causa de los bugs previos). `merge_cluster` elige canónica (aprobada > estandarizada > ISBN > imagen > precio), une sources/images(portada primera)/extras, backfill de campos curados.
+
+**Etapa 3 — Pipeline + lectores.** `consolidate_sources` wireado como paso `[4g]` de scrape_delta/full (tras estandarización, que reasigna edition_key → nuevos clusters; idempotente). Dashboard `dedupByUrl` y `build_web` ahora unen los `sources[]` GUARDADOS al agrupar (en vez de reconstruirlos), sin el viejo bypass `preGrouped`. Registrado en Panel de Control.
+
+Verificado en navegador: catálogo 10304 cards, Hellsing = 1 card con 2 fuentes (PRH+Dark Horse), images[0]==portada, 0 errores de consola. **Tests: 524 → 530** (+6: merge_cluster sources-union/cover-first/single, consolidate_by_cluster, 2 de integración de append_jsonl — dedup por producto + re-scrape de una fuente preserva hermanas — y 1 del merge del skill). Decisiones #1 y #4 de CLAUDE.md reescritas.
+
+**Etapa 4 — skill `/standardize-catalog` migrado a fusionar (no borrar).** El merge del skill (SKILL.md + workflows/standardize-catalog.js) deduplicaba por (series,edition,volume) y BORRABA los duplicados (perdiendo sus fuentes). Ahora recomputa `cluster_key` tras reasignar edition_key y llama a `consolidate_by_cluster` (la misma primitiva que append_jsonl) → fusiona los duplicados conservando todas las fuentes en `sources[]`. Cierra el último hueco del refactor: ningún paso del pipeline pierde una fuente.
+
+**Etapa 5 — revisión exhaustiva (barrido de TODO el código + datos).** Un sweep completo (subagente sobre docs/código + auditorías de datos) encontró y arregló: **(a) 2 endpoints de curación de serve.py que rompían el modelo** — `_apply_merge_items` BORRABA la fila descartada (perdía su `sources[]`) → ahora fusiona con `merge_cluster`; `_apply_move` cambiaba `cluster_key` sin consolidar (creaba 2 filas con el mismo cluster_key si el destino ya tenía el tomo) → ahora corre `consolidate_by_cluster` tras mover. 2 tests de regresión nuevos. **(b) 1 portada mala residual** (banner promo de Rakuten `/img/bnr/event/` como portada) → patrón agregado a `IMAGE_URL_BAD_PATTERNS` + limpiada. **(c) 5 docs stale** que aún decían "upsert by URL / 1 línea por URL" como verdad actual (data-flow de CLAUDE.md, nota de flush, diagrama + traducción de ARCHITECTURE.md, docstring de build_web) → todas actualizadas al modelo nuevo. **Auditoría de datos final (10304 filas): 0 productos con >1 fila, 0 filas sin sources[], 0 entradas source sin url, 0 card≠carrusel a nivel fila, 0 huérfanos estandarizados-sin-keys, 100% slug.** Frentes verificados limpios: web/index.html, image-manager.html, web-next (agrupa bien + ItemHero une cluster con portada primera), endpoints `_apply_remove`/`_update_item_images`/`_apply_approve`. **Tests: 530 → 532.** Confirmado: una sola implementación de merge (`merge_cluster`/`consolidate_by_cluster`/`source_entry` en manga_watch.py) usada por append_jsonl, build_web, los retrofits, el skill y los endpoints de serve.py — sin sitios de merge divergentes.
+
+---
+
+Last updated: 2026-06-02 (carrusel a nivel CLUSTER — detalle vs gestor de imágenes mostraban distinto + portada canónica siempre primera) — El owner reportó el caso inverso al de Blade: en el detalle veía un carrusel de 2 fotos pero en el gestor de imágenes solo 1 (Hellsing Deluxe 1). **Causa raíz arquitectónica:** un cluster tiene N filas (una por fuente — PRH con ISBN + Dark Horse sin ISBN, fusionadas por `edition_key|volume`), cada una con su `images[]`. El **detalle hacía UNION** de las imágenes del cluster (2), pero el **gestor editaba una sola fila** (la canónica PRH, 1). Y peor: la union del dashboard armaba `merged.images` en **orden de archivo** mientras `merged.image_url` era el de la canónica → podían discrepar (mismo bug card≠carrusel pero a nivel cluster). **Fix en 4 frentes (el carrusel pasa a ser conceptualmente a nivel CLUSTER):**
+
+1. **Merge del dashboard** (`web/index.html` `dedupByUrl`): la portada canónica (`merged.image_url`, la que muestra la card) va SIEMPRE primera en la union; dedup por URL sin esquema/query. Garantiza carrusel[0] == card.
+2. **`scripts/build_web.py` `_merged_canonical`**: mismo fix (modo embebido) — tenía idéntico bug de orden-de-archivo.
+3. **`web-next/components/item/ItemHero.tsx`**: usaba solo `canonical.images` (mostraba 1) → ahora hace la misma union del cluster con la portada canónica primera. Los 3 lugares de merge ahora coinciden (documentado en la convención images[]).
+4. **Gestor de imágenes** (`web/image-manager.html` + endpoint `_update_item_images` en serve.py): `selectItem` carga la union del cluster (igual que el detalle); al guardar, el endpoint **propaga el set editado a TODAS las filas del cluster** (resuelto por `cluster_key`; standalone `url:` solo toca su fila). Así borrar una foto no reaparece desde una fila hermana, y `saveChanges` refleja la propagación en memoria.
+
+Verificado en navegador (server reiniciado): Hellsing Deluxe 1 → detalle 2 imágenes con images[0]==card, gestor 2 imágenes idénticas. **Auditoría exhaustiva del corpus: 0 de 10304 clusters con carrusel[0] != portada de la card.** Las 100 filas con `images[0].url != image_url` a nivel fila son los KADOKAWA `cover_500`/`cover_b` (misma imagen, otra resolución — inofensivas, el merge ya antepone la `cover_b`). **Tests: 522 → 524** (+2 de `build_web._merged_canonical`: portada primera + dedup por URL stem). web-next: type-check limpio, 14 tests. Docs: convención images[] (sección nueva "carrusel a nivel cluster" + "los 3 lugares de merge deben coincidir"), esta entrada.
+
+---
+
+Last updated: 2026-06-02 (saneamiento integral de imágenes — contaminación de carruseles + basura UI + portadas malas) — Continuación del fix anterior: el owner pidió limpiar también los carruseles con fotos de OTRAS series y revisar todo el tema de imágenes. Auditoría completa del corpus reveló 4 categorías de problema (además de la divergencia card≠carrusel ya resuelta), todas atacadas extendiendo el retrofit `sync_cover_images.py` + fixes de raíz en el extractor. **Tests: 512 → 522 (+10). Estado final: 0 divergencias, 0 basura UI, 0 contaminación de otras series, 0 portadas placeholder.**
+
+**1. Basura de UI en galerías (448 items).** Avatares de usuario de AnimeClick (`/bundles/accommon/`, `/immagini/avatar/`, `utente_registrato` — el carrusel levantaba el avatar de quien subió la edición), íconos de candado de Funside (`icona_lucchetto`), dups http/https. Agregados a `IMAGE_URL_BAD_PATTERNS` (fix de raíz: el extractor deja de capturarlos) + `_norm` del retrofit ahora ignora el esquema para colapsar dups http/https.
+
+**2. Contaminación de "productos relacionados" (60 items) — el bug que reportó el owner.** Star Comics servía en `/fumetti-cover/thumbnail/` una grilla de OTROS tomos/series (caso real: "Dragon Ball Official Guide" arrastraba Hellboy, Detective Conan, My Hero Academia); Manga-Sanctuary servía en `/objet/150/` las otras novedades del planning (las mismas 6 series — Whale Star, Captain Tsubasa, etc. — se repetían en Orange/Takopi/Zelda). En ambas la galería es 100% productos relacionados, NUNCA fotos propias del producto → `_is_related_product_thumb()` las descarta, dejando solo la portada (`images[0]`). Es la contrapartida-de-datos de gotcha #31 (el extractor ya filtra en scrape nuevo; esto limpia el histórico). Seguro: el filtro solo corre en posiciones ≥1, `images[0]` (portada) siempre se preserva — incluso para las 77 portadas de Star Comics que legítimamente viven en `/thumbnail/`.
+
+**3. Portadas malas (33 items + 1 manual).** `image_url` era un placeholder/banner: `visuel_defaut` de Manga-Sanctuary (12, 11 con ISBN → recuperables luego con `fetch_better_covers`) y el banner promo "Lista de Mangas Panini" de Manga México (16, sin ISBN, idéntico en 16 mangas distintos). `_fix_bad_cover()` promueve la 1ª imagen real de `images[]` o limpia a 📚. Dispara SOLO con `_is_junk` (no con related-thumb, para no romper las portadas legítimas de Star Comics en `/thumbnail/`). Caso manual: "Blue Box Cofanetto 1" tenía `image_url` apuntando a `cuckoos-box` (¡otra serie!) con la portada real `bluebox-box` en `images[1]` — swap manual (detectar "portada de otra serie" requiere match de nombre, no generalizable a 1 item). Fixes de raíz: banner promo agregado a `IMAGE_URL_BAD_PATTERNS`; guard `visuel_defaut` en `manga_sanctuary.py` (el wiki parser seteaba image_url sin filtrar el placeholder).
+
+**Nota de operación:** `serve.py` corriendo (threaded) pisó una escritura intermedia del retrofit cuando el owner interactuó con el dashboard (gotcha #34 aplicado a escrituras EXTERNAS, no solo a los endpoints). Mitigación: aplicar + verificar en la misma cadena de comando; idealmente no tocar el dashboard mientras corre un retrofit externo. El retrofit es idempotente, así que re-correr converge.
+
+10 tests nuevos (2 del extractor rechazando avatar/banner + 8 de las funciones del retrofit: prepend cover, dedup exacto, dedup http/https, drop Star Comics thumbnails, drop Manga-Sanctuary thumbnails, clear placeholder cover, promote real cover, noop cuando ya está sincronizado). Import dual robusto en el retrofit (`try manga_watch / except scripts.manga_watch`) para sobrevivir el wrapper raíz bajo pytest. Docs: file map, README de retrofits, registry, esta entrada.
+
+---
+
+Last updated: 2026-06-02 (fix: la card y el carrusel mostraban portadas distintas — images[0] desincronizado) — El owner reportó en un tomo de Blade of the Immortal Deluxe (Dark Horse) que la foto de la card era una y al abrir el carrusel/lightbox aparecía otra distinta, sin poder navegar. **Causa raíz:** violación de la convención `images[]` ("images[0] siempre es la portada, sincronizada con image_url/image_local"). La card usa `coverSrc()` (image_local/image_url = portada PRH por ISBN); el lightbox usa `carouselSrc(item, 0)` = `images[0].url`, que tenía una foto genérica de la tienda (`BOIDEV_DHD_PHOTO_DHD_DSP_02.png`, igual para los 10 tomos) — distinta de la portada y única en el array → sin flechas. La divergencia se acumuló en **161 filas** por rutas de escritura que actualizaron image_url/image_local sin tocar images[0] (backfill manual de ISBNs/portadas, distintos extractores de detail page). **Fix (datos):** nuevo retrofit `scripts/retrofit/sync_cover_images.py` que re-establece `images[0] == portada` y de paso elimina duplicados exactos (Panini `[cover,cover,cover]`) y banners de publicidad colados (KADOKAWA `top_bar_banner`, `bnr_honyaclub`). Acotado a esos dos casos seguros — NO toca la contaminación de "productos relacionados" (gotcha #31, aparte). 606 items corregidos (61 caso "imagen distinta" = el bug; 545 caso "duplicados/banners"); 0 divergencias genuinas restantes. Salta aprobados. **Fix (raíz):** `top_bar_banner` y `/bnr_` agregados a `IMAGE_URL_BAD_PATTERNS` para que el extractor no recapture esos banners de KADOKAWA Store. Registrado en Panel de Control + README de retrofits + file map. **Tests: 512/512** (sin tests nuevos — el retrofit es one-shot correctivo de datos; el cambio de patrones es aditivo). Backup `data/backups/items.jsonl/`.
+
+---
+
+Last updated: 2026-06-01 (fix gotcha #31 — filtro de stem-folder por directorio EXACTO, no substring; contaminación de carrusel Star Comics) — El extractor `_extract_images_from_detail_soup` (paso 6, filtro "mismo folder que la cover") usaba un check substring `stem in im["url"]` que fallaba cuando los "productos relacionados" viven en un SUBdirectorio del folder de la cover. Star Comics sirve la cover en `/files/immagini/fumetti-cover/<X>` y el carrusel de "otros volúmenes" en `/files/immagini/fumetti-cover/thumbnail/<Y>`; como el parent de la cover es substring del path del subdirectorio, los thumbnails de OTRAS series pasaban el filtro y contaminaban el carrusel (caso real: "One Piece 20th Anniversary Limited Edition Silver 1" arrastraba thumbnails de My Hero Academia, Deadrock, Detective Conan, Kagurabachi, Tenkaichi). **Fix**: comparar el directorio padre EXACTO (`_parent_dir(url) == cover_parent`) en vez de substring. Los folders hermanos (Norma `/0001/44/` vs `/0001/35/`) siguen funcionando. Un `/review-feedback` previo ya había limpiado los datos del corpus (70 items Star Comics, 267 imágenes); este fix corrige el extractor del scraper para que un re-scrape no las reintroduzca. **Tests: 510 → 511 (+1: `test_extract_images_star_comics_drops_related_products_subfolder`).** Doc: gotcha #31 actualizada.
+
+---
+
+Last updated: 2026-06-02 (FIX persistencia: race en escrituras concurrentes de items.jsonl — aprobaciones que "desaparecían") — El owner reportó que aprobaba varios items y tras unas interacciones quedaban sólo algunos. **Causa raíz:** `serve.py` es threaded (`ThreadedTCPServer`) y los 6 endpoints que modifican `items.jsonl` (`_apply_approve`, `_apply_approve_edition`, `_apply_move`, `_apply_remove`, `_apply_merge_items`, `_update_item_images`) hacían read-modify-write del archivo entero **sin lock** → requests concurrentes (clics rápidos) se pisaban y el último write borraba los cambios del otro. No era borrado, eran writes clobbering. **Fix:** decorador `@_serialized` (lock global `_ITEMS_LOCK`) sobre las 6 funciones, serializando la sección crítica load→modify→write. `_log_feedback` queda sin lock (no escribe items.jsonl, lo llaman funciones ya bajo lock → evita deadlock, Lock no reentrante). Verificado en navegador: 6 aprobaciones concurrentes (`Promise.all`) → 6/6 persisten (antes se perdían). Test de regresión `test_serve_concurrent_approvals_do_not_clobber` (25 threads → 25 persisten). **Tests: 511 → 512.** Nuevo gotcha #34. Las 7 aprobaciones reales del owner (en uso en vivo durante el fix) se preservaron intactas. Docs: gotcha #34 + esta entrada.
+
+---
+
+Last updated: 2026-06-02 (aprobación masiva de una edición — botón "Aprobar toda la edición") — En la vista de edición de `web/index.html` (`view==='edition'`), una barra arriba de la grilla con un botón toggle **"✓ Aprobar toda la edición"** (muestra "Edición aprobada — desaprobar todo" cuando ya están todos) + contador de tomos aprobados. Endpoint nuevo `POST /api/approve-edition {edition_key, approved}` (`_apply_approve_edition` en serve.py): marca/limpia `approved_at`/`approved_by` en TODAS las filas con ese `edition_key` en **una sola reescritura atómica** (vs N requests), y loguea una entrada por cluster_key a `approvals.jsonl` para el replay de `apply_approvals.py`. Frontend: getter `editionApprovalState` (total/approved/all) + `toggleApproveEdition()` (actualiza in-memory sin reload). Verificado en navegador (berserk-panini-cofanetto, 4 tomos: aprobar→4/4 en disco by owner, desaprobar→0, log con 4 approve + 4 unapprove). Limpiados los artefactos de aprobación de las pruebas (corpus queda en 0 aprobados). Sin schema nuevo, sin tests Python nuevos (solo UI + endpoint). Docs: CLAUDE.md (sección Aprobación humana), `docs/web-html/PRD.md`, `docs/admin/README.md`.
+
+---
+
+Last updated: 2026-06-02 (navegación entre tomos de la edición desde el detalle + fix de teclado) — En `web/index.html`, la página de detalle (`view==='volume'`) ahora tiene **flechas laterales ‹ ›** fijas (`position:fixed`, centradas verticalmente, `left/right-2 lg:6`) para saltar al tomo anterior/siguiente de la **misma edición** sin volver a la grilla, más navegación por **teclado ←/→**. Getters nuevos: `volumeSiblings` (items con el mismo `edition_key`, ordenados por `_volumeNumber`), `volumeNavIndex`, `hasVolumePrev/Next()`, `volumeNavPrev/Next()` (reusan `openVolume`). Las flechas se ocultan cuando no hay hermanos (ediciones de 1 tomo / standalone) y mientras el lightbox está abierto. **Fix de raíz importante:** el handler global de `keydown` usaba `root.__x.$data`, pero en este build de Alpine v3 `el.__x` es `undefined` (usa `_x_dataStack`); el guard `if (!root.__x) return` hacía que **TODO el teclado saliera en silencio** — Escape (volver de vista) y las teclas del lightbox (←/→/Esc) nunca funcionaron. Cambiado a `Alpine.$data(root)` (API oficial v3); ahora Escape, lightbox y la nueva navegación por flechas funcionan. Verificado en navegador (Bleach Maximum 37 tomos: click + teclado navegan vol↔vol, Escape vuelve a edición; item de 1 tomo no muestra flechas). Sin backend ni schema, sin tests nuevos (solo UI). Doc: `docs/web-html/PRD.md`.
+
+---
+
+Last updated: 2026-06-01 (lightbox en la página de detalle del HTML) — Clic en la imagen del detalle (`view==='volume'` en `web/index.html`) la abre en grande, portando el comportamiento del `ImageCarousel` de web-next. Overlay `position:fixed; z-index:9999; bg rgba(0,0,0,0.92)`, imagen `max-width:80vw/max-height:75vh`, flechas ‹ ›, ✕, contador "N/total", etiqueta Portada/Galería/Extra + descripción, dots, teclado ←/→/Esc, `body.style.overflow='hidden'` mientras está abierto. Estado `lightboxOpen` + métodos `openLightbox/closeLightbox/lightboxNext/lightboxPrev` (reusan `itemImages`/`carouselSrc`/`modalImageIdx` ya existentes). Reseteado en `openVolume`/`goHome` para no dejar el scroll bloqueado. Tanto el carrusel multi-imagen como la imagen única son clickeables (`cursor-zoom-in`). Verificado en navegador (abre, navega 3 imágenes, cierra y restaura overflow). Sin backend ni schema, sin tests nuevos (solo UI). Doc: `docs/web-html/PRD.md`.
+
+---
+
+Last updated: 2026-06-01 (acceso rápido al gestor de imágenes por item — deep-link + round-trip) — Botón **🖼️ Editar imágenes** en el footer de la página de detalle (`view==='volume'`) **y** ícono 🖼️ al hover en las cards (ediciones de 1 tomo + grilla de tomos) de `web/index.html`. Navega (misma pestaña) a `image-manager.html?item=<url>&return=<url-actual>`. El gestor (`web/image-manager.html`) ahora parsea esos params en `init()` (`_handleDeepLink`): `?item` abre directo el editor de galería de ese item (`selectItem`), `?return` habilita **"← Volver al detalle"** (barra superior + header del editor, vía `goBackToDashboard()`). Como `index.html` recarga `items.jsonl` al volver y el hash `#/volume/<url>` re-enruta al detalle, las imágenes editadas se ven inmediatamente. Verificado en navegador: deep-link abre el item correcto, "Volver" regresa al detalle con datos frescos. **Sin tests nuevos (solo UI/HTML).** Motivación del owner: encontrar fotos malas mientras navega y poder cambiarlas rápido sin perder el contexto.
+
+**Fix (mismo día):** el botón daba 404 cuando el usuario navegaba desde la raíz (`http://localhost:8000/`, servida por `_HTML_ALIASES` en serve.py). El link relativo `image-manager.html?item=…` resolvía a `/image-manager.html?item=…`, pero `_HTML_ALIASES` comparaba `self.path` **con** el query string → no matcheaba la clave `/image-manager.html` → caía al handler estático que buscaba `<root>/image-manager.html` (inexistente) → 404. Arreglado en `serve.py do_GET`: ahora compara el path **sin** query (`self.path.split("?",1)[0]`) contra `_HTML_ALIASES`. Generaliza a cualquier página HTML servida en la raíz que reciba query params.
+
+**Hardening del round-trip (2026-06-02):** al volver al detalle (o refrescar) podía verse la imagen vieja si el navegador cacheaba `items.jsonl`. Ahora `loadItems()` de `index.html` y el `init()` de `image-manager.html` fetchean con cache-bust (`?_=Date.now()` + `cache:'no-store'`) para traer datos frescos tras editar. Además `saveChanges()` del gestor ahora avisa "No hay cambios para guardar" cuando se aprieta Grabar sin cambios (antes era un no-op silencioso que parecía éxito). El mecanismo de guardado (`_update_item_images` sincroniza `image_url`/`image_local` con `images[0]`) se verificó end-to-end: replace → save (200) → persiste en items.jsonl → el detalle muestra la imagen nueva tras "Volver"/refresh.
+
+---
+
+Last updated: 2026-06-01 (sistema de aprobación humana — golden records con `approved_at`) — Mecanismo para que el owner marque cards como **correctas y definitivas** desde el dashboard, congelándolas frente a los pases automáticos y usándolas como referencia de "dato bien hecho". Es el equivalente humano de `standardized_at`. **Tests: 502 → 510 (+8).**
+
+**Schema:** campos nuevos `approved_at` (ISO UTC, su presencia = aprobado) + `approved_by` (`"owner"`) en items.jsonl, sticky (parte de `_CURATED_FIELDS`). Log durable append-only `data/approvals.jsonl` (gitignored).
+
+**Backend:** `is_approved()` helper en `manga_watch.py`; `append_jsonl` congela TODA la metadata descriptiva de items aprobados y sólo refresca `_VOLATILE_FIELDS` (price/stock_type/sources/detected_at) en re-scrapes. Endpoint `POST /api/approve {url, approved}` en `serve.py` (`_apply_approve`) — aplica a todo el `cluster_key`, reescribe atómico, appendea al log.
+
+**Frontend (`web/index.html`):** botón 👍/✓ en el footer del modal + toggle rápido (candado) al hover en las cards (ediciones de 1 tomo + grid de tomos) + badge ✓ verde + filtro sidebar "Estado de revisión" (Todos / ✓ Aprobados / Sin revisar) vía `filters.approval`. `toggleApprove()` actualiza en memoria sin reload.
+
+**Congelado en pipeline:** 7 retrofits (`rescore`, `clean_titles`, `filter_non_manga`, `filter_collectible`, `set_rarity`, `backfill_metadata`, `translate_descriptions`) saltean aprobados por defecto (flag `--include-approved`; los filtros SIEMPRE conservan aprobados). Skills `/standardize-catalog`, `/review-feedback`, `/enrich-series-aliases` los excluyen del set a modificar pero los pueden leer como referencia.
+
+**Durabilidad:** `scripts/retrofit/apply_approvals.py` re-materializa `approved_at` desde `approvals.jsonl` tras reconstruir el catálogo (match por cluster_key, fallback url; idempotente). Registrado en Panel de Control. Sólo HTML por ahora (web-next leerá el campo después). Docs: CLAUDE.md (esta entrada + sección "Aprobación humana" + file map), `docs/web-html/PRD.md`, `docs/admin/README.md`.
+
+---
+
+Last updated: 2026-06-01 (/review-feedback — 8 items de la cola 👎; 5 removidos, 2 arreglos de datos, 1 sin acción) — Pasada del skill `/review-feedback` sobre `data/feedback.jsonl` (8 entradas). **Sin cambios de código ni de filtros** — solo datos (no se agregó ningún test). Corpus: 10329 → **10324** (-5). Backup `data/backups/items.jsonl/items.jsonl.pre-review-feedback-bak`.
+
+**Removidos (item genuinamente incorrecto, confirmado vía web/imagen):**
+- *Moriarty el Patriota Special 4* (ListadoManga calendario) — la colección id=2993 es 100% tomos regulares; señal `artbook` falsa (el `product_type` se filtró a la descripción y `detect_signals` lo releyó). NO se tocó el filtro `artbook` (221 items lo usan legítimamente).
+- *One Piece Edición Especial Limitada 1* (Amazon ES, Planeta) — es la edición PROMO de 1,95 €; "limitada" es nombre comercial, no edición coleccionable.
+- *One Piece Red Limited Collector* (SocialAnime, Amazon.it) — confirmado: caja Panini con 20 cartas coleccionables + booklet del film. No es manga. NO se agregó filtro amplio (descripción capturada sin "carte/cards"; "Collector's Box" lo usan box sets legítimos).
+- *One Piece The Movie Anime Comics 1 y 2* (research import Shueisha) — al **ver las portadas locales** se confirmó que muestran OTRO manga (gag de sumo; 神撫手), ISBNs equivocados (9784088735665/72 sirven covers de libros distintos en Amazon). Import generico botcheado (`...animecomics-movie-1` sin nombre de film real, a diferencia de los demás OP anime comics).
+
+**Arreglos de datos (item válido, dato malo):**
+- *One Piece Anniversary 1* (Star Comics) — producto REAL confirmado (One Piece 20th Anniversary Limited Edition Silver, Star Comics 2017, ISBN 9788822607492; también presente vía AnimeClick). (1) Carrusel contaminado con 5 thumbnails de OTRAS series ("related products"). **Sistémico: 70 items de Star Comics, 267 imágenes contaminantes dropeadas** — se conservan solo las galleries cuyo token de serie inicial coincide con la portada. (2) El gemelo de AnimeClick tenía `volume=""`: seteado a `1` → ahora ambos comparten `cluster_key edition:one-piece-star-anniversary|1` y mergean en una sola card multi-fuente (refrescado con `backfill_cluster_key.py`).
+- *Uchi ga Suki na Hito Special Edition* (Sumikko) — `image_url` era un GIF 1×1 (placeholder "no image" de Amazon, sin portada en Amazon/OpenLibrary). Vaciados `image_url`/`image_local`/`images` para que muestre el placeholder 📚 limpio.
+
+**Sin acción:** *Hellsing Collector 5* — era una acción `move` de curación (reason="test"), ya aplicada por el endpoint.
+
+**Pendiente (flagged como tarea aparte):** la contaminación de carrusel de Star Comics se limpió en datos pero el bug del extractor (el source `Star Comics (search)` deja pasar thumbnails de "productos relacionados", el filtro de scope de gotcha #31 no lo agarra) puede re-contaminar en un futuro re-scrape de esos items.
 
 ---
 
@@ -3199,7 +3550,7 @@ Last updated: 2026-05-26 (reorganización data/ — backups rotativos + diagnost
 Last updated: 2026-05-26 (resilience: flush incremental + timeouts en wiki subprocesos) — Dos mejoras de robustez para el pipeline de scraping:
 
 **1. `flush_source_candidates()` — escritura incremental (no más pérdida de datos si el proceso muere):**
-Antes el loop principal acumulaba todos los candidatos en memoria y escribía a `items.jsonl` solo AL FINAL del run completo. Si el proceso era matado a mitad (OOM, timeout de sistema, etc.) se perdía todo. Ahora se llama `flush_source_candidates(candidates, state, items_path, min_score)` justo después de que CADA fuente termina — tanto en la variante serial (workers=1) como en `as_completed()` del pool paralelo. La función aplica el mismo gate `is_collectible_edition` que `process_state()` pero NO actualiza `state`. Como `append_jsonl` es idempotente (upsert by URL), el write final del run completo simplemente actualiza los campos enrichidos sin crear duplicados. 4 tests nuevos (402/402 verde). Ver gotcha #32.
+Antes el loop principal acumulaba todos los candidatos en memoria y escribía a `items.jsonl` solo AL FINAL del run completo. Si el proceso era matado a mitad (OOM, timeout de sistema, etc.) se perdía todo. Ahora se llama `flush_source_candidates(candidates, state, items_path, min_score)` justo después de que CADA fuente termina — tanto en la variante serial (workers=1) como en `as_completed()` del pool paralelo. La función aplica el mismo gate `is_collectible_edition` que `process_state()` pero NO actualiza `state`. Como `append_jsonl` es idempotente (upsert por URL + consolidación por cluster_key, ver decisión #1), el write final del run completo simplemente actualiza los campos enrichidos sin crear duplicados. 4 tests nuevos (402/402 verde). Ver gotcha #32.
 
 **2. `_run_timed()` — timeouts portables en wiki subprocesos para evitar hangs:**
 Los scripts `scrape_delta.sh` y `scrape_full.sh` llamaban wikis sin ningún timeout. Un wiki colgado (AnimeClick fetching detail pages por horas, listadomanga-collections recorriendo 3432 colecciones) bloqueaba TODO el pipeline indefinidamente. Nuevo helper `_run_timed <secs> <cmd>` en ambos scripts: intenta `timeout` (macOS nativo) → `gtimeout` (brew GNU coreutils) → sin timeout (mejor que romper). Todos los 11 wikis del delta y 12 del full ahora tienen límites explícitos (desde 300s para wikis livianos hasta 14400s/4h para AnimeClick full histórico). Ver gotcha #33. Gotchas count: 31 → **33**.

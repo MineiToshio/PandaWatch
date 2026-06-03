@@ -485,6 +485,28 @@ def test_extract_image_url_rejects_theme_svg_icon():
     assert mw.extract_image_url(card, "https://www.sanyodo.co.jp/") == ""
 
 
+def test_extract_image_url_rejects_animeclick_avatar():
+    # AnimeClick: el carrusel levantaba el avatar de quien subió la edición.
+    soup = make_soup(
+        '<div class="product"><img'
+        ' src="/bundles/accommon/images/utente_registrato_F.png">'
+        '<p class="card">Variant Cover</p></div>'
+    )
+    card = soup.find("p", class_="card")
+    assert mw.extract_image_url(card, "https://www.animeclick.it/") == ""
+
+
+def test_extract_image_url_rejects_kadokawa_banner():
+    # KADOKAWA Store: banner de publicidad servido como <img> en la ficha.
+    soup = make_soup(
+        '<div class="product"><img'
+        ' src="/img/usr/common/top_bar_banner/top_bar_banner_sp_250303.png">'
+        '<p class="card">限定版</p></div>'
+    )
+    card = soup.find("p", class_="card")
+    assert mw.extract_image_url(card, "https://store.kadokawa.co.jp/") == ""
+
+
 # ---------------------------------------------------------------------------
 # _extract_image_from_detail_soup (página de detalle, vía fetch_metadata)
 # ---------------------------------------------------------------------------
@@ -3721,6 +3743,109 @@ def test_append_jsonl_does_not_preserve_when_no_standardized_at(tmp_path):
     assert items[0]["series_key"] == "wrong-key-2"
 
 
+def test_is_approved_helper():
+    """is_approved() es True sólo cuando approved_at tiene valor."""
+    assert mw.is_approved({"approved_at": "2026-06-01T00:00:00+00:00"}) is True
+    assert mw.is_approved({"approved_at": ""}) is False
+    assert mw.is_approved({}) is False
+
+
+def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
+    """Un item aprobado (golden record) congela TODA la metadata descriptiva
+    en re-scrapes; sólo los campos volátiles de mercado (price, stock_type,
+    sources, detected_at) se refrescan. No depende de standardized_at."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Deluxe 1",
+        "series_key": "berserk",
+        "edition_key": "berserk-darkhorse-deluxe",
+        "volume": "1",
+        "image_url": "https://example.com/correct.jpg",
+        "price": "USD 39.99",
+        "stock_type": "in_stock",
+        "approved_at": "2026-06-01T10:00:00+00:00",
+        "approved_by": "owner",
+        "detected_at": "2026-06-01",
+    }])
+
+    # Re-scrape trae metadata "peor" + precio/stock nuevos.
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Vol 1 raw scraped junk",
+        "series_key": "berserk-1",
+        "edition_key": "berserk-1-special",
+        "volume": "",
+        "image_url": "https://example.com/wrong.jpg",
+        "price": "USD 49.99",
+        "stock_type": "limited",
+        "detected_at": "2026-07-01",
+    }])
+
+    it = [json.loads(l) for l in path.open()][0]
+    # Metadata descriptiva CONGELADA:
+    assert it["title"] == "Berserk Deluxe 1"
+    assert it["series_key"] == "berserk"
+    assert it["edition_key"] == "berserk-darkhorse-deluxe"
+    assert it["volume"] == "1"
+    assert it["image_url"] == "https://example.com/correct.jpg"
+    assert it["approved_at"] == "2026-06-01T10:00:00+00:00"
+    # Info de mercado REFRESCADA:
+    assert it["price"] == "USD 49.99"
+    assert it["stock_type"] == "limited"
+    assert it["detected_at"] == "2026-07-01"
+
+
+def test_append_jsonl_no_freeze_when_not_approved(tmp_path):
+    """Sin approved_at (y sin standardized_at) el re-scrape reemplaza todo."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "old", "series_key": "old", "price": "USD 1",
+    }])
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "new", "series_key": "new", "price": "USD 2",
+    }])
+    it = [json.loads(l) for l in path.open()][0]
+    assert it["title"] == "new"
+    assert it["series_key"] == "new"
+
+
+def test_serve_concurrent_approvals_do_not_clobber(tmp_path, monkeypatch):
+    """El server es threaded; aprobar varios items en paralelo NO debe perder
+    aprobaciones. Sin el lock (_serialized), el read-modify-write del archivo
+    entero se pisaba y sólo sobrevivían algunas. Regresión del bug reportado
+    ('aprobé varios y quedaron sólo unas')."""
+    import sys as _sys
+    import threading as _threading
+    _scripts = str(Path(__file__).resolve().parent.parent / "scripts")
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    import serve  # type: ignore
+
+    items_path = tmp_path / "items.jsonl"
+    appr_path = tmp_path / "approvals.jsonl"
+    N = 25
+    rows = [{"url": f"https://ex/{i}", "cluster_key": f"url:https://ex/{i}",
+             "title": f"t{i}"} for i in range(N)]
+    items_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    monkeypatch.setattr(serve, "ITEMS_PATH", items_path)
+    monkeypatch.setattr(serve, "APPROVALS_PATH", appr_path)
+
+    threads = [_threading.Thread(target=serve._apply_approve,
+                                 args=(f"https://ex/{i}", True, "t"))
+               for i in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    after = [json.loads(l) for l in items_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    approved = sum(1 for r in after if r.get("approved_at"))
+    assert approved == N, f"perdió aprobaciones por race: {approved}/{N}"
+
+
 def _make_candidate(**kwargs):
     """Helper para construir un Candidate de prueba con defaults mínimos."""
     defaults = dict(
@@ -6612,6 +6737,51 @@ def test_extract_images_no_filter_when_paths_shallow():
     assert len(images) == 3
 
 
+def test_extract_images_star_comics_drops_related_products_subfolder():
+    """Star Comics sirve la cover en `/files/immagini/fumetti-cover/<X>` y
+    el carrusel de 'otros volúmenes' (productos relacionados) en el
+    SUBdirectorio `/files/immagini/fumetti-cover/thumbnail/<Y>`. El filtro
+    de stem-folder debe descartar los thumbnails aunque su path contenga
+    el parent de la cover como substring (gotcha #31).
+
+    Regresión del bug que contaminaba 'One Piece 20th Anniversary Limited
+    Edition Silver 1' con thumbnails de My Hero Academia, Deadrock,
+    Detective Conan, Kagurabachi, Tenkaichi."""
+    html_text = """
+    <html><body>
+    <main>
+      <article itemtype="https://schema.org/Product">
+        <meta property="og:image"
+              content="https://www.starcomics.com/files/immagini/fumetti-cover/onepiece1-limited-silver-jpg-1">
+        <div class="product-gallery">
+          <img src="https://www.starcomics.com/files/immagini/fumetti-cover/onepiece1-limited-silver-jpg-1"
+               alt="One Piece 20th Anniversary Limited Edition Silver 1">
+        </div>
+      </article>
+      <section class="ti-potrebbe-interessare">
+        <img src="https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/myheroacademia-1-1200px" alt="My Hero Academia 1">
+        <img src="https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/deadrock-1-1200px" alt="Deadrock 1">
+        <img src="https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/detectiveconan-1-1200px" alt="Detective Conan 1">
+        <img src="https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/kagurabachi-1-1200px" alt="Kagurabachi 1">
+        <img src="https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/tenkaichi-1-1200px" alt="Tenkaichi 1">
+      </section>
+    </main>
+    </body></html>
+    """
+    soup = make_soup(html_text)
+    images = mw._extract_images_from_detail_soup(
+        soup,
+        "https://www.starcomics.com/fumetto/one-piece20th-anniversary-limited-editionsilver-1",
+    )
+    urls = [im["url"] for im in images]
+    # La cover sobrevive.
+    assert any("onepiece1-limited-silver" in u for u in urls)
+    # Ninguna URL del subdirectorio /thumbnail/ (productos relacionados).
+    assert not any("/thumbnail/" in u for u in urls), urls
+    # En la práctica queda solo la cover.
+    assert len(images) == 1, urls
+
+
 # ---------------------------------------------------------------------------
 # PRH Comics parser
 # ---------------------------------------------------------------------------
@@ -7978,3 +8148,353 @@ def test_viz_iter_year_months_clamps_to_2013():
     pairs = _viz.iter_year_months(2000, 1, 2013, 3)
     assert pairs[0] == (2013, 1)
     assert (2012, 6) not in pairs
+
+
+# ---------------------------------------------------------------------------
+# sync_cover_images retrofit — images[0] == portada, limpieza de galería,
+# contaminación de productos relacionados, portada mala
+# ---------------------------------------------------------------------------
+
+from scripts.retrofit import sync_cover_images as _sci
+
+
+def test_sync_cover_prepends_cover_when_images0_is_different():
+    # Bug reportado: card muestra la portada PRH, carrusel muestra otra foto.
+    it = {
+        "image_url": "https://images.penguinrandomhouse.com/cover/9781506720999",
+        "image_local": "abc.jpg",
+        "images": [{"url": "https://dh.com/cdn/shop/files/GENERIC.png", "local": "", "kind": "gallery"}],
+    }
+    assert _sci._rebuild(it) is True
+    assert it["images"][0]["url"] == it["image_url"]
+    assert it["images"][0]["local"] == "abc.jpg"
+    # La foto genérica se conserva como 2da imagen → vuelve la navegación.
+    assert len(it["images"]) == 2
+
+
+def test_sync_cover_dedupes_exact_duplicates():
+    # Panini: images = [cover, cover, cover] → [cover].
+    u = "https://www.panini.it/media/catalog/product/m/b/mberd001isbn_0.jpg"
+    it = {"image_url": u, "image_local": "c.jpg",
+          "images": [{"url": u, "local": "c.jpg", "kind": "gallery"}] * 3}
+    assert _sci._rebuild(it) is True
+    assert len(it["images"]) == 1
+
+
+def test_sync_cover_collapses_http_https_duplicate():
+    it = {
+        "image_url": "https://funside.it/cdn/shop/files/cover_x.jpg",
+        "image_local": "c.jpg",
+        "images": [
+            {"url": "https://funside.it/cdn/shop/files/cover_x.jpg", "local": "c.jpg", "kind": "gallery"},
+            {"url": "http://funside.it/cdn/shop/files/cover_x.jpg?v=1", "local": "", "kind": "gallery"},
+        ],
+    }
+    assert _sci._rebuild(it) is True
+    assert len(it["images"]) == 1
+
+
+def test_sync_cover_drops_star_comics_related_thumbnails():
+    # Star Comics: la galería son SIEMPRE otros tomos/series en /thumbnail/.
+    cover = "https://www.starcomics.com/files/immagini/fumetti-cover/kagurabachi-1-variant"
+    it = {"image_url": cover, "image_local": "c.jpg",
+          "images": [
+              {"url": cover, "local": "c.jpg", "kind": "gallery"},
+              {"url": "https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/kagurabachi-8", "local": "", "kind": "gallery", "description": "KAGURABACHI n. 8"},
+              {"url": "https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/hellboy-9", "local": "", "kind": "gallery", "description": "HELLBOY n. 9"},
+          ]}
+    assert _sci._rebuild(it) is True
+    assert len(it["images"]) == 1
+    assert it["images"][0]["url"] == cover
+
+
+def test_sync_cover_drops_manga_sanctuary_related_thumbnails():
+    cover = "https://img.sanctuary.fr/objet/300/392760.jpg"
+    it = {"image_url": cover, "image_local": "c.jpg",
+          "images": [
+              {"url": cover, "local": "c.jpg", "kind": "gallery"},
+              {"url": "https://img.sanctuary.fr/objet/150/441765.jpg", "local": "", "kind": "gallery", "description": "Whale Star #1"},
+          ]}
+    assert _sci._rebuild(it) is True
+    assert len(it["images"]) == 1
+
+
+def test_sync_cover_clears_placeholder_cover():
+    # visuel_defaut / banner promo: sin reemplazo real → portada vacía (📚).
+    it = {
+        "image_url": "https://www.manga-sanctuary.com/v10_good/public/img/visuel_defaut.png",
+        "image_local": "ph.png",
+        "images": [{"url": "https://www.manga-sanctuary.com/v10_good/public/img/visuel_defaut.png", "local": "ph.png", "kind": "gallery"}],
+    }
+    assert _sci._fix_bad_cover(it) is True
+    assert it["image_url"] == ""
+    assert it["image_local"] == ""
+    assert it["images"] == []
+
+
+def test_sync_cover_promotes_real_cover_over_bad_one():
+    # Si la portada es basura pero hay una imagen real en images[], se promueve.
+    it = {
+        "image_url": "https://x.com/img/lista%20de%20mangas%20panini.jpg",
+        "image_local": "banner.jpg",
+        "images": [
+            {"url": "https://x.com/img/lista%20de%20mangas%20panini.jpg", "local": "banner.jpg", "kind": "gallery"},
+            {"url": "https://cdn.real.com/cover-real.jpg", "local": "real.jpg", "kind": "gallery"},
+        ],
+    }
+    assert _sci._fix_bad_cover(it) is True
+    assert it["image_url"] == "https://cdn.real.com/cover-real.jpg"
+    assert it["image_local"] == "real.jpg"
+
+
+def test_sync_cover_noop_when_already_synced():
+    u = "https://cdn.real.com/cover.jpg"
+    it = {"image_url": u, "image_local": "c.jpg",
+          "images": [{"url": u, "local": "c.jpg", "kind": "gallery"}]}
+    assert _sci._fix_bad_cover(it) is False
+    assert _sci._rebuild(it) is False
+
+
+# ---------------------------------------------------------------------------
+# build_web._merged_canonical — la portada canónica va primera en el carrusel
+# (carrusel[0] == card cover); union cross-source deduplicada por URL
+# ---------------------------------------------------------------------------
+
+from scripts import build_web as _bw
+
+
+def _pick_by_completeness(a, b):
+    score = lambda x: (100 if x.get("isbn") else 0) + (10 if x.get("image_url") else 0) + (5 if x.get("price") else 0)
+    return a if score(a) >= score(b) else b
+
+
+def test_build_web_merge_cover_first_in_carousel():
+    # PRH (con ISBN → canónico) + Dark Horse (sin ISBN). El carrusel debe
+    # empezar por la portada PRH (la que muestra la card), no por la foto DHD,
+    # aunque DHD esté primero en orden de archivo.
+    dh = {"url": "https://dh/x", "cluster_key": "edition:x|1",
+          "image_url": "https://dh.com/photo.png", "image_local": "dh.png",
+          "images": [{"url": "https://dh.com/photo.png", "local": "dh.png", "kind": "gallery"}]}
+    prh = {"url": "https://prh/x", "cluster_key": "edition:x|1", "isbn": "9781506715537",
+           "image_url": "https://prh.com/cover.jpg", "image_local": "prh.jpg",
+           "images": [{"url": "https://prh.com/cover.jpg", "local": "prh.jpg", "kind": "gallery"}]}
+    merged = _bw._merged_canonical([dh, prh], _pick_by_completeness)
+    assert merged["image_url"] == "https://prh.com/cover.jpg"      # canónica = PRH
+    assert merged["images"][0]["url"] == merged["image_url"]        # carrusel[0] == card
+    assert len(merged["images"]) == 2                              # union mantiene la foto DHD
+    assert merged["images"][1]["url"] == "https://dh.com/photo.png"
+
+
+def test_build_web_merge_dedupes_by_url_stem():
+    a = {"url": "https://a", "cluster_key": "edition:y|1", "isbn": "9",
+         "image_url": "https://cdn/c.jpg", "image_local": "c.jpg",
+         "images": [{"url": "https://cdn/c.jpg", "local": "c.jpg", "kind": "gallery"}]}
+    b = {"url": "https://b", "cluster_key": "edition:y|1",
+         "image_url": "http://cdn/c.jpg?v=2", "image_local": "",
+         "images": [{"url": "http://cdn/c.jpg?v=2", "local": "", "kind": "gallery"}]}
+    merged = _bw._merged_canonical([a, b], _pick_by_completeness)
+    # http/https + query distintos pero MISMA imagen → 1 sola en el carrusel.
+    assert len(merged["images"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Modelo 1-fila-por-producto: merge_cluster / consolidate_by_cluster /
+# append_jsonl dedup por producto (no se regeneran filas duplicadas)
+# ---------------------------------------------------------------------------
+
+def test_merge_cluster_single_gets_self_source():
+    it = {"url": "https://a", "source": "Src A", "image_url": "c.jpg", "image_local": "c.png"}
+    m = mw.merge_cluster([it])
+    assert len(m["sources"]) == 1
+    assert m["sources"][0]["url"] == "https://a"
+    assert m["sources"][0]["name"] == "Src A"
+
+
+def test_merge_cluster_unions_sources_cover_first():
+    prh = {"url": "https://prh", "source": "PRH", "isbn": "9", "cluster_key": "edition:x|1",
+           "image_url": "https://prh/cover.jpg", "image_local": "p.jpg",
+           "images": [{"url": "https://prh/cover.jpg", "local": "p.jpg", "kind": "gallery"}]}
+    dh = {"url": "https://dh", "source": "DH", "cluster_key": "edition:x|1",
+          "image_url": "https://dh/photo.png", "image_local": "d.png",
+          "images": [{"url": "https://dh/photo.png", "local": "d.png", "kind": "gallery"}]}
+    m = mw.merge_cluster([dh, prh])               # DH primero a propósito
+    assert m["image_url"] == "https://prh/cover.jpg"     # PRH canónica (tiene ISBN)
+    assert m["images"][0]["url"] == m["image_url"]       # carrusel[0] == card
+    assert len(m["images"]) == 2
+    assert {s["name"] for s in m["sources"]} == {"PRH", "DH"}
+
+
+def test_consolidate_by_cluster_collapses_same_product():
+    rows = [
+        {"url": "https://prh", "source": "PRH", "isbn": "9", "cluster_key": "edition:x|1", "image_url": "p.jpg"},
+        {"url": "https://dh", "source": "DH", "cluster_key": "edition:x|1", "image_url": "d.png"},
+        {"url": "https://other", "source": "O", "cluster_key": "url:https://other", "image_url": "o.jpg"},
+    ]
+    out = mw.consolidate_by_cluster(rows)
+    assert len(out) == 2                                  # producto x + standalone
+    prod = next(r for r in out if r.get("cluster_key") == "edition:x|1")
+    assert len(prod["sources"]) == 2
+
+
+def test_append_jsonl_dedups_by_product_not_url(tmp_path):
+    # Dos fuentes del MISMO producto (cluster_key igual, URLs distintas) →
+    # UNA sola fila con 2 sources, no dos filas.
+    items = tmp_path / "items.jsonl"
+    prh = {"url": "https://prh/op1", "source": "PRH", "isbn": "9781", "title": "OP 1",
+           "cluster_key": "edition:op|1", "image_url": "https://prh/op1.jpg", "price": "$10"}
+    dh = {"url": "https://dh/op1", "source": "DH", "title": "OP 1",
+          "cluster_key": "edition:op|1", "image_url": "https://dh/op1.png", "price": "$12"}
+    mw.append_jsonl(items, [prh])
+    mw.append_jsonl(items, [dh])
+    rows = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(rows) == 1, f"esperaba 1 fila por producto, hay {len(rows)}"
+    assert len(rows[0]["sources"]) == 2
+    assert {s["name"] for s in rows[0]["sources"]} == {"PRH", "DH"}
+
+
+def test_append_jsonl_rescrape_one_source_keeps_siblings(tmp_path):
+    # Re-scrapear SOLO una fuente no debe borrar las fuentes hermanas del array.
+    items = tmp_path / "items.jsonl"
+    prh = {"url": "https://prh/op1", "source": "PRH", "isbn": "9781", "title": "OP 1",
+           "cluster_key": "edition:op|1", "image_url": "https://prh/op1.jpg", "price": "$10"}
+    dh = {"url": "https://dh/op1", "source": "DH", "title": "OP 1",
+          "cluster_key": "edition:op|1", "image_url": "https://dh/op1.png", "price": "$12"}
+    mw.append_jsonl(items, [prh, dh])
+    # Re-scrape solo PRH, con precio nuevo.
+    prh2 = dict(prh, price="$9")
+    mw.append_jsonl(items, [prh2])
+    rows = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(rows) == 1
+    names = {s["name"] for s in rows[0]["sources"]}
+    assert names == {"PRH", "DH"}, f"DH se perdió al re-scrapear PRH: {names}"
+
+
+def test_standardize_dedup_merges_sources_not_drops():
+    # Simula el merge de /standardize-catalog: dos filas que tras reasignar
+    # edition_key pasan a ser el MISMO producto deben FUSIONARSE conservando
+    # ambas fuentes (no borrar una y perder su source) — modelo 1-fila/producto.
+    a = {"url": "https://src-a/op1", "source": "Src A", "series_key": "one-piece",
+         "edition_key": "one-piece-norma-special", "volume": "1",
+         "image_url": "https://a/op1.jpg", "sources": [
+             {"name": "Src A", "url": "https://src-a/op1", "price": "$10"}]}
+    b = {"url": "https://src-b/op1", "source": "Src B", "series_key": "one-piece",
+         "edition_key": "one-piece-norma-special", "volume": "1",
+         "image_url": "https://b/op1.png", "sources": [
+             {"name": "Src B", "url": "https://src-b/op1", "price": "$12"}]}
+    # recomputar cluster_key (como hace el skill tras estandarizar) + consolidar
+    for it in (a, b):
+        it["cluster_key"] = mw.derive_cluster_key(it)
+    out = mw.consolidate_by_cluster([a, b])
+    assert len(out) == 1, "deben fusionarse en 1 fila"
+    names = {s["name"] for s in out[0]["sources"]}
+    assert names == {"Src A", "Src B"}, f"se perdió una fuente: {names}"
+
+
+# ---------------------------------------------------------------------------
+# serve.py endpoints de curación — mantienen el modelo 1-fila-por-producto
+# ---------------------------------------------------------------------------
+
+def _load_serve():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("serve_mod_test", "scripts/serve.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_serve_merge_items_unions_sources(tmp_path):
+    serve = _load_serve()
+    assert serve.merge_cluster is not None
+    items = tmp_path / "items.jsonl"
+    serve.ITEMS_PATH = items
+    serve.IMAGES_DIR = tmp_path
+    rows = [
+        {"url": "https://a", "source": "A", "score": 50, "cluster_key": "url:https://a",
+         "image_url": "a.jpg", "sources": [{"name": "A", "url": "https://a"}]},
+        {"url": "https://b", "source": "B", "score": 90, "isbn": "9", "cluster_key": "url:https://b",
+         "image_url": "b.jpg", "sources": [{"name": "B", "url": "https://b"}]},
+    ]
+    items.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    serve._apply_merge_items("https://a", "https://b", "dup")
+    out = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(out) == 1, "merge debe dejar 1 fila"
+    assert {s["name"] for s in out[0]["sources"]} == {"A", "B"}, "ninguna fuente se pierde"
+
+
+def test_serve_move_consolidates_into_existing_volume(tmp_path):
+    serve = _load_serve()
+    assert serve.consolidate_by_cluster is not None
+    items = tmp_path / "items.jsonl"
+    serve.ITEMS_PATH = items
+    serve.IMAGES_DIR = tmp_path
+    # 'mover' debe fusionar si el destino ya tiene ese tomo (mismo cluster_key).
+    rows = [
+        {"url": "https://x", "source": "X", "volume": "1", "edition_key": "wrong-ed",
+         "cluster_key": "edition:wrong-ed|1", "image_url": "x.jpg",
+         "sources": [{"name": "X", "url": "https://x"}]},
+        {"url": "https://y", "source": "Y", "volume": "1", "edition_key": "right-ed",
+         "edition_display": "Right", "series_key": "s", "series_display": "S",
+         "cluster_key": "edition:right-ed|1", "image_url": "y.jpg", "isbn": "9",
+         "sources": [{"name": "Y", "url": "https://y"}]},
+    ]
+    items.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    serve._apply_move("https://x", "right-ed", "regroup")
+    out = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(out) == 1, "mover al tomo existente debe fusionar, no duplicar"
+    assert {s["name"] for s in out[0]["sources"]} == {"X", "Y"}
+
+
+# ---------------------------------------------------------------------------
+# sync_cover_images — detección de archivos basura (placeholder/píxel/ad)
+# ---------------------------------------------------------------------------
+
+def test_compute_junk_local_flags_tiny_zero_and_shared(tmp_path):
+    imgs = tmp_path / "images"; imgs.mkdir()
+    (imgs / "pixel.gif").write_bytes(b"GIF89a" + b"\x00" * 30)          # 36B tiny
+    (imgs / "empty.jpg").write_bytes(b"")                                # 0B
+    (imgs / "ad.png").write_bytes(b"\x89PNG" + b"\x00" * 50000)          # 50KB
+    (imgs / "realcover.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 50000)
+    items = [
+        {"image_local": "pixel.gif", "series_display": "A", "title": "A"},
+        {"image_local": "empty.jpg", "series_display": "B", "title": "B"},
+        # ad.png compartido por 4 OBRAS distintas → basura
+        {"image_local": "ad.png", "series_display": "W One", "title": "W One"},
+        {"image_local": "ad.png", "series_display": "X Two", "title": "X Two"},
+        {"image_local": "ad.png", "series_display": "Y Three", "title": "Y Three"},
+        {"image_local": "ad.png", "series_display": "Z Four", "title": "Z Four"},
+        # realcover compartido por 4 filas de la MISMA obra (volúmenes) → NO basura
+        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 1"},
+        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 2"},
+        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 3"},
+        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 4"},
+    ]
+    junk = _sci._compute_junk_local(items, imgs)
+    assert "pixel.gif" in junk          # tiny
+    assert "empty.jpg" in junk          # 0 bytes
+    assert "ad.png" in junk             # compartido por 4 obras distintas
+    assert "realcover.jpg" not in junk  # misma obra fragmentada → NO basura
+
+
+def test_fix_bad_cover_clears_junk_local_cover():
+    _sci._JUNK_LOCAL = {"placeholder.png"}
+    try:
+        it = {"image_url": "https://x/placeholder.png", "image_local": "placeholder.png", "images": [
+            {"url": "https://x/placeholder.png", "local": "placeholder.png", "kind": "gallery"}]}
+        assert _sci._fix_bad_cover(it) is True
+        assert it["image_url"] == "" and it["image_local"] == "" and it["images"] == []
+    finally:
+        _sci._JUNK_LOCAL = set()
+
+
+def test_fix_bad_cover_promotes_over_junk_local():
+    _sci._JUNK_LOCAL = {"ad.png"}
+    try:
+        it = {"image_url": "https://x/ad.jpg", "image_local": "ad.png", "images": [
+            {"url": "https://x/ad.jpg", "local": "ad.png", "kind": "gallery"},
+            {"url": "https://x/real-cover.jpg", "local": "real.jpg", "kind": "gallery"}]}
+        assert _sci._fix_bad_cover(it) is True
+        assert it["image_url"] == "https://x/real-cover.jpg"
+        assert it["image_local"] == "real.jpg"
+    finally:
+        _sci._JUNK_LOCAL = set()
