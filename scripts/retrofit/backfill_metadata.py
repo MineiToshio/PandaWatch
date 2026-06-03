@@ -32,7 +32,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
+from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate, is_approved  # type: ignore
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; manga-watch-backfill/1.0; "
@@ -92,6 +92,9 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true",
                         help="No fetchea ni escribe; solo cuenta candidatos.")
+    parser.add_argument("--include-approved", action="store_true",
+                        help="Procesar también items aprobados (golden records). Por "
+                             "defecto se saltean para no pisar metadata aprobada.")
     parser.add_argument(
         "--checkpoint-every", type=int, default=500,
         help="Cada N items procesados, escribe items.jsonl con el progreso "
@@ -163,6 +166,10 @@ def main() -> int:
     def needs_backfill(item: dict) -> bool:
         if "_raw" in item or not item.get("url"):
             return False
+        # Golden records: el owner aprobó esta card; no la re-fetcheamos.
+        # Queda intacta en `items` y se reescribe sin cambios al final.
+        if is_approved(item) and not args.include_approved:
+            return False
         for f in target_fields:
             if f == "images":
                 # Skip wikis con URL sintética: su `images[]` ya viene poblado
@@ -188,6 +195,11 @@ def main() -> int:
                 if not item.get(f):
                     return True
         return False
+
+    skipped_approved = sum(
+        1 for i in items
+        if "_raw" not in i and is_approved(i) and not args.include_approved
+    )
 
     candidates = [i for i in items if needs_backfill(i)]
 
@@ -222,6 +234,8 @@ def main() -> int:
     print(f"[INFO] {len(items)} items totales en {src}")
     print(f"[INFO] {len(candidates)} candidatos a backfill " +
           (f"(campo: {args.only})" if args.only else "(todos los campos)"))
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} aprobados saltados (usa --include-approved para incluirlos)")
 
     # Resumen por source (top 10)
     src_counter = Counter(c.get("source", "?") for c in candidates)

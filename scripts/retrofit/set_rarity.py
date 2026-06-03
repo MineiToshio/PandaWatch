@@ -32,7 +32,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import derive_rarity_tier, backup_and_rotate  # type: ignore
+from manga_watch import derive_rarity_tier, backup_and_rotate, is_approved  # type: ignore
 
 RARITY_LABEL = {
     "common": "⬜ common",
@@ -54,6 +54,9 @@ def main() -> int:
         "--force", action="store_true",
         help="Recalcula rarity en TODOS los items, incluso los que ya tienen valor.",
     )
+    p.add_argument("--include-approved", action="store_true",
+                   help="Procesar también items aprobados (golden records). Por "
+                        "defecto se saltean para no pisar metadata aprobada.")
     args = p.parse_args()
 
     input_path = Path(args.input)
@@ -72,7 +75,14 @@ def main() -> int:
 
     changed = 0
     skipped = 0
+    skipped_approved = 0
     for item in items:
+        # Golden records: el owner aprobó esta card; no recalculamos su rarity.
+        # El item permanece sin cambios en la lista (in-place rewrite).
+        if is_approved(item) and not args.include_approved:
+            skipped_approved += 1
+            continue
+
         old = item.get("rarity", "")
 
         # Sin --force: respetar el valor existente (incluido 'common' de web search).
@@ -100,6 +110,8 @@ def main() -> int:
     after: Counter = Counter(i.get("rarity", "") for i in items)
 
     print(f"Items con rarity ya asignado (saltados): {skipped}")
+    if skipped_approved:
+        print(f"Items aprobados (saltados; usa --include-approved para incluirlos): {skipped_approved}")
     print(f"Items {'que cambiarían' if args.dry_run else 'actualizados'}: {changed}")
     print()
     print("Distribución antes:")
@@ -112,7 +124,9 @@ def main() -> int:
         sim: Counter = Counter()
         for item in items:
             old = item.get("rarity", "")
-            if old and not args.force:
+            if is_approved(item) and not args.include_approved:
+                sim[old] += 1
+            elif old and not args.force:
                 sim[old] += 1
             else:
                 sim[derive_rarity_tier(

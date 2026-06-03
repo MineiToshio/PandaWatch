@@ -21,7 +21,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import clean_title, backup_and_rotate  # type: ignore
+from manga_watch import clean_title, backup_and_rotate, is_approved  # type: ignore
 
 
 def main() -> int:
@@ -30,6 +30,9 @@ def main() -> int:
     parser.add_argument("--output", default="data/items.jsonl")
     parser.add_argument("--dry-run", action="store_true",
                         help="No escribe el archivo; solo cuenta cuántos se limpiarían.")
+    parser.add_argument("--include-approved", action="store_true",
+                        help="Procesar también items aprobados (golden records). Por "
+                             "defecto se saltean para no pisar metadata aprobada.")
     args = parser.parse_args()
 
     src = Path(args.input)
@@ -41,6 +44,7 @@ def main() -> int:
     lines = src.read_text(encoding="utf-8").splitlines()
     cleaned_lines: list[str] = []
     changed = 0
+    skipped_approved = 0
     sample_changes: list[tuple[str, str]] = []
 
     for line in lines:
@@ -52,6 +56,13 @@ def main() -> int:
         except json.JSONDecodeError:
             cleaned_lines.append(line)
             continue
+
+        # Golden records: el owner aprobó esta card; no la re-limpiamos.
+        if is_approved(item) and not args.include_approved:
+            skipped_approved += 1
+            cleaned_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
+            continue
+
         original = item.get("title", "")
         new = clean_title(original)
         if new != original:
@@ -62,6 +73,8 @@ def main() -> int:
         cleaned_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
 
     print(f"[INFO] {len(lines)} líneas totales, {changed} títulos cambiarían.")
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} aprobados saltados (usa --include-approved para incluirlos)")
     if sample_changes:
         print("\nMuestra de cambios:")
         for old, new in sample_changes:

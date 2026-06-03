@@ -36,6 +36,7 @@ from manga_watch import (  # type: ignore
     score_candidate,
     candidate_to_json,
     backup_and_rotate,
+    is_approved,
 )
 
 
@@ -68,6 +69,9 @@ def main() -> int:
     p.add_argument("--output", default="data/items.jsonl")
     p.add_argument("--dry-run", action="store_true",
                    help="No escribe; sólo reporta drift de signal_types y product_type.")
+    p.add_argument("--include-approved", action="store_true",
+                   help="Procesar también items aprobados (golden records). Por "
+                        "defecto se saltean para no pisar metadata aprobada.")
     args = p.parse_args()
 
     src = Path(args.input)
@@ -81,6 +85,7 @@ def main() -> int:
     drift_st = 0
     drift_pt = 0
     drift_score = 0
+    skipped_approved = 0
     pt_changes: Counter[tuple[str, str]] = Counter()
     for line in lines:
         line = line.strip()
@@ -90,6 +95,12 @@ def main() -> int:
             item = json.loads(line)
         except json.JSONDecodeError:
             out_lines.append(line)
+            continue
+
+        # Golden records: el owner aprobó esta card; no la re-scoreamos.
+        if is_approved(item) and not args.include_approved:
+            skipped_approved += 1
+            out_lines.append(json.dumps(item, ensure_ascii=False))
             continue
 
         old_st = set(item.get("signal_types") or [])
@@ -121,6 +132,8 @@ def main() -> int:
 
     total = len(out_lines)
     print(f"[INFO] {total} items procesados")
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} aprobados saltados (usa --include-approved para incluirlos)")
     print(f"[INFO] signal_types cambió:  {drift_st} ({drift_st*100//max(total,1)}%)")
     print(f"[INFO] product_type cambió:  {drift_pt} ({drift_pt*100//max(total,1)}%)")
     print(f"[INFO] score cambió:         {drift_score} ({drift_score*100//max(total,1)}%)")

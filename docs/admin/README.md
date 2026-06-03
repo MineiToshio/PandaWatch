@@ -50,6 +50,9 @@ endpoints `/api/*` conviven en el mismo servidor:
 | `GET /api/jobs/<id>/stream` | SSE stdout/stderr en vivo (panel) |
 | `POST /api/jobs/<id>/stop` | detiene un job (panel) |
 | `POST /api/feedback` | registra feedback (catálogo) |
+| `POST /api/curation/{move,merge,remove}` | curación inmediata de items (catálogo) |
+| `POST /api/approve` | aprobar/desaprobar una card — golden record (catálogo) |
+| `POST /api/approve-edition` | aprobar/desaprobar todos los tomos de una edición (catálogo) |
 | `POST /api/save-cover-preview` | guarda revisiones de portadas (catálogo) |
 
 El servidor usa `ThreadingMixIn` para soportar múltiples conexiones SSE

@@ -25,7 +25,9 @@ típicamente items recién scrapeados que llegaron con asignación
 heurística cruda (o sin asignación) del pipeline.
 
 **Cómo funciona**:
-1. Audita pendientes (filtra items sin `standardized_at`).
+1. Audita pendientes (filtra items sin `standardized_at` **y sin
+   `approved_at`** — los golden records aprobados por el owner nunca se
+   re-procesan; se pueden leer como referencia pero jamás se sobreescriben).
 2. Particiona en chunks de ~150-200.
 3. Delega a subagentes paralelos (7 por wave) que re-derivan
    series_key/edition_key/volume/title_standardized desde cero via LLM.
@@ -75,7 +77,8 @@ actualizado con traducciones multilingües.
      aliases ambiguos genéricos.
    - **Skip** si confidence baja + item count bajo (esperar más data).
 3. Edita `data/series_aliases.yml` in-place.
-4. Corre backfill snippet para consolidar `items.jsonl`.
+4. Corre backfill snippet para consolidar `items.jsonl` (**salta items con
+   `approved_at`** — no remapea golden records).
 5. Trunca la queue (`data/unmapped_series.jsonl`).
 
 **Cuándo invocarlo**:
@@ -136,6 +139,8 @@ y trunca la queue.
    por el mismo patrón, presenta propuestas numeradas y **espera confirmación**.
 4. Aplica cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
    `sources.yml` / `series_aliases.yml` / o correcciones directas en `items.jsonl`.
+   **Golden records guard**: si un fix de calidad de datos (K–N) tocaría un item
+   con `approved_at`, NO se auto-edita — se consulta al owner primero.
 5. Agrega tests y corre pytest (solo para cambios de filtros).
 6. Corre retrofits correspondientes (`filter_non_manga.py`, `filter_collectible.py`,
    `rescore.py`, `backfill_metadata.py`, `clean_titles.py`, etc.).

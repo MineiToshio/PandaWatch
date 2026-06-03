@@ -45,7 +45,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate  # type: ignore
+from manga_watch import backup_and_rotate, is_approved  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +379,9 @@ def main() -> int:
     parser.add_argument("--flush-every", type=int, default=50,
                         help="Guardar al disco cada N items procesados (default 50). "
                              "Permite retomar sin perder progreso si el proceso se interrumpe.")
+    parser.add_argument("--include-approved", action="store_true",
+                        help="Procesar también items aprobados (golden records). Por "
+                             "defecto se saltean para no pisar metadata aprobada.")
     args = parser.parse_args()
 
     # --- Verificar dependencias obligatorias ---
@@ -415,12 +418,23 @@ def main() -> int:
     print(f"[INFO] {len(items)} items cargados desde {src}.", flush=True)
 
     # --- Filtrar pendientes ---
+    # Golden records: el owner aprobó esta card; no la re-traducimos. Queda
+    # intacta en `updated_items` y se reescribe sin cambios.
+    skipped_approved = sum(
+        1 for item in items
+        if "_raw" not in item and is_approved(item) and not args.include_approved
+    )
     pending_idxs = [
         i for i, item in enumerate(items)
-        if "_raw" not in item and _needs_translation(item, args.force)
+        if "_raw" not in item
+        and not (is_approved(item) and not args.include_approved)
+        and _needs_translation(item, args.force)
     ]
     if args.limit:
         pending_idxs = pending_idxs[: args.limit]
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} aprobados saltados "
+              f"(usa --include-approved para incluirlos).", flush=True)
 
     # Contar campos pendientes para estimación de carga
     extras_pending = sum(

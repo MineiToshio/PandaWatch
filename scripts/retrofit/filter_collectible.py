@@ -34,6 +34,7 @@ from manga_watch import (  # type: ignore
     derive_product_type,
     detect_signals,
     backup_and_rotate,
+    is_approved,
 )
 
 
@@ -44,6 +45,9 @@ def main() -> int:
     parser.add_argument("--rejected-output", default="data/diagnostics/items.non_collectible.jsonl")
     parser.add_argument("--dry-run", action="store_true",
                         help="No escribe nada; solo reporta cuántos se filtrarían.")
+    parser.add_argument("--include-approved", action="store_true",
+                        help="Procesar también items aprobados (golden records). Por "
+                             "defecto se saltean para no pisar metadata aprobada.")
     args = parser.parse_args()
 
     src = Path(args.input)
@@ -54,6 +58,7 @@ def main() -> int:
     lines = src.read_text(encoding="utf-8").splitlines()
     kept_lines: list[str] = []
     rejected_lines: list[str] = []
+    skipped_approved = 0
     reason_counter: Counter[str] = Counter()
     sample_rejected: list[tuple[str, str, str]] = []
     sample_kept: list[tuple[str, str, str]] = []
@@ -67,6 +72,13 @@ def main() -> int:
         except json.JSONDecodeError:
             kept_lines.append(line)
             continue
+
+        # Golden records: el owner aprobó esta card; SIEMPRE se conserva.
+        if is_approved(item) and not args.include_approved:
+            skipped_approved += 1
+            kept_lines.append(line)
+            continue
+
         title = item.get("title", "")
         description = item.get("description", "")
         tags = item.get("tags", []) or []
@@ -97,6 +109,8 @@ def main() -> int:
     print(f"[INFO] {total} items totales")
     print(f"[INFO] {len(kept_lines)} coleccionables (kept)  {len(kept_lines)*100//max(total,1)}%")
     print(f"[INFO] {len(rejected_lines)} tomos regulares (rejected)  {len(rejected_lines)*100//max(total,1)}%")
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} aprobados saltados (kept; usa --include-approved para incluirlos)")
     print(f"\nMotivos de descarte:")
     for bucket, n in reason_counter.most_common():
         print(f"  {bucket:25s}  {n}")

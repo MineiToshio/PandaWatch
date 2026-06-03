@@ -212,6 +212,15 @@ PROPUESTAS DE MEJORA (N total):
 
 ## Step 4 — Apply approved changes
 
+> **Golden records guard.** Before applying any **data-quality** fix that
+> rewrites a specific item in `items.jsonl` (categories K–N: wrong image,
+> wrong metadata, wrong series/edition key, junk title), check
+> `item.get('approved_at')`. If the item is **approved**, do NOT auto-edit it
+> — the owner marked it correct. Surface it to the owner and ask before
+> touching it. Filter/code fixes (A–J) are about scraper logic, not specific
+> rows, so they're fine; but when a retrofit follows, it already skips
+> approved items by default (`--include-approved` to override).
+
 ### A/B/C: Adding to `_NON_MANGA_HARD`
 
 Read the current `_NON_MANGA_HARD` list in `manga_watch.py`. Add using `_phrase_pattern()` for word-boundary matching:

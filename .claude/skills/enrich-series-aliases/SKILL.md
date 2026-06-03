@@ -112,6 +112,9 @@ ITEMS = Path('data/items.jsonl')
 items = [json.loads(l) for l in open(ITEMS)]
 remapped = 0
 for it in items:
+    # Golden records: items aprobados desde el dashboard NO se remapean.
+    if it.get('approved_at'):
+        continue
     old_sk = it.get('series_key','')
     old_sd = it.get('series_display','')
     new_sk, new_sd = canonical_series_key(it.get('title',''), old_sk, old_sd)
