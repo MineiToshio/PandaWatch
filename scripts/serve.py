@@ -11,6 +11,8 @@ Endpoints:
     POST /api/curation/move         → mover item a otra edición (inmediato)
     POST /api/curation/merge        → fusionar items duplicados (inmediato)
     POST /api/curation/remove       → sacar item de su edición (inmediato)
+    POST /api/approve               → aprobar/desaprobar una card (golden record)
+    POST /api/approve-edition       → aprobar/desaprobar todos los tomos de una edición
     GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
     POST /api/save-cover-preview    → guarda data/cover_preview.json
     GET  /api/health                → liveness probe
@@ -33,6 +35,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import functools
 import http.server
 import json
 import os
@@ -54,9 +57,10 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
-ITEMS_PATH    = ROOT / "data" / "items.jsonl"
-FEEDBACK_PATH = ROOT / "data" / "feedback.jsonl"
-IMAGES_DIR    = ROOT / "data" / "images"
+ITEMS_PATH     = ROOT / "data" / "items.jsonl"
+FEEDBACK_PATH  = ROOT / "data" / "feedback.jsonl"
+APPROVALS_PATH = ROOT / "data" / "approvals.jsonl"
+IMAGES_DIR     = ROOT / "data" / "images"
 
 MAX_BUFFERED_LINES = 5000
 MAX_FINISHED_JOBS  = 30
@@ -78,6 +82,19 @@ except ImportError:
 
     def known_flags(sid: str) -> set:  # type: ignore[misc]
         return set()
+
+# Primitivas del modelo 1-fila-por-producto (fuente única de verdad del merge).
+# Las usan los endpoints de curación que escriben items.jsonl para no romper el
+# invariante "1 fila por cluster_key con sources[]". Ver CLAUDE.md decisión #1.
+try:
+    import manga_watch as _mw_mod  # type: ignore
+    if not hasattr(_mw_mod, "merge_cluster"):  # wrapper raíz bajo pytest
+        from scripts import manga_watch as _mw_mod  # type: ignore
+    merge_cluster = _mw_mod.merge_cluster
+    consolidate_by_cluster = _mw_mod.consolidate_by_cluster
+except Exception:  # pragma: no cover
+    merge_cluster = None  # type: ignore
+    consolidate_by_cluster = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +319,28 @@ def build_command(
 # Feedback / curation helpers
 # ---------------------------------------------------------------------------
 
+# El servidor es threaded (ThreadedTCPServer). Todos los endpoints que
+# modifican items.jsonl hacen read-modify-write del archivo ENTERO. Sin
+# serializar, dos requests concurrentes (clics rápidos: aprobar varios, o
+# aprobar + curar) se pisan — ambos leen el estado viejo y el último write
+# gana, perdiendo los cambios del otro (p. ej. aprobaciones que "desaparecen").
+# Este lock serializa la sección crítica load→modify→write de cada operación.
+# OJO: NO decorar funciones que se llamen entre sí (deadlock — Lock no
+# reentrante). _log_feedback queda SIN lock a propósito (sólo lee items.jsonl
+# para snapshot + appendea a feedback.jsonl; lo llaman funciones ya bajo lock).
+_ITEMS_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    """Serializa la ejecución de la función con _ITEMS_LOCK (read-modify-write
+    atómico sobre items.jsonl)."""
+    @functools.wraps(fn)
+    def _wrapper(*args, **kwargs):
+        with _ITEMS_LOCK:
+            return fn(*args, **kwargs)
+    return _wrapper
+
+
 def _load_items() -> list[dict]:
     items: list[dict] = []
     if not ITEMS_PATH.exists():
@@ -391,6 +430,7 @@ def _search_editions(query: str, limit: int = 15) -> list[dict]:
     return list(seen.values())
 
 
+@_serialized
 def _apply_move(item_url: str, to_edition_key: str, reason: str) -> str:
     """Move item to a different edition. Returns status message."""
     items = _load_items()
@@ -412,12 +452,19 @@ def _apply_move(item_url: str, to_edition_key: str, reason: str) -> str:
     vol = (item.get("volume") or "").strip()
     item["cluster_key"] = f"edition:{to_edition_key}|{vol}"
 
+    # Modelo 1-fila-por-producto: si la edición destino ya tiene ESTE tomo,
+    # mover crearía 2 filas con el mismo cluster_key. Consolidamos para que se
+    # fusionen en una sola con sources[] unido. Idempotente.
+    if consolidate_by_cluster is not None:
+        items = consolidate_by_cluster(items)
+
     _write_items(items)
     _log_feedback(item_url, reason, action="move",
                   extra={"from_edition": old_ek, "to_edition": to_edition_key})
     return "ok"
 
 
+@_serialized
 def _apply_merge_items(item_url: str, duplicate_of_url: str,
                        reason: str) -> str:
     """Merge two duplicate items: keep the better one, remove the other."""
@@ -429,32 +476,31 @@ def _apply_merge_items(item_url: str, duplicate_of_url: str,
     if not item_b:
         return "Item destino no encontrado"
 
-    keep, drop = (item_b, item_a) if (item_b.get("score", 0) >=
-                  item_a.get("score", 0)) else (item_a, item_b)
+    url_a, url_b = item_a.get("url"), item_b.get("url")
 
-    for field in ("isbn", "price", "author", "release_date", "image_url",
-                  "image_local", "description"):
-        if not keep.get(field) and drop.get(field):
-            keep[field] = drop[field]
+    # Modelo 1-fila-por-producto: el usuario marca estos dos como el MISMO
+    # producto (suelen tener cluster_key distinto, por eso aparecían como 2
+    # cards). Los fusionamos en UNA fila con merge_cluster — une sources[],
+    # imágenes (portada canónica primera) y extras, eligiendo la más completa
+    # como canónica. NO borramos una perdiendo su fuente (bug del modelo viejo).
+    if merge_cluster is not None:
+        merged = merge_cluster([item_a, item_b])
+    else:  # pragma: no cover — fallback degradado
+        merged = item_a if item_a.get("score", 0) >= item_b.get("score", 0) else item_b
+    kept_url = merged.get("url")
+    dropped_url = url_b if kept_url == url_a else url_a
 
-    keep_imgs = keep.get("images") or []
-    drop_imgs = drop.get("images") or []
-    existing_urls = {img.get("url") for img in keep_imgs}
-    for img in drop_imgs:
-        if img.get("url") not in existing_urls:
-            keep_imgs.append(img)
-    if keep_imgs:
-        keep["images"] = keep_imgs
-
-    items = [i for i in items if i.get("url") != drop.get("url")]
+    items = [i for i in items if i.get("url") not in (url_a, url_b)]
+    items.append(merged)
     _write_items(items)
     _log_feedback(item_url, reason, action="merge",
                   extra={"duplicate_of": duplicate_of_url,
-                         "kept_url": keep.get("url"),
-                         "dropped_url": drop.get("url")})
+                         "kept_url": kept_url,
+                         "dropped_url": dropped_url})
     return "ok"
 
 
+@_serialized
 def _apply_remove(item_url: str, reason: str) -> str:
     """Remove item from its edition (set standalone edition_key)."""
     items = _load_items()
@@ -473,6 +519,116 @@ def _apply_remove(item_url: str, reason: str) -> str:
     return "ok"
 
 
+@_serialized
+def _apply_approve(item_url: str, approved: bool, reason: str = "") -> str:
+    """Aprobar/desaprobar una card (golden record).
+
+    Aprobar marca `approved_at` + `approved_by` en TODAS las filas que
+    comparten el `cluster_key` del item clickeado (una card = un cluster).
+    Para clusters standalone (`url:...`) toca sólo esa fila. Desaprobar
+    limpia ambos campos. Además appendea un registro al log durable
+    data/approvals.jsonl para poder re-aplicar tras una reconstrucción
+    del catálogo (ver scripts/retrofit/apply_approvals.py).
+    """
+    items = _load_items()
+    item = _find_item_by_url(items, item_url)
+    if not item:
+        return "Item no encontrado"
+
+    cluster = item.get("cluster_key") or f"url:{item_url}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    targets = [
+        it for it in items
+        if (it.get("cluster_key") or f"url:{it.get('url','')}") == cluster
+    ]
+    if not targets:
+        targets = [item]
+
+    for it in targets:
+        if approved:
+            it["approved_at"] = now
+            it["approved_by"] = "owner"
+        else:
+            it["approved_at"] = ""
+            it["approved_by"] = ""
+
+    _write_items(items)
+
+    entry = {
+        "cluster_key": cluster,
+        "url": item_url,
+        "action": "approve" if approved else "unapprove",
+        "approved_at": now if approved else "",
+        "approved_by": "owner" if approved else "",
+        "reason": reason,
+        "submitted_at": now,
+        # snapshot de campos congelados para auditoría / replay
+        "series_key": item.get("series_key", ""),
+        "edition_key": item.get("edition_key", ""),
+        "title": item.get("title", ""),
+        "volume": item.get("volume", ""),
+    }
+    APPROVALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with APPROVALS_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    return "ok"
+
+
+@_serialized
+def _apply_approve_edition(edition_key: str, approved: bool, reason: str = "") -> tuple[str, int]:
+    """Aprobar/desaprobar TODOS los tomos de una edición de una sola vez.
+
+    Marca `approved_at`/`approved_by` en todas las filas con ese `edition_key`
+    en una única reescritura atómica de items.jsonl (más eficiente que N
+    requests). Loguea una entrada por cluster_key afectado a approvals.jsonl
+    para que `apply_approvals.py` pueda re-materializarlas. Devuelve
+    (status, n_filas_afectadas).
+    """
+    if not edition_key or edition_key.startswith("__solo__"):
+        return "edition_key inválido", 0
+    items = _load_items()
+    now = datetime.now(timezone.utc).isoformat()
+    affected = [it for it in items if it.get("edition_key") == edition_key]
+    if not affected:
+        return "Edición no encontrada", 0
+
+    for it in affected:
+        if approved:
+            it["approved_at"] = now
+            it["approved_by"] = "owner"
+        else:
+            it["approved_at"] = ""
+            it["approved_by"] = ""
+
+    _write_items(items)
+
+    APPROVALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    seen_clusters: set[str] = set()
+    with APPROVALS_PATH.open("a", encoding="utf-8") as fh:
+        for it in affected:
+            cluster = it.get("cluster_key") or f"url:{it.get('url','')}"
+            if cluster in seen_clusters:
+                continue
+            seen_clusters.add(cluster)
+            fh.write(json.dumps({
+                "cluster_key": cluster,
+                "url": it.get("url", ""),
+                "action": "approve" if approved else "unapprove",
+                "approved_at": now if approved else "",
+                "approved_by": "owner" if approved else "",
+                "reason": reason or f"bulk edition: {edition_key}",
+                "submitted_at": now,
+                "series_key": it.get("series_key", ""),
+                "edition_key": edition_key,
+                "title": it.get("title", ""),
+                "volume": it.get("volume", ""),
+            }, ensure_ascii=False) + "\n")
+
+    return "ok", len(affected)
+
+
 # ---------------------------------------------------------------------------
 # Image manager helpers
 # ---------------------------------------------------------------------------
@@ -488,6 +644,7 @@ def _image_file_sizes() -> dict[str, int]:
     return sizes
 
 
+@_serialized
 def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[str]]:
     """Rewrite item's images[] in items.jsonl.
 
@@ -498,6 +655,32 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
     if not ITEMS_PATH.exists():
         return False, []
     lines = ITEMS_PATH.read_text(encoding="utf-8").splitlines()
+
+    # El gestor opera a nivel CLUSTER: el set de imágenes editado se aplica a
+    # TODAS las filas del cluster (mismo cluster_key), no solo a la fila abierta.
+    # Así el detalle (que hace union del cluster) y el gestor muestran siempre lo
+    # mismo, y borrar una foto no reaparece desde una fila hermana. Para clusters
+    # `url:` (standalone) o sin cluster_key, solo se toca la fila por su url.
+    target_cluster = ""
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if row.get("url") == item_url:
+            ck = row.get("cluster_key") or ""
+            if ck and not ck.startswith("url:"):
+                target_cluster = ck
+            break
+
+    def _is_target(row: dict) -> bool:
+        if target_cluster:
+            return (row.get("cluster_key") or "") == target_cluster
+        return row.get("url") == item_url
+
     found = False
     old_locals: set[str] = set()
     new_locals: set[str] = {img.get("local", "") for img in images} - {""}
@@ -512,7 +695,7 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
         except json.JSONDecodeError:
             new_lines.append(raw)
             continue
-        if row.get("url") == item_url:
+        if _is_target(row):
             found = True
             for img in row.get("images", []):
                 loc = img.get("local", "")
@@ -520,7 +703,7 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
                     old_locals.add(loc)
             if row.get("image_local"):
                 old_locals.add(row["image_local"])
-            row["images"] = images
+            row["images"] = [dict(im) for im in images]
             if images:
                 cover = images[0]
                 row["image_url"] = cover.get("url", "")
@@ -718,8 +901,12 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             "/cover-preview.html": ROOT / "web" / "cover-preview.html",
             "/image-manager.html": ROOT / "web" / "image-manager.html",
         }
-        if self.path in _HTML_ALIASES:
-            self._serve_file(_HTML_ALIASES[self.path])
+        # Comparar sin el query string: /image-manager.html?item=... debe
+        # matchear el alias /image-manager.html (el query lo lee el JS del
+        # cliente vía window.location.search, no afecta qué archivo servir).
+        _path_only = self.path.split("?", 1)[0]
+        if _path_only in _HTML_ALIASES:
+            self._serve_file(_HTML_ALIASES[_path_only])
             return
 
         # Curation API (GET)
@@ -790,6 +977,12 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == "/api/curation/remove":
             self._handle_curation_remove()
+            return
+        if self.path == "/api/approve":
+            self._handle_approve()
+            return
+        if self.path == "/api/approve-edition":
+            self._handle_approve_edition()
             return
         if self.path == "/api/save-cover-preview":
             self._handle_save_cover_preview()
@@ -956,6 +1149,42 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         result = _apply_remove(url, reason or "removed via UI")
         if result == "ok":
             self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_approve(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        url = (payload.get("url") or "").strip()
+        approved = bool(payload.get("approved", True))
+        reason = (payload.get("reason") or "").strip()
+        if not url:
+            self._json(400, {"error": "Missing 'url'"})
+            return
+        result = _apply_approve(url, approved, reason or "approved via UI")
+        if result == "ok":
+            self._json(200, {"ok": True, "approved": approved})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_approve_edition(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        edition_key = (payload.get("edition_key") or "").strip()
+        approved = bool(payload.get("approved", True))
+        reason = (payload.get("reason") or "").strip()
+        if not edition_key:
+            self._json(400, {"error": "Missing 'edition_key'"})
+            return
+        result, n = _apply_approve_edition(edition_key, approved, reason or "approved edition via UI")
+        if result == "ok":
+            self._json(200, {"ok": True, "approved": approved, "count": n})
         else:
             self._json(400, {"error": result})
 

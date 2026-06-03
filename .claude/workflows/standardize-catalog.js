@@ -557,27 +557,16 @@ for gk, grp in groups.items():
                 it["series_key"] = dom_sk
                 outliers += 1
 
-# Dedup
-def comp(it):
-    return (100 if it.get("isbn") else 0) + (10 if it.get("image_url") else 0) + (5 if it.get("price") else 0)
-winners = {}
+# Consolidar por producto (modelo 1-fila-por-producto): el edition_key/volume
+# cambió al estandarizar, así que recomputamos cluster_key y FUSIONAMOS los
+# duplicados con merge_cluster (NO los borramos — perdería las fuentes hermanas).
+# consolidate_by_cluster es la MISMA primitiva que usa append_jsonl al ingestar.
+from manga_watch import derive_cluster_key, consolidate_by_cluster
 for it in final:
-    sk = it.get("series_key",""); ek = it.get("edition_key",""); v = it.get("volume","")
-    if not (sk and ek): continue
-    k = (sk, ek, v)
-    if k not in winners or comp(it) > comp(winners[k]):
-        winners[k] = it
-deduped = []
-seen = set()
-dedup_count = 0
-for it in final:
-    sk = it.get("series_key",""); ek = it.get("edition_key",""); v = it.get("volume","")
-    if not (sk and ek):
-        deduped.append(it); continue
-    k = (sk, ek, v)
-    if k in seen: dedup_count += 1; continue
-    seen.add(k)
-    deduped.append(winners[k])
+    it["cluster_key"] = derive_cluster_key(it)
+_before_consolidate = len(final)
+deduped = consolidate_by_cluster(final)
+dedup_count = _before_consolidate - len(deduped)
 
 tmp = ITEMS.with_suffix(ITEMS.suffix + ".tmp")
 with tmp.open("w", encoding="utf-8") as fh:

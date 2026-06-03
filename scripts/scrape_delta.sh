@@ -395,6 +395,11 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
     fi
 
+    echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
+    "$VENV_PY" scripts/retrofit/consolidate_sources.py \
+        > "$LOG_DIR/04g-consolidate-sources.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo " ✓ PHASE 3 cleanup done"
 else
     echo "[SKIP] PHASE 3 (cleanup) saltada por SKIP_CLEANUP=1"

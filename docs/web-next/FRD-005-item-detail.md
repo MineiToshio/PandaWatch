@@ -91,8 +91,14 @@ to zero or `NaN` is suppressed. Same rule applies in `MetaTable` and `ItemCard`.
 
 Located in `components/item/ImageCarousel.tsx`. Uses `"use client"`.
 
-The carousel shows the `images[]` array from the canonical item:
-- `kind=cover` — main cover (always first)
+The carousel shows the **cluster-level union** of `images[]` (built in
+`ItemHero.tsx` from `cluster.items`, not just `canonical.images`), so it matches
+the Alpine dashboard's detail carousel. Dedup by URL stem (no scheme/query); the
+canonical cover (`canonical.image_url`, the one the card shows) is **always first**
+so `carousel[0] == card cover`. This invariant must match the other two merge
+sites — `web/index.html` `dedupByUrl` and `scripts/build_web.py`
+`_merged_canonical` (2026-06-02).
+- position 0 — main cover (synced with the card)
 - `kind=gallery` — additional product photos
 - `kind=extra` — photos of included extras (postcards, shikishi, etc.)
 
@@ -185,15 +191,25 @@ internal signal-detection metric, not a user-facing quality indicator.
 
 ### FR-8: Sources table
 
-If the cluster has more than one source, show a "Fuentes" section:
+Las fuentes viven en **`canonical.sources[]`** (modelo 1-fila-por-producto,
+2026-06-02): cada fila de items.jsonl ya trae todas las fuentes donde se
+encontró el producto. `SourcesList` recibe `sources: SourceEntry[]` (NO
+`items: Item[]` — antes derivaba de `cluster.items`, que ahora es 1 sola fila,
+y mostraba "Fuentes (1)" perdiendo las hermanas). Fallback: si la fila no trae
+`sources[]` (datos legacy), se deriva de `cluster.items`. Se muestra cuando
+`sources.length > 1`.
 
-| Column | Field |
+| Column | Campo (de `SourceEntry`) |
 |---|---|
-| Fuente | `source` |
-| URL | Clickable link (external icon) |
-| Precio | `price` per source |
-| Fecha | `release_date` per source |
+| Fuente | `name` (+ link externo a `url`) |
+| Precio | `price` |
+| Fecha | `release_date` |
 | Stock | `stock_type` |
+
+> Nota relacionada: `lib/data.ts buildCluster` también une `country`/
+> `publisher`/`language` desde `canonical.sources[]` (no solo de las filas),
+> para que un producto multi-fuente no pierda los países/editoriales de las
+> fuentes hermanas en facetas y badges.
 
 ### FR-9: Navigation
 

@@ -31,6 +31,26 @@ export type Item = {
   detected_at?: string
   stock_type?: string
   rarity?: 'common' | 'rare' | 'super_rare' | 'ultra_rare'
+  // Modelo 1-fila-por-producto: cada fila lleva todas las fuentes donde se
+  // encontró el producto (name/url/price/country/stock_type…). Lo escribe
+  // append_jsonl al ingestar; ver CLAUDE.md decisión #1.
+  sources?: SourceEntry[]
+}
+
+export type SourceEntry = {
+  name?: string
+  source_class?: string
+  country?: string
+  publisher?: string
+  language?: string
+  url: string
+  price?: string
+  image_url?: string
+  image_local?: string
+  stock_type?: string
+  detected_at?: string
+  release_date?: string
+  score?: number
 }
 
 export type ItemImage = {

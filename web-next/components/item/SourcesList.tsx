@@ -1,13 +1,15 @@
 import { ExternalLink } from 'lucide-react'
 import { formatDate } from '@/lib/format'
-import type { Item } from '@/lib/types'
+import type { SourceEntry } from '@/lib/types'
 
 function hostname(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, '') }
   catch { return url }
 }
 
-export function SourcesList({ items }: { items: Item[] }) {
+// Recibe el array `sources[]` guardado en la fila del producto (modelo
+// 1-fila-por-producto). Cada entrada es una fuente: name/url/price/stock/fecha.
+export function SourcesList({ sources }: { sources: SourceEntry[] }) {
   return (
     <section>
       <h2 style={{
@@ -15,7 +17,7 @@ export function SourcesList({ items }: { items: Item[] }) {
         letterSpacing: '0.08em', color: 'var(--color-text-secondary)',
         marginBottom: 12, marginTop: 0,
       }}>
-        Fuentes ({items.length})
+        Fuentes ({sources.length})
       </h2>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -33,14 +35,14 @@ export function SourcesList({ items }: { items: Item[] }) {
             </tr>
           </thead>
           <tbody>
-            {items.map((item, i) => (
+            {sources.map((s, i) => (
               <tr
-                key={item.url}
-                style={{ borderBottom: i < items.length - 1 ? '1px solid var(--color-border-subtle)' : 'none' }}
+                key={s.url || i}
+                style={{ borderBottom: i < sources.length - 1 ? '1px solid var(--color-border-subtle)' : 'none' }}
               >
                 <td style={{ padding: '8px 16px 8px 0' }}>
                   <a
-                    href={item.url}
+                    href={s.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -49,18 +51,18 @@ export function SourcesList({ items }: { items: Item[] }) {
                       fontSize: 13,
                     }}
                   >
-                    {item.source || hostname(item.url)}
+                    {s.name || hostname(s.url)}
                     <ExternalLink size={11} style={{ flexShrink: 0 }} />
                   </a>
                 </td>
                 <td style={{ padding: '8px 16px 8px 0', color: 'var(--color-text-secondary)' }}>
-                  {item.price ?? '—'}
+                  {s.price || '—'}
                 </td>
                 <td style={{ padding: '8px 16px 8px 0', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-                  {item.release_date ? formatDate(item.release_date) : '—'}
+                  {s.release_date ? formatDate(s.release_date) : '—'}
                 </td>
                 <td style={{ padding: '8px 0', color: 'var(--color-text-secondary)' }}>
-                  {item.stock_type ?? '—'}
+                  {s.stock_type || '—'}
                 </td>
               </tr>
             ))}

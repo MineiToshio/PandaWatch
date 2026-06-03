@@ -1711,6 +1711,113 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False),
         ],
     },
+    {
+        "id": "apply_approvals",
+        "category": "Retrofit",
+        "icon": "✅",
+        "name": "Re-aplicar aprobaciones",
+        "tagline": "Restaura los golden records desde el log durable.",
+        "what": "Lee data/approvals.jsonl (el log de las cards aprobadas desde "
+                "el dashboard) y vuelve a marcar approved_at/approved_by en "
+                "items.jsonl. Sirve después de reconstruir el catálogo de cero "
+                "(re-scrape/import), cuando los flags de aprobación se perdieron. "
+                "Idempotente.",
+        "when": "Tras una reconstrucción de items.jsonl, para no perder lo aprobado.",
+        "command": [PYTHON, "scripts/retrofit/apply_approvals.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "✅ Re-aplicar aprobaciones",
+                "desc": "Marca de nuevo como aprobados los items del log.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra cuántos items se marcarían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra cuántos items se marcarían sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+    {
+        "id": "sync_cover_images",
+        "category": "Retrofit",
+        "icon": "🖼️",
+        "name": "Sincronizar portada del carrusel",
+        "tagline": "Hace que images[0] sea siempre la portada de la card.",
+        "what": "Saneamiento integral de imágenes: (1) si la portada es un "
+                "placeholder/banner, promueve una imagen real o la limpia (→ 📚); "
+                "(2) pone la portada en images[0] (la misma que muestra la card); "
+                "(3) elimina duplicados, banners y avatares de UI; (4) descarta "
+                "galerías que son otros tomos/series (no fotos del producto).",
+        "when": "Cuando una card y su carrusel muestran fotos distintas, hay "
+                "imágenes repetidas / banners / avatares, o carruseles con fotos "
+                "de otras series.",
+        "command": [PYTHON, "scripts/retrofit/sync_cover_images.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "🖼️ Sincronizar portadas",
+                "desc": "Repara images[0] y limpia duplicados/banners.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra cuántos items se corregirían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los cambios que aplicaría sin modificar items.jsonl.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "También re-sincroniza items aprobados (por defecto se saltean).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "consolidate_sources",
+        "category": "Retrofit",
+        "icon": "🧩",
+        "name": "Consolidar fuentes (1 fila por producto)",
+        "tagline": "Colapsa filas duplicadas del mismo producto en una con sources[].",
+        "what": "Un producto encontrado en varias fuentes debe ser UNA sola fila "
+                "con un array de fuentes (sources[]), no varias filas. Este "
+                "retrofit agrupa por producto (cluster_key) y fusiona los "
+                "duplicados conservando todas las fuentes, imágenes y extras. "
+                "El scraper ya deduplica al ingestar; esto re-consolida tras la "
+                "estandarización (que reasigna edition_key). Idempotente.",
+        "when": "Después de /standardize-catalog, o si ves cards duplicadas del "
+                "mismo producto.",
+        "command": [PYTHON, "scripts/retrofit/consolidate_sources.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "🧩 Consolidar",
+                "desc": "Colapsa duplicados de producto en 1 fila con sources[].",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra cuántas filas se colapsarían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra el conteo de consolidación sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
 
     # =====================================================================
     # AUDITORÍA

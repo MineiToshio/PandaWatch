@@ -952,6 +952,36 @@ IMAGE_URL_BAD_PATTERNS = (
     # vive en data-src o data-original, el src es solo placeholder).
     "data:image/gif;base64,r0lgodlh",
     "data:image/png;base64,ivborw0kggo",    # 1x1 PNG transparente común
+    # Banners de publicidad de tienda servidos como <img> de galería.
+    # KADOKAWA Store inyecta top_bar_banner_sp_*.png y bnr_honyaclub.jpg en el
+    # carrusel del producto — no son portada ni foto del producto (el
+    # "/banner/" de arriba no los agarra porque el path es "/top_bar_banner/"
+    # o "/img/bnr_"). Ver gotcha imágenes.
+    "top_bar_banner",
+    "/bnr_",
+    # Avatares de usuario / assets de UI de AnimeClick servidos como <img> en
+    # la ficha (el carrusel levantaba el avatar de quien subió la edición).
+    "/bundles/accommon/",
+    "/immagini/avatar/",
+    "utente_registrato",
+    # Íconos de UI de Funside (candado "scheda prodotto", etc.).
+    "icona_lucchetto",
+    # Banners promocionales de Rakuten Books servidos como portada
+    # (/books/img/bnr/event/... — campañas de puntos, no es portada).
+    "/img/bnr/",
+    # Íconos de estrella de rating de honto.jp servidos como portada
+    # (img.honto.jp/library/img/pc/img_star5_s.png).
+    "img_star",
+    # Placeholder "now printing" de e-hon.ne.jp (libro sin portada todavía).
+    "nowprinting",
+    # Aviso de contenido adulto de Manga-Sanctuary servido como portada.
+    "/img/adulte",
+    # Banners del sitio Otaku Calendar (Header-Spring.png, Twitter-Card-*.png).
+    "/images/site/yomi/",
+    # Banner promocional "Lista de Mangas Panini" que Manga México (blog en
+    # Blogger) sirve como imagen del post — se colaba como portada idéntica en
+    # decenas de mangas distintos. No es portada de producto.
+    "lista%20de%20mangas",
 )
 
 IMAGE_URL_GOOD_PATTERNS = (
@@ -1739,33 +1769,45 @@ def _extract_images_from_detail_soup(
 
     # 6) Filtro de "mismo folder que la cover": cuando el sitio tiene
     # carruseles de "productos relacionados" dentro del scope del producto
-    # principal (caso real: Norma `<main>` incluye el sidebar de also-buy),
+    # principal (caso real: Norma `<main>` incluye el sidebar de also-buy;
+    # Star Comics incrusta un carrusel de "otros volúmenes" en el detail),
     # los thumbs de OTROS productos colaban como gallery. Si la cover tiene
     # un parent path identificable (>=2 segmentos), filtramos las gallery a
-    # las que comparten ese stem. Cover siempre se mantiene.
+    # las que viven en el MISMO directorio que la cover. Cover siempre se
+    # mantiene.
+    #
+    # IMPORTANTE: la comparación es por directorio EXACTO, no substring.
+    # Star Comics sirve la cover en `/files/immagini/fumetti-cover/<X>` y los
+    # thumbnails de productos relacionados en
+    # `/files/immagini/fumetti-cover/thumbnail/<Y>` — un SUBdirectorio. Un
+    # check `stem in url` dejaba pasar los contaminantes porque el parent de
+    # la cover (`.../fumetti-cover`) es substring del path del subdirectorio
+    # (`.../fumetti-cover/thumbnail/...`). Comparar el directorio padre exacto
+    # los descarta (gotcha #31).
     if len(out) >= 2:
-        cover_url = out[0]["url"]
-        try:
-            from urllib.parse import urlparse
-            cp = urlparse(cover_url).path.rstrip("/")
-            # parent path sin el filename final
-            parent = cp.rsplit("/", 1)[0]
-            segments = [s for s in parent.split("/") if s]
-            # Heurística: usar parent path solo si tiene >=2 segmentos
-            # (evita falsos positivos en sites con paths shallow tipo /img/).
-            if len(segments) >= 2:
-                stem = parent  # ej. "/upload/media/albumes/0001/35"
-                filtered = [out[0]]
-                for im in out[1:]:
-                    if stem in im["url"]:
-                        filtered.append(im)
-                # Solo aplicamos el filtro si descartamos >=2 imágenes (señal
-                # de que había contaminación real). Si descartamos <=1, era
-                # un site con paths heterogéneos legítimos — no tocamos.
-                if len(out) - len(filtered) >= 2:
-                    out = filtered
-        except Exception:
-            pass
+        from urllib.parse import urlparse
+
+        def _parent_dir(u: str) -> str:
+            try:
+                p = urlparse(u).path.rstrip("/")
+                return p.rsplit("/", 1)[0]
+            except Exception:
+                return ""
+
+        cover_parent = _parent_dir(out[0]["url"])
+        segments = [s for s in cover_parent.split("/") if s]
+        # Heurística: usar parent path solo si tiene >=2 segmentos
+        # (evita falsos positivos en sites con paths shallow tipo /img/).
+        if len(segments) >= 2:
+            filtered = [out[0]]
+            for im in out[1:]:
+                if _parent_dir(im["url"]) == cover_parent:
+                    filtered.append(im)
+            # Solo aplicamos el filtro si descartamos >=2 imágenes (señal
+            # de que había contaminación real). Si descartamos <=1, era
+            # un site con paths heterogéneos legítimos — no tocamos.
+            if len(out) - len(filtered) >= 2:
+                out = filtered
 
     return out
 
@@ -3501,6 +3543,170 @@ def backup_and_rotate(path: Path, label: str, max_keep: int = 3) -> Path:
     return dest
 
 
+def is_approved(item: dict[str, Any]) -> bool:
+    """True si el item fue aprobado manualmente desde el dashboard.
+
+    `approved_at` (timestamp ISO) es un "golden record" marker: el owner
+    confirmó que la metadata de esta card es correcta. Los retrofits y skills
+    deben SALTEAR estos items (no re-derivar ni re-filtrar) y pueden usarlos
+    como ejemplos de referencia de "dato bien hecho". El re-scrape preserva
+    los campos descriptivos y sólo refresca info de mercado (precio/stock).
+    Ver `append_jsonl` y la sección de aprobación en CLAUDE.md.
+    """
+    return bool(item.get("approved_at"))
+
+
+# ── Modelo 1-fila-por-producto: merge de cluster (FUENTE ÚNICA DE VERDAD) ──────
+#
+# Un producto físico (cluster) es UNA fila en items.jsonl con un array
+# `sources[]` que lista todas las fuentes donde se encontró. Estas tres
+# primitivas son la ÚNICA implementación del merge — las usan append_jsonl
+# (ingesta), build_web (embed) y el retrofit consolidate_sources. NO duplicar la
+# lógica en otro lado (la divergencia entre sitios de merge fue la raíz de los
+# bugs de fotos de 2026-06-02).
+
+_SOURCE_FIELDS = (
+    "source", "source_class", "country", "publisher", "language", "url",
+    "price", "image_url", "image_local", "stock_type", "detected_at",
+    "release_date", "score",
+)
+
+# Campos curados que no deben perderse al elegir la fila canónica del cluster.
+_CLUSTER_CURATED = (
+    "series_key", "series_display", "edition_key", "edition_display", "volume",
+    "standardized_at", "slug", "approved_at", "approved_by", "isbn",
+    "author", "description", "description_es", "rarity", "rarity_verified_at",
+)
+
+
+def source_entry(item: dict[str, Any]) -> dict[str, Any]:
+    """Subconjunto por-fuente de un item (precio/URL/país/stock por tienda)."""
+    return {("name" if k == "source" else k): item.get(k, "" if k != "score" else 0)
+            for k in _SOURCE_FIELDS}
+
+
+def _img_stem(url: str) -> str:
+    return re.sub(r"^https?://", "", (url or "").split("?", 1)[0]).lower()
+
+
+def _cluster_completeness(it: dict[str, Any]) -> int:
+    return (
+        (1 if it.get("approved_at") else 0) * 10000
+        + (1 if it.get("standardized_at") else 0) * 1000
+        + (100 if it.get("isbn") else 0)
+        + (10 if it.get("image_url") else 0)
+        + (5 if it.get("price") else 0)
+    )
+
+
+def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fusiona N filas del MISMO producto en una sola, con `sources[]`.
+
+    - Canónica = la más completa (aprobada > estandarizada > ISBN > imagen > precio).
+    - Campos faltantes en la canónica se rellenan desde cualquier miembro.
+    - `sources[]` = union de las fuentes (usa el `sources[]` guardado de cada
+      miembro si lo trae, si no `source_entry(member)`), dedup por URL.
+    - `images[]` = union con la PORTADA canónica (image_url) SIEMPRE primera
+      (carrusel[0] == card), dedup por URL stem.
+    - `extras[]` = union dedup por (description, release_date).
+    """
+    if len(group) == 1:
+        only = dict(group[0])
+        if not (isinstance(only.get("sources"), list) and only["sources"]):
+            only["sources"] = [source_entry(only)]
+        return only
+
+    canonical = max(group, key=_cluster_completeness)
+    merged = dict(canonical)
+    for f in ("image_url", "image_local", "author", "price", "release_date",
+              "description", "isbn", "publisher"):
+        if not merged.get(f):
+            for it in group:
+                if it.get(f):
+                    merged[f] = it[f]
+                    break
+    for f in _CLUSTER_CURATED:
+        if merged.get(f) in (None, ""):
+            for it in group:
+                if it.get(f) not in (None, ""):
+                    merged[f] = it[f]
+                    break
+
+    # images union — portada canónica primero
+    seen_i: set[str] = set()
+    imgs: list[dict] = []
+
+    def _push_img(im: dict | None) -> None:
+        if not im or not im.get("url"):
+            return
+        k = _img_stem(im["url"])
+        if k in seen_i:
+            return
+        seen_i.add(k)
+        imgs.append(im)
+
+    cover = merged.get("image_url", "")
+    if cover:
+        own = next((im for im in (canonical.get("images") or [])
+                    if _img_stem(im.get("url", "")) == _img_stem(cover)), None)
+        _push_img(own or {"url": cover, "local": merged.get("image_local", ""),
+                          "kind": "gallery", "description": ""})
+    for it in group:
+        for im in (it.get("images") or []):
+            _push_img(im)
+    if imgs:
+        merged["images"] = imgs
+
+    # extras union
+    seen_e: set[tuple[str, str]] = set()
+    extras: list[dict] = []
+    for it in group:
+        for ex in (it.get("extras") or []):
+            if not ex or not ex.get("description"):
+                continue
+            k = (ex["description"], ex.get("release_date", ""))
+            if k in seen_e:
+                continue
+            seen_e.add(k)
+            extras.append(ex)
+    if extras:
+        merged["extras"] = extras
+
+    merged["score"] = max((i.get("score") or 0) for i in group)
+
+    # sources union — usa el sources[] guardado de cada miembro si lo trae
+    seen_s: set[str] = set()
+    sources: list[dict] = []
+    for it in group:
+        entries = it["sources"] if (isinstance(it.get("sources"), list) and it["sources"]) else [source_entry(it)]
+        for s in entries:
+            u = normalize_url_for_dedup(s.get("url", "") or "")
+            if u in seen_s:
+                continue
+            seen_s.add(u)
+            sources.append(s)
+    sources.sort(key=lambda s: (s.get("url", "") != canonical.get("url", ""),
+                                s.get("country", ""), s.get("name", "")))
+    merged["sources"] = sources
+    return merged
+
+
+def consolidate_by_cluster(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Colapsa filas del mismo `cluster_key` en 1 fila por producto con sources[].
+
+    Clusters `url:` (standalone) quedan como 1 fila cada uno. Idempotente.
+    """
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for r in rows:
+        key = r.get("cluster_key") or derive_cluster_key(r)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+    return [merge_cluster(groups[k]) for k in order]
+
+
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     """Upsert por URL normalizada: una línea por item único en disco.
 
@@ -3560,7 +3766,12 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         "edition_display",
         "volume",
         "description_es",  # traducción al español (translate_descriptions.py)
+        "approved_at",     # golden record marker (aprobado desde el dashboard)
+        "approved_by",
     )
+    # Campos volátiles de mercado: SÍ se refrescan aunque el item esté aprobado
+    # (un golden record congela la metadata descriptiva, no el precio/stock).
+    _VOLATILE_FIELDS = ("price", "stock_type", "sources", "detected_at")
     for row in rows:
         url = row.get("url", "")
         if not url:
@@ -3621,7 +3832,30 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
                 seen_e.add(k)
                 merged_e.append(ex)
             row["extras"] = merged_e
-        if old and old.get("standardized_at"):
+        # sources[] sticky+merge (modelo 1-fila-por-producto): cada fila ES una
+        # fuente. El scraper no setea sources[], así que la fila entrante es
+        # `source_entry(row)`. Preservamos las fuentes HERMANAS que ya estaban
+        # (otro retailer del mismo producto cuya URL no se re-scrapeó esta vez) y
+        # refrescamos/agregamos la propia. Sin esto, un re-scrape de una sola
+        # fuente borraría las demás del array. La consolidación por cluster (al
+        # final) une además filas-fuente que llegaron con URLs distintas.
+        incoming = list(row["sources"]) if (isinstance(row.get("sources"), list) and row["sources"]) else [source_entry(row)]
+        seen_src = {normalize_url_for_dedup(s.get("url", "") or "") for s in incoming}
+        for s in ((old or {}).get("sources") or []):
+            if normalize_url_for_dedup(s.get("url", "") or "") not in seen_src:
+                incoming.append(s)
+        row["sources"] = incoming
+        if old and is_approved(old):
+            # Golden record: el owner aprobó esta card desde el dashboard.
+            # Congelamos TODA la metadata descriptiva (partimos de old) y sólo
+            # refrescamos los campos volátiles de mercado (precio/stock/fuentes)
+            # con los valores del re-scrape. Ver is_approved() + CLAUDE.md.
+            merged = dict(old)
+            for vf in _VOLATILE_FIELDS:
+                if vf in row:
+                    merged[vf] = row[vf]
+            existing[key] = merged
+        elif old and old.get("standardized_at"):
             merged = dict(row)
             for field in _CURATED_FIELDS:
                 if old.get(field) not in (None, ""):
@@ -3636,7 +3870,13 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     def _detected_key(item: dict[str, Any]) -> str:
         return str(item.get("detected_at", "") or "")
 
-    sorted_rows = sorted(existing.values(), key=_detected_key)
+    # Consolidación por producto: colapsa filas que comparten cluster_key (el
+    # mismo producto encontrado en varias fuentes con URLs distintas) en UNA
+    # sola fila con `sources[]`. Esto es lo que implementa el modelo
+    # 1-fila-por-producto al ingestar — un producto re-encontrado NO agrega una
+    # fila nueva, suma su fuente al array. Idempotente.
+    consolidated = consolidate_by_cluster(list(existing.values()))
+    sorted_rows = sorted(consolidated, key=_detected_key)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as file:
         for item in sorted_rows:

@@ -76,8 +76,8 @@ Read `CLAUDE.md` first for the high-level orientation.
               ▼                       ▼
       ┌───────────────┐       ┌──────────────────────┐
       │ state.json    │       │  items.jsonl         │
-      │ (cache, ~7MB) │       │  (upsert by URL,     │
-      │ url → snapshot│       │   cluster_key in row)│
+      │ (cache, ~7MB) │       │  (1 fila/producto,   │
+      │ url → snapshot│       │   sources[] + cluster_key)│
       └───────────────┘       └────────┬─────────────┘
                                        │
                                        ▼
@@ -398,7 +398,16 @@ even when their title and description had nothing about a boxset.
 ### items.jsonl
 
 - Format: JSON Lines (one JSON object per line).
-- Semantics: **upsert by URL** (after `normalize_url_for_dedup`).
+- Semantics (cambio 2026-06-02): **una fila por PRODUCTO** (cluster), no por
+  URL. `append_jsonl` hace upsert por URL normalizada, luego **consolida por
+  `cluster_key`** (`consolidate_by_cluster`) → cada producto queda en UNA fila
+  con un array **`sources[]`** (todas las fuentes donde se encontró: name, url,
+  price, country, stock_type, image_url…). Un producto re-encontrado en otra
+  fuente NO agrega fila: suma su entrada a `sources[]` (sticky+merge, preserva
+  hermanas). El merge vive en `manga_watch.merge_cluster` / `source_entry`
+  (fuente única de verdad; también lo usan build_web y `consolidate_sources.py`).
+  `cluster_key` no es estable hasta `/standardize-catalog` (asigna edition_key),
+  por eso `consolidate_sources.py` re-consolida como paso `[4g]` del pipeline.
 - Sort: by `detected_at` ascending (oldest first); rows without URL go
   at the end.
 - Atomic write via `.tmp` + `rename`. Safe under crash.
@@ -456,6 +465,18 @@ Row schema (the fields written by `candidate_to_json`):
   "edition_display":"display name e.g. 'Deluxe Edition (Dark Horse)'",
   "volume":        "string '1' | '100' | '1-3' for sets | '' for one-shots",
   "standardized_at":"ISO-8601 UTC, set ONLY by /standardize-catalog skill",
+
+  // --- Human approval / golden records (added 2026-06-01, see CLAUDE.md "Aprobación humana") ---
+  "approved_at":   "ISO-8601 UTC. Presence = the owner approved this card as
+                    correct from the dashboard. Empty/absent = unreviewed.
+                    Sticky (part of _CURATED_FIELDS). When set, append_jsonl
+                    FREEZES all descriptive metadata on re-scrape and only
+                    refreshes _VOLATILE_FIELDS (price/stock_type/sources/
+                    detected_at). Retrofits + skills skip approved items by
+                    default. Set per-CLUSTER by POST /api/approve and per-EDITION
+                    by POST /api/approve-edition. Also logged to approvals.jsonl
+                    for durable replay (apply_approvals.py).",
+  "approved_by":   "'owner' when approved, '' when cleared.",
 
   // --- URL slug for Next.js app (added 2026-05-27, see docs/web-next/FRD-006-slug-generation.md) ---
   "slug":          "URL-safe unique key for /item/[slug] route in web-next.
@@ -621,7 +642,8 @@ Lives at `scripts/retrofit/translate_descriptions.py`. Behavior:
   under the same condition.
 - Skips items where `description` is already Spanish (detected via
   `langdetect` — threshold `lang == 'es'`).
-- Writes back in-place (upsert by URL, only the translated fields change).
+- Writes back in-place (per-row update, only the translated fields change;
+  el modelo 1-fila-por-producto con sources[] no se altera).
 - Flags: `--dry-run`, `--limit N`, `--workers N` (parallel calls, default 4),
   `--force` (re-translate even if `description_es` already set),
   `--sleep` (pause between API calls, default 0.15s).
@@ -746,6 +768,33 @@ Schema: all fields of the original `items.jsonl` row, plus:
 - **Reader**: the `/review-feedback` skill — reads the queue, categorizes
   root causes (A–J filter issues + K–N data quality), proposes fixes,
   applies approved changes, and truncates the queue.
+- Gitignored.
+
+### approvals.jsonl
+
+Durable, append-only log of the cards the owner **approved** (golden records)
+from the dashboard. Complements the `approved_at`/`approved_by` fields written
+into `items.jsonl`: those live in the regenerable catalog, this log survives a
+from-scratch rebuild.
+
+- Written by `POST /api/approve` (one entry per cluster) and
+  `POST /api/approve-edition` (one entry per affected cluster) in `serve.py`.
+- One line per approve/unapprove action. Schema:
+  ```jsonc
+  {
+    "cluster_key":  "edition:<key>|<vol> | isbn:<X> | url:<X>",
+    "url":          "canonical item URL",
+    "action":       "approve | unapprove",
+    "approved_at":  "ISO-8601 UTC (empty when unapprove)",
+    "approved_by":  "owner | ''",
+    "reason":       "free-text / 'bulk edition: <key>'",
+    "submitted_at": "ISO-8601 UTC",
+    "series_key": "...", "edition_key": "...", "title": "...", "volume": "..."
+  }
+  ```
+- **Reader / replay**: `scripts/retrofit/apply_approvals.py` reduces the log to
+  the final state per cluster_key (last-wins) and re-applies `approved_at` to a
+  freshly rebuilt `items.jsonl` (match by cluster_key, fallback url). Idempotent.
 - Gitignored.
 
 ### Why JSONL and not SQLite (yet)
@@ -1176,6 +1225,27 @@ async would touch hundreds of call sites and rewrite the wiki
 parsers. Threads buy 6-8× speedup with ~250 LOC of change and the
 existing fetch helpers untouched. The cost is GIL, but the workload
 is I/O-bound (network-waiting, not CPU-burning).
+
+### Server-side write serialization (`serve.py`) — `@_serialized`
+
+`serve.py` runs on a **threaded** server (`ThreadedTCPServer(ThreadingMixIn,
+TCPServer)`) so it can handle concurrent SSE streams and API requests. But the
+6 endpoints that mutate `items.jsonl` (`_apply_approve`, `_apply_approve_edition`,
+`_apply_move`, `_apply_remove`, `_apply_merge_items`, `_update_item_images`)
+do a **read-modify-write of the entire file** (`_load_items()` → mutate →
+`_write_items()`). Without serialization, two concurrent requests (fast clicks:
+approving several items, or approve + curate) both read the old state and the
+last `_write_items` wins, **silently dropping the other's change**.
+
+Fix (2026-06-02, gotcha #34): a module-level `_ITEMS_LOCK = threading.Lock()`
+and a `@_serialized` decorator wrapping each of the 6 functions in
+`with _ITEMS_LOCK`. The lock must span the whole load→modify→write critical
+section (locking only `_write_items` is insufficient — the stale read happens
+before the lock). `_log_feedback` is intentionally NOT decorated (it only reads
+items.jsonl for a snapshot + appends to feedback.jsonl, and is called from
+functions already holding the lock → avoids deadlock since `Lock` is not
+reentrant). **Any new endpoint that rewrites `items.jsonl` MUST use
+`@_serialized`.** Regression test: `test_serve_concurrent_approvals_do_not_clobber`.
 
 ## Cluster key — multi-source grouping beyond ISBN
 

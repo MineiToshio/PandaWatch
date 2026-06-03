@@ -32,15 +32,27 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 
 - **Grilla de items** con foto, título, país, editorial, tipo de producto
 - **Búsqueda** por título (substring, case-insensitive, indexa `title` + `title_original` + `series_display`)
-- **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, rareza, solo stock limitado, signal types (multi-select chips)
+- **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, rareza, estado de revisión (Todos / Aprobados / Sin revisar), solo stock limitado, signal types (multi-select chips)
 - **Ordenamiento**: por fecha de detección (default), o título A-Z
 
 > **Removido (2026-06-01):** el score se eliminó de la UI — del grid, del filtro
 > "score mínimo", del ordenamiento y de los badges de las cards. El scoring interno
 > del pipeline (gate de coleccionables) se mantiene, pero no es user-facing.
 - **Paginación** con contador de items que matchean los filtros
-- **Modal de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción en español (`description_es` con fallback a `description` si no hay traducción)
+- **Página de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción en español (`description_es` con fallback a `description` si no hay traducción)
+- **Lightbox**: clic en la imagen del detalle la abre en grande (overlay full-screen, navegación ‹ ›, dots, contador "N / total", etiqueta Portada/Galería/Extra, teclado ←/→/Esc) — mismo comportamiento que el `ImageCarousel` de la app Next.js
+- **Navegación entre tomos de la edición**: flechas laterales ‹ › fijas a los lados de la página de detalle (y teclado ←/→) para saltar al tomo anterior/siguiente de la misma edición sin volver a la grilla. Se ocultan en items sin hermanos (ediciones de 1 tomo / standalone). Esc vuelve a la edición/catálogo.
 - **Multi-source view**: un producto con N fuentes se muestra como 1 card consolidada; el modal lista todas las fuentes con sus precios y URLs
+
+### Aprobación humana (golden records)
+
+El owner marca cards como **correctas y definitivas** desde el dashboard. Patrón *golden record / human-in-the-loop*: un item aprobado queda congelado frente a los pases automáticos y sirve de referencia de "dato bien hecho". Es el equivalente humano de `standardized_at`.
+
+- **Botón 👍/✓ (modal)** + **toggle rápido (candado al hover en la card)**: marca/desmarca la card. Aplica a todas las filas del `cluster_key`. Endpoint `POST /api/approve {url, approved}`.
+- **Aprobar toda la edición**: en la vista de edición, un botón "✓ Aprobar toda la edición" marca todos los tomos de una sola vez (toggle: desaprueba todo si ya estaban todos). Endpoint `POST /api/approve-edition {edition_key, approved}` — una sola reescritura atómica.
+- **Badge ✓ verde** en cards aprobadas + **filtro "Estado de revisión"** (Todos / Aprobados / Sin revisar).
+- **Schema**: `approved_at` (ISO UTC) + `approved_by` (`owner`) en items.jsonl, sticky. Log durable `data/approvals.jsonl`.
+- **Congelado**: re-scrapes congelan la metadata descriptiva y sólo refrescan precio/stock; retrofits y skills saltean items aprobados por defecto. Restauración tras reconstrucción: `scripts/retrofit/apply_approvals.py`.
 
 ### Curación de datos
 
@@ -64,6 +76,28 @@ Dos paneles en el footer del modal de detalle, unificados en `data/feedback.json
 Herramienta dedicada para gestionar las portadas e imagenes de galería del catálogo.
 Accesible desde el header del dashboard (botón "Gestor de imagenes") o
 directamente en `/image-manager.html`. Dark theme, Alpine.js, sin Tailwind.
+
+**Opera a nivel CLUSTER (2026-06-02).** Un producto puede tener varias filas en
+`items.jsonl` (una por fuente). El gestor carga la **union** de `images[]` de
+todas las filas del cluster — exactamente lo que muestra el carrusel del detalle —
+con la portada de la fila abierta primera. Al guardar, el set editado se
+**propaga a todas las filas del cluster** (el endpoint resuelve los hermanos por
+`cluster_key`). Así detalle y gestor muestran siempre lo mismo, y borrar/agregar
+una foto no reaparece desde una fila hermana. (Antes el gestor editaba una sola
+fila → discrepaba con el detalle, que ya hacía union.)
+
+#### Acceso rápido por item (deep-link + round-trip)
+
+Desde el dashboard hay un botón **🖼️ Editar imágenes** en el footer de la página
+de detalle de un item **y** un ícono 🖼️ al hover en las cards (ediciones de 1 tomo
++ grilla de tomos). Ambos navegan a
+`image-manager.html?item=<url>&return=<url-de-vuelta>`:
+- `?item=<url>` → el gestor abre directo el editor de galería de ese item
+  (`_handleDeepLink()` busca por `url` y llama `selectItem`).
+- `?return=<url>` → habilita el botón **"← Volver al detalle"** (barra superior +
+  header del editor) que regresa a la página exacta de donde se vino.
+- Como el dashboard recarga `items.jsonl` al volver, el detalle muestra las
+  **imágenes nuevas** inmediatamente. Misma pestaña (round-trip), no popup.
 
 #### Vista principal (grid)
 

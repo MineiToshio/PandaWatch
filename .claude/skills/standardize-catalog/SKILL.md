@@ -46,9 +46,15 @@ sys.path.insert(0, 'scripts')
 from manga_watch import derive_series_metadata, Candidate
 
 items = [json.loads(l) for l in open('data/items.jsonl')]
-pending = [it for it in items if not it.get('standardized_at')]
+# Golden records: items aprobados manualmente desde el dashboard (approved_at)
+# NUNCA se re-procesan — son fuente de verdad. Pueden usarse como ejemplos de
+# referencia de "dato bien hecho", pero jamás se sobreescriben.
+pending = [it for it in items
+           if not it.get('standardized_at') and not it.get('approved_at')]
+approved = [it for it in items if it.get('approved_at')]
 print(f'Total items: {len(items)}')
 print(f'Pendientes (sin standardized_at): {len(pending)}')
+print(f'Aprobados (golden records, no se tocan): {len(approved)}')
 
 if not pending:
     print('\nNothing to standardize.')
@@ -462,27 +468,18 @@ for gk, grp in _groups.items():
 
 print(f"[CONSISTENCY] outliers fixed: {_outliers_fixed}")
 
-# Dedup by (series_key, edition_key, volume)
-def comp(it):
-    return (100 if it.get('isbn') else 0) + (10 if it.get('image_url') else 0) + (5 if it.get('price') else 0)
-winners = {}
+# Consolidar por producto (modelo 1-fila-por-producto).
+# El edition_key/volume cambió al estandarizar, así que recomputamos cluster_key
+# y FUSIONAMOS los duplicados con merge_cluster (NO los borramos — borrar
+# perdería las fuentes hermanas). consolidate_by_cluster es la MISMA primitiva
+# que usa append_jsonl al ingestar (fuente única de verdad del merge): une
+# sources[], imágenes (portada canónica primera) y extras.
+from manga_watch import derive_cluster_key, consolidate_by_cluster
 for it in final:
-    sk = it.get('series_key',''); ek = it.get('edition_key',''); v = it.get('volume','')
-    if not (sk and ek): continue
-    k = (sk, ek, v)
-    if k not in winners or comp(it) > comp(winners[k]):
-        winners[k] = it
-deduped = []
-seen = set()
-dedup_removed = 0
-for it in final:
-    sk = it.get('series_key',''); ek = it.get('edition_key',''); v = it.get('volume','')
-    if not (sk and ek):
-        deduped.append(it); continue
-    k = (sk, ek, v)
-    if k in seen: dedup_removed += 1; continue
-    seen.add(k)
-    deduped.append(winners[k])
+    it['cluster_key'] = derive_cluster_key(it)
+_before_consolidate = len(final)
+deduped = consolidate_by_cluster(final)
+dedup_removed = _before_consolidate - len(deduped)
 
 tmp = ITEMS.with_suffix(ITEMS.suffix + '.tmp')
 with tmp.open('w', encoding='utf-8') as fh:
@@ -542,6 +539,10 @@ Report to the user:
 
 ## Anti-patterns
 
+- **NEVER write to items with `approved_at`** (golden records). The owner
+  approved them from the dashboard — they are frozen. Even `--force-all` must
+  NOT touch them: they stay out of the pending set. You MAY read them as
+  reference examples of correct data, but never overwrite their fields.
 - **Don't process items that already have `standardized_at`** unless `--force-all`.
 - **Don't skip Step 2 (Tier 1 auto-standardize)** — it saves ~30% of tokens.
 - **Don't use chunks larger than 30** — session limits cause data loss with big chunks.

@@ -186,6 +186,7 @@
     <h1>Gestor de Imagenes</h1>
     <span class="stats" x-text="`${filtered.length} items`"></span>
     <span style="flex:1"></span>
+    <a href="#" x-show="returnUrl" @click.prevent="goBackToDashboard()" class="nav-link" style="color:var(--accent);font-weight:600">&#x2190; Volver al detalle</a>
     <a href="/" class="nav-link">Catalogo</a>
     <a href="/panel.html" class="nav-link">Panel</a>
   </div>
@@ -255,7 +256,8 @@
   <div class="overlay" x-show="selected" x-cloak>
 
     <div class="overlay-header">
-      <button class="btn btn-sm" @click="closeDetail()">&#x2190; Volver</button>
+      <button class="btn btn-accent btn-sm" x-show="returnUrl" @click="goBackToDashboard()" title="Volver a la página de detalle">&#x2190; Volver al detalle</button>
+      <button class="btn btn-sm" @click="closeDetail()" x-text="returnUrl ? 'Grilla' : '← Volver'"></button>
       <button class="btn btn-icon btn-sm" title="Item anterior" @click="goToPrevItem()" :disabled="!hasPrevItem()">&#x25C0;</button>
       <button class="btn btn-icon btn-sm" title="Item siguiente" @click="goToNextItem()" :disabled="!hasNextItem()">&#x25B6;</button>
       <h2 x-text="selected?.title || ''"></h2>
@@ -648,6 +650,7 @@
       items: [], filtered: [], fileSizes: {}, selected: null, originalImages: null,
       page: 1, perPage: 60,
       filter: 'all', search: '',
+      returnUrl: '',
       counts: { all: 0, no_image: 0, low: 0, medium: 0, upscaled: 0, single: 0 },
       previewIdx: 0, dirty: false, imgDims: { w: 0, h: 0 },
       lightboxOpen: false,
@@ -664,7 +667,7 @@
 
       async init() {
         try {
-          const [ir, sr] = await Promise.all([fetch('../data/items.jsonl'), fetch('/api/image-file-sizes')]);
+          const [ir, sr] = await Promise.all([fetch('../data/items.jsonl?_=' + Date.now(), { cache: 'no-store' }), fetch('/api/image-file-sizes')]);
           const text = await ir.text();
           this.items = text.trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
           this.fileSizes = await sr.json();
@@ -675,9 +678,29 @@
           }
           this.computeCounts();
           this.applyFilter();
+          this._handleDeepLink();
         } catch (e) {
           this.showToast('Error cargando datos: ' + e.message, 'error');
         } finally { this.loading = false; }
+      },
+
+      // Deep-link desde el dashboard: ?item=<url> abre el editor de ese item;
+      // ?return=<url> habilita el botón "Volver" que regresa al detalle.
+      _handleDeepLink() {
+        const params = new URLSearchParams(window.location.search);
+        const ret = params.get('return');
+        if (ret) this.returnUrl = ret;
+        const itemUrl = params.get('item');
+        if (itemUrl) {
+          const it = this.items.find(i => i.url === itemUrl);
+          if (it) this.selectItem(it);
+          else this.showToast('No encontré ese item en el catálogo.', 'error');
+        }
+      },
+
+      goBackToDashboard() {
+        if (this.dirty && !confirm('Hay cambios sin guardar. Salir igual?')) return;
+        window.location.href = this.returnUrl || '/web/index.html';
       },
 
       getQuality(item) {
@@ -727,12 +750,42 @@
       siblings: [],
       selectItem(item) {
         this.selected = JSON.parse(JSON.stringify(item));
-        if ((!this.selected.images || !this.selected.images.length) && (this.selected.image_url || this.selected.image_local)) {
-          this.selected.images = [{ url: this.selected.image_url || '', local: this.selected.image_local || '', kind: 'gallery', description: '' }];
-        }
+        this.siblings = this._computeSiblings();
+        // El gestor opera a nivel CLUSTER, igual que el carrusel del detalle:
+        // muestra la union de images[] de todas las fuentes del cluster, con la
+        // portada de la fila seleccionada primera. Al guardar se propaga a todas
+        // las filas del cluster (ver saveChanges + endpoint). Así el gestor y el
+        // detalle SIEMPRE muestran lo mismo.
+        this.selected.images = this._clusterImages();
         this.originalImages = JSON.parse(JSON.stringify(this.selected.images || []));
         this.previewIdx = 0; this.dirty = false; this.imgDims = { w: 0, h: 0 };
-        this.siblings = this._computeSiblings();
+      },
+
+      // Union de images[] de todo el cluster, deduplicada por URL (sin esquema),
+      // con la portada de la fila seleccionada en posición 0.
+      _clusterImages() {
+        const key = (u) => (u || '').split('?')[0].replace(/^https?:\/\//, '').toLowerCase();
+        const seen = new Set();
+        const out = [];
+        const push = (im) => {
+          if (!im || !im.url) return;
+          const k = key(im.url);
+          if (seen.has(k)) return;
+          seen.add(k);
+          out.push(JSON.parse(JSON.stringify(im)));
+        };
+        // 1) portada de la fila seleccionada primero.
+        const cover = this.selected.image_url || this.selected.image_local;
+        if (cover) {
+          const own = (this.selected.images || []).find(im => im && key(im.url) === key(this.selected.image_url));
+          push(own || { url: this.selected.image_url || '', local: this.selected.image_local || '', kind: 'gallery', description: '' });
+        }
+        // 2) resto de imágenes de la fila seleccionada + de los siblings.
+        for (const im of (this.selected.images || [])) push(im);
+        for (const sib of this.siblings) {
+          for (const im of (sib.images || [])) push(im);
+        }
+        return out;
       },
       closeDetail() {
         if (this.dirty && !confirm('Hay cambios sin guardar. Salir?')) return;
@@ -970,16 +1023,22 @@
       // ==================== SAVE ====================
 
       async saveChanges() {
-        if (!this.selected || !this.dirty) return;
+        if (!this.selected) return;
+        if (!this.dirty) { this.showToast('No hay cambios para guardar', 'error'); return; }
         this.saving = true;
         try {
           const cleanImages = (this.selected.images || []).map(img => ({ url: img.url || '', local: img.local || '', kind: img.kind || 'gallery', description: img.description || '' }));
           const resp = await fetch('/api/image-manager/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_url: this.selected.url, images: cleanImages }) });
           const data = await resp.json();
           if (!resp.ok) throw new Error(data.error || 'Save failed');
-          const orig = this.items.find(i => i.url === this.selected.url);
-          if (orig) {
-            orig.images = cleanImages;
+          // El endpoint propaga a todas las filas del cluster; reflejarlo en
+          // memoria para que el grid y futuras aperturas coincidan con el disco.
+          const ck = this.selected.cluster_key || '';
+          const targets = (ck && !ck.startsWith('url:'))
+            ? this.items.filter(i => (i.cluster_key || '') === ck)
+            : this.items.filter(i => i.url === this.selected.url);
+          for (const orig of targets) {
+            orig.images = JSON.parse(JSON.stringify(cleanImages));
             if (cleanImages.length > 0) { orig.image_url = cleanImages[0].url; orig.image_local = cleanImages[0].local; }
             else { orig.image_url = ''; orig.image_local = ''; }
             orig._fileSize = this.fileSizes[orig.image_local || ''] || 0;

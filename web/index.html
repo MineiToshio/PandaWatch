@@ -320,6 +320,25 @@
       </button>
     </div>
 
+    <div>
+      <label class="block text-xs uppercase tracking-wider text-gray-500 font-semibold mb-2">
+        Estado de revisión
+      </label>
+      <div class="flex flex-wrap gap-1">
+        <template x-for="opt in [['all','Todos'],['approved','✓ Aprobados'],['pending','Sin revisar']]" :key="opt[0]">
+          <button
+            type="button"
+            @click="filters.approval = opt[0]; page = 1; _syncStateToUrl()"
+            :class="filters.approval === opt[0]
+              ? 'bg-emerald-500 text-white border-emerald-500'
+              : 'bg-white text-gray-700 border-gray-300 hover:border-emerald-300'"
+            class="px-2 py-1 text-xs rounded-md border transition cursor-pointer"
+            x-text="opt[1]">
+          </button>
+        </template>
+      </div>
+    </div>
+
     <div class="pt-2 border-t border-gray-200">
       <label class="flex items-center gap-2 text-sm cursor-pointer">
         <input type="checkbox" x-model="filters.onlyLimited" class="rounded text-pink-500 focus:ring-pink-300">
@@ -365,7 +384,7 @@
                 </div>
               </template>
               <div @click="ed.tomoCount > 1 ? openEditionByKey(ed.edition_key) : openVolume(ed.leader)"
-                   class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+                   class="card group bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
                 <div class="img-wrap relative">
                   <template x-if="ed.leader.image_local || ed.leader.image_url">
                     <img :src="coverSrc(ed.leader)" :data-fallback="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="onCoverError($event)">
@@ -384,6 +403,23 @@
                           :class="{'bg-gray-100 text-gray-600': ed.leader.rarity==='common', 'bg-purple-100 text-purple-700': ed.leader.rarity==='super_rare', 'bg-yellow-100 text-yellow-700': ed.leader.rarity==='ultra_rare'}"
                           x-text="{'common':'⬜','super_rare':'🟪','ultra_rare':'🟨'}[ed.leader.rarity]">
                     </span>
+                  </template>
+                  <template x-if="ed.tomoCount === 1">
+                    <button @click.stop="toggleApprove(ed.leader)"
+                            :title="ed.leader.approved_at ? 'Aprobado — clic para desaprobar' : 'Aprobar (golden record)'"
+                            class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full text-sm shadow transition"
+                            :class="ed.leader.approved_at
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-white/90 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-emerald-500'"
+                            x-text="ed.leader.approved_at ? '✓' : '👍'">
+                    </button>
+                  </template>
+                  <template x-if="ed.tomoCount === 1">
+                    <button @click.stop="goToImageManager(ed.leader)"
+                            title="Editar imágenes de este item"
+                            class="absolute top-2 right-11 w-7 h-7 flex items-center justify-center rounded-full text-sm shadow transition bg-white/90 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-pink-500">
+                      🖼️
+                    </button>
                   </template>
                 </div>
                 <div class="p-3 flex-1 flex flex-col">
@@ -443,10 +479,26 @@
     <!-- VIEW: edition (grid de TOMOS de la edición seleccionada) -->
     <template x-if="view === 'edition'">
       <div>
+        <!-- Barra de acciones de la edición: aprobar todos los tomos de una. -->
+        <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <p class="text-sm text-gray-500">
+            <span x-text="editionApprovalState.total"></span> tomos en esta edición
+            <span x-show="editionApprovalState.approved > 0" class="text-emerald-600 font-medium"
+                  x-text="'· ' + editionApprovalState.approved + ' aprobado' + (editionApprovalState.approved === 1 ? '' : 's')"></span>
+          </p>
+          <button @click="toggleApproveEdition()"
+                  :title="editionApprovalState.all ? 'Desaprobar todos los tomos de la edición' : 'Marcar todos los tomos de la edición como correctos'"
+                  class="px-3 py-2 rounded-md text-sm border font-medium transition-colors"
+                  :class="editionApprovalState.all
+                    ? 'bg-emerald-500 border-emerald-500 text-white hover:opacity-90'
+                    : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'"
+                  x-text="editionApprovalState.all ? '✓ Edición aprobada — desaprobar todo' : '✓ Aprobar toda la edición'">
+          </button>
+        </div>
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
           <template x-for="item in paginated" :key="item.url">
             <div @click="openVolume(item)"
-                 class="card bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+                 class="card group bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
               <div class="img-wrap relative">
                 <template x-if="item.image_local || item.image_url">
                   <img :src="coverSrc(item)" :data-fallback="item.image_url" :alt="item.title" loading="lazy" @error="onCoverError($event)">
@@ -460,6 +512,19 @@
                 <template x-if="item.stock_type === 'limited'">
                   <span class="badge-limited absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-semibold">⚠️ limitado</span>
                 </template>
+                <button @click.stop="toggleApprove(item)"
+                        :title="item.approved_at ? 'Aprobado — clic para desaprobar' : 'Aprobar (golden record)'"
+                        class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full text-sm shadow transition"
+                        :class="item.approved_at
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-white/90 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-emerald-500'"
+                        x-text="item.approved_at ? '✓' : '👍'">
+                </button>
+                <button @click.stop="goToImageManager(item)"
+                        title="Editar imágenes de este item"
+                        class="absolute top-2 right-11 w-7 h-7 flex items-center justify-center rounded-full text-sm shadow transition bg-white/90 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-pink-500">
+                  🖼️
+                </button>
               </div>
               <div class="p-3 flex-1 flex flex-col">
                 <template x-if="item.series_display">
@@ -556,6 +621,17 @@
 <div class="max-w-3xl mx-auto px-6 py-6"
      x-show="view === 'volume' && selectedItem"
      x-cloak>
+  <!-- Flechas laterales: navegar entre los tomos de la misma edición. -->
+  <button x-show="hasVolumePrev() && !lightboxOpen"
+          @click="volumeNavPrev()"
+          :title="'Tomo anterior'"
+          class="fixed left-2 lg:left-6 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-white shadow-lg border border-gray-300 text-gray-700 hover:bg-pink-50 hover:border-pink-300 text-2xl leading-none"
+          aria-label="Tomo anterior de la edición">‹</button>
+  <button x-show="hasVolumeNext() && !lightboxOpen"
+          @click="volumeNavNext()"
+          :title="'Tomo siguiente'"
+          class="fixed right-2 lg:right-6 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-white shadow-lg border border-gray-300 text-gray-700 hover:bg-pink-50 hover:border-pink-300 text-2xl leading-none"
+          aria-label="Tomo siguiente de la edición">›</button>
   <template x-if="selectedItem">
     <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <!-- Header -->
@@ -616,7 +692,9 @@
                 :src="carouselSrc(selectedItem, modalImageIdx)"
                 :data-fallback="itemImages(selectedItem)[modalImageIdx] && itemImages(selectedItem)[modalImageIdx].url"
                 :alt="selectedItem.title"
-                class="w-full rounded-lg border border-gray-200"
+                @click="openLightbox()"
+                title="Clic para ver en grande"
+                class="w-full rounded-lg border border-gray-200 cursor-zoom-in"
                 @error="onCoverError($event)">
               <!-- Flechas -->
               <button
@@ -647,7 +725,7 @@
           </template>
           <!-- Single image (legacy o solo cover): comportamiento previo. -->
           <template x-if="itemImages(selectedItem).length <= 1 && (selectedItem.image_local || selectedItem.image_url)">
-            <img :src="coverSrc(selectedItem)" :data-fallback="selectedItem.image_url" :alt="selectedItem.title" class="w-full rounded-lg border border-gray-200" @error="onCoverError($event)">
+            <img :src="coverSrc(selectedItem)" :data-fallback="selectedItem.image_url" :alt="selectedItem.title" @click="openLightbox()" title="Clic para ver en grande" class="w-full rounded-lg border border-gray-200 cursor-zoom-in" @error="onCoverError($event)">
           </template>
           <template x-if="itemImages(selectedItem).length === 0 && !(selectedItem.image_local || selectedItem.image_url)">
             <div class="img-wrap rounded-lg border border-gray-200"><div class="img-placeholder">📚</div></div>
@@ -847,6 +925,19 @@
                   class="px-3 py-2 rounded-md text-sm border border-gray-300 hover:bg-gray-100 text-gray-700">
             ← Volver
           </button>
+          <button @click="goToImageManager(selectedItem)"
+                  title="Editar las imágenes de este item"
+                  class="px-3 py-2 rounded-md text-sm border border-gray-200 text-gray-500 hover:border-pink-300 hover:bg-pink-50 transition-colors">
+            🖼️ Editar imágenes
+          </button>
+          <button @click="toggleApprove(selectedItem)"
+                  :title="selectedItem.approved_at ? 'Aprobado — clic para desaprobar' : 'Marcar como correcto (golden record)'"
+                  class="px-3 py-2 rounded-md text-sm border transition-colors"
+                  :class="selectedItem.approved_at
+                    ? 'bg-emerald-500 border-emerald-500 text-white hover:opacity-90'
+                    : 'border-gray-200 text-gray-500 hover:border-emerald-300 hover:bg-emerald-50'">
+            <span x-text="selectedItem.approved_at ? '✓ Aprobado' : '👍 Aprobar'"></span>
+          </button>
           <button @click="toggleCuration()"
                   :title="curationOpen ? 'Cerrar panel' : 'Curar / reportar item'"
                   class="px-3 py-2 rounded-md text-sm border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
@@ -860,6 +951,49 @@
       </div>
     </div>
   </template>
+
+  <!-- Lightbox: imagen del detalle en grande (clic en la portada). -->
+  <div x-show="lightboxOpen && selectedItem" x-cloak
+       @click="closeLightbox()"
+       class="fixed inset-0 flex items-center justify-center"
+       style="z-index:9999; background:rgba(0,0,0,0.92)">
+    <button @click.stop="closeLightbox()"
+            class="fixed top-4 right-4 w-10 h-10 flex items-center justify-center text-white/80 hover:text-white text-3xl leading-none"
+            aria-label="Cerrar">✕</button>
+    <button x-show="selectedItem && itemImages(selectedItem).length > 1"
+            @click.stop="lightboxPrev()"
+            class="fixed left-3 top-1/2 -translate-y-1/2 w-12 h-12 flex items-center justify-center text-white/80 hover:text-white text-4xl"
+            aria-label="Imagen anterior">‹</button>
+    <div @click.stop class="flex flex-col items-center max-w-[90vw]">
+      <template x-if="selectedItem">
+        <img :src="carouselSrc(selectedItem, modalImageIdx)"
+             :data-fallback="(itemImages(selectedItem)[modalImageIdx]||{}).url"
+             :alt="selectedItem.title"
+             @error="onCoverError($event)"
+             style="max-width:80vw; max-height:75vh; width:auto; height:auto;"
+             class="rounded-lg shadow-2xl">
+      </template>
+      <div class="mt-3 text-center text-sm text-white/80" x-show="selectedItem">
+        <span class="inline-block px-2 py-0.5 bg-white/15 rounded-full mr-2"
+              x-text="modalImageIdx === 0 ? 'Portada' : ((itemImages(selectedItem)[modalImageIdx]||{}).kind === 'extra' ? 'Extra' : 'Galería')"></span>
+        <span x-text="(itemImages(selectedItem)[modalImageIdx]||{}).description || ''"></span>
+        <span class="ml-2 text-white/50" x-show="itemImages(selectedItem).length > 1"
+              x-text="(modalImageIdx + 1) + ' / ' + itemImages(selectedItem).length"></span>
+      </div>
+      <div class="mt-2 flex justify-center gap-1.5" x-show="selectedItem && itemImages(selectedItem).length > 1">
+        <template x-for="(img, idx) in itemImages(selectedItem)" :key="idx">
+          <button @click.stop="modalImageIdx = idx"
+                  class="rounded-full transition-all"
+                  :class="modalImageIdx === idx ? 'bg-white w-3 h-3' : 'bg-white/40 w-2 h-2'"
+                  :aria-label="'Ir a imagen ' + (idx+1)"></button>
+        </template>
+      </div>
+    </div>
+    <button x-show="selectedItem && itemImages(selectedItem).length > 1"
+            @click.stop="lightboxNext()"
+            class="fixed right-3 top-1/2 -translate-y-1/2 w-12 h-12 flex items-center justify-center text-white/80 hover:text-white text-4xl"
+            aria-label="Imagen siguiente">›</button>
+  </div>
 </div>
 
 <script>
@@ -873,6 +1007,8 @@ function mangaApp() {
     // Fase 2 — carrusel: índice de la imagen actual en el modal. Se resetea
     // a 0 cada vez que se abre un item nuevo (ver openItem / closeModal).
     modalImageIdx: 0,
+    // Lightbox: ver la imagen del detalle en grande (clic en la portada).
+    lightboxOpen: false,
 
     // Navegación de vistas: 'catalog' | 'edition' | 'volume'
     view: 'catalog',
@@ -892,6 +1028,7 @@ function mangaApp() {
       signalTypes: [],
       rarities: [],
       onlyLimited: false,
+      approval: "all",
     },
     detailFields: [
       { key: "product_type", label: "Tipo de producto" },
@@ -938,7 +1075,9 @@ function mangaApp() {
             "o 'web/serve.sh' para lanzar un server local."
           );
         }
-        const res = await fetch("../data/items.jsonl");
+        // cache-bust: tras editar imágenes en el gestor y "Volver al detalle",
+        // queremos los datos frescos, no la copia cacheada por el navegador.
+        const res = await fetch("../data/items.jsonl?_=" + Date.now(), { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const text = await res.text();
         const lines = text.trim().split("\n").filter(Boolean);
@@ -1034,13 +1173,13 @@ function mangaApp() {
         byUrl.set(key, pickWinner(byUrl.get(key), item));
       }
 
+      // Modelo 1-fila-por-producto: cada fila puede traer un `sources[]`
+      // guardado (consolidación al ingestar). Agrupamos TODO por cluster_key
+      // (sin bypass) y unimos los `sources[]` guardados; así una fila ya
+      // consolidada + cualquier fila suelta del mismo producto colapsan en una
+      // sola card sin perder fuentes. Dedup de fuentes por URL normalizada.
       const clusterGroups = new Map();
-      const preGrouped = [];
       for (const item of byUrl.values()) {
-        if (Array.isArray(item.sources) && item.sources.length > 0) {
-          preGrouped.push(item);
-          continue;
-        }
         let key = item.cluster_key;
         if (!key) {
           const isbn = (item.isbn || "").trim();
@@ -1050,10 +1189,31 @@ function mangaApp() {
         clusterGroups.get(key).push(item);
       }
 
+      // Une los sources[] de todos los miembros del grupo (usa el guardado si
+      // existe, si no [self]); dedup por URL normalizada, canónica primero.
+      const mergeSources = (group, canonical) => {
+        const seen = new Set();
+        const out = [];
+        for (const it of group) {
+          const entries = (Array.isArray(it.sources) && it.sources.length) ? it.sources : [sourceEntry(it)];
+          for (const s of entries) {
+            const u = this.normalizeUrlForDedup(s.url || "");
+            if (seen.has(u)) continue;
+            seen.add(u);
+            out.push(s);
+          }
+        }
+        out.sort((a, b) => (a.url === canonical.url ? 0 : 1) - (b.url === canonical.url ? 0 : 1)
+                           || (a.country || "").localeCompare(b.country || ""));
+        return out;
+      };
+
       const final = [];
       for (const group of clusterGroups.values()) {
         if (group.length === 1) {
-          final.push({ ...group[0], sources: [sourceEntry(group[0])] });
+          const only = group[0];
+          const sources = (Array.isArray(only.sources) && only.sources.length) ? only.sources : [sourceEntry(only)];
+          final.push({ ...only, sources });
         } else {
           let canonical = group[0];
           for (const it of group.slice(1)) canonical = pickWinner(canonical, it);
@@ -1071,18 +1231,34 @@ function mangaApp() {
           // fuentes del mismo cluster pueden aportar imágenes distintas
           // (ListadoManga colecciones agrega extras de 1ª edición; Norma
           // o Mangavariant aportan la cover de catálogo). El carrusel
-          // muestra todas, deduplicadas por (kind, url).
+          // muestra todas, deduplicadas por URL (sin esquema).
+          // IMPORTANTE: la portada de la canónica (la que muestra la card,
+          // merged.image_url) va SIEMPRE primera, para que carrusel[0] == card.
+          // Sin esto, mergedImages quedaba en orden de archivo y el carrusel
+          // podía empezar con la foto de otra fuente (bug card != carrusel a
+          // nivel cluster).
+          const imgKey = (u) => (u || "").split("?")[0].replace(/^https?:\/\//, "").toLowerCase();
           const seenImg = new Set();
           const mergedImages = [];
+          const pushImg = (im) => {
+            if (!im || !im.url) return;
+            const k = imgKey(im.url);
+            if (seenImg.has(k)) return;
+            seenImg.add(k);
+            mergedImages.push(im);
+          };
+          // 1) la portada canónica primero (sincronizada con merged.image_url)
+          const coverUrl = merged.image_url || "";
+          if (coverUrl) {
+            const canonImgs = Array.isArray(canonical.images) ? canonical.images : [];
+            const coverImg = canonImgs.find(im => im && imgKey(im.url) === imgKey(coverUrl))
+                          || { url: coverUrl, local: merged.image_local || "", kind: "gallery", description: "" };
+            pushImg(coverImg);
+          }
+          // 2) el resto de la galería del cluster
           for (const it of group) {
             const arr = Array.isArray(it.images) ? it.images : [];
-            for (const im of arr) {
-              if (!im || !im.url) continue;
-              const k = `${im.kind || ""}::${im.url}`;
-              if (seenImg.has(k)) continue;
-              seenImg.add(k);
-              mergedImages.push(im);
-            }
+            for (const im of arr) pushImg(im);
           }
           if (mergedImages.length) merged.images = mergedImages;
           const seenEx = new Set();
@@ -1098,20 +1274,11 @@ function mangaApp() {
             }
           }
           if (mergedExtras.length) merged.extras = mergedExtras;
-          merged.sources = group.map(sourceEntry);
-          merged.sources.sort((a, b) => {
-            const ca = a.url === canonical.url ? 0 : 1;
-            const cb = b.url === canonical.url ? 0 : 1;
-            if (ca !== cb) return ca - cb;
-            return (a.country || "").localeCompare(b.country || "");
-          });
+          merged.sources = mergeSources(group, canonical);
           final.push(merged);
         }
       }
 
-      for (const item of preGrouped) {
-        final.push(item);
-      }
       return final;
     },
 
@@ -1171,6 +1338,8 @@ function mangaApp() {
           if (!f.rarities.includes(i.rarity)) return false;
         }
         if (f.onlyLimited && i.stock_type !== "limited") return false;
+        if (f.approval === "approved" && !i.approved_at) return false;
+        if (f.approval === "pending" && i.approved_at) return false;
         return true;
       });
     },
@@ -1288,6 +1457,70 @@ function mangaApp() {
       return { edition_key: ek, display, items: sortedByVol };
     },
 
+    // Estado de aprobación de la edición abierta (para el botón "aprobar toda
+    // la edición" de la vista de edición).
+    get editionApprovalState() {
+      const e = this.currentEdition;
+      if (!e || !e.items.length) return { total: 0, approved: 0, all: false };
+      const approved = e.items.filter(i => i.approved_at).length;
+      return { total: e.items.length, approved, all: approved === e.items.length };
+    },
+    async toggleApproveEdition() {
+      const e = this.currentEdition;
+      if (!e || !e.items.length || (e.edition_key || '').startsWith('__solo__')) return;
+      const willApprove = !this.editionApprovalState.all;
+      try {
+        const res = await fetch('/api/approve-edition', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ edition_key: e.edition_key, approved: willApprove }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const stamp = data.approved ? new Date().toISOString() : '';
+        const owner = data.approved ? 'owner' : '';
+        for (const it of this.items) {
+          if (it.edition_key === e.edition_key) { it.approved_at = stamp; it.approved_by = owner; }
+        }
+      } catch (err) {
+        alert('Error al aprobar la edición: ' + err.message);
+      }
+    },
+
+    // Tomos hermanos del item abierto en el detalle (misma edición),
+    // ordenados por volumen. Vacío si el item no tiene edición o es único.
+    // Se usa para las flechas de navegación laterales del detalle.
+    get volumeSiblings() {
+      const si = this.selectedItem;
+      if (!si || !si.edition_key) return [];
+      const items = this.items.filter(i => i.edition_key === si.edition_key);
+      if (items.length <= 1) return [];
+      return [...items].sort((a, b) => {
+        const va = this._volumeNumber(a.volume);
+        const vb = this._volumeNumber(b.volume);
+        if (va !== vb) return va - vb;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+    },
+    get volumeNavIndex() {
+      const sibs = this.volumeSiblings;
+      if (!sibs.length || !this.selectedItem) return -1;
+      return sibs.findIndex(i => i.url === this.selectedItem.url);
+    },
+    hasVolumePrev() { return this.volumeNavIndex > 0; },
+    hasVolumeNext() {
+      const idx = this.volumeNavIndex;
+      return idx >= 0 && idx < this.volumeSiblings.length - 1;
+    },
+    volumeNavPrev() {
+      const sibs = this.volumeSiblings, idx = this.volumeNavIndex;
+      if (idx > 0) this.openVolume(sibs[idx - 1]);
+    },
+    volumeNavNext() {
+      const sibs = this.volumeSiblings, idx = this.volumeNavIndex;
+      if (idx >= 0 && idx < sibs.length - 1) this.openVolume(sibs[idx + 1]);
+    },
+
     // Lista a paginar según view actual.
     get _activeList() {
       if (this.view === 'edition') {
@@ -1364,6 +1597,7 @@ function mangaApp() {
     // --- Navegación entre vistas ---
     goHome() {
       const wasInDifferentView = this.view !== 'catalog';
+      this.lightboxOpen = false; document.body.style.overflow = '';
       this.view = 'catalog';
       this.currentEditionKey = '';
       this.currentVolumeUrl = '';
@@ -1400,6 +1634,7 @@ function mangaApp() {
       this.currentVolumeUrl = item.url || '';
       this.selectedItem = item;
       this.modalImageIdx = 0;  // reset carrusel al abrir item nuevo
+      this.lightboxOpen = false; document.body.style.overflow = '';
       this.copiedTitle = false;
       this._resetFeedback();
       this._syncStateToUrl({ push: isViewChange });
@@ -1596,6 +1831,66 @@ function mangaApp() {
       }
     },
 
+    async toggleApprove(item) {
+      if (!item || !item.url) return;
+      const willApprove = !item.approved_at;
+      try {
+        const res = await fetch("/api/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: item.url, approved: willApprove }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const stamp = data.approved ? new Date().toISOString() : "";
+        const owner = data.approved ? "owner" : "";
+        // Actualizar en memoria: la card clickeada + cualquier card que
+        // comparta cluster_key (el approve en el server aplica a todo el cluster).
+        const cluster = item.cluster_key;
+        for (const it of this.items) {
+          if (it.url === item.url || (cluster && it.cluster_key === cluster)) {
+            it.approved_at = stamp;
+            it.approved_by = owner;
+          }
+        }
+        item.approved_at = stamp;
+        item.approved_by = owner;
+        if (this.selectedItem && this.selectedItem.url === item.url) {
+          this.selectedItem.approved_at = stamp;
+          this.selectedItem.approved_by = owner;
+        }
+      } catch (e) {
+        alert("Error al aprobar: " + e.message);
+      }
+    },
+
+    openLightbox() {
+      if (!this.selectedItem) return;
+      this.lightboxOpen = true;
+      document.body.style.overflow = 'hidden';
+    },
+    closeLightbox() {
+      this.lightboxOpen = false;
+      document.body.style.overflow = '';
+    },
+    lightboxNext() {
+      const n = this.itemImages(this.selectedItem).length;
+      if (n > 1) this.modalImageIdx = (this.modalImageIdx + 1) % n;
+    },
+    lightboxPrev() {
+      const n = this.itemImages(this.selectedItem).length;
+      if (n > 1) this.modalImageIdx = (this.modalImageIdx - 1 + n) % n;
+    },
+
+    goToImageManager(item) {
+      if (!item || !item.url) return;
+      // Round-trip: guardamos la URL actual (incl. hash #/volume/...) como
+      // `return` para que el gestor de imágenes ofrezca "Volver al detalle".
+      const ret = window.location.pathname + window.location.search + window.location.hash;
+      window.location.href = 'image-manager.html?item=' + encodeURIComponent(item.url)
+        + '&return=' + encodeURIComponent(ret);
+    },
+
     isReported(url) {
       return !!(url && this.reportedUrls[url]);
     },
@@ -1653,7 +1948,7 @@ function mangaApp() {
       this.filters = {
         search: "", country: "", publisher: "", language: "",
         productType: "", sourceClass: "", signalTypes: [], rarities: [],
-        onlyLimited: false,
+        onlyLimited: false, approval: "all",
       };
       this.page = 1;
       this._syncStateToUrl();
@@ -1685,12 +1980,30 @@ function mangaApp() {
 
 // ESC: en volume → volver a la edición/catálogo; en edition → catálogo.
 document.addEventListener("keydown", (e) => {
+  const root = document.querySelector("[x-data]");
+  // Alpine v3: el acceso oficial al estado es Alpine.$data(root); `root.__x`
+  // no existe en este build (rompía Escape + flechas en silencio).
+  const d = (root && window.Alpine) ? Alpine.$data(root) : null;
+  if (!d) return;
+  // Con el lightbox abierto: ←/→ navegan, Esc cierra (sin volver de vista).
+  if (d.lightboxOpen) {
+    if (e.key === "Escape") { e.preventDefault(); d.closeLightbox(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); d.lightboxPrev(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); d.lightboxNext(); }
+    return;
+  }
   if (e.key === "Escape") {
-    const root = document.querySelector("[x-data]");
-    if (!root || !root.__x) return;
-    const d = root.__x.$data;
     if (d.view === 'volume') d.goBack();
     else if (d.view === 'edition') d.goHome();
+    return;
+  }
+  // En el detalle: ←/→ navegan entre tomos de la edición (si no estás
+  // escribiendo en un campo).
+  if (d.view === 'volume' && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.key === "ArrowLeft") d.volumeNavPrev();
+    else d.volumeNavNext();
   }
 });
 </script>

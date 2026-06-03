@@ -54,6 +54,19 @@ function buildCluster(items: Item[]): Cluster {
   const canonical = sorted[0]
   const volumes = new Set(items.map(i => i.volume).filter(Boolean))
 
+  // Modelo 1-fila-por-producto: country/publisher/language por-fuente viven en
+  // `sources[]`. Para país/editorial/idioma del cluster unimos las filas + las
+  // entradas de sources[] (si no, un producto multi-fuente perdería los países
+  // de las fuentes hermanas, que ya no son filas separadas).
+  const srcEntries = items.flatMap(i => i.sources || [])
+  const collect = (key: 'country' | 'publisher' | 'language'): string[] => {
+    const vals = [
+      ...items.map(i => i[key]),
+      ...srcEntries.map(s => s[key]),
+    ].filter((v): v is string => Boolean(v))
+    return [...new Set(vals)]
+  }
+
   return {
     clusterKey: canonical.cluster_key,
     slug: canonical.slug || '',
@@ -65,9 +78,9 @@ function buildCluster(items: Item[]): Cluster {
     volume: canonical.volume,
     volumeCount: volumes.size || 1,
     signalTypes: [...new Set(items.flatMap(i => i.signal_types || []))],
-    countries: [...new Set(items.map(i => i.country).filter((c): c is string => Boolean(c)))],
-    publishers: [...new Set(items.map(i => i.publisher).filter((p): p is string => Boolean(p)))],
-    languages: [...new Set(items.map(i => i.language).filter((l): l is string => Boolean(l)))],
+    countries: collect('country'),
+    publishers: collect('publisher'),
+    languages: collect('language'),
     minPrice: resolveMinPrice(items),
   }
 }

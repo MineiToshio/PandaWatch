@@ -35,7 +35,17 @@ export default async function ItemPage({ params, searchParams }: Props) {
   }
 
   const hasExtras = (canonical.extras?.length ?? 0) > 0
-  const hasMultipleSources = items.length > 1
+
+  // Modelo 1-fila-por-producto: las fuentes viven en canonical.sources[].
+  // Fallback a derivarlas de las filas del cluster (datos legacy sin sources[]).
+  const sources = (canonical.sources && canonical.sources.length)
+    ? canonical.sources
+    : items.map(it => ({
+        name: it.source, url: it.url, price: it.price,
+        release_date: it.release_date, stock_type: it.stock_type,
+        country: it.country, publisher: it.publisher,
+      }))
+  const hasMultipleSources = sources.length > 1
 
   return (
     <main style={{ maxWidth: 1024, margin: '0 auto', padding: '24px 16px 64px' }}>
@@ -64,7 +74,7 @@ export default async function ItemPage({ params, searchParams }: Props) {
             paddingTop: 24,
             borderTop: '1px solid var(--color-border)',
           }}>
-            <SourcesList items={items} />
+            <SourcesList sources={sources} />
           </div>
         )}
       </article>

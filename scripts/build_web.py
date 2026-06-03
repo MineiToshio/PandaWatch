@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """build_web.py — embebe data/items.jsonl dentro de web/index.html.
 
-Lee data/items.jsonl, deduplica por url (queda la entrada más reciente),
+Lee data/items.jsonl (modelo 1-fila-por-producto con sources[]), agrupa por
+cluster_key vía manga_watch.consolidate_by_cluster (red de seguridad, idempotente)
 y reemplaza el contenido del <script id="manga-data"> en web/index.html
 con un array JSON inline. Después de correrlo, podés abrir
 web/index.html directamente con doble-click sin necesidad de servidor.
@@ -85,116 +86,46 @@ def dedupe_by_url(items: list[dict]) -> list[dict]:
     return _group_by_cluster_key(list(by_url.values()), pick)
 
 
-def _source_entry(item: dict) -> dict:
-    """Subconjunto del item que tiene sentido por-source (cada tienda
-    tiene su precio, URL, imagen, stock, etc.)."""
-    return {
-        "name":         item.get("source", ""),
-        "source_class": item.get("source_class", ""),
-        "country":      item.get("country", ""),
-        "publisher":    item.get("publisher", ""),
-        "language":     item.get("language", ""),
-        "url":          item.get("url", ""),
-        "price":        item.get("price", ""),
-        "image_url":    item.get("image_url", ""),
-        "image_local":  item.get("image_local", ""),
-        "stock_type":   item.get("stock_type", ""),
-        "detected_at":  item.get("detected_at", ""),
-        "release_date": item.get("release_date", ""),
-        "score":        item.get("score", 0),
-    }
+def _mw():
+    """Importa las primitivas de merge de manga_watch (fuente única de verdad).
 
-
-def _merged_canonical(group: list[dict], pick) -> dict:
-    """Combina N items con el mismo ISBN en una sola entrada.
-
-    - El item con mayor score gana como base ("canonical")
-    - Si al canónico le falta algún campo (cover, autor, precio, fecha,
-      ISBN, descripción), se completa desde cualquier source del grupo
-      que sí lo tenga (best-of merge).
-    - sources[] preserva la entrada por-source (precio, URL, país, etc.).
-    """
-    canonical = group[0]
-    for item in group[1:]:
-        canonical = pick(canonical, item)
-    merged = dict(canonical)
-    completable = ("image_url", "image_local", "author", "price", "release_date",
-                   "description", "isbn", "publisher")
-    for field in completable:
-        if not merged.get(field):
-            for item in group:
-                if item.get(field):
-                    merged[field] = item[field]
-                    break
-    # Fase 2 — union de `images[]` y `extras[]` cross-source para el modal
-    # carrusel. Dos fuentes del mismo cluster pueden aportar imágenes
-    # distintas (cover de retailer + extras de 1ª edición de listadomanga).
-    # Dedup por (kind, url) en imgs y por (description, release_date) en extras.
-    seen_img: set[tuple[str, str]] = set()
-    merged_imgs: list[dict] = []
-    for it in group:
-        for im in (it.get("images") or []):
-            if not im or not im.get("url"):
-                continue
-            k = (im.get("kind", ""), im["url"])
-            if k in seen_img:
-                continue
-            seen_img.add(k)
-            merged_imgs.append(im)
-    if merged_imgs:
-        merged["images"] = merged_imgs
-    seen_ex: set[tuple[str, str]] = set()
-    merged_extras: list[dict] = []
-    for it in group:
-        for ex in (it.get("extras") or []):
-            if not ex or not ex.get("description"):
-                continue
-            k = (ex["description"], ex.get("release_date", ""))
-            if k in seen_ex:
-                continue
-            seen_ex.add(k)
-            merged_extras.append(ex)
-    if merged_extras:
-        merged["extras"] = merged_extras
-    # Score máximo del grupo (mejor representa el "interés combinado").
-    merged["score"] = max((i.get("score") or 0) for i in group)
-    # Lista de sources, ordenada: la canónica primero, después por país.
-    sources = [_source_entry(i) for i in group]
-    sources.sort(key=lambda s: (
-        s["url"] != canonical.get("url", ""),  # canónica primero
-        s.get("country", ""),
-        s.get("name", ""),
-    ))
-    merged["sources"] = sources
-    return merged
-
-
-def _group_by_cluster_key(items: list[dict], pick) -> list[dict]:
-    """Agrupa items con mismo cluster_key fusionándolos en uno solo.
-
-    cluster_key viene precalculada en items.jsonl por candidate_to_json
-    (manga_watch.derive_cluster_key). Fallback para items legacy sin la
-    clave: ISBN si existe, sino URL (standalone). Claves "url:..." nunca
-    se agrupan con nada porque cada item tiene URL única.
+    Standalone: `import manga_watch` (scripts/ en el path) trae el módulo
+    completo. Bajo pytest, ese nombre resuelve al wrapper raíz (solo expone
+    parse_args/run); en ese caso caemos a `scripts.manga_watch`.
     """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from manga_watch import derive_cluster_key
+    try:
+        import manga_watch as mw
+    except ImportError:  # pragma: no cover
+        from scripts import manga_watch as mw
+    if not hasattr(mw, "merge_cluster"):  # wrapper raíz bajo pytest
+        from scripts import manga_watch as mw
+    return mw
 
-    groups: dict[str, list[dict]] = {}
-    for item in items:
-        key = item.get("cluster_key") or derive_cluster_key(item)
-        groups.setdefault(key, []).append(item)
 
-    final: list[dict] = []
-    for key, group in groups.items():
-        if len(group) == 1:
-            merged = dict(group[0])
-            merged["sources"] = [_source_entry(group[0])]
-            final.append(merged)
-        else:
-            final.append(_merged_canonical(group, pick))
-    return final
+def _source_entry(item: dict) -> dict:
+    """Subconjunto por-source. Delega en manga_watch.source_entry (única impl.)."""
+    return _mw().source_entry(item)
+
+
+def _merged_canonical(group: list[dict], pick=None) -> dict:
+    """Combina N items del mismo producto en uno con sources[].
+
+    Delega en manga_watch.merge_cluster — la ÚNICA implementación del merge
+    (la divergencia entre sitios de merge causó los bugs de fotos de
+    2026-06-02). `pick` se ignora: merge_cluster elige la canónica internamente
+    (aprobada > estandarizada > ISBN > imagen > precio).
+    """
+    return _mw().merge_cluster(group)
+
+
+def _group_by_cluster_key(items: list[dict], pick=None) -> list[dict]:
+    """Agrupa por cluster_key → 1 fila por producto con sources[].
+
+    Delega en manga_watch.consolidate_by_cluster (única impl.).
+    """
+    return _mw().consolidate_by_cluster(items)
 
 
 def inject(html: str, items: list[dict]) -> str:
