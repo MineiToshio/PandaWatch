@@ -8445,6 +8445,54 @@ def test_serve_move_consolidates_into_existing_volume(tmp_path):
     assert {s["name"] for s in out[0]["sources"]} == {"X", "Y"}
 
 
+def test_serve_item_update_product_field_propagates_row_field_does_not(tmp_path):
+    serve = _load_serve()
+    items = tmp_path / "items.jsonl"
+    edits = tmp_path / "edits.jsonl"
+    serve.ITEMS_PATH = items
+    serve.EDITS_PATH = edits
+    serve.IMAGES_DIR = tmp_path
+    # 2 filas del MISMO producto (mismo cluster_key) desde 2 fuentes distintas.
+    rows = [
+        {"url": "https://a", "source": "A", "author": "viejo", "publisher": "P",
+         "slug": "slug-a", "cluster_key": "edition:ed|1", "title": "T",
+         "image_url": "a.jpg", "tags": ["x"], "score": 10,
+         "sources": [{"name": "A", "url": "https://a"}]},
+        {"url": "https://b", "source": "B", "author": "viejo", "publisher": "P",
+         "slug": "slug-b", "cluster_key": "edition:ed|1", "title": "T",
+         "image_url": "b.jpg",
+         "sources": [{"name": "B", "url": "https://b"}]},
+    ]
+    items.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    ok, applied = serve._apply_item_update("https://a", {
+        "author": "Kentaro Miura",        # producto → propaga al cluster
+        "tags": ["manga", "deluxe"],      # tipo lista preservado
+        "score": 95,                       # tipo int preservado
+        "slug": "slug-a-fixed",           # row-local → solo la fila abierta
+        "image_url": "HACK.jpg",          # protegido (imágenes) → ignorado
+    })
+    assert ok
+    assert "image_url" not in applied, "los campos de imagen no se editan acá"
+    out = {r["url"]: r for r in
+           (json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip())}
+    assert len(out) == 2, "el editor no agrega ni borra filas"
+    # Campo de PRODUCTO → ambas filas del cluster.
+    assert out["https://a"]["author"] == "Kentaro Miura"
+    assert out["https://b"]["author"] == "Kentaro Miura"
+    # Tipos preservados (no coaccionados a str).
+    assert out["https://a"]["tags"] == ["manga", "deluxe"]
+    assert out["https://a"]["score"] == 95 and isinstance(out["https://a"]["score"], int)
+    assert out["https://b"]["tags"] == ["manga", "deluxe"], "tags es de producto → propaga al cluster"
+    # Campo ROW-LOCAL (slug) → SOLO la fila abierta, la hermana intacta.
+    assert out["https://a"]["slug"] == "slug-a-fixed"
+    assert out["https://b"]["slug"] == "slug-b"
+    # Campo de imagen protegido → ninguna fila cambió.
+    assert out["https://a"]["image_url"] == "a.jpg"
+    # Se logueó el cambio para auditoría.
+    log = [json.loads(l) for l in edits.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(log) == 1 and log[0]["rows_updated"] == 2
+
+
 # ---------------------------------------------------------------------------
 # sync_cover_images — detección de archivos basura (placeholder/píxel/ad)
 # ---------------------------------------------------------------------------

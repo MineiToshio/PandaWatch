@@ -11,6 +11,7 @@ Endpoints:
     POST /api/curation/move         → mover item a otra edición (inmediato)
     POST /api/curation/merge        → fusionar items duplicados (inmediato)
     POST /api/curation/remove       → sacar item de su edición (inmediato)
+    POST /api/item/update           → editar metadata del item (detalle, inmediato)
     POST /api/approve               → aprobar/desaprobar una card (golden record)
     POST /api/approve-edition       → aprobar/desaprobar todos los tomos de una edición
     GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
@@ -60,6 +61,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ITEMS_PATH     = ROOT / "data" / "items.jsonl"
 FEEDBACK_PATH  = ROOT / "data" / "feedback.jsonl"
 APPROVALS_PATH = ROOT / "data" / "approvals.jsonl"
+EDITS_PATH     = ROOT / "data" / "edits.jsonl"
 IMAGES_DIR     = ROOT / "data" / "images"
 
 MAX_BUFFERED_LINES = 5000
@@ -629,6 +631,88 @@ def _apply_approve_edition(edition_key: str, approved: bool, reason: str = "") -
     return "ok", len(affected)
 
 
+# El editor inline del detalle permite editar CUALQUIER atributo del item,
+# EXCEPTO estos dos grupos:
+#
+# 1. _PROTECTED_ITEM_FIELDS — las imágenes tienen su propio gestor
+#    (image-manager.html / endpoint /api/image-manager/save). Editarlas desde
+#    acá rompería la convención images[] (portada por posición, sync con
+#    image_url/image_local). Cualquier key de este set en el payload se ignora.
+_PROTECTED_ITEM_FIELDS = frozenset({
+    "image_url", "image_local", "images", "images_backfilled_at",
+})
+# 2. _ROW_LOCAL_FIELDS — campos de IDENTIDAD/estructura de la FILA. Se aplican
+#    SOLO a la fila abierta, nunca a las hermanas del cluster: son per-fila (la
+#    url es la clave de upsert; cluster_key/slug identifican la fila; sources[]
+#    es la lista de fuentes de esa fila concreta). El resto de campos (metadata
+#    de PRODUCTO: title/author/price/…) sí se propaga a todas las filas del
+#    cluster, como el gestor de imágenes, para que el dato editado no reaparezca
+#    desde una fila hermana al re-mergear el detalle.
+_ROW_LOCAL_FIELDS = frozenset({
+    "url", "slug", "cluster_key", "content_hash", "source_url", "sources",
+})
+
+
+@_serialized
+def _apply_item_update(item_url: str, fields: dict) -> tuple[bool, dict]:
+    """Edición manual de metadata desde el detalle del dashboard.
+
+    Acepta CUALQUIER campo salvo _PROTECTED_ITEM_FIELDS (imágenes). Preserva el
+    tipo de cada valor tal como lo manda el cliente (str/int/float/list/dict),
+    no lo coacciona a str. Los campos de _ROW_LOCAL_FIELDS se escriben SOLO a la
+    fila abierta; el resto se propaga a todas las filas del cluster. Loguea el
+    cambio a data/edits.jsonl (auditoría). Devuelve (ok, campos_aplicados).
+
+    NO recomputa cluster_key automáticamente: la reagrupación estructural por
+    arrastre tiene su propio flujo (`/api/curation/move`). Si el owner edita
+    cluster_key/edition_key/etc. a mano desde el editor avanzado, es a propósito.
+    """
+    clean = {k: v for k, v in (fields or {}).items()
+             if k not in _PROTECTED_ITEM_FIELDS}
+    if not clean:
+        return False, {}
+
+    items = _load_items()
+    item = _find_item_by_url(items, item_url)
+    if not item:
+        return False, {}
+
+    cluster = item.get("cluster_key") or ""
+    # Campos de producto (se propagan al cluster) vs de fila (solo la abierta).
+    cluster_fields = {k: v for k, v in clean.items() if k not in _ROW_LOCAL_FIELDS}
+
+    def _is_sibling(row: dict) -> bool:
+        # Hermanas = misma fila de cluster real (no standalone url:).
+        if row is item:
+            return False
+        if cluster and not cluster.startswith("url:"):
+            return (row.get("cluster_key") or "") == cluster
+        return False
+
+    n = 0
+    for row in items:
+        if row is item:
+            row.update(clean)            # la fila abierta recibe TODO
+            n += 1
+        elif _is_sibling(row) and cluster_fields:
+            row.update(cluster_fields)   # las hermanas, solo metadata de producto
+            n += 1
+
+    _write_items(items)
+
+    now = datetime.now(timezone.utc).isoformat()
+    EDITS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EDITS_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "url": item_url,
+            "cluster_key": cluster,
+            "rows_updated": n,
+            "fields": clean,
+            "submitted_at": now,
+        }, ensure_ascii=False) + "\n")
+    return True, clean
+
+
 # ---------------------------------------------------------------------------
 # Image manager helpers
 # ---------------------------------------------------------------------------
@@ -978,6 +1062,9 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/curation/remove":
             self._handle_curation_remove()
             return
+        if self.path == "/api/item/update":
+            self._handle_item_update()
+            return
         if self.path == "/api/approve":
             self._handle_approve()
             return
@@ -1151,6 +1238,23 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
         else:
             self._json(400, {"error": result})
+
+    def _handle_item_update(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=200_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        url = (payload.get("url") or "").strip()
+        fields = payload.get("fields")
+        if not url or not isinstance(fields, dict):
+            self._json(400, {"error": "Missing 'url' or 'fields'"})
+            return
+        ok, applied = _apply_item_update(url, fields)
+        if ok:
+            self._json(200, {"ok": True, "fields": applied})
+        else:
+            self._json(400, {"error": "Item no encontrado o sin campos válidos"})
 
     def _handle_approve(self) -> None:
         try:

@@ -71,6 +71,54 @@ Dos paneles en el footer del modal de detalle, unificados en `data/feedback.json
   - Endpoint de búsqueda: `GET /api/editions/search?q=<query>` retorna ediciones matching por nombre
   - Endpoints de escritura: `POST /api/curation/{move,merge,remove}`
 
+### Edición inline de la metadata (botón ✏️ Editar info)
+
+Botón **✏️ Editar info** en el footer de la página de detalle (`view==='volume'`).
+Flipea el detalle a un **modo edición in-situ**: la metadata del item se convierte
+en un **formulario dinámico** con una barra de acciones **💾 Guardar cambios /
+Cancelar**. Es el flujo "edito lo que veo y lo grabo" — corregir cualquier dato del
+item desde el mismo detalle, sin herramientas externas.
+
+- **Se edita CUALQUIER atributo del item, EXCEPTO**:
+  - **Imágenes** (`image_url`, `image_local`, `images`, `images_backfilled_at`) —
+    tienen su propio gestor (`image-manager.html`). Set `_PROTECTED_ITEM_FIELDS` en
+    `serve.py`; se ignoran si llegan en el payload.
+  - **Identidad de fila** (`url`, `slug`, `cluster_key`, `content_hash`, `source_url`,
+    `sources`) — son editables, pero se aplican **solo a la fila abierta**, no a las
+    hermanas del cluster (set `_ROW_LOCAL_FIELDS`).
+  - Todo lo demás (≈37 campos: title, author, publisher, price, isbn, volume,
+    description, description_es, rarity, stock_type, tags, signal_types, signals,
+    extras, score, series_key, edition_key, status, fechas, …) es editable.
+- **Formulario dinámico** (`buildEditSchema` en `web/index.html`): arma el schema
+  desde las keys reales del item, infiriendo el control por tipo — texto / textarea
+  (descripciones) / número (score) / lista separada por comas (signal_types, signals,
+  tags) / JSON (sources, extras). Split en "Principales" (orden fijo, siempre visibles)
+  + "Avanzado / técnico" (colapsable, con warning sobre editar keys estructurales). El
+  server **preserva el tipo** de cada valor; el frontend manda **solo lo que cambió**.
+- **Descripción**: dos campos — `description_es` (override en español, lo que se
+  muestra) y `description` (original de la fuente). Editar `description_es` no toca el
+  original que usa `detect_signals` para `signal_types`. Convención i18n estándar.
+- **Opera a nivel CLUSTER para los campos de producto**: como el gestor de imágenes,
+  el cambio se propaga a **todas las filas del cluster** (mismo `cluster_key`) — así no
+  reaparece desde una fila hermana al re-mergear. Clusters `url:` standalone tocan solo
+  su fila. Card y detalle se actualizan en memoria sin recargar; si cambió algo
+  estructural (keys/grouping), recarga el dataset para re-agrupar al volver.
+- **NO recomputa `cluster_key`** automáticamente: la reagrupación estructural por
+  arrastre tiene su propio flujo (botón 👎 → "Mover a otra edición"). El owner puede
+  editar las keys a mano desde el editor avanzado, a propósito.
+- **Durabilidad**: los items con `standardized_at` (≈99.6% del corpus) preservan los
+  campos curados (`title`, `series_display`, `edition_display`, `volume`,
+  `description_es`, …) frente a re-scrapes vía `_CURATED_FIELDS` de `append_jsonl`. Los
+  campos no-curados (autor, editorial, precio, país, idioma, ISBN, product_type)
+  persisten hasta que un re-scrape de esa misma URL los refresque. Para congelar TODO,
+  el owner aprueba la card (golden record).
+- **Auditoría**: cada edición se appendea a `data/edits.jsonl` (gitignored, append-only)
+  con `url`, `cluster_key`, `rows_updated`, `fields`, `submitted_at`.
+- Endpoint: `POST /api/item/update {url, fields}` (`_apply_item_update`, serializado
+  con `@_serialized` — read-modify-write atómico, ver gotcha #34).
+- Teclado: `Escape` cancela la edición (no vuelve de vista); abrir otro tomo o el
+  catálogo descarta el modo edición.
+
 ### Gestor de imagenes (`/image-manager.html`)
 
 Herramienta dedicada para gestionar las portadas e imagenes de galería del catálogo.
@@ -211,8 +259,9 @@ Estas son las funcionalidades que queremos agregar al dashboard HTML (el orden n
 
 ### Curación avanzada
 
-- **Edición inline de campos**: modificar `title`, `series_key`, `edition_key`, `publisher`, `volume` de un item directamente desde el modal sin tocar el JSONL a mano
-- **Merge manual de cards**: seleccionar 2+ cards y combinarlas en una sola (para casos donde el dedup automático por `cluster_key` no detectó que son el mismo producto)
+- ✅ ~~**Edición inline de campos**~~ — **IMPLEMENTADO** (ver "Edición inline de la metadata" en Features actuales): botón ✏️ Editar info en el detalle, formulario editable + guardar, escritura a nivel cluster vía `POST /api/item/update`.
+- **Merge manual de cards**: seleccionar 2+ cards y combinarlas en una sola (para casos donde el dedup automático por `cluster_key` no detectó que son el mismo producto). *(Parcial: ya existe "Duplicado / merge" pegando la URL del duplicado.)*
+- **Asignar series_key/edition_key estructural desde el editor**: hoy el editor inline cambia los *display* (`series_display`/`edition_display`) pero no reasigna los keys ni re-clusteriza; eso sigue siendo dominio del flujo "Mover a otra edición".
 - **Asignar series_key desde el modal**: dropdown con canonicals de `series_aliases.yml` + opción de crear nuevo canonical
 
 ### Operaciones de datos

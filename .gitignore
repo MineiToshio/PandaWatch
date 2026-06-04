@@ -11,6 +11,7 @@ data/state.json
 data/state.json.bak*
 data/feedback.jsonl
 data/approvals.jsonl
+data/edits.jsonl
 data/*.broken.json
 data/images/
 data/backups/
