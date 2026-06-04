@@ -238,6 +238,22 @@ def _run_gc(
         for s in (it.get("sources") or []):
             if isinstance(s, dict) and s.get("image_local"):
                 referenced.add(s["image_local"])
+
+    # cover_preview.json referencia archivos del espejo por `old_image`/
+    # `new_image` (revisión de portadas mejoradas, web/cover-preview.html). NO
+    # están en items.jsonl — si no se incluyen, el GC borra las originales y la
+    # página de review queda con todas las fotos rotas (bug 2026-06-03).
+    preview = images_dir.parent / "cover_preview.json"
+    if preview.exists():
+        try:
+            for e in json.loads(preview.read_text(encoding="utf-8")):
+                for k in ("old_image", "new_image"):
+                    v = e.get(k)
+                    if v and v != "[dry-run]":
+                        referenced.add(v)
+        except (ValueError, OSError):
+            pass
+
     on_disk = [p for p in images_dir.iterdir() if p.is_file()]
     orphans = [p for p in on_disk if p.name not in referenced]
 

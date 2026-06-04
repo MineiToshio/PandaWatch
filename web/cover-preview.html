@@ -154,7 +154,7 @@
             <div class="comparison" @click="openCompare(e)" style="cursor:pointer;" title="Clic para ver en grande">
               <div class="img-box">
                 <img :src="'../data/images/' + e.old_image" alt="Anterior"
-                     onerror="this.style.opacity=0.3">
+                     @error="if(!$event.target.dataset.fb && e.old_url){$event.target.dataset.fb=1; $event.target.src=e.old_url}else{$event.target.style.opacity=0.3}">
                 <div class="label">Anterior</div>
                 <div class="pixels bad" x-text="formatPx(e.old_pixels)"></div>
               </div>
@@ -212,7 +212,7 @@
             <img :src="'../data/images/' + compareEntry.old_image"
                  style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
                         border:2px solid var(--red);"
-                 onerror="this.style.opacity=0.3">
+                 @error="if(!$event.target.dataset.fb && compareEntry.old_url){$event.target.dataset.fb=1; $event.target.src=compareEntry.old_url}else{$event.target.style.opacity=0.3}">
             <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
               Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
             </div>
@@ -318,21 +318,12 @@ function previewApp() {
     modalItem: null,
     compareEntry: null,
     itemsBySlug: {},
+    _itemsLoaded: false,
 
     async init() {
-      // Cargar items.jsonl para el modal de detalle
-      try {
-        const r = await fetch('../data/items.jsonl', { cache: 'no-store' });
-        if (r.ok) {
-          const text = await r.text();
-          const items = text.trim().split('\n').map(l => JSON.parse(l));
-          items.forEach(it => {
-            if (it.slug) this.itemsBySlug[it.slug] = it;
-          });
-        }
-      } catch {}
-
-      // Cargar preview
+      // Solo cargamos el preview (chico). items.jsonl (25MB) se carga LAZY al
+      // abrir un detalle — antes se cargaba acá al inicio y bloqueaba la página
+      // varios segundos a medida que el catálogo creció.
       try {
         const r = await fetch('../data/cover_preview.json?t=' + Date.now(), { cache: 'no-store' });
         if (r.ok) {
@@ -342,6 +333,21 @@ function previewApp() {
         }
       } catch {}
       this.loaded = true;
+    },
+
+    // Carga items.jsonl bajo demanda (solo cuando se abre el modal de detalle).
+    async _ensureItems() {
+      if (this._itemsLoaded) return;
+      this._itemsLoaded = true;
+      try {
+        const r = await fetch('../data/items.jsonl', { cache: 'no-store' });
+        if (r.ok) {
+          const text = await r.text();
+          text.trim().split('\n').forEach(l => {
+            try { const it = JSON.parse(l); if (it.slug) this.itemsBySlug[it.slug] = it; } catch {}
+          });
+        }
+      } catch {}
     },
 
     decidedCount() {
@@ -355,7 +361,8 @@ function previewApp() {
       return px + ' px';
     },
 
-    openDetail(slug) {
+    async openDetail(slug) {
+      await this._ensureItems();
       const item = this.itemsBySlug[slug];
       if (item) {
         this.modalItem = item;

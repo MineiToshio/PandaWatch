@@ -1027,7 +1027,12 @@ def _process_item(
 
     curr_px = _get_current_pixels(item, images_dir)
     is_upscaled_item = _is_upscaled(item, images_dir)
-    if curr_px >= min_pixels and not is_upscaled_item:
+    # Solo buscamos para imágenes que GENUINAMENTE necesitan mejora: las que
+    # están por debajo del umbral de píxeles. Antes había un bypass que hacía
+    # buscar reemplazo para CUALQUIER imagen upscaleada por AI aunque ya fuera de
+    # 2 MP — y terminaba aplicando portadas web equivocadas/de peor calidad sobre
+    # portadas que estaban bien. El tamaño manda; una imagen ya grande no se toca.
+    if curr_px >= min_pixels:
         return None
 
     isbn = item.get("isbn", "")
@@ -1230,7 +1235,7 @@ def run(
     serper_key: str = "",
     tavily_key: str = "",
     dry_run: bool = False,
-    preview: bool = False,
+    preview: bool = True,   # SEGURO por defecto: nada se aplica sin aprobación
     limit: int = 0,
     verbose: bool = False,
 ) -> None:
@@ -1302,8 +1307,8 @@ def run(
     session = requests.Session()
     session.headers.update({"User-Agent": _UA})
 
-    applied_high = 0  # alta confianza → aplicadas directo
-    applied_low = 0   # baja confianza → aplicadas + van a preview
+    applied_high = 0  # alta confianza + --apply → aplicadas directo
+    previewed = 0     # van a preview SIN aplicar (esperan aprobación manual)
     skipped = 0
     errors = 0
     flush_count = 0
@@ -1330,25 +1335,25 @@ def run(
                 new_local = result["new_local"]
                 confidence = result.get("confidence", "high")
 
-                if confidence == "high":
-                    # Alta confianza: aplicar directo sin review
+                # Regla de seguridad (2026-06-03): NUNCA reemplazar la portada
+                # automáticamente sin aprobación. El item conserva su portada
+                # vieja hasta que el owner apruebe en cover-preview.html. Única
+                # excepción: alta confianza (CDN/ISBN, hash-verificada = misma
+                # imagen en mayor resolución) EN modo --apply explícito. La baja
+                # confianza NUNCA se auto-aplica — era la fuente de las portadas
+                # equivocadas (un kit de magia para "Negima", etc.).
+                old_local = item.get("image_local", "")
+                old_url = item.get("image_url", "")
+                if confidence == "high" and not preview and not dry_run:
                     applied_high += 1
-                    if not dry_run:
-                        old_local = item.get("image_local", "")
-                        _apply_improvement(item, new_url, new_local)
-                        _atomic_write(items_path, items)
-                        flush_count += 1
+                    _apply_improvement(item, new_url, new_local)
+                    _atomic_write(items_path, items)
+                    flush_count += 1
                     if verbose:
-                        print(f"  ✓ aplicada [alta confianza] ({flush_count})", flush=True)
+                        print(f"  ✓ aplicada [alta confianza, --apply] ({flush_count})", flush=True)
                 else:
-                    # Baja confianza: aplicar PERO agregar a preview para revisión
-                    applied_low += 1
-                    old_local = item.get("image_local", "")
-                    old_url = item.get("image_url", "")
-                    if not dry_run:
-                        _apply_improvement(item, new_url, new_local)
-                        _atomic_write(items_path, items)
-                        flush_count += 1
+                    # A preview, SIN tocar items.jsonl (la portada vieja se queda).
+                    previewed += 1
                     preview_entries.append({
                         "slug": item.get("slug", ""),
                         "title": item.get("title", ""),
@@ -1365,13 +1370,16 @@ def run(
                         "page_title": result.get("page_title", ""),
                         "domain": result.get("domain", ""),
                         "query": result.get("query", ""),
+                        "confidence": confidence,
                         "status": "pending",
                     })
-                    _PREVIEW_PATH.write_text(
-                        json.dumps(preview_entries, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+                    if not dry_run:
+                        _PREVIEW_PATH.write_text(
+                            json.dumps(preview_entries, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
                     if verbose:
-                        print(f"  ⚠ aplicada [baja confianza → preview] ({len(preview_entries)})", flush=True)
+                        tag = "alta" if confidence == "high" else "baja"
+                        print(f"  → preview [{tag} confianza, NO aplicada] ({len(preview_entries)})", flush=True)
             else:
                 skipped += 1
         except Exception as e:
@@ -1379,17 +1387,16 @@ def run(
             if verbose:
                 print(f"  ERROR: {e}", flush=True)
 
-    total_applied = applied_high + applied_low
     print(flush=True)
     print(f"✓ Resultado:")
-    print(f"  Aplicadas (alta confianza):  {applied_high}")
-    print(f"  Aplicadas (baja confianza):  {applied_low} → revisar en preview")
-    print(f"  Sin mejora:                  {skipped}")
-    print(f"  Errores:                     {errors}")
+    print(f"  Aplicadas (alta confianza, --apply): {applied_high}")
+    print(f"  En preview (esperan tu aprobación):  {previewed}")
+    print(f"  Sin mejora:                          {skipped}")
+    print(f"  Errores:                             {errors}")
     if not dry_run:
         print(f"  Guardados:  {flush_count} flushes a items.jsonl")
-    if applied_low > 0:
-        print(f"\n  ⚠  {applied_low} items necesitan revisión visual:")
+    if previewed > 0:
+        print(f"\n  ⚠  {previewed} candidatas NO aplicadas — revisalas y aprobá:")
         print(f"  Preview:    {_PREVIEW_PATH}")
         print(f"  Abrir:      http://localhost:8000/web/cover-preview.html")
         print(f"  Después:    .venv/bin/python scripts/retrofit/fetch_better_covers.py --apply-preview")
@@ -1514,9 +1521,12 @@ def main() -> None:
              "Fallback si no hay Serper key. 1 000 queries/mes gratis.",
     )
     ap.add_argument(
-        "--preview", action="store_true",
-        help="Buscar candidatas y generar preview HTML para revisión visual. "
-             "No modifica items.jsonl. Abrir http://localhost:8000/web/cover-preview.html",
+        "--apply", action="store_true",
+        help="Aplicar DIRECTO solo las candidatas de ALTA confianza (CDN/ISBN, "
+             "hash-verificadas = misma portada en mayor resolución). Por defecto "
+             "(sin este flag) NADA se aplica: TODO va a preview para tu aprobación "
+             "manual en http://localhost:8000/web/cover-preview.html. La baja "
+             "confianza NUNCA se auto-aplica.",
     )
     ap.add_argument(
         "--apply-preview", action="store_true",
@@ -1548,7 +1558,7 @@ def main() -> None:
         max_hash_dist=args.max_hash_dist,
         no_search=args.no_search,
         include_upscaled=args.include_upscaled,
-        preview=args.preview,
+        preview=not args.apply,
         serper_key=args.serper_key,
         tavily_key=args.tavily_key,
         dry_run=args.dry_run,

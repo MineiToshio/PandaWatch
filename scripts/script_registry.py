@@ -1390,7 +1390,7 @@ SCRIPTS: list[dict[str, Any]] = [
         "category": "Mantenimiento",
         "icon": "🔍",
         "name": "Buscar portadas en mayor resolución",
-        "tagline": "Para items con imagen pequeña, busca portadas hi-res vía CDN, OpenLibrary, Serper y Tavily.",
+        "tagline": "Para items con imagen pequeña, busca portadas hi-res y las deja en preview para tu aprobación.",
         "what": (
             "Muchas fuentes IT (AnimeClick) y ES (ListadoManga) sólo exponen portadas pequeñas. "
             "Este script busca la versión hi-res por orden de prioridad: "
@@ -1399,7 +1399,11 @@ SCRIPTS: list[dict[str, Any]] = [
             "Tavily Search API (TAVILY_API_KEY, 1 000 queries/mes) como fallback. "
             "Keys auto-cargadas desde .env. "
             "Verificación: perceptual hash aHash 8×8, distancia Hamming ≤ --max-hash-dist (default 12/64). "
-            "Flush incremental: cada mejora se guarda inmediatamente en items.jsonl."
+            "SEGURO POR DEFECTO (2026-06-03): NO reemplaza ninguna portada automáticamente — todas las "
+            "candidatas van a cover-preview.html para tu aprobación manual; el item conserva su portada "
+            "vieja hasta que apruebes. Solo busca imágenes que realmente lo necesitan (debajo de --min-pixels). "
+            "Con --apply, las de ALTA confianza (CDN/ISBN hash-verificadas) se aplican directo; la baja "
+            "confianza NUNCA se auto-aplica. Aprobás en la página → corrés con --apply-preview."
         ),
         "when": (
             "Después de upgrade_image_resolution.py. Cuando hay items con imagen < 100 000 px "
@@ -1419,8 +1423,12 @@ SCRIPTS: list[dict[str, Any]] = [
                 "flags": {"--no-search": True},
             },
             {
-                "label": "🔍 Todo (CDN + OpenLibrary + Brave/Tavily)",
+                "label": "🔍 Buscar y mandar a preview (no aplica nada)",
                 "flags": {},
+            },
+            {
+                "label": "✅ Aplicar aprobadas del preview",
+                "flags": {"--apply-preview": True},
             },
         ],
         "flags": [
@@ -1441,6 +1449,20 @@ SCRIPTS: list[dict[str, Any]] = [
                   "No usa Serper, Brave ni Tavily. Solo lookups determinísticos por ISBN. "
                   "Rápido, sin consumo de cuota API; solo ayuda a items con ISBN.",
                   type="bool", default=False),
+            _flag("--apply", "Aplicar directo las de ALTA confianza",
+                  "Sin este flag (recomendado), NADA se aplica: todo va a preview para tu "
+                  "aprobación. Con --apply, solo las de alta confianza (CDN/ISBN hash-verificadas) "
+                  "se aplican directo; la baja confianza NUNCA se auto-aplica.",
+                  type="bool", default=False),
+            _flag("--apply-preview", "Aplicar las aprobadas del preview",
+                  "Procesa cover_preview.json: aplica las que marcaste como aprobadas en la "
+                  "página de revisión, descarta las rechazadas, deja las pendientes.",
+                  type="bool", default=False),
+            _flag("--include-upscaled", "Buscar también para imágenes upscaleadas",
+                  "Por defecto solo se buscan portadas para imágenes chicas. Este flag fuerza "
+                  "a buscar reemplazos reales también para imágenes agrandadas con AI (úsalo con "
+                  "cuidado: estas ya son grandes y la búsqueda puede traer fotos peores).",
+                  type="bool", default=False, advanced=True),
             _flag("--serper-key", "Serper API key (recomendado)",
                   "Si no se pasa, se lee SERPER_API_KEY del .env. "
                   "Google Images API — 2 500 queries gratis sin tarjeta de crédito en serper.dev. "
