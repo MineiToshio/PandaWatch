@@ -276,7 +276,8 @@ web/index.html ← Alpine.js dashboard (filters incl. signal_types
     │
     ▼
 http://localhost:8000/ (via scripts/serve.py — servidor ÚNICO)
-  + POST /api/feedback, POST /api/save-cover-preview (catálogo)
+  + POST /api/feedback, /api/curation/*, /api/item/update,
+    /api/approve(-edition), POST /api/save-cover-preview (catálogo)
   + GET /api/scripts, POST /api/run, GET+SSE /api/jobs/* (panel)
   web/panel.html → Panel de Control. Lee scripts/script_registry.py
   y permite ejecutar scripts con toggles + presets + logs en vivo (SSE).
@@ -337,6 +338,17 @@ data/
                                        el catálogo vía
                                        retrofit/apply_approvals.py. Ver
                                        sección "Aprobación humana".
+  edits.jsonl                        — gitignored. Log durable (append-only)
+                                       de las ediciones de metadata hechas
+                                       desde el detalle del dashboard
+                                       (botón ✏️ Editar info → endpoint
+                                       /api/item/update). Cada entrada:
+                                       url, cluster_key, rows_updated,
+                                       fields (los campos editados),
+                                       submitted_at. Sólo auditoría — el
+                                       cambio ya está aplicado en
+                                       items.jsonl. Ver sección "Edición
+                                       inline de la metadata".
   images/                            — gitignored. Espejo local de
                                        portadas (Image storage Fase 1):
                                        1 archivo por imagen, nombre
@@ -910,9 +922,24 @@ scripts/
                                        --max-hash-dist (default 12/64 bits).
                                        Items con variant_cover o
                                        retailer_exclusive se saltan siempre.
+                                       **SEGURO POR DEFECTO (2026-06-03):** NO
+                                       reemplaza ninguna portada automáticamente
+                                       — todas las candidatas van a
+                                       cover-preview.html para aprobación manual;
+                                       el item conserva su portada vieja hasta
+                                       que el owner apruebe. Con `--apply`, solo
+                                       las de ALTA confianza (CDN/ISBN hash-
+                                       verificadas) se aplican directo; la BAJA
+                                       confianza NUNCA se auto-aplica (era la
+                                       fuente de portadas equivocadas). Solo
+                                       busca imágenes que GENUINAMENTE lo
+                                       necesitan (curr_px < --min-pixels); ya NO
+                                       busca para imágenes upscaleadas grandes
+                                       (eso buscaba reemplazo a 5340 portadas de
+                                       2MP que estaban bien). Aprobás en la
+                                       página → `--apply-preview` aplica.
                                        Requiere Pillow:
                                        .venv/bin/python3 -m pip install Pillow.
-                                       Registrado en Panel de Control.
                                        Registrado en Panel de Control.
   audit/
     source_health.py                 — parses N recent overnight logs
@@ -1023,7 +1050,8 @@ web-next/                            — Next.js 16 + Tailwind v4 app (NUEVO).
                                        work orders.
   app/                               — App Router (Server Components por
                                        defecto). Páginas: / (catálogo),
-                                       /edition/[editionKey], /item/[slug].
+                                       /series/[seriesKey], /edition/[editionKey],
+                                       /item/[slug].
   components/core/                   — Componentes base reutilizables:
                                        Button (CVA), Chip, Badge, Heading,
                                        Typography, Icon.
@@ -1035,16 +1063,22 @@ web-next/                            — Next.js 16 + Tailwind v4 app (NUEVO).
                                        Pagination, EmptyState, CatalogControls
                                        (Client wrapper que gestiona drawerOpen
                                        compartido entre SortBar y SidebarFilters).
+  components/series/                 — Componentes del nivel obra (WO-008):
+                                       SeriesCard (card compacta en la tira),
+                                       SeriesHighlights (tira horizontal scroll),
+                                       SeriesHeader (header de /series/[key]).
   components/edition/                — Componentes de edition detail:
                                        EditionHeader, VolumeGrid.
   components/item/                   — Componentes de item detail:
                                        ItemHero, ImageCarousel, MetaTable,
                                        ExtrasSection, SourcesList.
   lib/types.ts                       — TypeScript types: Item, Cluster,
-                                       Facets, FilterParams, SortKey.
+                                       Series, Facets, FilterParams, SortKey.
   lib/data.ts                        — Carga y agrupación: loadClusters(),
                                        loadEditionClusters(), clusterBySlug(),
-                                       allEditionKeys(), allSlugs().
+                                       allEditionKeys(), allSlugs(),
+                                       loadSeries(), topSeries(), seriesByKey(),
+                                       loadSeriesEditions(), allSeriesKeys().
   lib/filters.ts                     — Filtrado + sorting + paginación:
                                        filterClusters(), sortClusters(),
                                        paginate(), buildFacets().
@@ -1087,6 +1121,9 @@ docs/
                                        SourcesList, back navigation.
     FRD-006-slug-generation.md       — Slug generation: reglas, colisiones,
                                        CLI, pipeline integration.
+    FRD-007-series-highlights.md     — Series highlights strip + serie page:
+                                       Series aggregate, topSeries(), tira
+                                       horizontal en home, /series/[key].
     blueprints/
       BP-001-architecture.md         — ADRs: Server Components, no API
                                        routes, URL state, SSG, symlink,
@@ -1113,6 +1150,10 @@ docs/
                                        BackLink.
       WO-006-item-detail.md          — item/[slug]/page.tsx, ImageCarousel,
                                        MetaTable, ExtrasSection, SourcesList.
+      WO-008-series-page.md          — series/[seriesKey]/page.tsx,
+                                       SeriesCard, SeriesHighlights,
+                                       SeriesHeader, loadSeries() et al.
+                                       **Done.**
 ```
 
 ## Current corpus state
@@ -1434,13 +1475,15 @@ without re-scraping everything.
 
 ## Feedback y curación desde el modal
 
-El footer del modal de detalle tiene tres botones:
+El footer de la página de detalle (`view==='volume'`) tiene estos botones:
 
 - **👍 / ✓ (aprobar)** — marcar la card como correcta (golden record). Ver
   sección "Aprobación humana" abajo.
-- **👎 (feedback)** — reportar un problema con el item (datos erróneos,
-  clasificación equivocada). El item NO se elimina.
-- **Lápiz (curación)** — 3 acciones operativas con efecto inmediato:
+- **✏️ Editar info** — editar la metadata del item in-situ y grabar. Ver
+  sección "Edición inline de la metadata" abajo.
+- **👎 (feedback / curación)** — abre el panel unificado: reportar un problema
+  (datos erróneos, clasificación equivocada — el item NO se elimina) o 3 acciones
+  operativas con efecto inmediato:
   - **Mover a otra edición**: buscador autocomplete → cambia edition_key
   - **Duplicado (merge)**: pegar URL del duplicado → fusiona y elimina
   - **No va aquí (remover)**: separa el item de su edición actual
@@ -1481,6 +1524,76 @@ El campo `action` distingue el tipo:
 
 **No modificar el comportamiento** sin actualizar los handlers en
 `serve.py` y los métodos en `web/index.html` a la vez.
+
+## Edición inline de la metadata (botón ✏️ Editar info)
+
+El owner puede **editar la metadata de un item directamente desde el detalle**
+y grabarla, sin tocar el JSONL a mano ni herramientas externas. Botón
+**✏️ Editar info** en el footer de la página de detalle (`view==='volume'` en
+`web/index.html`) → flipea el detalle a un **modo edición in-situ**: la metadata
+se vuelve un formulario editable (inputs + textarea de descripción) con barra de
+acciones **💾 Guardar cambios / Cancelar** en el propio panel.
+
+**Se puede editar CUALQUIER atributo del item, EXCEPTO dos grupos** (modelo
+**denylist**, no allowlist — el owner pidió explícitamente "editar todo menos las
+imágenes"):
+- `_PROTECTED_ITEM_FIELDS` (`serve.py`) — las **imágenes** (`image_url`,
+  `image_local`, `images`, `images_backfilled_at`). Tienen su propio gestor
+  (`image-manager.html`); cualquier key de este set en el payload se ignora.
+- `_ROW_LOCAL_FIELDS` (`serve.py`) — campos de **identidad/estructura de la fila**
+  (`url`, `slug`, `cluster_key`, `content_hash`, `source_url`, `sources`). Son
+  editables, pero se aplican **SOLO a la fila abierta**, nunca a las hermanas del
+  cluster (son per-fila, no del producto).
+
+El formulario del frontend es **dinámico**: arma su schema desde las keys reales
+del item (`buildEditSchema`), infiriendo el control por el tipo del valor —
+`text` / `textarea` (description, description_es) / `number` (score) / `list`
+(listas de escalares: signal_types, signals, tags → input separado por comas) /
+`json` (listas de objetos o dicts: sources, extras → textarea con JSON). Los campos
+comunes van en "Principales" (orden fijo, siempre visibles aunque falten en el item);
+el resto en "Campos avanzados / técnicos" (colapsable, con warning sobre editar
+keys estructurales). El server **preserva el tipo** de cada valor (no coacciona a
+str). El frontend manda **solo los campos que cambiaron** (diff contra el snapshot
+inicial) → el log de auditoría registra el cambio real, no todo el item.
+
+**Descripción**: hay dos campos editables — `description_es` (override en español,
+lo que se muestra vía `description_es || description`) y `description` (texto original
+de la fuente). Editar `description_es` no toca el original que usa `detect_signals`
+para `signal_types`. Misma convención i18n que el resto del proyecto.
+
+**Opera a nivel CLUSTER para los campos de PRODUCTO** (igual que el gestor de
+imágenes): `_apply_item_update` propaga los campos no-row-local a **TODAS las filas
+del cluster** (mismo `cluster_key`), no solo a la fila abierta — así el dato editado
+no reaparece desde una fila hermana al re-mergear el detalle. Clusters `url:`
+standalone (o sin cluster_key) tocan solo su fila. El frontend refleja el cambio en
+memoria sin recargar; si cambió algo estructural (`url`/`slug`/`cluster_key`/
+`edition_key`/`series_key`/`volume`) además recarga el dataset (`loadItems`) para
+que el catálogo se re-agrupe bien al volver.
+
+**NO recomputa `cluster_key` automáticamente**: la reagrupación estructural por
+arrastre tiene su propio flujo de curación (`/api/curation/move`). Si el owner edita
+`cluster_key`/`edition_key`/etc. a mano desde el editor avanzado, es a propósito.
+
+**Durabilidad**: los items con `standardized_at` (≈99.6% del corpus) preservan los
+campos curados (`title`, `series_display`, `edition_display`, `volume`,
+`description_es`, …) frente a re-scrapes vía `_CURATED_FIELDS` de `append_jsonl`. Los
+campos no-curados (autor, editorial, precio, país, idioma, ISBN, product_type)
+persisten hasta que un re-scrape de esa misma URL los refresque. Para congelar TODA
+la metadata, el owner aprueba la card (golden record).
+
+**Auditoría**: cada edición se appendea a `data/edits.jsonl` (gitignored, append-only)
+con `url`, `cluster_key`, `rows_updated`, `fields`, `submitted_at`. No hay replay
+script todavía (a diferencia de approvals → `apply_approvals.py`); si se reconstruye
+el catálogo de cero las ediciones no-curadas se pierden — re-editar o aprobar.
+
+**Endpoint**: `POST /api/item/update {url, fields}` → `_apply_item_update`,
+serializado con `@_serialized` (read-modify-write atómico de items.jsonl — gotcha #34).
+Body capado a 200 kB.
+
+**No modificar el comportamiento** sin actualizar `_apply_item_update` /
+`_handle_item_update` (+ `_PROTECTED_ITEM_FIELDS` / `_ROW_LOCAL_FIELDS`) en
+`serve.py` y `buildEditSchema`/`startEdit`/`cancelEdit`/`saveEdit` en
+`web/index.html` a la vez.
 
 ## Aprobación humana (golden records) — `approved_at`
 
@@ -3102,6 +3215,56 @@ These came up in conversation but were explicitly deferred:
   colecciones conocidas (ids 1606, 3020, 6090, 6242, 2688) + dry-run
   comparado contra items.jsonl actual, se decide si avanzar Fase 2
   inmediatamente o esperar feedback del corpus.
+
+---
+
+Last updated: 2026-06-03 (cover-preview: originales rotas por el GC + reversión de portadas mal aplicadas + rediseño seguro de fetch_better_covers) — El owner abrió `cover-preview.html` y las portadas "originales" salían rotas. Investigación que destapó DOS problemas, uno grave: **(1) El GC borró las originales.** `cover_preview.json` referencia imágenes por las claves `old_image`/`new_image`, que el GC de `mirror_images` no incluía en su set de referenciados → borró 314/326 originales como huérfanas. Fix: el GC ahora lee `cover_preview.json` e incluye esas refs (regla: cualquier archivo que un JSON referencie debe entrar en el set). Restauradas las 330 (re-descarga por URL con nombre exacto). Bonus: `cover-preview.html` cargaba los 25MB de items.jsonl al inicio (lentísimo) → ahora lazy (solo al abrir un detalle) + fallback `@error`→`old_url`. **(2) El GRAVE: `fetch_better_covers` aplicaba portadas EQUIVOCADAS sin aprobación.** Al revisar, el owner notó que la mayoría de las "nuevas" sugeridas estaban mal (un kit de magia "MAGIA BORRAS" como portada de "Negima Boxset", el tomo 10 suelto para un boxset, etc.) **y ya estaban aplicadas al catálogo** (112 items, incluso varias en estado `rejected`). Causa raíz: (a) la rama de BAJA confianza hacía `_apply_improvement` igual ("aplicar PERO agregar a preview"); (b) el modo `--preview` chequeaba `if not dry_run` en vez de `if not preview`, así que **preview igual aplicaba**; (c) un bypass de imágenes upscaleadas hacía buscar reemplazo para CUALQUIER imagen agrandada por AI aunque ya fuera de 2MP — buscaba sobre **5340 portadas que estaban bien**. **Reversión (decisión A del owner):** 102 items con la portada equivocada revertidos a su original (`old_image`/`old_url`), 21 que el owner aprobó conservan la nueva, `cover_preview.json` vaciado, 351 fotos nuevas huérfanas borradas (GC), 0 refs rotas. **Rediseño de fetch_better_covers (seguro por defecto):** ahora `preview` es el DEFAULT (nada se aplica sin aprobación); la BAJA confianza NUNCA se auto-aplica; solo con `--apply` se aplican las de ALTA confianza (CDN/ISBN hash-verificadas); el bypass de upscaled se eliminó → solo busca para imágenes genuinamente chicas (74 candidatas vs 5340 antes). Registry actualizado (presets + flags `--apply`/`--apply-preview`/`--include-upscaled`). 536 tests. Sin tests Python nuevos (cambios de flujo + datos); el comportamiento se verificó en navegador + conteos.
+
+---
+
+Last updated: 2026-06-03 (WO-008 — nivel Serie en web-next: tira "Obras destacadas" + /series/[seriesKey]) — Implementación completa de la serie (obra) como nivel navegable en el app Next.js. Sin cambios de Python ni de schema — todo en `web-next/`.
+
+**Nuevos archivos:**
+- `lib/types.ts` — nuevo type `Series` (`seriesKey`, `seriesDisplay`, `cover`, `editionCount`, `itemCount`, `countries`, `publishers`, `signalTypes`, `topRarity`).
+- `lib/data.ts` — funciones `loadSeries()` (builds + ranks todas las obras; FRD-007 FR-2: editionCount desc → itemCount desc → nombre A→Z), `topSeries(12)`, `seriesByKey()`, `loadSeriesEditions()` (reusan `groupByEdition`), `allSeriesKeys()`. Cache en production igual que `loadClusters()`.
+- `components/series/SeriesCard.tsx` — card compacta para la tira: portada 2/3, nombre (2-line clamp), "N ediciones · M tomos", banderas. Link a `/series/{key}`.
+- `components/series/SeriesHighlights.tsx` — Server Component con tira horizontal scroll (snap), header "Obras destacadas" + subtítulo, `topSeries(12)`. Scrollbar oculto via `.series-strip`.
+- `components/series/SeriesHeader.tsx` — header modeled on `EditionHeader`: cover 64×96, H1 nombre, stats, banderas, signal chips.
+- `app/series/[seriesKey]/page.tsx` — Server Component SSG: `generateStaticParams()` sobre `allSeriesKeys()`, `generateMetadata()`, `notFound()` si no existe, BackLink + SeriesHeader + CatalogGrid con `from=/series/{key}`.
+- `app/globals.css` — reglas `.series-card` (hover lift) + `.series-strip` (ocultar scrollbar).
+
+**Modificados:**
+- `app/page.tsx` — renderiza `<SeriesHighlights />` arriba de `CatalogControls` solo en la vista por defecto (`isDefaultView`: sin q, sin filtros, page===1).
+
+**Verificado en browser (puerto 3001):**
+- Home muestra 12 cards; One Piece primero (84 ediciones · 285 tomos), luego Attack on Titan, Demon Slayer, Berserk, Witch Hat Atelier, Blue Lock, Naruto... — ranking exacto del FRD.
+- Con `?q=berserk` la tira desaparece.
+- `/series/one-piece` muestra header (84 ediciones · 285 tomos, banderas, 10 signal chips) + grilla completa de todas las ediciones OP.
+- `/series/does-not-exist` → 404.
+- `npm run type-check` → 0 errores.
+
+**Docs actualizados:** CLAUDE.md file map (components/series/, lib/types.ts/data.ts, rutas, FRD-007, WO-008), WO-008 marcado Done.
+
+---
+
+Last updated: 2026-06-04 (corrección de los anime comics de One Piece — tomo único vs 2 tomos, ISBNs barajados, novelas) — El owner reportó varios anime comics de One Piece con "tomo 1" pero sin tomo 2, y pidió investigar si eran tomo único o import errado, revisando la fuente de cada uno. Investigación con 3 subagentes (Glénat FR + Shueisha JP vía openBD/ja.wikipedia/glenat/PlaneteBD). Hallazgo: la tanda **"Research import (One Piece special volumes)"** (movies 2–8, Shueisha) tenía los **ISBN barajados entre items** (campo ≠ URL; p. ej. el ISBN de Cursed Holy Sword era en realidad el de Clockwork Island). La otra tanda ("special publications": Strong World/Film Z/Gold/Stampede/Red + Glénat) estaba sana. Correcciones aplicadas vía script one-shot `scripts/fix_op_anime_comics.py` (idempotente, atómico, `backup_and_rotate`): **(a) 5 ediciones eran TOMO ÚNICO** mal etiquetadas "1" → volume="", título sin el "1", cluster/slug recomputados (Glénat: Épisode d'Alabasta, Épisode de Chopper, Château Karakuri; Shueisha movie-7 Karakuri Castle, movie-8 Episode of Arabasta). **(b) movie-4 Dead End + movie-5 Cursed Holy Sword son 2 tomos reales** (上/下): ISBN/URL/portada corregidos y **se agregó el tomo 2 faltante** de Cursed Holy Sword (ISBN 9784088737089). **(c) movies 2/3/6 NO tienen anime comic** (la línea de anime comics de Shueisha arrancó con movie-4 en 2003; Omatsuri nunca tuvo) — solo existe **novela** (JUMP j BOOKS): convertidas a `product_type=novel` + tag `novela` + ISBN/precio/fecha reales (Clockwork Island 9784087031027, Chopper's Kingdom 9784087031102, Baron Omatsuri 9784087031539). movie-2 tenía 2 items fabricados → tomo 1 a novela, **tomo 2 eliminado** (no existe 2do volumen). Todas las portadas re-descargadas desde Amazon CDN por ISBN correcto. Corpus 10304 filas (−1 movie-2 v2 +1 movie-5 v2). **Solo datos, sin cambios de código ni schema** (product_type=novel y tags ya existían). Server detenido durante el write y relanzado (gotcha #34, escritura externa). Items estaban aprobados (golden records); el owner los re-curó así que se mantuvo `approved_at`.
+
+---
+
+Last updated: 2026-06-03 (edición inline de la metadata desde el detalle — editar CUALQUIER atributo menos imágenes) — El owner pidió poder editar TODO desde el HTML: ver algo mal en el detalle del manga, modificarlo y grabar. Implementado como **modo edición in-situ** en `web/index.html` (`view==='volume'`): botón **✏️ Editar info** en el footer → la metadata se vuelve un **formulario dinámico** con barra **💾 Guardar / Cancelar** en el propio panel. Mejor UX que un modal aparte: edito lo que veo, en su lugar.
+
+**Alcance (clarificación del owner): se edita CUALQUIER atributo del item, EXCEPTO imágenes** (tienen su propio gestor). Modelo **denylist**, no allowlist:
+- `_PROTECTED_ITEM_FIELDS` (`serve.py`): `image_url`, `image_local`, `images`, `images_backfilled_at` — se ignoran si llegan en el payload.
+- `_ROW_LOCAL_FIELDS`: `url`, `slug`, `cluster_key`, `content_hash`, `source_url`, `sources` — editables, pero se escriben SOLO a la fila abierta (identidad per-fila), no a las hermanas.
+- Todo lo demás (los ~37 campos restantes: title, author, publisher, price, isbn, volume, description, description_es, rarity, stock_type, tags, signal_types, signals, extras, score, series_key, edition_key, status, fechas, …) es editable y los campos de PRODUCTO se propagan a todas las filas del cluster.
+
+**Formulario dinámico** (`buildEditSchema`): arma el schema desde las keys reales del item, infiriendo el control por tipo — text / textarea (description, description_es) / number (score) / list (signal_types, signals, tags → input separado por comas) / json (sources, extras → textarea JSON). Split "Principales" (orden fijo, siempre visibles) + "Avanzado / técnico" (colapsable, con warning sobre keys estructurales). El server **preserva el tipo** de cada valor (no coacciona a str); el frontend manda **solo lo que cambió** (diff vs snapshot inicial), así el log de auditoría registra el cambio real.
+
+**Backend:** `POST /api/item/update {url, fields}` → `_apply_item_update` (decorado `@_serialized`, gotcha #34, body capado a 200 kB). Refleja en memoria sin recargar; si cambió algo estructural (url/slug/cluster_key/edition_key/series_key/volume) además recarga el dataset para re-agrupar bien. **NO recomputa cluster_key** (la reagrupación por arrastre es el flujo "Mover a otra edición"). La descripción se edita por `description_es` (override ES, lo que se muestra) **y** `description` (original) por separado.
+
+**Durabilidad**: items con `standardized_at` (~99.6%) preservan los campos curados vía `_CURATED_FIELDS`; los no-curados persisten hasta el próximo re-scrape de esa URL (aprobar la card congela todo). **Auditoría**: cada edición se appendea a `data/edits.jsonl` (gitignored, append-only; sin replay script todavía). **Frontend**: `buildEditSchema`/`startEdit`/`cancelEdit`/`saveEdit` + getters `editMainFields`/`editAdvancedFields` en `mangaApp()`; Escape cancela; abrir otro tomo o el catálogo descarta el editor; flechas de navegación entre tomos ocultas en modo edición.
+
+**Verificado en navegador** (server reiniciado): (a) el schema cubre los 37 atributos no-imagen (0 keys faltantes), 0 campos de imagen en el form; (b) tipos inferidos OK (score=number, tags/signal_types/signals=list, sources=json); (c) guardar editando una lista (tags) + un número (score) → persiste con el TIPO correcto (`[...]` y `777` int, no strings), sources intacto, log con solo los 2 campos cambiados; (d) campo row-local (slug) solo toca la fila abierta. Valores de prueba restaurados (0 datos de prueba en el corpus); 0 errores de consola. **Tests: 535 → 536** (+1: `test_serve_item_update_product_field_propagates_row_field_does_not` — campo de producto propaga al cluster, row-local solo a la fila, tipos preservados, imágenes ignoradas, no agrega/borra filas, loguea a edits.jsonl). Docs: sección "Edición inline de la metadata" (modelo denylist) + file map (`data/edits.jsonl`) + endpoints del diagrama + `docs/web-html/PRD.md` (feature de planificada → actual).
 
 ---
 
