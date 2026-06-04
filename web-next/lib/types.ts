@@ -104,6 +104,18 @@ export type SortKey =
   | 'title_asc'
   | 'title_desc'
 
+export type Series = {
+  seriesKey: string
+  seriesDisplay: string
+  cover: { imageLocal?: string; imageUrl?: string }
+  editionCount: number
+  itemCount: number
+  countries: string[]
+  publishers: string[]
+  signalTypes: string[]
+  topRarity?: Item['rarity']
+}
+
 export type FilterParams = {
   q?: string
   country?: string[]

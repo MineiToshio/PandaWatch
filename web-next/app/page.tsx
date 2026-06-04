@@ -1,8 +1,9 @@
-import { loadClusters, buildFacets, groupByEdition } from '@/lib/data'
+import { loadClusters, buildFacets, groupByEdition, seriesFromClusters } from '@/lib/data'
 import { parseFilterParams, filterClusters, sortClusters, paginate } from '@/lib/filters'
 import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
 import { Pagination } from '@/components/catalog/Pagination'
+import { SeriesHighlights } from '@/components/series/SeriesHighlights'
 
 export const metadata = { title: 'PandaWatch' }
 
@@ -29,6 +30,10 @@ export default async function CatalogPage({
     filtered.map(c => c.canonical.series_key).filter(Boolean)
   ).size
 
+  // Series highlights derived from the filtered results — dynamic context:
+  // no filter → global top 12; searching "demon slayer" → Demon Slayer card.
+  const highlightSeries = seriesFromClusters(filtered)
+
   // Build the catalog URL to pass as ?from= in detail-page links,
   // so BackLink can return to the exact same filtered/paginated state.
   const qs = new URLSearchParams()
@@ -50,6 +55,7 @@ export default async function CatalogPage({
       totalEditions={totalEditions}
       totalObras={totalObras}
     >
+      <SeriesHighlights series={highlightSeries} />
       <CatalogGrid clusters={items} from={catalogFrom} />
       {pages > 1 && <Pagination total={pages} current={page} />}
     </CatalogControls>

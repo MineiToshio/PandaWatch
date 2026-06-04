@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import type { Item, Cluster, Facets } from './types'
+import type { Item, Cluster, Facets, Series } from './types'
 
 // Path relative to web-next/ (process.cwd() in Next.js)
 const ITEMS_PATH = path.join(process.cwd(), '..', 'data', 'items.jsonl')
@@ -174,6 +174,129 @@ export function groupByEdition(clusters: Cluster[]): Cluster[] {
 
   return result
 }
+
+// ─── Series (obra) aggregates ─────────────────────────────────────────────────
+
+const RARITY_ORDER = ['common', 'rare', 'super_rare', 'ultra_rare'] as const
+
+function buildSeries(seriesKey: string, clusters: Cluster[]): Series {
+  const editionKeys = new Set<string>()
+  const clusterKeys = new Set<string>()
+  const countries = new Set<string>()
+  const publishers = new Set<string>()
+  const signalTypes = new Set<string>()
+  let cover: Series['cover'] = {}
+  let bestCover = -1
+  let topRarityIdx = -1
+
+  for (const c of clusters) {
+    if (c.editionKey) editionKeys.add(c.editionKey)
+    clusterKeys.add(c.clusterKey)
+    c.countries.forEach(v => countries.add(v))
+    c.publishers.forEach(v => publishers.add(v))
+    c.signalTypes.forEach(v => signalTypes.add(v))
+
+    const it = c.canonical
+    const score = completeness(it)
+    if ((it.image_local || it.image_url) && score > bestCover) {
+      bestCover = score
+      cover = { imageLocal: it.image_local, imageUrl: it.image_url }
+    }
+    const ri = it.rarity ? RARITY_ORDER.indexOf(it.rarity as typeof RARITY_ORDER[number]) : -1
+    if (ri > topRarityIdx) topRarityIdx = ri
+  }
+
+  return {
+    seriesKey,
+    seriesDisplay:
+      clusters[0].seriesDisplay ||
+      clusters[0].canonical.series_display ||
+      seriesKey,
+    cover,
+    editionCount: editionKeys.size,
+    itemCount: clusterKeys.size,
+    countries: [...countries],
+    publishers: [...publishers],
+    signalTypes: [...signalTypes],
+    topRarity: topRarityIdx >= 0 ? RARITY_ORDER[topRarityIdx] : undefined,
+  }
+}
+
+let _seriesCache: Series[] | null = null
+
+export function loadSeries(): Series[] {
+  if (process.env.NODE_ENV === 'production' && _seriesCache) return _seriesCache
+
+  const bySeries = new Map<string, Cluster[]>()
+  for (const c of loadClusters()) {
+    const key = c.canonical.series_key
+    if (!key) continue
+    if (!bySeries.has(key)) bySeries.set(key, [])
+    bySeries.get(key)!.push(c)
+  }
+
+  const collator = new Intl.Collator('es')
+  const series = Array.from(bySeries.entries())
+    .map(([key, clusters]) => buildSeries(key, clusters))
+    // FRD-007 FR-2 ranking — isolated comparator for easy retuning
+    .sort((a, b) =>
+      b.editionCount - a.editionCount ||
+      b.itemCount - a.itemCount ||
+      collator.compare(a.seriesDisplay, b.seriesDisplay)
+    )
+
+  if (process.env.NODE_ENV === 'production') _seriesCache = series
+  return series
+}
+
+export function topSeries(limit = 12): Series[] {
+  return loadSeries()
+    .filter(s => s.cover.imageLocal || s.cover.imageUrl)
+    .slice(0, limit)
+}
+
+export function seriesByKey(seriesKey: string): Series | null {
+  return loadSeries().find(s => s.seriesKey === seriesKey) ?? null
+}
+
+export function loadSeriesEditions(seriesKey: string): Cluster[] {
+  const clusters = loadClusters().filter(
+    c => c.canonical.series_key === seriesKey
+  )
+  return groupByEdition(clusters).sort(
+    (a, b) =>
+      b.volumeCount - a.volumeCount ||
+      (a.canonical.title || '').localeCompare(b.canonical.title || '')
+  )
+}
+
+export function allSeriesKeys(): string[] {
+  return loadSeries().map(s => s.seriesKey)
+}
+
+/** Build and rank Series from an arbitrary subset of clusters (e.g. filtered results).
+ *  Used by the catalog home to show context-relevant highlights. */
+export function seriesFromClusters(clusters: Cluster[], limit = 12): Series[] {
+  const bySeries = new Map<string, Cluster[]>()
+  for (const c of clusters) {
+    const key = c.canonical.series_key
+    if (!key) continue
+    if (!bySeries.has(key)) bySeries.set(key, [])
+    bySeries.get(key)!.push(c)
+  }
+  const collator = new Intl.Collator('es')
+  return Array.from(bySeries.entries())
+    .map(([key, cls]) => buildSeries(key, cls))
+    .filter(s => s.cover.imageLocal || s.cover.imageUrl)
+    .sort((a, b) =>
+      b.editionCount - a.editionCount ||
+      b.itemCount - a.itemCount ||
+      collator.compare(a.seriesDisplay, b.seriesDisplay)
+    )
+    .slice(0, limit)
+}
+
+// ─── Facets ───────────────────────────────────────────────────────────────────
 
 export function buildFacets(clusters: Cluster[]): Facets {
   const count = (values: string[]): { value: string; count: number }[] => {

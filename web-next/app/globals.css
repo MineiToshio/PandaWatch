@@ -366,6 +366,24 @@ body {
   box-shadow: 5px 6px 0 0 #E4DED6, 10px 12px 0 0 #D8D1C6;
 }
 
+/* ── SERIES CARD (WO-008) ── */
+.series-card {
+  transition: transform 0.15s var(--ease-out-quart), box-shadow 0.15s var(--ease-out-quart);
+}
+.series-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Hide scrollbar on the series highlights strip (keeps snap scroll) */
+.series-strip::-webkit-scrollbar {
+  display: none;
+}
+.series-strip {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* ── CATALOG GRID LAYOUT (WO-004) ── */
 /*
  * Uses minmax(0, 1fr), NOT plain 1fr.

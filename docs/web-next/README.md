@@ -42,6 +42,7 @@ The app:
 | [FRD-004](FRD-004-edition-detail.md) | Edition Detail Page | Draft |
 | [FRD-005](FRD-005-item-detail.md) | Item Detail Page | Draft |
 | [FRD-006](FRD-006-slug-generation.md) | Slug Generation | Draft |
+| [FRD-007](FRD-007-series-highlights.md) | Series Highlights & Series Page | Draft |
 
 ### Blueprints — Technical Design
 
@@ -62,6 +63,7 @@ The app:
 | [WO-004](work-orders/WO-004-catalog.md) | Catalog Page | 2 | WO-002, WO-003 |
 | [WO-005](work-orders/WO-005-edition.md) | Edition Detail Page | 3 | WO-004 |
 | [WO-006](work-orders/WO-006-item-detail.md) | Item Detail Page | 3 | WO-004, WO-005 |
+| [WO-008](work-orders/WO-008-series-page.md) | Series Highlights & Series Page | 4 | WO-004, WO-005, WO-006 |
 
 ---
 
@@ -100,6 +102,9 @@ web-next/
 │   ├── globals.css              ← design system (ported from PandaTrack)
 │   ├── layout.tsx               ← root layout, dark/light mode
 │   ├── page.tsx                 ← catalog (Server Component)
+│   ├── series/
+│   │   └── [seriesKey]/
+│   │       └── page.tsx         ← series detail (Server Component, SSG — FRD-007)
 │   ├── edition/
 │   │   └── [editionKey]/
 │   │       └── page.tsx         ← edition detail (Server Component)
@@ -110,6 +115,7 @@ web-next/
 │   ├── core/                    ← Typography, Heading, Button, Chip, Badge, Icon
 │   ├── modules/                 ← EditionCard, ItemCard, ImageCarousel, SignalChip
 │   ├── catalog/                 ← CatalogGrid, SidebarFilters, SortBar, Pagination
+│   ├── series/                  ← SeriesCard, SeriesHighlights, SeriesHeader (FRD-007)
 │   ├── edition/                 ← EditionHeader, VolumeGrid
 │   └── item/                   ← ItemHero, MetaTable, SourcesList
 ├── lib/
@@ -125,4 +131,5 @@ web-next/
 
 ---
 
-*Last updated: 2026-05-27 (initial documentation)*
+*Last updated: 2026-06-03 (added FRD-007 + WO-008: series highlights strip on the
+home page and the `/series/[seriesKey]` page — the work/obra navigation level)*

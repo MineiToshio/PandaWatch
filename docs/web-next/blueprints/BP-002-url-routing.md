@@ -18,7 +18,8 @@ and how they map to data. This is the source of truth for URL design decisions.
 
 | Route | Next.js file | Type | Description |
 |---|---|---|---|
-| `/` | `app/page.tsx` | Server Component | Catalog — all editions, with filters |
+| `/` | `app/page.tsx` | Server Component | Catalog — all editions, with filters. Also hosts the "Obras destacadas" highlights strip (default view only). |
+| `/series/[seriesKey]` | `app/series/[seriesKey]/page.tsx` | Server Component (SSG) | All editions of one work (FRD-007) |
 | `/edition/[editionKey]` | `app/edition/[editionKey]/page.tsx` | Server Component (SSG) | All volumes of one edition |
 | `/item/[slug]` | `app/item/[slug]/page.tsx` | Server Component (SSG) | Single item detail |
 
@@ -73,6 +74,45 @@ Params (all optional, all have defaults):
 
 **Static generation:** No. The catalog is dynamically rendered per request
 (many possible combinations of search params).
+
+**Highlights strip:** the home page also renders an "Obras destacadas" strip
+(top-N works by edition count) **above** the catalog, but only on the default
+landing view — when there is no `q`, no active filter, and `page === 1`. See FRD-007.
+
+---
+
+### `/series/[seriesKey]` — Series (obra) Detail
+
+```
+URL: /series/one-piece
+
+Params:
+  seriesKey    string       Work identifier (from the series_key field)
+
+Optional query params:
+  from         string       Referrer for back-navigation (default: "/")
+```
+
+**Examples:**
+```
+/series/one-piece
+/series/berserk
+/series/witch-hat-atelier
+/series/attack-on-titan
+```
+
+The `series_key` field is already a kebab-case slug, so it doubles as the URL
+segment — **no slug generation needed** (unlike `/item/[slug]`, see FRD-006).
+
+Shows the work header (cover, name, edition/item counts, signal chips) + a grid of
+**all editions of the series**, reusing the catalog's `CatalogGrid` / `EditionCard`.
+Edition cards link down to `/edition/[editionKey]` or `/item/[slug]`, passing
+`?from=/series/[seriesKey]` so back-navigation returns to the series page.
+
+**Static generation:** Yes. `generateStaticParams()` runs over all distinct
+`series_key` values.
+
+**Not found:** If `seriesKey` has no standardized items, returns 404.
 
 ---
 
@@ -140,6 +180,17 @@ all distinct `slug` values.
 ## Navigation Flows
 
 ```
+CATALOG (/)
+    │
+    │ click SeriesCard (Obras destacadas strip)
+    ▼
+SERIES DETAIL (/series/[seriesKey])
+    │
+    │ click EditionCard → /edition/[editionKey] or /item/[slug]
+    │   (?from=/series/[seriesKey] returns here on back)
+    ▼
+   …drill down…
+
 CATALOG (/)
     │
     │ click EditionCard (has edition_key)
@@ -211,7 +262,10 @@ There are no redirect chains. All URLs are stable once assigned.
 
 | Route | Description |
 |---|---|
-| `/series/[seriesKey]` | All editions of one series (Berserk across all publishers) |
+| `/series` | Full index of all works (the home strip is curated top-N only) |
 | `/search` | Full-text search results page with query highlighting |
 | `/new` | Recently added items (last 30 days) |
 | `/api/feedback` | POST endpoint for 👎 button (when feedback moves to Next.js) |
+
+> `/series/[seriesKey]` graduated from this list to an active route — see the route
+> table above and FRD-007.
