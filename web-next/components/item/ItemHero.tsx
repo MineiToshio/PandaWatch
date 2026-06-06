@@ -2,6 +2,7 @@ import { ImageCarousel } from '@/components/item/ImageCarousel'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import { formatDate } from '@/lib/format'
+import { itemDescription } from '@/lib/descriptions'
 import type { Cluster, ItemImage } from '@/lib/types'
 
 const RARITY_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -199,15 +200,14 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             )}
           </div>
 
-          {/* Description — description_es con fallback a description */}
-          {(canonical.description_es || canonical.description) && (
-            <p style={{
-              fontSize: 14, lineHeight: 1.6,
-              color: 'var(--color-text-secondary)', margin: 0,
-            }}>
-              {canonical.description_es || canonical.description}
-            </p>
-          )}
+          {/* Description — stored description_es/description, o template determinístico
+              (FRD-008 FR-6). Siempre presente: contenido indexable. */}
+          <p style={{
+            fontSize: 14, lineHeight: 1.6,
+            color: 'var(--color-text-secondary)', margin: 0,
+          }}>
+            {itemDescription(cluster)}
+          </p>
         </div>
       </div>
     </>

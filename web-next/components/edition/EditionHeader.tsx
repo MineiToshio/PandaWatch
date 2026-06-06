@@ -1,6 +1,7 @@
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
+import { editionDescription } from '@/lib/descriptions'
 import type { Cluster } from '@/lib/types'
 
 type EditionHeaderProps = {
@@ -135,6 +136,18 @@ export function EditionHeader({ cluster, totalVolumes, signalTypes }: EditionHea
               ))}
             </div>
           )}
+
+          {/* Lede — descripción determinística (FRD-008 FR-6), contenido indexable */}
+          <p
+            style={{
+              fontSize: 14,
+              lineHeight: 1.6,
+              color: 'var(--color-text-secondary)',
+              margin: '12px 0 0',
+            }}
+          >
+            {editionDescription(cluster, totalVolumes, signalTypes)}
+          </p>
         </div>
       </div>
     </header>

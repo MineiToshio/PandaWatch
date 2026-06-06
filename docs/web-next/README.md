@@ -43,6 +43,7 @@ The app:
 | [FRD-005](FRD-005-item-detail.md) | Item Detail Page | Draft |
 | [FRD-006](FRD-006-slug-generation.md) | Slug Generation | Draft |
 | [FRD-007](FRD-007-series-highlights.md) | Series Highlights & Series Page | Draft |
+| [FRD-008](FRD-008-seo-discoverability.md) | SEO & Discoverability | Draft |
 
 ### Blueprints — Technical Design
 
@@ -64,6 +65,10 @@ The app:
 | [WO-005](work-orders/WO-005-edition.md) | Edition Detail Page | 3 | WO-004 |
 | [WO-006](work-orders/WO-006-item-detail.md) | Item Detail Page | 3 | WO-004, WO-005 |
 | [WO-008](work-orders/WO-008-series-page.md) | Series Highlights & Series Page | 4 | WO-004, WO-005, WO-006 |
+| [WO-009](work-orders/WO-009-seo-foundations.md) | SEO Foundations (site URL, robots, sitemap, manifest) | 5 | WO-004, WO-005, WO-006, WO-008 |
+| [WO-010](work-orders/WO-010-metadata-og.md) | Rich Metadata (canonical, OG, Twitter) | 5 | WO-009, WO-011 |
+| [WO-011](work-orders/WO-011-entity-descriptions.md) | Per-entity Descriptions (template content) | 5 | WO-003 |
+| [WO-012](work-orders/WO-012-structured-data.md) | Structured Data (JSON-LD) | 5 | WO-009, WO-010, WO-011 |
 
 ---
 
@@ -91,6 +96,13 @@ The app:
 4. **Symlink for images.** `web-next/public/images` → `../../data/images/`. Next.js serves `/images/filename.jpg`.
 5. **`slug` field required.** Every item needs a `slug` before the item detail page can go live (see FRD-006).
 6. **DB-migration-ready.** `edition_key`, `slug`, `cluster_key` are first-class fields → survive SQLite/Postgres move.
+7. **Client `useSearchParams()` must be wrapped in `<Suspense>`.** `Header` → `SearchBar`
+   (a `'use client'` component using `useSearchParams()`) renders on every page. Detail
+   routes (`/item`, `/edition`, `/series`) have `generateStaticParams`, so `next build`
+   prerenders them — and an unwrapped `useSearchParams()` aborts that pass
+   (`missing-suspense-with-csr-bailout`). `SearchBar` is wrapped in `<Suspense>` in
+   `Header.tsx`. `next dev` compiles on demand and does **not** surface this — only a full
+   `npm run build` does. Run `npm run build` before deploying, not just `next dev`.
 
 ---
 
@@ -131,5 +143,8 @@ web-next/
 
 ---
 
-*Last updated: 2026-06-03 (added FRD-007 + WO-008: series highlights strip on the
-home page and the `/series/[seriesKey]` page — the work/obra navigation level)*
+*Last updated: 2026-06-06 (FRD-008 + WO-009..012: SEO & discoverability **implemented** —
+site URL helper, robots/sitemap/manifest, rich metadata + OG/Twitter, per-entity template
+descriptions, and schema.org JSON-LD for web + LLM crawlers. Pending: set
+`NEXT_PUBLIC_SITE_URL=https://watch.pandatrack.app` in Vercel Production, then validate in
+Google Rich Results Test.)*

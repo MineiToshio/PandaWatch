@@ -1,6 +1,7 @@
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
+import { seriesDescription } from '@/lib/descriptions'
 import type { Series } from '@/lib/types'
 
 type SeriesHeaderProps = {
@@ -98,6 +99,18 @@ export function SeriesHeader({ series }: SeriesHeaderProps) {
               ))}
             </div>
           )}
+
+          {/* Lede — descripción determinística (FRD-008 FR-6), contenido indexable */}
+          <p
+            style={{
+              fontSize: 14,
+              lineHeight: 1.6,
+              color: 'var(--color-text-secondary)',
+              margin: '12px 0 0',
+            }}
+          >
+            {seriesDescription(series)}
+          </p>
         </div>
       </div>
     </header>

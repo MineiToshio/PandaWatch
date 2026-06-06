@@ -4,11 +4,26 @@ import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
 import { Pagination } from '@/components/catalog/Pagination'
 import { SeriesHighlights } from '@/components/series/SeriesHighlights'
-
-export const metadata = { title: 'PandaWatch' }
+import type { Metadata } from 'next'
 
 // Force dynamic rendering so searchParams is always fresh
 export const dynamic = 'force-dynamic'
+
+// FR-7: filtered/sorted/paginated views are noindex (avoid duplicate content +
+// crawl-budget waste); the clean catalog `/` stays indexable and canonical.
+// Title/description inherit the root layout defaults.
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[]>>
+}): Promise<Metadata> {
+  const sp = await searchParams
+  const filtered = Object.keys(sp).length > 0
+  return {
+    alternates: { canonical: '/' },
+    ...(filtered ? { robots: { index: false, follow: true } } : {}),
+  }
+}
 
 export default async function CatalogPage({
   searchParams,

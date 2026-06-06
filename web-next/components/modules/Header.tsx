@@ -1,4 +1,5 @@
 // Server Component — no "use client"
+import { Suspense } from 'react'
 import Link from 'next/link'
 import { SearchBar } from './SearchBar'
 
@@ -50,8 +51,11 @@ export function Header() {
         </span>
       </Link>
 
-      {/* Search bar — Client Component for focus state */}
-      <SearchBar />
+      {/* Search bar — Client Component (useSearchParams) wrapped in Suspense so pages
+          with static prerendering (item/edition/series) don't bail out at build. */}
+      <Suspense fallback={<div style={{ flex: 1 }} />}>
+        <SearchBar />
+      </Suspense>
     </header>
   )
 }
