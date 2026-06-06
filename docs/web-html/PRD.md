@@ -212,13 +212,22 @@ Los atajos se desactivan cuando el foco está en un input/textarea/select.
 
 #### Agregar imágenes
 
-Tres mecanismos:
+Cuatro mecanismos:
 
-1. **Por URL** (modal): pegar una URL directa de imagen. Se descarga al espejo
+1. **🔍 Buscar portada en Google**: abre **Google Imágenes** en una pestaña nueva
+   con `title_original + publisher` del item. Lo más simple y sin fricción: sin
+   API, sin keys, sin límites — buscás/iterás en Google libre y traés la foto con
+   "Agregar por URL" o arrastrándola. *(No se puede embeber Google en un iframe
+   ni inyectarle botones: X-Frame-Options/CSP bloquean el framing y la Same-Origin
+   Policy impide tocar el DOM de un iframe cross-origin. Para un "botón en cada
+   foto" mientras navegás, la vía real sería un userscript/extensión, no una web.)*
+   *(Parado, no borrado: existe un modal de búsqueda por API — Tavily + ISBN vía
+   `POST /api/image-search` — que quedó sin usar tras decisión del owner.)*
+2. **Por URL** (modal): pegar una URL directa de imagen. Se descarga al espejo
    local (`data/images/`) automáticamente vía `POST /api/image-manager/download`
-2. **Multi-URL** (textarea en el mismo modal): pegar varias URLs, una por línea.
+3. **Multi-URL** (textarea en el mismo modal): pegar varias URLs, una por línea.
    Se descargan secuencialmente con **barra de progreso** ("3/10 descargadas")
-3. **Importar desde página web** (modal de scrape): ingresar la URL de una página
+4. **Importar desde página web** (modal de scrape): ingresar la URL de una página
    (pre-llenada con la URL del item para conveniencia). El servidor fetchea el HTML,
    extrae todas las `<img>` URLs, y las muestra en un grid de selección con
    checkboxes. Botones "Seleccionar todas" / "Deseleccionar". Las imágenes
@@ -244,6 +253,65 @@ Tres mecanismos:
 | `/api/image-manager/download` | POST | Descarga imagen por URL al espejo local (body: `{image_url}`) |
 | `/api/image-manager/scrape` | POST | Extrae `<img>` URLs de una página web (body: `{page_url}`) |
 
+### Selección múltiple y acciones batch
+
+Botón **☑️ Selección múltiple** en la barra de orden (catálogo y vista de edición). Activa checkboxes en cada card; clic en la card (o el checkbox) la marca. Cuando hay ≥1 seleccionada aparece una **barra flotante** abajo con:
+
+- **✓ Aprobar / Desaprobar** — golden record en lote.
+- **↪ Mover a edición…** — autocomplete de ediciones destino (reusa `/api/editions/search`).
+- **⚐ Reportar** — feedback en lote (pide motivo).
+- **Limpiar / Seleccionar visibles**.
+
+La selección unifica ediciones e items: una card de catálogo selecciona la **edición entera** (`e:<edition_key>`), una card de la vista de edición selecciona el **tomo** (`i:<url>`); las ediciones de 1 tomo (`__solo__`) se resuelven al item. Endpoints: `POST /api/batch/approve {urls, edition_keys, approved}` y `POST /api/batch/move {urls, to_edition}` — ambos hacen **una sola lectura+escritura atómica** de `items.jsonl` (`@_serialized`, no N reescrituras).
+
+### Modo curación rápida (teclado)
+
+Botón **⚡ Curación rápida (N)** → overlay full-screen que recorre la **cola filtrada** (los filtros del sidebar definen la cola: ej. "Sin revisar" + un país) de a un item, con portada grande + metadata clave + atajos:
+
+| Tecla | Acción |
+|---|---|
+| **A** | Aprobar (+ siguiente) |
+| **U** | Desaprobar |
+| **R** | Reportar (input inline + Enter) |
+| **E** | Editar (sale al detalle y abre el editor inline) |
+| **S** | Saltar |
+| **J / →** | Siguiente |
+| **K / ←** | Anterior |
+| **Esc** | Salir |
+
+Auto-avanza al actuar. La cola se snapshotea al entrar para que aprobar/reportar no la reordene. Convierte el "scroll-clic-volver-a-la-grilla" en un flujo de teclado continuo.
+
+### Panel de Calidad de datos (`/quality.html`)
+
+Página dedicada (link 🩺 en el header) que consume `data/quality_report.json` (lo genera `scripts/audit/data_quality.py`) y lo muestra como **worklists clickeables** agrupadas:
+
+- **Resumen por grupo** (estructura / procedencia / imágenes) con conteo de alertas.
+- **Categorías colapsables** (sin imagen, portada-basura, pixelada, card≠carrusel, clusters con >1 fila, sin slug, sin sources[], …). Cada item de la worklist linkea al **gestor de imágenes** (alertas de imagen — misma pestaña, con botón **"← Volver al reporte"**) o al **detalle** (alertas de estructura/metadata — pestaña nueva) para resolverlo en un click. El botón "Volver" del gestor es origen-consciente (reporte / detalle / portadas).
+- **Cobertura de campos** (isbn, price, author, volume, …) con barras.
+- Botón **Regenerar** que lanza el audit vía `POST /api/run` + polling de `/api/jobs/<id>` y recarga el JSON.
+- **Live-update (sin regenerar):** al arreglar un ítem (en el gestor de imágenes o el detalle) el panel lo **saca de la worklist automáticamente**. Tres mecanismos: (a) re-verificación **por ítem** vía `POST /api/quality/check` (no re-audita todo el corpus); (b) **sync entre pestañas** por `BroadcastChannel` — al guardar en el gestor/detalle se avisa la URL y el panel la re-chequea al instante; (c) **recheck al recuperar foco** de los ítems que fuiste a arreglar (cola persistida en `localStorage`, cubre el flujo same-tab). Los **collapses se recuerdan** (regenerar/recargar no los cierra).
+
+Cierra el loop **detectar → ir → arreglar → (se actualiza solo)** (antes las fotos malas se descubrían scrolleando a ciegas y el reporte quedaba viejo hasta regenerar todo).
+
+### Revisión de portadas (`/cover-preview.html`)
+
+Página dedicada para revisar y aprobar las portadas que `fetch_better_covers.py` encontró con **baja confianza** (la imagen original era demasiado chica para verificar por hash, así que no se auto-aplican). Consume `data/cover_preview.json` y persiste vía `POST /api/save-cover-preview`.
+
+**Multi-candidato + galería completa (2026-06-05).** Cada producto puede tener **N candidatas** (varias pasadas de búsqueda acumulan candidatas para el mismo item). Arriba de cada card se muestra la **galería ACTUAL completa** del item (portada + galería + extras) como filmstrip — así el owner ve todo lo que ya tiene y puede decidir con contexto. Debajo, un **sub-card por candidata**, cada uno con:
+
+- Miniatura + conteo de píxeles + factor de mejora (×N) frente a la portada actual.
+- **Dropdown de acción** por candidata, dinámico según la galería: *Reemplazar portada (descarta la actual)* / *Reemplazar portada (la actual pasa a extra)* — la nueva queda de portada y la vieja se conserva en la galería / *Reemplazar imagen N (galería/extra)* — una opción por cada imagen actual más allá de la portada / *Agregar a galería* / *Agregar como extra*. Así el owner puede decir "esta candidata reemplaza **esta imagen específica** de la galería".
+- Botones **✓ aprobar / ✕ rechazar** individuales + badge de estado (pendiente / aprobada / rechazada).
+- Clic en cualquier miniatura (galería actual o candidata) → zoom / comparación grande.
+
+Controles globales: **Aprobar / Rechazar todas pendientes** (respeta la acción elegida por candidata). Un producto se **colapsa** (header gris) cuando todas sus candidatas están decididas.
+
+**Aprobar ≠ aplicar — botón "Aplicar aprobadas".** Aprobar/rechazar solo **registra la decisión** en `cover_preview.json`; el catálogo (`items.jsonl`) NO cambia hasta aplicar. El botón **"✓ Aplicar aprobadas (N)"** en la barra de acciones lo hace desde la propia página: `POST /api/apply-cover-preview` corre `apply_preview` in-proc (`@_serialized`), aplica las aprobadas a `items.jsonl` y **quita del JSON las decididas** (aprobadas **y** rechazadas), dejando solo las pendientes; la página recarga sola. (También sigue disponible por CLI `fetch_better_covers.py --apply-preview` y en el Panel de Control.) Es seguro por diseño: nada se auto-aplica sin tu OK. Tras aplicar, refrescá el image-manager para ver las portadas nuevas.
+
+Al aplicar, cada acción se materializa: *replace_cover* reemplaza `image_url`/`image_local`/`images[0]` y descarta la vieja; *replace_cover_demote* pone la nueva de portada y **conserva la portada actual en la galería como extra** (no la descarta); *replace_image* reemplaza la imagen de `images[]` cuya url coincide con el `target` elegido (preservando su `kind`; si es la portada, sincroniza los campos de portada; si la galería cambió y el target ya no está, cae a *add_gallery*); *add_gallery*/*add_extra* agregan a `images[]` sin tocar la portada. El rechazo revierte (portada vieja o quita la URL de galería) y borra el archivo nuevo —y el de la imagen reemplazada— si quedan huérfanos.
+
+Backwards-compat: las entries del schema viejo (campos planos `new_image`/`new_url`/…) se normalizan a 1 candidata `action=replace_cover`, con `current_images` sintetizado desde la portada.
+
 ### Presentación
 
 - Paleta: fondo claro `#fafaf7`, acento rosa `#d63384`
@@ -260,19 +328,21 @@ Estas son las funcionalidades que queremos agregar al dashboard HTML (el orden n
 ### Curación avanzada
 
 - ✅ ~~**Edición inline de campos**~~ — **IMPLEMENTADO** (ver "Edición inline de la metadata" en Features actuales): botón ✏️ Editar info en el detalle, formulario editable + guardar, escritura a nivel cluster vía `POST /api/item/update`.
-- **Merge manual de cards**: seleccionar 2+ cards y combinarlas en una sola (para casos donde el dedup automático por `cluster_key` no detectó que son el mismo producto). *(Parcial: ya existe "Duplicado / merge" pegando la URL del duplicado.)*
-- **Asignar series_key/edition_key estructural desde el editor**: hoy el editor inline cambia los *display* (`series_display`/`edition_display`) pero no reasigna los keys ni re-clusteriza; eso sigue siendo dominio del flujo "Mover a otra edición".
+- ✅ ~~**Merge manual de cards**~~ — **IMPLEMENTADO (parcial)**: "Duplicado / merge" pegando la URL del duplicado en la curación 👎. *(Pendiente: merge multi-select visual sin pegar URL.)*
+- **Asignar series_key/edition_key estructural desde el editor**: hoy el editor inline cambia los *display* (`series_display`/`edition_display`) pero no reasigna los keys ni re-clusteriza; eso sigue siendo dominio del flujo "Mover a otra edición" (ahora también en lote vía selección múltiple).
 - **Asignar series_key desde el modal**: dropdown con canonicals de `series_aliases.yml` + opción de crear nuevo canonical
 
 ### Operaciones de datos
 
-- **Re-run de retrofit desde la UI**: disparar `rescore.py` / `filter_collectible.py` / `backfill_metadata.py` sin tocar el terminal (complementa el Panel de Control admin, pero más contextual)
-- **Vista de items sin `standardized_at`**: filtro rápido para ver qué items nuevos están pendientes de curación
+- **Re-run de retrofit desde la UI**: disparar `rescore.py` / `filter_collectible.py` / `backfill_metadata.py` sin tocar el terminal (complementa el Panel de Control admin, pero más contextual). *(Parcial: el Panel de Calidad ya lanza `data_quality.py` desde la UI vía `/api/run`.)*
+- **Vista de items sin `standardized_at`**: filtro rápido para ver qué items nuevos están pendientes de curación. *(El filtro "Estado de revisión" + la cola de curación rápida cubren el caso de aprobación; falta un filtro específico de `standardized_at`.)*
 
 ### UX
 
-- **Keyboard shortcuts** para navegar entre cards y cerrar modal
-- **Modo "curación rápida"**: vista simplificada con solo 👍 / 👎 por item para pasadas de review masivo
+- ✅ ~~**Keyboard shortcuts**~~ — **IMPLEMENTADO**: navegación ←/→ entre tomos, Esc para volver, y el **modo curación rápida** con atajos A/U/R/E/S/J/K (ver Features actuales).
+- ✅ ~~**Modo "curación rápida"**~~ — **IMPLEMENTADO** (ver "Modo curación rápida" en Features actuales): overlay de un item a la vez sobre la cola filtrada, con atajos de teclado y auto-avance.
+- ✅ ~~**Acciones en lote**~~ — **IMPLEMENTADO** (ver "Selección múltiple y acciones batch").
+- ✅ ~~**Surfacear la auditoría de calidad en la UI**~~ — **IMPLEMENTADO** (ver "Panel de Calidad de datos").
 
 ---
 

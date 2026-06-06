@@ -277,11 +277,16 @@ web/index.html ← Alpine.js dashboard (filters incl. signal_types
     ▼
 http://localhost:8000/ (via scripts/serve.py — servidor ÚNICO)
   + POST /api/feedback, /api/curation/*, /api/item/update,
-    /api/approve(-edition), POST /api/save-cover-preview (catálogo)
+    /api/approve(-edition), /api/batch/{approve,move},
+    /api/quality/check (re-verificación por ítem), POST
+    /api/save-cover-preview + /api/apply-cover-preview
+    (aplica aprobadas del revisor al catálogo) (catálogo)
   + GET /api/scripts, POST /api/run, GET+SSE /api/jobs/* (panel)
   web/panel.html → Panel de Control. Lee scripts/script_registry.py
   y permite ejecutar scripts con toggles + presets + logs en vivo (SSE).
-  Detalle en docs/admin/README.md.
+  web/quality.html → Panel de Calidad. Lee data/quality_report.json
+  (lo genera scripts/audit/data_quality.py) y lo muestra como worklists
+  clickeables. Detalle en docs/admin/README.md.
 
 Orchestration: scripts/overnight_run.sh chains
   scrape (parallel) → wiki bootstraps →
@@ -349,6 +354,13 @@ data/
                                        cambio ya está aplicado en
                                        items.jsonl. Ver sección "Edición
                                        inline de la metadata".
+  quality_report.json                — gitignored. Reporte estructurado de la
+                                       auditoría de calidad (lo escribe
+                                       scripts/audit/data_quality.py). Lo
+                                       consume el Panel de Calidad
+                                       (web/quality.html) como worklists
+                                       clickeables. Regenerable; artefacto de
+                                       la familia items.jsonl/state.json.
   images/                            — gitignored. Espejo local de
                                        portadas (Image storage Fase 1):
                                        1 archivo por imagen, nombre
@@ -938,6 +950,30 @@ scripts/
                                        (eso buscaba reemplazo a 5340 portadas de
                                        2MP que estaban bien). Aprobás en la
                                        página → `--apply-preview` aplica.
+                                       **Multi-candidato (2026-06-05):** el
+                                       preview usa schema `candidates[]` (N por
+                                       producto) + `current_images[]` (galería
+                                       actual del item, para elegir qué reemplazar).
+                                       `--apply-preview` lee cada candidata aprobada
+                                       y aplica su `action`: replace_cover (reemplaza
+                                       portada = images[0], descarta la vieja),
+                                       replace_cover_demote (la nueva pasa a portada
+                                       y la portada ACTUAL se conserva en la galería
+                                       como extra — no se descarta), replace_image
+                                       (reemplaza la imagen de images[] cuya url == `target`,
+                                       preservando su kind; si el target es images[0]
+                                       sincroniza la portada; si la galería cambió y
+                                       no se encuentra, fallback a add_gallery),
+                                       add_gallery / add_extra (agrega a images[] sin
+                                       tocar la portada, kind gallery/extra),
+                                       replace_and_add (portada + galería). Rechazo
+                                       revierte (replace_cover→portada vieja,
+                                       add/replace_image→quita la URL de galería) y
+                                       borra el archivo nuevo si queda huérfano; el
+                                       archivo de la imagen reemplazada también se
+                                       borra si queda huérfano. La pasada de búsqueda
+                                       acumula candidatas en candidates[] por slug.
+                                       Backwards-compat con el schema plano viejo.
                                        Requiere Pillow:
                                        .venv/bin/python3 -m pip install Pillow.
                                        Registrado en Panel de Control.
@@ -953,6 +989,35 @@ scripts/
                                        agrupadas + fuzzy-matched contra
                                        canonicals existentes. Lo consume
                                        el skill enrich-series-aliases.
+    data_quality.py                  — auditoría de calidad SOLO LECTURA
+                                       sobre items.jsonl: levanta alertas
+                                       (no modifica). Imágenes (sin imagen,
+                                       ref local rota, archivo basura
+                                       píxel/banner/placeholder, portada
+                                       URL basura, pixelada <px midiendo
+                                       dimensiones con Pillow, card !=
+                                       carrusel, archivo compartido entre
+                                       ≥4 obras), procedencia (items sin
+                                       sources[], source sin url), metadata
+                                       (estandarizados sin keys), estructura
+                                       (clusters con >1 fila, slug faltante)
+                                       + cobertura. Reusa
+                                       IMAGE_URL_BAD_PATTERNS. Además del
+                                       reporte humano, escribe
+                                       `data/quality_report.json`
+                                       estructurado (función `audit_items()`)
+                                       + `check_urls(urls)` para re-evaluar
+                                       SOLO ciertos items (live-update del
+                                       panel vía POST /api/quality/check)
+                                       que consume el Panel de Calidad
+                                       (web/quality.html) como worklists
+                                       clickeables (cada alerta trae los items
+                                       con su URL + `target` image|detail para
+                                       el deep-link). Registrado en el Panel de
+                                       Control (categoría 🔍 Calidad). Flags:
+                                       --px, --examples, --no-measure (saltea
+                                       Pillow), --no-json, --json-out.
+                                       Hermana de source_health.
   series_aliases.py                  — `canonical_series_key()` resolver
                                        + `log_unmapped_series()` (escribe
                                        a data/unmapped_series.jsonl
@@ -1007,11 +1072,73 @@ scripts/
 web/
   index.html                         — Alpine.js dashboard (PÚBLICO,
                                        deployable). Consume data/items.jsonl
-                                       y POST /api/feedback.
+                                       y POST /api/feedback. Incluye:
+                                       **selección múltiple + acciones batch**
+                                       (checkbox en cada card → barra flotante
+                                       aprobar/desaprobar/mover/reportar en
+                                       lote, vía POST /api/batch/approve|move)
+                                       y **modo curación rápida** (botón
+                                       "⚡ Curación rápida" → overlay de un
+                                       item a la vez sobre la cola filtrada,
+                                       atajos A=aprobar U=desaprobar R=reportar
+                                       E=editar S=saltar J/K/←/→ navegar
+                                       Esc=salir, auto-avance).
+  quality.html                       — Panel de Calidad de datos. Consume
+                                       data/quality_report.json (lo genera
+                                       scripts/audit/data_quality.py) y lo
+                                       renderiza como worklists clickeables
+                                       agrupadas (estructura/procedencia/
+                                       imágenes) + cobertura. Cada item linkea
+                                       al gestor de imágenes (target=image) o
+                                       al detalle (target=detail) en pestaña
+                                       nueva. Botón "Regenerar" lanza el audit
+                                       vía POST /api/run + polling de
+                                       /api/jobs/<id> y recarga el JSON.
+                                       **Live-update**: al arreglar un ítem (en
+                                       el gestor de imágenes / detalle), el panel
+                                       lo saca de la worklist solo —
+                                       re-verificación por ítem (POST
+                                       /api/quality/check), sync entre pestañas
+                                       (BroadcastChannel) + recheck al recuperar
+                                       foco; collapses persistidos en
+                                       localStorage. No hace falta regenerar.
   cover-preview.html                 — revisión visual de portadas mejoradas
                                        con baja confianza. Consume
                                        data/cover_preview.json + POST
                                        /api/save-cover-preview.
+                                       **Multi-candidato (2026-06-05):** cada
+                                       producto puede tener N candidatas en
+                                       `candidates[]`, cada una con su `action`
+                                       (replace_cover / replace_cover_demote /
+                                       replace_image / add_gallery / add_extra) +
+                                       `target`
+                                       (url de la imagen a reemplazar, solo
+                                       replace_image) + `status`. La entry trae
+                                       `current_images[]` (galería ACTUAL completa
+                                       del item: portada + galería + extras) y la UI
+                                       la muestra como filmstrip arriba de cada card,
+                                       así el owner ve TODO y elige por candidata:
+                                       reemplazar la portada, reemplazar una imagen
+                                       específica de la galería (dropdown dinámico
+                                       "Reemplazar imagen N"), agregarla a la galería
+                                       o como extra. Sub-card por candidata con
+                                       aprobar/rechazar individual; el producto se
+                                       colapsa cuando todas sus candidatas están
+                                       decididas. Backwards-compat: entries del
+                                       schema viejo (campos planos
+                                       new_image/new_url/...) se normalizan a 1
+                                       candidato replace_cover + current_images
+                                       sintetizado de la portada. Las candidatas del
+                                       mismo producto se acumulan en candidates[]
+                                       (pasadas de búsqueda sucesivas no se pisan).
+                                       Botón **"✓ Aplicar aprobadas (N)"** → POST
+                                       /api/apply-cover-preview corre apply_preview
+                                       in-proc (@_serialized): aplica las aprobadas a
+                                       items.jsonl y quita del JSON las decididas
+                                       (aprobadas + rechazadas), dejando solo las
+                                       pendientes — ya no hace falta el paso CLI.
+                                       Las fotos abren en modal a tamaño original
+                                       (centrado V+H, con scroll). Ver "Image storage".
   image-manager.html                 — gestor de imágenes del catálogo.
                                        Grid filtrable por calidad (sin imagen,
                                        baja, media, escalada, 1 foto). Click
@@ -1019,18 +1146,35 @@ web/
                                        filmstrip, eliminar/reemplazar/agregar
                                        imágenes por URL, importar desde
                                        página web (scrape + seleccionar +
-                                       descargar). Persiste cambios a
-                                       items.jsonl vía POST
+                                       descargar). **Buscar portada en Google**
+                                       (botón 🔍): abre Google Imágenes en
+                                       pestaña nueva con `title_original +
+                                       publisher` (decisión del owner 2026-06-05:
+                                       lo más simple — sin API, sin keys, sin
+                                       límites; navegás Google libre y traés la
+                                       foto con "Agregar por URL"/arrastre).
+                                       **PARADO** (no borrado, por pedido del
+                                       owner): el modal de búsqueda Tavily+ISBN
+                                       (POST /api/image-search,
+                                       `openSearchModal`/`showSearchModal`)
+                                       quedó sin trigger; se conserva por si se
+                                       reactiva.
+                                       Persiste cambios a items.jsonl vía POST
                                        /api/image-manager/save. Indicadores
                                        de calidad vía GET
                                        /api/image-file-sizes.
                                        Deep-link `?item=<url>&return=<url>`:
                                        abre directo el editor de ese item
                                        (botón "🖼️ Editar imágenes" del
-                                       detalle/cards en index.html) y muestra
-                                       "← Volver al detalle" para el round-trip
-                                       (al volver, index.html recarga y se ven
-                                       las imágenes nuevas).
+                                       detalle/cards en index.html, o un item
+                                       del Panel de Calidad) y muestra un botón
+                                       de retorno **origen-consciente**
+                                       (`returnLabel`: "← Volver al detalle" /
+                                       "← Volver al reporte" / "← Volver a
+                                       portadas" según matchee la `return` URL)
+                                       para el round-trip. Al volver, la página
+                                       de origen recarga / re-verifica y se ven
+                                       los cambios.
   panel.html                         — Panel de control (HTML PÚBLICO pero
                                        solo funcional con admin_serve.py en
                                        port 8001). Llama a
@@ -1162,7 +1306,7 @@ After the filtering, dedup, collectible-gate, and clustering passes:
 
 | Metric | Value |
 |---|---|
-| Total unique items (line in items.jsonl) | **10329** (10117 prev + 166 One Piece special publications vía shueisha/viz + 46 One Piece special volumes [research import fandom.com]; medido 2026-06-01) |
+| Total unique items (line in items.jsonl) | **10334** (10339 tras One Piece special volumes fix − 5 neto: consolidaciones de ~50 tomos artbook→special re-fusionados con su gemelo de otra fuente, auditoría de clasificación 2026-06-04; medido 2026-06-04) |
 | Items movidos a `data/non_manga_blacklist.jsonl` (acumulado) | 574 |
 | `data/series_aliases.yml` entries | **2844** canonical works; 896 entries (31.5%) con aliases multilingüe poblados, el resto self-canonical mínimo |
 | Sources in YAML | 138 |
@@ -2124,7 +2268,7 @@ Serving en Fase 2: dominio propio (como el `ASSETS_PUBLIC_BASE_URL` de
 PandaTrack), **no** el URL `r2.dev` (está rate-limited, es sólo para
 dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
 
-## The 34 known gotchas
+## The 36 known gotchas
 
 1. **Mojibake in FR sources.** Glénat/Pika sometimes return UTF-8 bytes
    decoded as cp1252. `clean_title()` handles via `_fix_mojibake()` with
@@ -2531,7 +2675,7 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     - Card: solo muestra `title` (clean, scaneable).
     - Modal: muestra `title` prominente arriba. Si `title_original`
       difiere, muestra una segunda línea en gris itálico con el prefijo
-      `原題:` (etiqueta JP de "título original").
+      `Título original:` (etiqueta en español).
     - Search: el `filtered()` indexa `title + title_original +
       series_display`. Una sola búsqueda matchea cualquier idioma.
 
@@ -2988,6 +3132,58 @@ dev). La sync es `data/images/ → R2`; el GC borra orphans también en R2.
     Test de regresión: `test_serve_concurrent_approvals_do_not_clobber`
     (25 threads aprobando en paralelo → los 25 deben persistir).
 
+35. **`honto.jp/ebook/` y otros productos DIGITALES se filtran — PandaWatch
+    cataloga ediciones FÍSICAS.**
+
+    La fuente `JP - Honto (search)` apunta a `netstore/search.html` (tienda
+    física) pero la búsqueda de Honto mezcla resultados `/ebook/`
+    (Kindle/digital). Un ebook nunca es una edición física especial. Sin
+    filtro entraban al catálogo como falsos `限定版` (caso 2026-06-04: los
+    7 únicos items Honto del corpus eran TODOS `/ebook/`, y 4 tenían
+    título-basura "〈autor〉 Work 限定版" — el parser convirtió el sufijo
+    japonés 作品, "obra de", en una serie inventada tipo `niyama-work`).
+
+    Fix: `is_digital_only_url(url)` en manga_watch.py chequea
+    `_DIGITAL_ONLY_URL_PATTERNS` (hoy `honto.jp/ebook/`) por host+path —
+    NO por substring "ebook" suelto, para no rechazar slugs legítimos. El
+    extractor de listings (`extract_listing_candidates`) saltea la card
+    cuando `is_digital_only_url(link)` es True. Si aparece otro retailer
+    que mezcla digital, agregar su patrón host+path al frozenset.
+
+    Test: `test_is_digital_only_url_rejects_honto_ebook`.
+
+36. **"画集付き" / "イラスト集付き特装版" = artbook INCLUIDO como bonus, NO el
+    producto — el item es el tomo, no un artbook.**
+
+    Muchas ediciones especiales japonesas son un tomo regular que trae un
+    mini-cuadernillo de ilustraciones de regalo: el original dice
+    "画集付き特装版" / "イラスト集付き特装版" / "ミニ画集付き" (= edición
+    especial CON artbook incluido). El keyword 画集/イラスト集 disparaba el
+    signal `artbook` y `product_type=artbook`, y el skill
+    `/standardize-catalog` les ponía `edition_key=*-artbook` + título
+    "X Artbook Special N" — cuando son TOMOS, no artbooks (queja del owner
+    2026-06-04: ~50 items, p. ej. "Uchuu Kyoudai Artbook Special 39").
+
+    Fix de raíz en DOS funciones (deben coincidir):
+    - `detect_signals`: tras el match, si `artbook` se detectó SOLO por un
+      cuadernillo adjunto (`_ARTBOOK_BONUS_ATTACH_RE` = 画集/イラスト集/
+      アートワーク seguido en ≤8 chars de 付/つき/同梱/付属) y las frases
+      artbook matcheadas ⊆ `_ARTBOOK_BOOKLET_PHRASES`, se demuele
+      artbook→`bonus`.
+    - `derive_product_type`: si `_ARTBOOK_BONUS_ATTACH_RE` matchea, se
+      saltea el ptype `artbook` (el producto es el tomo → `manga`).
+
+    Un artbook GENUINO (画集 standalone, sin 付き — "笠井あゆみ画集",
+    "Beasts Art Book") NO se demuele. La adyacencia 画集+付 es la clave: un
+    artbook propio no lleva 画集付き. El mismo criterio aplica a fanbook
+    ("ファンブック付き特装版" de un tomo numerado → special/limited, no
+    fanbook), aunque la demotion automática es solo artbook (los
+    fanbook-tomo se corrigieron en datos; un "Visual Fanbook" standalone
+    SÍ es producto). El skill `/standardize-catalog` ahora documenta la
+    regla para no re-crear el error en items nuevos.
+
+    Test: `test_detect_signals_artbook_booklet_bonus_demoted_to_bonus`.
+
 ## When the user reports "this item shouldn't be here"
 
 1. Look up the item in `data/items.jsonl` to see its actual source,
@@ -3217,6 +3413,58 @@ These came up in conversation but were explicitly deferred:
   inmediatamente o esperar feedback del corpus.
 
 ---
+
+Last updated: 2026-06-05 (búsqueda de portadas integrada en el gestor de imágenes — "🔍 Buscar portada en la web") — El owner quería buscar imágenes para un item DESDE el gestor sin el flujo right-click→Google Lens (que falla cuando el item no tiene foto o necesita texto). Pidió, idealmente, un iframe de Google con botones inyectados sobre cada foto. **Eso es imposible por seguridad del navegador** (X-Frame-Options/CSP bloquean embeber Google y la mayoría de sitios; y la Same-Origin Policy impide leer/inyectar DOM en un iframe cross-origin) — documentado para no reintentarlo. Implementada la alternativa que logra el objetivo: **búsqueda integrada en el modal del gestor**. Nuevo endpoint `POST /api/image-search {query, isbn}` (solo lectura) que **reúsa la infra de `fetch_better_covers.py`**: por ISBN → Amazon CDN + PRH + OpenLibrary + Google Books (gratis); por texto → **Tavily** (`TAVILY_API_KEY` ya en .env, include_images). Frontend (`web/image-manager.html`): botón "🔍 Buscar portada en la web" en "Agregar imágenes" → modal con query **prellenado del item** (título + autor), botón "Solo por ISBN", grid de candidatas (las rotas se ocultan con `@error`), "Agregar seleccionadas" (descarga al espejo vía `/api/image-manager/download` y las suma a la galería; el owner Guarda). + links de apoyo **Google Imágenes** (por texto) y **Google Lens** (por la portada actual, `lens.google.com/uploadbyurl?url=`) en pestaña nueva, para los casos que la API no cubre (complementan el "Importar desde página web" que ya pega una URL). **`launch.json` ya usa `.venv/bin/python`** (el endpoint importa fetch_better_covers→requests/PIL, que el python3 del sistema no tiene). Verificado en navegador: item con ISBN → 5 candidatas (ISBN + Tavily), query prellenado, "Agregar" descarga y suma a la galería en memoria + marca dirty (probado y descartado sin guardar; orphan de prueba borrado). 538 tests (sin tests nuevos: endpoint + UI, verificado en navegador). **Futuro posible** para "navegar cualquier web y agregar con un clic": un **bookmarklet** (corre en el contexto de la página que visitás, sí puede inyectar botones y postear al server local) — no implementado, anotado como Fase 2.
+
+**Pivot (mismo día, decisión del owner): el botón NO usa Tavily — abre Google.** El owner aclaró que nunca pidió Tavily/ISBN (overreach mío) y que esa búsqueda da pocos resultados, sin iterar ni libertad. Tras investigar alternativas (iframe imposible por X-Frame-Options/SOP; bookmarklet bloqueado por CSP en Google; proxy server-side frágil para Google; navegador embebido real = solo en apps Electron; userscript Tampermonkey = sweet spot pero requiere instalar), el owner eligió **lo más simple**: el botón "🔍 Buscar portada en Google" ahora es un `<a target="_blank">` que abre **Google Imágenes** (`google.com/search?tbm=isch&q=`) con **`title_original + publisher`** del item. Sin API, sin keys, sin límites — navegás Google libre y traés la foto con "Agregar por URL" o arrastre. El modal Tavily+ISBN (`/api/image-search`, `openSearchModal`) queda **PARADO** (sin trigger, no borrado — por pedido del owner). Verificado en navegador: arma la query correcta con título latino y con título original japonés (CJK encodea bien), `tbm=isch`. 538 tests.
+
+---
+
+Last updated: 2026-06-04/05 (3 features de alto impacto en el dashboard HTML — Panel de Calidad accionable + selección batch + modo curación rápida; + refinamientos de falsos positivos, live-update y botón Volver origen-consciente) — El owner pidió mejorar el flujo de revisión/curación del administrador HTML: hacerlo más fluido, soportar batch, acelerar la revisión. Implementadas las 3 features priorizadas; luego, por feedback del owner en la misma tanda, se corrigieron 2 falsos positivos del audit, se agregó live-update del panel (sin regenerar) y se hizo el botón "Volver" del gestor origen-consciente. **Sin cambios de pipeline ni schema — solo dashboard, server y un script de auditoría. Tests: 538/538 (sin tests nuevos; la lógica es UI + endpoints, verificada en navegador).**
+
+**1. Panel de Calidad accionable (`web/quality.html`).** `scripts/audit/data_quality.py` ahora, además del reporte humano, escribe `data/quality_report.json` estructurado (nueva función `audit_items()` reutilizable; cada categoría trae `target` image|detail + los items con su URL). La página nueva lo renderiza como **worklists clickeables** agrupadas (estructura/procedencia/imágenes) + barras de cobertura: cada item linkea (pestaña nueva) al gestor de imágenes (`target=image`) o al detalle (`target=detail`). Botón "Regenerar" lanza el audit vía `POST /api/run` + polling de `/api/jobs/<id>` y recarga el JSON. Registrado en el Panel de Control (categoría 🔍 Calidad, flags `--no-measure`/`--px`/`--examples`/`--no-json`). Cierra el dolor #1 del changelog (fotos malas descubiertas scrolleando a ciegas → ahora encontrables + resolubles en un click). El audit completo tarda ~2.5s (10334 items, mide píxeles con Pillow). Estado actual: 401 alertas (estructura/procedencia 0; imágenes: 207 sin imagen, 98 card≠carrusel, 95 pixeladas, 1 portada-basura).
+
+**2. Selección múltiple + acciones batch (`web/index.html`).** Botón "☑️ Selección múltiple" en la barra de orden → checkbox en cada card (catálogo y edición) + barra flotante inferior cuando hay selección: **Aprobar / Desaprobar / Mover a edición… (con autocomplete) / Reportar / Limpiar**. La selección unifica ediciones (catálogo) e items (vista de edición): `e:<edition_key>` se expande a la edición entera, `i:<url>` o `e:__solo__<url>` a un tomo. Nuevos endpoints en `serve.py`: `POST /api/batch/approve {urls, edition_keys, approved}` y `POST /api/batch/move {urls, to_edition}` — ambos `@_serialized`, **una sola lectura+escritura atómica** de items.jsonl (no N reescrituras), reusando el log de approvals y `consolidate_by_cluster` tras mover. Es el "revisar a nivel de batch y más rápido" pedido. Verificado: 3 ediciones → 32 tomos concretos; round-trip approve→unapprove deja el estado idéntico.
+
+**3. Modo curación rápida (`web/index.html`).** Botón "⚡ Curación rápida (N)" → overlay full-screen que recorre la **cola filtrada** (los filtros del sidebar definen la cola; ej. "Sin revisar" + país) de a un item, con portada grande + metadata + atajos de teclado: **A**=aprobar, **U**=desaprobar, **R**=reportar (input inline + Enter), **E**=editar (sale al detalle y abre el editor), **S**=saltar, **J/K/←/→**=navegar, **Esc**=salir. Auto-avanza al actuar. La cola se snapshotea al entrar (`reviewUrls`) para que aprobar/reportar no la reordene bajo los pies. Convierte el "scroll-clic-volver-a-la-grilla" en un flujo de teclado continuo. Las 3 features se encadenan: el Panel de Calidad dice qué revisar → la selección batch actúa en lote → la curación rápida acelera lo inevitablemente de-a-uno.
+
+Verificado en navegador (server gestionado por preview, 10334 items): quality.html carga el JSON y renderiza worklists/cobertura sin errores de consola; selección+expansión+batch endpoints OK; curación rápida entra/navega/sale limpio; el botón Regenerar corre el job (exit 0) y reescribe el JSON. Docs: file map (web/quality.html, data/quality_report.json, data_quality.py JSON mode, index.html batch+review), diagrama de endpoints (/api/batch/*), `docs/web-html/PRD.md` (features de planificadas → actuales), `docs/admin/README.md` (script data_quality + Panel de Calidad).
+
+**Refinamientos (mismo día, por feedback del owner — 2 falsos positivos del audit que comparaban la URL de origen en vez de la imagen que se VE):**
+
+- **`portada_url_basura`**: `is_junk_url()` miraba `image_url`, no la imagen mostrada (`image_local` cuando existe). Shueisha sirve portadas reales bajo `/icon/` (patrón "basura"), así "One Piece Novel Straw Hat Stories" se marcaba pese a tener copia local sana de 800×1290 px. Fix: solo dispara si `is_junk_url(image_url)` Y **no hay copia local sana** (`image_local` ausente, archivo inexistente, o <6 KB) — es decir, cuando la card realmente cae al `image_url` basura.
+
+- **`card_ne_carrusel`**: comparaba `norm(image_url)` vs `norm(images[0].url)`. KADOKAWA sirve la MISMA portada en dos URLs (`cover_b` para la card, `cover_500` para `images[0]`) que descargan al **mismo archivo local** → 98/98 eran falsos positivos (misma foto, distinta URL). Fix: comparar la imagen QUE SE VE — si `image_local` y `images[0].local` apuntan al mismo archivo, no es mismatch; solo se compara por URL cuando no hay locales. Y en el **gestor de imágenes** (`web/image-manager._clusterImages`) se agregó dedup **por archivo local además de por URL**, así dos URLs que resuelven al mismo archivo descargado se muestran como UNA sola foto (antes el gestor mostraba 2 thumbnails idénticos para estos ítems).
+
+Resultado: alertas 401 → **301** (los 98 `card_ne_carrusel` benignos + el `portada_url_basura` falso positivo desaparecen; quedan 207 sin imagen + 94 pixeladas reales). Verificado en navegador: el gestor de "Super Dragon Artist Book Deluxe 3" pasa de 2 fotos a 1.
+
+**Live-update del Panel de Calidad (por feedback del owner — el reporte era una foto estática y al arreglar un ítem seguía viéndose viejo hasta regenerar todo + se cerraban los collapses):** ahora el panel se actualiza solo. (1) **Re-verificación por ítem** en vez de regenerar: `data_quality.check_urls(urls)` re-evalúa SOLO los ítems tocados (contexto barato sobre todo el corpus + 1 Pillow open c/u), expuesto en `POST /api/quality/check` (solo lectura, sin lock). (2) **Sync en vivo entre pestañas** vía `BroadcastChannel('manga-quality')`: el gestor de imágenes (al guardar) y la edición inline del detalle (al guardar) avisan la URL tocada; el panel re-verifica ese ítem y lo **saca de la worklist** si se arregló (toast "✓ N resuelto"). (3) **Recheck al recuperar foco**: al volver a la pestaña del panel, re-verifica los ítems que fui a arreglar (cola `recheckQueue` persistida en localStorage — cubre el flujo same-tab). (4) **Collapses persistidos** en localStorage (regenerar/recargar ya no los cierra). El link de imagen abre el gestor en la MISMA pestaña pasando `return` a Calidad → el gestor muestra **"← Volver al reporte"** (label origen-consciente vía `returnLabel`: reporte / detalle / portadas según de dónde se entró); al volver, `recheckVisited` corre en el `init` y saca los ítems arreglados. Los links de estructura (detalle) sí abren en pestaña nueva (index.html no tiene retorno a Calidad; son casos raros). **`launch.json` corregido**: el server de la preview ahora usa `.venv/bin/python` (igual que `run_local.sh`/producción) — el `python3` del sistema no tiene PIL/bs4/feedparser, así que el endpoint in-proc fallaba 500 (y `merge_cluster` quedaba en None). Verificado en navegador: ítem sano inyectado en una categoría → recheck lo quita + toast; visited/open persisten; BroadcastChannel activo; 0 errores de consola. 538 tests.
+
+---
+
+Last updated: 2026-06-04 (fix de clasificación — tomos con "Artbook"/"Fanbook" en el título que NO son artbooks) — El owner notó "varios tomos que en el título dice artwork cuando no son artworks" y pidió revisar problemas similares de clasificación/títulos. **Causa raíz (confirmada por el owner como tema viejo del skill standardize):** muchas ediciones especiales japonesas son un TOMO regular con un mini-cuadernillo de ilustraciones de REGALO — el original dice "画集付き特装版" / "イラスト集付き特装版" (= edición especial CON artbook incluido). El keyword 画集/イラスト集 disparaba `signal=artbook` + `product_type=artbook`, y `/standardize-catalog` les ponía `edition_key=*-artbook` + título "X Artbook Special N". Pero son tomos (con número de volumen), no artbooks. **Fix de raíz en 2 funciones** (`detect_signals` + `derive_product_type`): cuando 画集/イラスト集/アートワーク va seguido en ≤8 chars de 付/つき/同梱/付属 (= incluido como bonus) y ese es el único indicio de artbook, se demuele artbook→`bonus` y product_type→`manga`. Un artbook GENUINO (画集 standalone sin 付き — "笠井あゆみ画集", "Beasts Art Book") NO se toca. **Gotcha #36** nueva + regla reforzada en `standardize-catalog/SKILL.md` (ya existía "ARTBOOK vs SPECIAL" pero los subagentes la violaban; ahora con el patrón 画集付き explícito + ejemplo). **Datos:** 50 tomos artbook→`special`/`limited` (41 特装版→special, 7 限定版→limited, 2 同梱版) con título sin "Artbook", product_type→manga, signals refrescados, cluster_key+slug recomputados; **varios se re-fusionaron con su gemelo de otra fuente** (Mangavariant/Rakuten tenían el mismo producto como `-special`) → consolidados a 1 card multi-fuente. + 2 fanbook-tomos (ファンブック付き → special/limited, excluyendo "Amakano2 Visual Fanbook" que SÍ es un fanbook producto) + 2 títulos con "Artbook" duplicado ("Beasts Art Book Artbook" → "Beasts Art Book"). Backups en data/backups/. **Tests: 537 → 538** (+1 `test_detect_signals_artbook_booklet_bonus_demoted_to_bonus`). **Auditoría final: 0 tomos-con-bonus mal etiquetados, 0 títulos con Artbook duplicado, 0 clusters con >1 fila, 0 sin slug.** Nota: una sesión paralela importó +42 One Piece special volumes durante el trabajo (corpus a 10334); server detenido durante las escrituras y relanzado (gotcha #34).
+
+---
+
+Last updated: 2026-06-04 (auditoría de calidad de datos a pedido del owner — script nuevo `data_quality.py`, filtro de ebooks Honto, recuperación de portadas) — El owner pidió revisar toda la base buscando incongruencias: fotos pequeñas/pixeladas, mismatches, fotos que no corresponden (mencionó explícitamente "fotos con estrellas"). Nuevo script de auditoría **SOLO LECTURA** `scripts/audit/data_quality.py` (hermano de `source_health.py`) que mide dimensiones reales con Pillow y reusa `IMAGE_URL_BAD_PATTERNS`. **Estado encontrado (10304 items): estructura/procedencia 100% limpias** (0 clusters con >1 fila, 0 estandarizados sin keys, 0 sin slug, 0 sin sources[]); el mismatch card≠carrusel (98) es 100% el caso benigno conocido (misma imagen, otra resolución: Star Comics search + KADOKAWA cover_b); 0 placeholders reusados; calidad de imagen real 75% ≥500k px / ~1% pixelada (el "28% <100k px" del doc estaba **obsoleto** tras los upscales — corregido). **Alertas reales y fixes aplicados:**
+
+1. **"Fotos con estrellas" = 3 items Honto** con la portada = ícono de rating ⭐ (`img_star5_s.png`) + 1 Manga-Sanctuary `adulte.png`. Causa de raíz mayor: **los 7 únicos items de Honto eran TODOS `/ebook/` (digitales)**, no ediciones físicas, y 4 tenían título-basura "〈autor〉 Work 限定版" (el parser convirtió el sufijo japonés 作品 en una serie inventada `niyama-work`). **Fix de raíz:** `is_digital_only_url()` + `_DIGITAL_ONLY_URL_PATTERNS` (`honto.jp/ebook/`) en manga_watch.py; `extract_listing_candidates` saltea cards digitales. Test `test_is_digital_only_url_rejects_honto_ebook`. **Gotcha #35** nueva. **Datos:** removidos los 7 items Honto (backup + write atómico) → 10304 → **10297**.
+
+2. **4ª portada-basura + galerías duplicadas** → `sync_cover_images.py` (Dead Tube → 📚, 6 galerías saneadas). **Portadas-basura ahora 0.**
+
+3. **Recuperación de portadas** (sin imagen + pixeladas): `fetch_better_covers --apply --min-pixels 100000` → 63 candidatas (35 con ISBN), **2 aplicadas alta confianza (CDN/ISBN hash-verificadas)**, **8 a `cover-preview.html`** esperando aprobación manual del owner (`--apply-preview` tras aprobar), 53 sin mejora, 0 errores. Comportamiento conservador (seguro por defecto, no auto-aplica dudosas). **Bug arreglado de paso:** `fetch_better_covers.py` crasheaba en la línea de progreso (`NameError: applied_low`, var inexistente) → corregido a `applied_high`/`previewed`.
+
+**Pendiente para el owner:** revisar las 8 portadas en `cover-preview.html`. **Alertas sin acción automática** (recuperación dudosa, requieren búsqueda manual o quedan en 📚): 207 items sin imagen (Sanyodo fuera de catálogo, ListadoManga box sets sin cover, Sumikko) + 95 pixeladas en CDNs que solo sirven miniaturas (Manga-Sanctuary/ListadoManga/AnimeClick). **Tests: 536 → 537** (+1). Server detenido durante las escrituras y relanzado (gotcha #34).
+
+---
+
+Last updated: 2026-06-03 (import One Piece Jump Remix — 35 items nuevos: 24 Remix + 11 Character Remix) — Ingesta manual a partir del fandom wiki `onepiece.fandom.com/wiki/Shueisha_Jump_Remix`. Dos ediciones diferenciadas:
+
+**One Piece Remix** (集英社ジャンプリミックス, 24 vols, Sep 2021 – Aug 2022): compilaciones gruesas organizadas por arco narrativo (Este Azul → Alabasta → Skypiea → Water Seven → Thriller Bark → Marineford). Vendidas en konbini, B6, ~¥550. `edition_key=one-piece-shueisha-remix`, `signal_types=["special_edition"]`. Portadas desde Amazon CDN (`LZZZZZZZ`, 57–112 KB). ISBNs secuenciales 9784081150434…9784081150663 — se detectó y corrigió un error del research agent en Vol 16 (`9784081150583` → `9784081150588`; dígito de control incorrecto).
+
+**One Piece Jump Character Remix** (JUMPキャラクターREMIX, 11 vols, Jul 2024 – Mar 2025): antologías centradas en un personaje por volumen (Luffy 1, Luffy 2, Zoro, Nami, Usopp, Sanji, Chopper, Robin, Franky, Brook, Ace). Incluyen stickers bonus + mini-póster doble cara. ¥880/vol. `edition_key=one-piece-shueisha-character-remix`, `signal_types=["special_edition","bonus"]`. Portadas desde Shueisha CDN (430–595 KB). ISBNs 9784081152230…9784081152544.
+
+**Script**: `scripts/import_op_remix.py` (idempotente, backup automático). Corpus: 10297 → **10332** (+35). Todas las portadas descargadas al espejo local (`data/images/`). Items con `standardized_at` seteado — no requieren `/standardize-catalog`.
 
 Last updated: 2026-06-03 (cover-preview: originales rotas por el GC + reversión de portadas mal aplicadas + rediseño seguro de fetch_better_covers) — El owner abrió `cover-preview.html` y las portadas "originales" salían rotas. Investigación que destapó DOS problemas, uno grave: **(1) El GC borró las originales.** `cover_preview.json` referencia imágenes por las claves `old_image`/`new_image`, que el GC de `mirror_images` no incluía en su set de referenciados → borró 314/326 originales como huérfanas. Fix: el GC ahora lee `cover_preview.json` e incluye esas refs (regla: cualquier archivo que un JSON referencie debe entrar en el set). Restauradas las 330 (re-descarga por URL con nombre exacto). Bonus: `cover-preview.html` cargaba los 25MB de items.jsonl al inicio (lentísimo) → ahora lazy (solo al abrir un detalle) + fallback `@error`→`old_url`. **(2) El GRAVE: `fetch_better_covers` aplicaba portadas EQUIVOCADAS sin aprobación.** Al revisar, el owner notó que la mayoría de las "nuevas" sugeridas estaban mal (un kit de magia "MAGIA BORRAS" como portada de "Negima Boxset", el tomo 10 suelto para un boxset, etc.) **y ya estaban aplicadas al catálogo** (112 items, incluso varias en estado `rejected`). Causa raíz: (a) la rama de BAJA confianza hacía `_apply_improvement` igual ("aplicar PERO agregar a preview"); (b) el modo `--preview` chequeaba `if not dry_run` en vez de `if not preview`, así que **preview igual aplicaba**; (c) un bypass de imágenes upscaleadas hacía buscar reemplazo para CUALQUIER imagen agrandada por AI aunque ya fuera de 2MP — buscaba sobre **5340 portadas que estaban bien**. **Reversión (decisión A del owner):** 102 items con la portada equivocada revertidos a su original (`old_image`/`old_url`), 21 que el owner aprobó conservan la nueva, `cover_preview.json` vaciado, 351 fotos nuevas huérfanas borradas (GC), 0 refs rotas. **Rediseño de fetch_better_covers (seguro por defecto):** ahora `preview` es el DEFAULT (nada se aplica sin aprobación); la BAJA confianza NUNCA se auto-aplica; solo con `--apply` se aplican las de ALTA confianza (CDN/ISBN hash-verificadas); el bypass de upscaled se eliminó → solo busca para imágenes genuinamente chicas (74 candidatas vs 5340 antes). Registry actualizado (presets + flags `--apply`/`--apply-preview`/`--include-upscaled`). 536 tests. Sin tests Python nuevos (cambios de flujo + datos); el comportamiento se verificó en navegador + conteos.
 
@@ -3724,7 +3972,7 @@ Last updated: 2026-05-28 (WO-006 item detail Next.js — /item/[slug] completo) 
 
 **Nuevos archivos creados:**
 - `web-next/app/item/[slug]/page.tsx` — Server Component con `generateStaticParams()` (todos los slugs del corpus), `generateMetadata()` (title = item title + " — PandaWatch", openGraph type=book), `notFound()`, back navigation via `?from=edition:<editionKey>`.
-- `web-next/components/item/ItemHero.tsx` — layout dos columnas (280px carousel / 1fr metadata) via `<style>` + media query ≥640px. Muestra: series eyebrow, h1 title, original title en itálica (原題:), country flag + publisher + language, ScoreBadge + SignalChips, precio en vermillion-500, fecha, ISBN, description_es.
+- `web-next/components/item/ItemHero.tsx` — layout dos columnas (280px carousel / 1fr metadata) via `<style>` + media query ≥640px. Muestra: series eyebrow, h1 title, original title en itálica ("Título original:"), country flag + publisher + language, ScoreBadge + SignalChips, precio en vermillion-500, fecha, ISBN, description_es.
 - `web-next/components/item/ImageCarousel.tsx` — `"use client"`. useState + useEffect para índice y src. Kind badge (Portada/Galería/Extra/Portada Alternativa/Contraportada). Flechas izq/der cuando >1 imagen. Dots cuando 2–8 imágenes. Teclado ArrowLeft/ArrowRight. Fallback chain: `/images/${local}` → remote URL → BookOpen placeholder. Local images via `next/image`, remotas via `<img>` (evita remotePatterns para ~76 dominios de scrape).
 - `web-next/components/item/MetaTable.tsx` — Server Component, `<dl>` con filas: ISBN, Precio, Lanzamiento, Autor, Editorial, País, Idioma, Tipo (con PRODUCT_TYPE_LABELS), Puntuación (con ScoreBadge render), Detectado, Estandarizado (date o "Pendiente"). Filtra filas null/undefined/empty.
 - `web-next/components/item/ExtrasSection.tsx` — Server Component, lista con `<Gift>` Lucide icon (bamboo-500), muestra `description_es` o `description`, fecha formateada si existe.
@@ -5249,7 +5497,7 @@ Last updated previo: 2026-05-24 — preservación de título original (`title_or
 - Skill `/standardize-catalog` actualizado: cuando sobrescribe `title`
   con el standardized form, hace backup a `title_original` si no estaba.
 - Frontend: modal muestra `title` prominente + `title_original` en gris
-  con prefijo `原題:` solo cuando difiere. Search ahora indexa AMBOS +
+  con prefijo `Título original:` solo cuando difiere. Search ahora indexa AMBOS +
   `series_display` → tipear JP/ES/EN/FR/IT encuentra el mismo item.
 - Dedup pipeline-level sigue siendo por `(series_key, edition_key, volume)`,
   no por texto. Decisión consciente: keys canónicas más robustas.
