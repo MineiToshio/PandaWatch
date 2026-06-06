@@ -123,7 +123,7 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
               fontSize: 13, fontStyle: 'italic',
               color: 'var(--color-text-tertiary)', margin: 0,
             }}>
-              原題: {canonical.title_original}
+              Título original: {canonical.title_original}
             </p>
           )}
 
