@@ -247,8 +247,18 @@ def _run_gc(
     if preview.exists():
         try:
             for e in json.loads(preview.read_text(encoding="utf-8")):
-                for k in ("old_image", "new_image"):
-                    v = e.get(k)
+                # old_image: portada vieja (referencia para el diff de review).
+                v = e.get("old_image")
+                if v and v != "[dry-run]":
+                    referenced.add(v)
+                # new_image: schema viejo (plano) o schema multi-candidato
+                # (candidates[].new_image). Hay que cubrir ambos o el GC borra
+                # las candidatas y la página de review queda con fotos rotas.
+                v = e.get("new_image")
+                if v and v != "[dry-run]":
+                    referenced.add(v)
+                for c in (e.get("candidates") or []):
+                    v = c.get("new_image")
                     if v and v != "[dry-run]":
                         referenced.add(v)
         except (ValueError, OSError):

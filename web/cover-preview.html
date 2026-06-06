@@ -25,46 +25,87 @@
                    font-weight: 400; }
   button.danger { background: var(--red); }
   button.success { background: var(--green); color: #000; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 1rem; }
   .card { background: var(--card); border: 2px solid var(--yellow); border-radius: 10px;
           overflow: hidden; transition: all 0.2s; }
-  .card.approved { border-color: var(--green); }
-  .card.rejected { border-color: var(--red); opacity: 0.5; }
+  .card.done { border-color: var(--border); }
   .card-header { display: flex; justify-content: space-between; align-items: center;
-                 padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
+                 padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); gap: 0.5rem; }
+  .card.done .card-header { opacity: 0.55; }
   .card-title { font-size: 0.8rem; font-weight: 600; overflow: hidden;
-                text-overflow: ellipsis; max-width: 65%; }
+                text-overflow: ellipsis; flex: 1; min-width: 0; }
   .card-title a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .card-title a:hover { text-decoration: underline; }
-  .card-status { font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.5rem;
-                 border-radius: 4px; white-space: nowrap; }
-  .card-status.ok { background: var(--green); color: #000; }
-  .card-status.bad { background: var(--red); color: #fff; }
-  .card-status.pending { background: var(--yellow); color: #000; }
-  .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-  .img-box { display: flex; flex-direction: column; align-items: center; padding: 0.5rem;
-             min-height: 190px; justify-content: center; }
-  .img-box img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 4px; }
-  .img-box .label { font-size: 0.65rem; color: var(--muted); margin-top: 0.3rem; text-align: center; }
-  .img-box .pixels { font-size: 0.7rem; font-weight: 600; }
-  .img-box .pixels.good { color: var(--green); }
-  .img-box .pixels.bad { color: var(--red); }
-  .gain { background: var(--green); color: #000; font-size: 0.65rem; font-weight: 700;
-          padding: 0.15rem 0.4rem; border-radius: 4px; margin-left: 0.3rem; }
-  .card-meta { padding: 0.5rem 0.8rem; font-size: 0.7rem; color: var(--muted);
-               border-top: 1px solid var(--border); line-height: 1.6; }
-  .card-meta .domain { color: var(--accent); }
-  .card-actions { padding: 0.5rem 0.8rem; border-top: 1px solid var(--border);
-                  display: flex; gap: 0.5rem; }
-  .card-actions button { font-size: 0.75rem; padding: 0.35rem 0.8rem; flex: 1; }
-  .card-actions button.active-approve { background: var(--green); color: #000; border: none; }
-  .card-actions button.active-reject { background: var(--red); color: #fff; border: none; }
+  .card-toggle { background: none; border: none; color: var(--muted); cursor: pointer;
+                 font-size: 0.75rem; padding: 0.1rem 0.4rem; font-weight: 400; }
+  .card-badge { font-size: 0.65rem; font-weight: 700; padding: 0.15rem 0.5rem;
+                border-radius: 4px; white-space: nowrap; }
+  .card-badge.done { background: var(--green); color: #000; }
+  .card-badge.pending { background: var(--yellow); color: #000; }
+  .card-body { padding: 0.6rem 0.8rem; }
+  /* galería actual del producto */
+  .gallery-now { padding-bottom: 0.6rem; border-bottom: 1px solid var(--border);
+                 margin-bottom: 0.6rem; }
+  .gallery-now .gn-head { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.4rem; }
+  .gallery-now .gn-head b { color: var(--text); }
+  .gn-strip { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.2rem; }
+  .gn-item { min-width: 60px; width: 60px; text-align: center; }
+  .gn-item img { width: 60px; height: 84px; object-fit: contain; border-radius: 4px;
+                 border: 1px solid var(--border); cursor: zoom-in; background: #000; }
+  .gn-item.cover img { border-color: var(--accent); }
+  .gn-item .gn-label { font-size: 0.58rem; color: var(--muted); margin-top: 0.15rem;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gn-item.cover .gn-label { color: var(--accent); font-weight: 600; }
+  /* per-candidate sub-card */
+  .cand { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem;
+          margin-bottom: 0.6rem; transition: border-color 0.15s; }
+  .cand:last-child { margin-bottom: 0; }
+  .cand.approved { border-color: var(--green); }
+  .cand.rejected { border-color: var(--red); opacity: 0.55; }
+  .cand-top { display: flex; gap: 0.6rem; }
+  .cand-thumb { width: 90px; min-width: 90px; display: flex; flex-direction: column;
+                align-items: center; }
+  .cand-thumb img { width: 90px; height: 120px; object-fit: contain; border-radius: 4px;
+                    border: 1px solid var(--green); cursor: zoom-in; background: #000; }
+  .cand-thumb .px { font-size: 0.7rem; font-weight: 600; color: var(--green); margin-top: 0.2rem; }
+  .gain { background: var(--green); color: #000; font-size: 0.6rem; font-weight: 700;
+          padding: 0.1rem 0.35rem; border-radius: 4px; margin-left: 0.2rem; }
+  .cand-info { flex: 1; min-width: 0; font-size: 0.7rem; color: var(--muted); line-height: 1.5; }
+  .cand-info .domain { color: var(--accent); }
+  .cand-status { font-size: 0.62rem; font-weight: 700; padding: 0.1rem 0.4rem;
+                 border-radius: 4px; display: inline-block; margin-bottom: 0.25rem; }
+  .cand-status.ok { background: var(--green); color: #000; }
+  .cand-status.bad { background: var(--red); color: #fff; }
+  .cand-status.pending { background: var(--yellow); color: #000; }
+  .cand-controls { margin-top: 0.5rem; display: flex; gap: 0.4rem; align-items: stretch; }
+  .cand-controls select { flex: 1; background: var(--bg); color: var(--text);
+                          border: 1px solid var(--border); border-radius: 6px;
+                          padding: 0.3rem 0.4rem; font-size: 0.72rem; cursor: pointer; }
+  .cand-controls button { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+  .cand-controls button.active-approve { background: var(--green); color: #000; }
+  .cand-controls button.active-reject { background: var(--red); color: #fff; }
+  .cand-controls button.outline-approve { background: transparent; border: 1px solid var(--green);
+                                          color: var(--green); font-weight: 600; }
+  .cand-controls button.outline-reject { background: transparent; border: 1px solid var(--red);
+                                         color: var(--red); font-weight: 600; }
   .empty { text-align: center; padding: 3rem; color: var(--muted); }
   .toast { position: fixed; bottom: 2rem; right: 2rem; padding: 0.8rem 1.5rem;
            border-radius: 8px; font-weight: 600; font-size: 0.85rem;
            display: none; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
   .toast.ok { background: var(--green); color: #000; }
   .toast.err { background: var(--red); color: #fff; }
+
+  /* Modal de zoom — imagen a tamaño ORIGINAL, centrada V+H, con scroll */
+  .zoom-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 1100;
+                  overflow: auto; padding: 1.5rem; display: flex; }
+  /* margin:auto en un flex item centra en AMBOS ejes y, a diferencia de
+     align/justify-center, no recorta el inicio cuando la imagen excede el viewport. */
+  .zoom-overlay img { margin: auto; display: block; }   /* tamaño natural, scroll si excede */
+  .zoom-close { position: fixed; top: 1rem; right: 1rem; z-index: 1101;
+                width: 2.4rem; height: 2.4rem; border-radius: 50%; padding: 0;
+                background: rgba(0,0,0,0.6); color: #fff; border: 1px solid var(--border);
+                font-size: 1.5rem; line-height: 1; cursor: pointer; }
+  .zoom-close:hover { background: rgba(0,0,0,0.85); }
 
   /* Modal de detalle */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000;
@@ -112,7 +153,8 @@
   <h1>Revisión de portadas</h1>
   <p class="subtitle">
     Portadas mejoradas con <b>baja confianza</b> (imagen original muy pequeña para verificar por hash).<br>
-    Hacé clic en el título para ver el detalle del item. Aprobá o rechazá cada una individualmente.
+    Cada producto puede tener varias candidatas. Elegí la <b>acción</b> de cada una
+    (reemplazar portada, agregar a galería, agregar como extra) y aprobá o rechazá individualmente.
   </p>
 
   <template x-if="!loaded">
@@ -127,64 +169,100 @@
   <template x-if="loaded && entries.length > 0">
     <div>
       <div class="stats">
-        <div class="stat">Pendientes: <b x-text="entries.length" style="color:var(--yellow)"></b></div>
+        <div class="stat">Productos: <b x-text="entries.length"></b></div>
+        <div class="stat">Candidatas pendientes:
+          <b x-text="pendingCount()" style="color:var(--yellow)"></b></div>
         <div class="stat" x-show="decidedCount() > 0">
-          Ya decididas: <b x-text="decidedCount()" style="color:var(--green)"></b>
+          Decididas: <b x-text="decidedCount()" style="color:var(--green)"></b>
         </div>
       </div>
 
       <div class="actions">
-        <button class="outline success" @click="bulkAction('approved')">Aprobar todas</button>
-        <button class="outline danger" @click="bulkAction('rejected')">Rechazar todas</button>
+        <button class="success" @click="applyApproved()" :disabled="approvedCount() === 0"
+                :style="approvedCount() === 0 ? 'opacity:0.45; cursor:not-allowed' : ''"
+                title="Aplica las aprobadas al catálogo y quita las decididas del listado">
+          ✓ Aplicar aprobadas (<span x-text="approvedCount()"></span>)
+        </button>
+        <button class="outline success" @click="bulkAction('approved')">Aprobar todas pendientes</button>
+        <button class="outline danger" @click="bulkAction('rejected')">Rechazar todas pendientes</button>
       </div>
 
       <div class="grid">
-        <template x-for="(e, i) in entries" :key="e.slug">
-          <div class="card" :class="e.status">
+        <template x-for="(e, ei) in entries" :key="e.slug || ei">
+          <div class="card" :class="entryDone(e) ? 'done' : ''">
             <div class="card-header">
               <span class="card-title">
                 <a @click.prevent="openDetail(e.slug)"
                    :title="(e.title_original || e.title) + ' — ver detalle'"
                    x-text="e.title || e.slug"></a>
               </span>
-              <span class="card-status"
-                    :class="e.status === 'approved' ? 'ok' : e.status === 'rejected' ? 'bad' : 'pending'"
-                    x-text="e.status === 'approved' ? 'Aprobada' : e.status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
+              <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
+                    x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
+              <button class="card-toggle" @click="toggleCollapse(e)"
+                      x-text="isCollapsed(e) ? '▸' : '▾'"></button>
             </div>
-            <div class="comparison" @click="openCompare(e)" style="cursor:pointer;" title="Clic para ver en grande">
-              <div class="img-box">
-                <img :src="'../data/images/' + e.old_image" alt="Anterior"
-                     @error="if(!$event.target.dataset.fb && e.old_url){$event.target.dataset.fb=1; $event.target.src=e.old_url}else{$event.target.style.opacity=0.3}">
-                <div class="label">Anterior</div>
-                <div class="pixels bad" x-text="formatPx(e.old_pixels)"></div>
+
+            <div class="card-body" x-show="!isCollapsed(e)">
+              <!-- galería ACTUAL del producto (portada + galería + extras) -->
+              <div class="gallery-now">
+                <div class="gn-head">
+                  <b>Galería actual</b>
+                  (<span x-text="(e.current_images || []).length"></span>)
+                  &middot; <span x-text="e.publisher"></span> &middot; <span x-text="e.country"></span>
+                </div>
+                <div class="gn-strip">
+                  <template x-for="(ci, gi) in (e.current_images || [])" :key="gi">
+                    <div class="gn-item" :class="ci.is_cover ? 'cover' : ''">
+                      <img :src="curSrc(ci)" alt="Actual"
+                           @click="openZoom(curSrc(ci))"
+                           @error="if(!$event.target.dataset.fb && ci.url){$event.target.dataset.fb=1; $event.target.src=ci.url}else{$event.target.style.opacity=0.3}">
+                      <div class="gn-label"
+                           x-text="(gi+1) + '·' + (ci.is_cover ? 'Portada' : (ci.kind === 'extra' ? 'Extra' : 'Galería'))"></div>
+                    </div>
+                  </template>
+                </div>
               </div>
-              <div class="img-box">
-                <img :src="e.new_image && e.new_image !== '[dry-run]' ? '../data/images/' + e.new_image : e.new_url"
-                     alt="Nueva"
-                     onerror="this.src=e.new_url">
-                <div class="label">Nueva <span class="gain" x-text="'x' + (e.new_pixels / e.old_pixels).toFixed(1)"></span></div>
-                <div class="pixels good" x-text="formatPx(e.new_pixels)"></div>
-              </div>
-            </div>
-            <div class="card-meta">
-              <span x-text="e.publisher"></span> &middot; <span x-text="e.country"></span><br>
-              <template x-if="e.domain">
-                <span>Fuente: <span class="domain" x-text="e.domain"></span></span>
+
+              <!-- candidatas -->
+              <template x-for="(c, ci) in e.candidates" :key="ci">
+                <div class="cand" :class="c.status">
+                  <div class="cand-top">
+                    <div class="cand-thumb">
+                      <img :src="candSrc(c)" alt="Candidata"
+                           @click="openCompare(e, c)"
+                           @error="if(!$event.target.dataset.fb && c.new_url){$event.target.dataset.fb=1; $event.target.src=c.new_url}else{$event.target.style.opacity=0.3}">
+                      <div class="px">
+                        <span x-text="formatPx(c.new_pixels)"></span>
+                        <span class="gain" x-show="e.old_pixels"
+                              x-text="'x' + (c.new_pixels / e.old_pixels).toFixed(1)"></span>
+                      </div>
+                    </div>
+                    <div class="cand-info">
+                      <span class="cand-status"
+                            :class="c.status === 'approved' ? 'ok' : c.status === 'rejected' ? 'bad' : 'pending'"
+                            x-text="c.status === 'approved' ? 'Aprobada' : c.status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
+                      <br>
+                      <template x-if="c.domain">
+                        <span>Fuente: <span class="domain" x-text="c.domain"></span><br></span>
+                      </template>
+                      <template x-if="c.page_title">
+                        <span x-text="c.page_title.substring(0, 70)"></span>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="cand-controls">
+                    <select x-model="c._choice" @change="applyChoice(e, c)">
+                      <template x-for="opt in candidateOptions(e)" :key="opt.value">
+                        <option :value="opt.value" x-text="opt.label"></option>
+                      </template>
+                    </select>
+                    <button :class="c.status === 'approved' ? 'active-approve' : 'outline-approve'"
+                            @click="setStatus(e, c, 'approved')">✓</button>
+                    <button :class="c.status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                            @click="setStatus(e, c, 'rejected')">✕</button>
+                  </div>
+                </div>
               </template>
-              <template x-if="e.page_title">
-                <span> &middot; <span x-text="e.page_title.substring(0, 80)"></span></span>
-              </template>
-            </div>
-            <div class="card-actions">
-              <button :class="e.status === 'approved' ? 'active-approve' : 'outline'"
-                      @click="setStatus(i, 'approved')">
-                Aprobar
-              </button>
-              <button :class="e.status === 'rejected' ? 'active-reject' : 'outline'"
-                      :style="e.status !== 'rejected' ? 'border-color:var(--red); color:var(--red)' : ''"
-                      @click="setStatus(i, 'rejected')">
-                Rechazar
-              </button>
             </div>
           </div>
         </template>
@@ -210,29 +288,34 @@
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1rem;">
           <div style="text-align:center;">
             <img :src="'../data/images/' + compareEntry.old_image"
+                 title="Clic para ver a tamaño original"
+                 @click="openZoom('../data/images/' + compareEntry.old_image)"
                  style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
-                        border:2px solid var(--red);"
+                        border:2px solid var(--red); cursor:zoom-in;"
                  @error="if(!$event.target.dataset.fb && compareEntry.old_url){$event.target.dataset.fb=1; $event.target.src=compareEntry.old_url}else{$event.target.style.opacity=0.3}">
             <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
               Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
             </div>
           </div>
-          <div style="text-align:center;">
-            <img :src="compareEntry.new_image && compareEntry.new_image !== '[dry-run]'
-                       ? '../data/images/' + compareEntry.new_image : compareEntry.new_url"
+          <div style="text-align:center;" x-show="compareCandidate">
+            <img :src="candSrc(compareCandidate)"
+                 title="Clic para ver a tamaño original"
+                 @click="openZoom(candSrc(compareCandidate))"
                  style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
-                        border:2px solid var(--green);"
-                 onerror="this.src=compareEntry.new_url">
-            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;">
-              Nueva — <span x-text="formatPx(compareEntry.new_pixels)"></span>
-              <span class="gain" x-text="'x' + (compareEntry.new_pixels / compareEntry.old_pixels).toFixed(1)"></span>
+                        border:2px solid var(--green); cursor:zoom-in;"
+                 @error="if(!$event.target.dataset.fb && compareCandidate && compareCandidate.new_url){$event.target.dataset.fb=1; $event.target.src=compareCandidate.new_url}else{$event.target.style.opacity=0.3}">
+            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;"
+                 x-show="compareCandidate">
+              Nueva — <span x-text="compareCandidate ? formatPx(compareCandidate.new_pixels) : ''"></span>
+              <span class="gain" x-show="compareCandidate && compareEntry.old_pixels"
+                    x-text="compareCandidate ? 'x' + (compareCandidate.new_pixels / compareEntry.old_pixels).toFixed(1) : ''"></span>
             </div>
           </div>
         </div>
-        <div style="padding:0 1rem 0.8rem; font-size:0.7rem; color:var(--muted);">
-          Fuente: <span style="color:var(--accent);" x-text="compareEntry.domain"></span>
-          <template x-if="compareEntry.page_title">
-            <span> · <span x-text="compareEntry.page_title.substring(0, 80)"></span></span>
+        <div style="padding:0 1rem 0.8rem; font-size:0.7rem; color:var(--muted);" x-show="compareCandidate">
+          Fuente: <span style="color:var(--accent);" x-text="compareCandidate ? compareCandidate.domain : ''"></span>
+          <template x-if="compareCandidate && compareCandidate.page_title">
+            <span> · <span x-text="compareCandidate.page_title.substring(0, 80)"></span></span>
           </template>
         </div>
       </div>
@@ -307,35 +390,100 @@
     </div>
   </template>
 
+  <!-- Modal de zoom: imagen a tamaño ORIGINAL con scroll -->
+  <template x-if="zoomSrc">
+    <div class="zoom-overlay" @click.self="zoomSrc = null" @keydown.escape.window="zoomSrc = null">
+      <button class="zoom-close" @click="zoomSrc = null" title="Cerrar (Esc)">&times;</button>
+      <img :src="zoomSrc" alt="Imagen a tamaño original"
+           @error="$event.target.style.opacity = 0.3">
+    </div>
+  </template>
+
   <div class="toast" x-ref="toast"></div>
 
 <script>
 function previewApp() {
   return {
     entries: [],
-    allEntries: [],
     loaded: false,
     modalItem: null,
     compareEntry: null,
+    compareCandidate: null,
+    zoomSrc: null,
+    collapsed: {},
     itemsBySlug: {},
     _itemsLoaded: false,
 
+    // Construye la galería actual a partir de la entry (current_images del JSON,
+    // o un fallback con la portada vieja para entries del schema viejo).
+    buildCurrentImages(e) {
+      if (Array.isArray(e.current_images) && e.current_images.length) {
+        return e.current_images.map((ci, i) => ({
+          url: ci.url || '', local: ci.local || '',
+          kind: ci.kind || 'gallery',
+          is_cover: ci.is_cover != null ? !!ci.is_cover : i === 0,
+        }));
+      }
+      if (e.old_url || e.old_image) {
+        return [{ url: e.old_url || '', local: e.old_image || '', kind: 'gallery', is_cover: true }];
+      }
+      return [];
+    },
+
+    // Normaliza una entry al schema multi-candidato (candidates[]).
+    // Backwards-compat: entries planas (new_image/new_url/...) → 1 candidato.
+    normalizeEntry(e) {
+      const base = {
+        slug: e.slug || '', title: e.title || '', title_original: e.title_original || '',
+        series_display: e.series_display || '', publisher: e.publisher || '',
+        country: e.country || '', old_image: e.old_image || '', old_url: e.old_url || '',
+        old_pixels: e.old_pixels || 0,
+      };
+      base.current_images = this.buildCurrentImages(e);
+      const wrap = c => ({
+        new_image: c.new_image || '', new_url: c.new_url || '', new_pixels: c.new_pixels || 0,
+        page_title: c.page_title || '', domain: c.domain || '', query: c.query || '',
+        confidence: c.confidence || 'low', action: c.action || 'replace_cover',
+        target: c.target || '', kind: c.kind || 'gallery', status: c.status || 'pending',
+      });
+      if (Array.isArray(e.candidates)) {
+        base.candidates = e.candidates.map(wrap);
+      } else {
+        base.candidates = [wrap({
+          new_image: e.new_image, new_url: e.new_url, new_pixels: e.new_pixels,
+          page_title: e.page_title, domain: e.domain, query: e.query,
+          confidence: e.confidence, action: 'replace_cover', status: e.status,
+        })];
+      }
+      // _choice: valor sintético del dropdown (action + target combinados).
+      base.candidates.forEach(c => { c._choice = this.choiceFor(base, c); });
+      return base;
+    },
+
     async init() {
-      // Solo cargamos el preview (chico). items.jsonl (25MB) se carga LAZY al
-      // abrir un detalle — antes se cargaba acá al inicio y bloqueaba la página
-      // varios segundos a medida que el catálogo creció.
+      await this.loadEntries();
+      this.loaded = true;
+    },
+
+    // Carga (o recarga) cover_preview.json. items.jsonl (25MB) se carga LAZY
+    // solo al abrir un detalle, no acá.
+    async loadEntries() {
       try {
         const r = await fetch('../data/cover_preview.json?t=' + Date.now(), { cache: 'no-store' });
         if (r.ok) {
           const data = await r.json();
-          this.allEntries = data.map(e => ({ ...e, status: e.status || 'pending' }));
-          this.entries = this.allEntries.filter(e => e.status === 'pending');
+          this.entries = data.map(e => this.normalizeEntry(e));
+          // Colapsar por defecto los productos ya decididos.
+          this.entries.forEach((e, i) => {
+            this.collapsed[e.slug || i] = this.entryDone(e);
+          });
+        } else {
+          this.entries = [];
         }
-      } catch {}
-      this.loaded = true;
+      } catch { this.entries = []; }
     },
 
-    // Carga items.jsonl bajo demanda (solo cuando se abre el modal de detalle).
+    // Carga items.jsonl bajo demanda (solo al abrir el modal de detalle).
     async _ensureItems() {
       if (this._itemsLoaded) return;
       this._itemsLoaded = true;
@@ -350,8 +498,113 @@ function previewApp() {
       } catch {}
     },
 
+    candSrc(c) {
+      if (!c) return '';
+      return c.new_image && c.new_image !== '[dry-run]'
+        ? '../data/images/' + c.new_image : c.new_url;
+    },
+
+    curSrc(ci) {
+      if (!ci) return '';
+      return ci.local && ci.local !== '[dry-run]'
+        ? '../data/images/' + ci.local : ci.url;
+    },
+
+    openZoom(src) { if (src) this.zoomSrc = src; },
+
+    // Opciones del dropdown de acción, dinámicas según la galería actual.
+    candidateOptions(e) {
+      const opts = [
+        { value: 'replace_cover', label: 'Reemplazar portada (descarta la actual)' },
+        { value: 'replace_cover_demote', label: 'Reemplazar portada (la actual pasa a extra)' },
+      ];
+      (e.current_images || []).forEach((ci, idx) => {
+        if (idx === 0) return;  // la portada se reemplaza con las opciones de arriba
+        const lbl = ci.kind === 'extra' ? 'extra' : 'galería';
+        opts.push({ value: 'replace_image:' + idx, label: `Reemplazar imagen ${idx + 1} (${lbl})` });
+      });
+      opts.push({ value: 'add_gallery', label: 'Agregar a galería' });
+      opts.push({ value: 'add_extra', label: 'Agregar como extra' });
+      return opts;
+    },
+
+    // action+target → valor del <select>.
+    choiceFor(e, c) {
+      if (c.action === 'replace_image' && c.target) {
+        const idx = (e.current_images || []).findIndex(ci => ci.url === c.target);
+        if (idx >= 1) return 'replace_image:' + idx;
+      }
+      return c.action || 'replace_cover';
+    },
+
+    // valor del <select> → action+target+kind del candidato.
+    applyChoice(e, c) {
+      const v = c._choice || 'replace_cover';
+      if (v.startsWith('replace_image:')) {
+        const idx = parseInt(v.split(':')[1], 10);
+        const ci = (e.current_images || [])[idx];
+        c.action = 'replace_image';
+        c.target = ci ? ci.url : '';
+        c.kind = ci && ci.kind === 'extra' ? 'extra' : 'gallery';
+      } else {
+        c.action = v;
+        c.target = '';
+        this.syncKind(c);
+      }
+    },
+
+    entryKey(e) { return e.slug || this.entries.indexOf(e); },
+    isCollapsed(e) { return !!this.collapsed[this.entryKey(e)]; },
+    toggleCollapse(e) { this.collapsed[this.entryKey(e)] = !this.collapsed[this.entryKey(e)]; },
+
+    entryDone(e) {
+      return e.candidates.every(c => c.status === 'approved' || c.status === 'rejected');
+    },
+    pendingInEntry(e) {
+      return e.candidates.filter(c => (c.status || 'pending') === 'pending').length;
+    },
+    pendingCount() {
+      return this.entries.reduce((n, e) => n + this.pendingInEntry(e), 0);
+    },
     decidedCount() {
-      return this.allEntries.filter(e => e.status !== 'pending').length;
+      return this.entries.reduce((n, e) =>
+        n + e.candidates.filter(c => c.status === 'approved' || c.status === 'rejected').length, 0);
+    },
+    approvedCount() {
+      return this.entries.reduce((n, e) =>
+        n + e.candidates.filter(c => c.status === 'approved').length, 0);
+    },
+
+    // Aplica al catálogo las aprobadas + quita del JSON las decididas
+    // (aprobadas y rechazadas). Las pendientes se conservan.
+    async applyApproved() {
+      const a = this.approvedCount();
+      if (!a) { this.showToast('No hay candidatas aprobadas para aplicar', 'err'); return; }
+      const r = this.decidedCount() - a;  // rechazadas que se van a quitar
+      if (!confirm(
+        `Aplicar ${a} aprobada(s) al catálogo (modifica items.jsonl)` +
+        (r > 0 ? ` y quitar ${r} rechazada(s) del listado` : '') + '. ¿Seguir?')) return;
+      try {
+        const resp = await fetch('/api/apply-cover-preview', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+          this.showToast(
+            `✓ Aplicadas: ${data.applied || 0} · rechazadas quitadas: ${data.rejected || 0}`, 'ok');
+          await this.loadEntries();   // recargar: las decididas ya no están
+        } else {
+          this.showToast('Error: ' + (data.error || 'no se pudo aplicar'), 'err');
+        }
+      } catch (err) {
+        this.showToast('Error: ' + err.message, 'err');
+      }
+    },
+
+    // El kind sólo importa para acciones que ponen algo en la galería como
+    // "extra" (add_extra, replace_and_add, replace_cover_demote) vs "gallery".
+    syncKind(c) {
+      if (c.action === 'add_extra' || c.action === 'replace_and_add'
+          || c.action === 'replace_cover_demote') c.kind = 'extra';
+      else c.kind = 'gallery';
     },
 
     formatPx(px) {
@@ -364,13 +617,12 @@ function previewApp() {
     async openDetail(slug) {
       await this._ensureItems();
       const item = this.itemsBySlug[slug];
-      if (item) {
-        this.modalItem = item;
-      }
+      if (item) this.modalItem = item;
     },
 
-    openCompare(entry) {
+    openCompare(entry, candidate) {
       this.compareEntry = entry;
+      this.compareCandidate = candidate;
     },
 
     modalFields() {
@@ -393,20 +645,42 @@ function previewApp() {
       ].filter(([, v]) => v);
     },
 
-    async setStatus(index, status) {
-      const entry = this.entries[index];
-      entry.status = status;
-      const title = entry.title;
-      await this.save(title + ' → ' + (status === 'approved' ? 'aprobada' : 'rechazada'));
-      this.entries.splice(index, 1);
+    async setStatus(entry, cand, status) {
+      cand.status = status;
+      const verb = status === 'approved' ? 'aprobada' : 'rechazada';
+      await this.save((entry.title || entry.slug) + ' → ' + verb);
+      // Colapsar el producto cuando todas sus candidatas están decididas.
+      if (this.entryDone(entry)) this.collapsed[this.entryKey(entry)] = true;
     },
 
     async bulkAction(status) {
       const label = status === 'approved' ? 'aprobar' : 'rechazar';
-      if (!confirm(`¿${label.charAt(0).toUpperCase() + label.slice(1)} las ${this.entries.length} pendientes?`)) return;
-      this.entries.forEach(e => e.status = status);
+      const n = this.pendingCount();
+      if (!n) return;
+      if (!confirm(`¿${label.charAt(0).toUpperCase() + label.slice(1)} las ${n} candidatas pendientes?`)) return;
+      this.entries.forEach(e => e.candidates.forEach(c => {
+        if ((c.status || 'pending') === 'pending') { c.status = status; }
+      }));
       await this.save(`todas (${label})`);
-      this.entries = [];
+      this.entries.forEach(e => {
+        if (this.entryDone(e)) this.collapsed[this.entryKey(e)] = true;
+      });
+    },
+
+    // Payload limpio: quita los campos UI-only (_choice) antes de guardar.
+    cleanPayload() {
+      return this.entries.map(e => ({
+        slug: e.slug, title: e.title, title_original: e.title_original,
+        series_display: e.series_display, publisher: e.publisher, country: e.country,
+        old_image: e.old_image, old_url: e.old_url, old_pixels: e.old_pixels,
+        current_images: e.current_images,
+        candidates: e.candidates.map(c => ({
+          new_image: c.new_image, new_url: c.new_url, new_pixels: c.new_pixels,
+          page_title: c.page_title, domain: c.domain, query: c.query,
+          confidence: c.confidence, action: c.action, target: c.target,
+          kind: c.kind, status: c.status,
+        })),
+      }));
     },
 
     async save(label) {
@@ -414,13 +688,9 @@ function previewApp() {
         const r = await fetch('/api/save-cover-preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.allEntries),
+          body: JSON.stringify(this.cleanPayload()),
         });
-        if (r.ok) {
-          this.showToast(label, 'ok');
-        } else {
-          this.showToast('Error al guardar', 'err');
-        }
+        this.showToast(r.ok ? label : 'Error al guardar', r.ok ? 'ok' : 'err');
       } catch (err) {
         this.showToast('Error: ' + err.message, 'err');
       }

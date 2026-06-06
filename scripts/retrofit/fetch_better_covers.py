@@ -1202,7 +1202,7 @@ _PREVIEW_PATH = _HERE / "data" / "cover_preview.json"
 
 
 def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
-    """Aplica una mejora directamente sobre el item dict."""
+    """Reemplaza la PORTADA del item (image_url + image_local + images[0])."""
     item["image_url"] = new_url
     if item.get("images"):
         if item["images"]:
@@ -1210,6 +1210,176 @@ def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
             item["images"][0]["local"] = new_local
     if new_local != "[dry-run]":
         item["image_local"] = new_local
+
+
+def _ensure_cover_slot(item: dict) -> None:
+    """
+    Garantiza que images[0] refleje la portada actual antes de agregar a la
+    galería. Convención images[]: la posición 0 es siempre la portada. Si el
+    item no tiene images[] todavía, sembramos el slot 0 con la portada actual
+    para no convertir por accidente una foto de galería nueva en la portada.
+    """
+    images = item.setdefault("images", [])
+    if not images and item.get("image_url"):
+        images.append({
+            "url": item.get("image_url", ""),
+            "local": item.get("image_local", ""),
+            "kind": "gallery",
+        })
+
+
+def _add_gallery_image(item: dict, new_url: str, new_local: str, kind: str) -> None:
+    """
+    Agrega una imagen a la galería (images[-1]) SIN tocar la portada.
+    Idempotente: si la URL ya está en images[], no la duplica.
+    """
+    _ensure_cover_slot(item)
+    images = item.setdefault("images", [])
+    if any(img.get("url") == new_url for img in images):
+        return
+    entry = {"url": new_url, "kind": kind if kind in ("gallery", "extra") else "gallery"}
+    if new_local and new_local != "[dry-run]":
+        entry["local"] = new_local
+    images.append(entry)
+
+
+def _remove_gallery_image(item: dict, url: str) -> None:
+    """Quita de images[] cualquier entrada de galería (idx>=1) con esa URL.
+    Nunca toca images[0] (la portada)."""
+    images = item.get("images")
+    if not images or len(images) <= 1:
+        return
+    item["images"] = images[:1] + [img for img in images[1:] if img.get("url") != url]
+
+
+def _replace_at_target(item: dict, target_url: str, new_url: str, new_local: str) -> bool:
+    """
+    Reemplaza la imagen de images[] cuya url == target_url por la nueva
+    (url + local). Si el target es images[0] (la portada), sincroniza también
+    image_url/image_local. Conserva el `kind` del slot reemplazado.
+    Devuelve True si encontró el target. Si no lo encuentra (la galería cambió
+    desde que se armó el preview), devuelve False — el caller decide el fallback.
+    """
+    images = item.get("images") or []
+    for i, img in enumerate(images):
+        if img.get("url") == target_url:
+            img["url"] = new_url
+            if new_local and new_local != "[dry-run]":
+                img["local"] = new_local
+            if i == 0:
+                item["image_url"] = new_url
+                if new_local and new_local != "[dry-run]":
+                    item["image_local"] = new_local
+            return True
+    return False
+
+
+def _entry_current_images(item: dict) -> list[dict]:
+    """Galería actual del item para mostrar en la página de review. images[0] es
+    la portada (is_cover). Si el item no tiene images[], sintetiza el slot 0
+    desde image_url/image_local."""
+    imgs = item.get("images") or []
+    out: list[dict] = []
+    if imgs:
+        for k, im in enumerate(imgs):
+            if not isinstance(im, dict):
+                continue
+            out.append({
+                "url": im.get("url", ""),
+                "local": im.get("local", ""),
+                "kind": im.get("kind", "gallery"),
+                "is_cover": k == 0,
+            })
+    elif item.get("image_url") or item.get("image_local"):
+        out.append({
+            "url": item.get("image_url", ""),
+            "local": item.get("image_local", ""),
+            "kind": "gallery",
+            "is_cover": True,
+        })
+    return out
+
+
+def _normalize_preview_entry(entry: dict) -> dict:
+    """
+    Devuelve la entry en el schema multi-candidato (con `candidates[]`).
+    Backwards-compat: si la entry trae los campos planos del schema viejo
+    (new_image/new_url/...), los envuelve en un único candidato con
+    action="replace_cover".
+
+    Garantiza `current_images[]` (galería actual del item, para que la UI deje
+    elegir qué imagen reemplazar). Si falta, la sintetiza desde old_image/old_url.
+    """
+    def _fallback_current(e):
+        if e.get("old_url") or e.get("old_image"):
+            return [{
+                "url": e.get("old_url", ""),
+                "local": e.get("old_image", ""),
+                "kind": "gallery",
+                "is_cover": True,
+            }]
+        return []
+
+    if isinstance(entry.get("candidates"), list):
+        # Ya es multi-candidato; rellenar defaults por candidato.
+        for c in entry["candidates"]:
+            c.setdefault("action", "replace_cover")
+            c.setdefault("target", "")
+            c.setdefault("kind", "gallery")
+            c.setdefault("status", "pending")
+            c.setdefault("confidence", "low")
+            c.setdefault("page_title", "")
+            c.setdefault("domain", "")
+            c.setdefault("query", "")
+        if not isinstance(entry.get("current_images"), list) or not entry["current_images"]:
+            entry["current_images"] = _fallback_current(entry)
+        return entry
+    candidate = {
+        "new_image": entry.get("new_image", ""),
+        "new_url": entry.get("new_url", ""),
+        "new_pixels": entry.get("new_pixels", 0),
+        "page_title": entry.get("page_title", ""),
+        "domain": entry.get("domain", ""),
+        "query": entry.get("query", ""),
+        "confidence": entry.get("confidence", "low"),
+        "action": entry.get("action", "replace_cover"),
+        "target": entry.get("target", ""),
+        "kind": entry.get("kind", "gallery"),
+        "status": entry.get("status", "pending"),
+    }
+    current = entry.get("current_images")
+    if not isinstance(current, list) or not current:
+        current = _fallback_current(entry)
+    return {
+        "slug": entry.get("slug", ""),
+        "title": entry.get("title", ""),
+        "title_original": entry.get("title_original", ""),
+        "series_display": entry.get("series_display", ""),
+        "publisher": entry.get("publisher", ""),
+        "country": entry.get("country", ""),
+        "old_image": entry.get("old_image", ""),
+        "old_url": entry.get("old_url", ""),
+        "old_pixels": entry.get("old_pixels", 0),
+        "current_images": current,
+        "candidates": [candidate],
+    }
+
+
+def _collect_referenced_locals(items: list[dict]) -> set:
+    """Todos los filenames locales referenciados por el corpus (image_local,
+    images[].local, sources[].image_local). Usado para borrar archivos huérfanos
+    de forma segura tras aplicar el preview."""
+    referenced: set = set()
+    for it in items:
+        if it.get("image_local"):
+            referenced.add(it["image_local"])
+        for img in (it.get("images") or []):
+            if isinstance(img, dict) and img.get("local"):
+                referenced.add(img["local"])
+        for s in (it.get("sources") or []):
+            if isinstance(s, dict) and s.get("image_local"):
+                referenced.add(s["image_local"])
+    return referenced
 
 
 def _is_upscaled(item: dict, images_dir: Path) -> bool:
@@ -1312,7 +1482,21 @@ def run(
     skipped = 0
     errors = 0
     flush_count = 0
+
+    # Acumulación de preview (schema multi-candidato). Sembramos desde el
+    # cover_preview.json existente — así múltiples pasadas de búsqueda van
+    # juntando candidatas por producto en vez de pisarse. Dedup por new_url.
     preview_entries: list[dict] = []
+    preview_by_slug: dict[str, dict] = {}
+    if not dry_run and _PREVIEW_PATH.exists():
+        try:
+            for e in json.loads(_PREVIEW_PATH.read_text(encoding="utf-8")):
+                e = _normalize_preview_entry(e)
+                preview_entries.append(e)
+                if e.get("slug"):
+                    preview_by_slug[e["slug"]] = e
+        except (ValueError, OSError):
+            pass
 
     for pos, idx in enumerate(candidates_idx):
         item = items[idx]
@@ -1320,8 +1504,8 @@ def run(
         if verbose:
             print(f"[{pos+1}/{len(candidates_idx)}] {title}", flush=True)
         elif pos % 50 == 0:
-            total_applied = applied_high + applied_low
-            print(f"  {pos}/{len(candidates_idx)} procesados... ({total_applied} mejorados)", flush=True)
+            print(f"  {pos}/{len(candidates_idx)} procesados... "
+                  f"({applied_high} aplicadas, {previewed} a preview)", flush=True)
 
         try:
             result = _process_item(
@@ -1353,17 +1537,13 @@ def run(
                         print(f"  ✓ aplicada [alta confianza, --apply] ({flush_count})", flush=True)
                 else:
                     # A preview, SIN tocar items.jsonl (la portada vieja se queda).
+                    # Schema multi-candidato: si el producto ya tiene una entry
+                    # (misma slug), agregamos la candidata a su candidates[] en
+                    # vez de crear una entry duplicada. Default action=replace_cover
+                    # (el owner elige otra en la UI antes de aprobar).
                     previewed += 1
-                    preview_entries.append({
-                        "slug": item.get("slug", ""),
-                        "title": item.get("title", ""),
-                        "title_original": item.get("title_original", ""),
-                        "series_display": item.get("series_display", ""),
-                        "publisher": item.get("publisher", ""),
-                        "country": item.get("country", ""),
-                        "old_image": old_local,
-                        "old_url": old_url,
-                        "old_pixels": result["current_pixels"],
+                    slug = item.get("slug", "")
+                    candidate = {
                         "new_image": new_local,
                         "new_url": new_url,
                         "new_pixels": result["candidate_pixels"],
@@ -1371,15 +1551,42 @@ def run(
                         "domain": result.get("domain", ""),
                         "query": result.get("query", ""),
                         "confidence": confidence,
+                        "action": "replace_cover",
+                        "target": "",
+                        "kind": "gallery",
                         "status": "pending",
-                    })
+                    }
+                    existing = preview_by_slug.get(slug) if slug else None
+                    if existing is not None:
+                        if not any(c.get("new_url") == new_url
+                                   for c in existing["candidates"]):
+                            existing["candidates"].append(candidate)
+                    else:
+                        entry = {
+                            "slug": slug,
+                            "title": item.get("title", ""),
+                            "title_original": item.get("title_original", ""),
+                            "series_display": item.get("series_display", ""),
+                            "publisher": item.get("publisher", ""),
+                            "country": item.get("country", ""),
+                            "old_image": old_local,
+                            "old_url": old_url,
+                            "old_pixels": result["current_pixels"],
+                            # galería actual completa (para elegir qué reemplazar)
+                            "current_images": _entry_current_images(item),
+                            "candidates": [candidate],
+                        }
+                        preview_entries.append(entry)
+                        if slug:
+                            preview_by_slug[slug] = entry
                     if not dry_run:
                         _PREVIEW_PATH.write_text(
                             json.dumps(preview_entries, ensure_ascii=False, indent=2),
                             encoding="utf-8")
                     if verbose:
                         tag = "alta" if confidence == "high" else "baja"
-                        print(f"  → preview [{tag} confianza, NO aplicada] ({len(preview_entries)})", flush=True)
+                        print(f"  → preview [{tag} confianza, NO aplicada] "
+                              f"({previewed} candidatas)", flush=True)
             else:
                 skipped += 1
         except Exception as e:
@@ -1404,29 +1611,51 @@ def run(
 
 def apply_preview(items_path: Path, images_dir: Path) -> None:
     """
-    Procesa el preview JSON con 3 estados por item:
-    - APPROVED: ya está aplicada la nueva. Borra la imagen vieja (cleanup).
-    - REJECTED: revierte a la imagen vieja. Borra la imagen nueva.
-    - PENDING:  no se toca. Queda en el preview para decidir después.
+    Procesa el preview JSON (schema multi-candidato). Cada producto puede tener
+    N candidatas, cada una con su `action` y `status`:
+
+      action:
+        replace_cover  → la nueva reemplaza la portada (images[0] + image_url).
+        add_gallery    → la nueva se agrega a la galería (kind="gallery").
+        add_extra      → idem pero kind="extra" (bonus/regalo).
+        replace_and_add→ reemplaza portada Y agrega la misma a la galería.
+
+      status:
+        approved → se aplica la acción.
+        rejected → se revierte (replace_*: vuelve a la portada vieja;
+                   add_*: quita la URL de la galería). Borra la imagen nueva.
+        pending  → no se toca; queda en el preview.
+
+    Backwards-compat: entries del schema viejo (campos planos) se normalizan a
+    un único candidato con action="replace_cover".
+
+    Una entry se quita del preview cuando TODAS sus candidatas están decididas
+    (approved/rejected). Si queda alguna pending, la entry se conserva entera.
     """
     if not _PREVIEW_PATH.exists():
         print(f"No hay preview en {_PREVIEW_PATH}.")
-        return
+        return {"ok": True, "applied": 0, "rejected": 0, "pending": 0,
+                "message": "No hay preview."}
 
-    preview = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
-    approved = [e for e in preview if e.get("status") == "approved"]
-    rejected = [e for e in preview if e.get("status") == "rejected"]
-    pending  = [e for e in preview if e.get("status", "pending") == "pending"]
+    raw = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
+    preview = [_normalize_preview_entry(e) for e in raw]
 
-    print(f"Preview: {len(preview)} items — {len(approved)} aprobados, "
-          f"{len(rejected)} rechazados, {len(pending)} pendientes", flush=True)
+    all_cands = [c for e in preview for c in e["candidates"]]
+    n_approved = sum(1 for c in all_cands if c.get("status") == "approved")
+    n_rejected = sum(1 for c in all_cands if c.get("status") == "rejected")
+    n_pending  = sum(1 for c in all_cands if c.get("status", "pending") == "pending")
 
-    if not approved and not rejected:
+    print(f"Preview: {len(preview)} productos, {len(all_cands)} candidatas — "
+          f"{n_approved} aprobadas, {n_rejected} rechazadas, {n_pending} pendientes",
+          flush=True)
+
+    if not n_approved and not n_rejected:
         print("Nada que procesar (todo pendiente).")
-        return
+        return {"ok": True, "applied": 0, "rejected": 0, "pending": n_pending,
+                "message": "Nada que procesar (todo pendiente)."}
 
     items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
-    backup_and_rotate(items_path, "fetch-better-covers")
+    backup_and_rotate(items_path, "apply-preview")
 
     items_by_slug: dict[str, list[dict]] = {}
     for item in items:
@@ -1434,42 +1663,155 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
         if s:
             items_by_slug.setdefault(s, []).append(item)
 
+    replaced = 0
+    galleried = 0
     reverted = 0
-    cleaned_old = 0
-    cleaned_new = 0
+    # Archivos candidatos a borrar tras aplicar (se filtran por orphan-check).
+    old_to_drop: set = set()   # portadas viejas reemplazadas
+    new_to_drop: set = set()   # imágenes nuevas rechazadas
 
-    for entry in rejected:
+    for entry in preview:
         slug = entry.get("slug", "")
-        for item in items_by_slug.get(slug, []):
-            _apply_improvement(item, entry["old_url"], entry["old_image"])
-            reverted += 1
-        new_file = images_dir / entry.get("new_image", "")
-        old_file = entry.get("old_image", "")
-        if new_file.name and new_file.name != old_file and new_file.exists():
-            new_file.unlink()
-            cleaned_new += 1
+        targets = items_by_slug.get(slug, [])
+        old_url = entry.get("old_url", "")
+        old_image = entry.get("old_image", "")
+        # Mapa url→local de la galería actual (para borrar el archivo de la
+        # imagen reemplazada cuando action == replace_image).
+        cur_local_by_url = {
+            ci.get("url", ""): ci.get("local", "")
+            for ci in (entry.get("current_images") or [])
+            if isinstance(ci, dict)
+        }
+        for cand in entry["candidates"]:
+            status = cand.get("status", "pending")
+            action = cand.get("action", "replace_cover")
+            new_url = cand.get("new_url", "")
+            new_local = cand.get("new_image", "")
+            kind = cand.get("kind", "gallery")
+            target = cand.get("target", "")
 
-    for entry in approved:
-        old_file = images_dir / entry.get("old_image", "")
-        new_file = entry.get("new_image", "")
-        if old_file.name and old_file.name != new_file and old_file.exists():
-            old_file.unlink()
-            cleaned_old += 1
+            if status == "approved":
+                if action == "replace_cover":
+                    for item in targets:
+                        _apply_improvement(item, new_url, new_local)
+                    replaced += 1
+                    if old_image and old_image != new_local:
+                        old_to_drop.add(old_image)
+                elif action == "replace_image":
+                    # Reemplaza una imagen específica de la galería (por su url).
+                    # Si la galería cambió y no se encuentra, fallback a agregar.
+                    hit = False
+                    for item in targets:
+                        if _replace_at_target(item, target, new_url, new_local):
+                            hit = True
+                        else:
+                            _add_gallery_image(item, new_url, new_local,
+                                               kind if kind == "extra" else "gallery")
+                    replaced += 1
+                    old_local = cur_local_by_url.get(target, "")
+                    if hit and old_local and old_local != new_local:
+                        old_to_drop.add(old_local)
+                elif action == "add_gallery":
+                    for item in targets:
+                        _add_gallery_image(item, new_url, new_local, "gallery")
+                    galleried += 1
+                elif action == "add_extra":
+                    for item in targets:
+                        _add_gallery_image(item, new_url, new_local, "extra")
+                    galleried += 1
+                elif action == "replace_cover_demote":
+                    # La nueva pasa a portada y la portada ACTUAL se conserva en
+                    # la galería como extra (no se descarta). Es lo que el owner
+                    # suele querer: "promové esta, pero guardame la vieja".
+                    for item in targets:
+                        _ensure_cover_slot(item)
+                        imgs = item.get("images") or []
+                        prev_url = imgs[0].get("url", "") if imgs else item.get("image_url", "")
+                        prev_local = imgs[0].get("local", "") if imgs else item.get("image_local", "")
+                        _apply_improvement(item, new_url, new_local)
+                        if prev_url and prev_url != new_url:
+                            _add_gallery_image(item, prev_url, prev_local, "extra")
+                    replaced += 1
+                    galleried += 1
+                    # NO borramos la portada vieja: ahora vive en la galería.
+                elif action == "replace_and_add":
+                    for item in targets:
+                        _apply_improvement(item, new_url, new_local)
+                        _add_gallery_image(item, new_url, new_local,
+                                           kind if kind == "extra" else "gallery")
+                    replaced += 1
+                    galleried += 1
+                    if old_image and old_image != new_local:
+                        old_to_drop.add(old_image)
+            elif status == "rejected":
+                if action in ("replace_cover", "replace_and_add"):
+                    for item in targets:
+                        _apply_improvement(item, old_url, old_image)
+                        _remove_gallery_image(item, new_url)
+                    reverted += 1
+                elif action in ("add_gallery", "add_extra", "replace_image",
+                                "replace_cover_demote"):
+                    # Nada se había aplicado todavía (safe-by-default): solo
+                    # quitamos la url nueva por si una corrida previa la agregó.
+                    for item in targets:
+                        _remove_gallery_image(item, new_url)
+                    reverted += 1
+                if new_local and new_local != old_image and new_local != "[dry-run]":
+                    new_to_drop.add(new_local)
+            # pending: nada
 
     _atomic_write(items_path, items)
 
-    print(f"✓ Resultado:")
-    print(f"  Aprobados:              {len(approved)} (imagen vieja eliminada: {cleaned_old})")
-    print(f"  Rechazados (revertidos): {reverted} (imagen nueva eliminada: {cleaned_new})")
+    # Borrado seguro de archivos: solo si NINGÚN item los referencia tras aplicar.
+    referenced = _collect_referenced_locals(items)
+    cleaned_old = 0
+    cleaned_new = 0
+    for fname in old_to_drop:
+        if fname and fname not in referenced:
+            f = images_dir / fname
+            if f.exists():
+                f.unlink()
+                cleaned_old += 1
+    for fname in new_to_drop:
+        if fname and fname not in referenced:
+            f = images_dir / fname
+            if f.exists():
+                f.unlink()
+                cleaned_new += 1
 
-    if pending:
-        # Guardar solo los pendientes para futura revisión
+    print(f"✓ Resultado:")
+    print(f"  Reemplazos (portada/galería): {replaced} (imagen vieja eliminada: {cleaned_old})")
+    print(f"  Agregadas a galería:          {galleried}")
+    print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
+
+    # Conservar entries con alguna candidata pendiente (entera); quitar el resto.
+    # Así las aprobadas Y rechazadas se sacan del JSON; solo quedan las pendientes.
+    remaining = [
+        e for e in preview
+        if any(c.get("status", "pending") == "pending" for c in e["candidates"])
+    ]
+    n_rem = 0
+    if remaining:
         _PREVIEW_PATH.write_text(
-            json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"  Pendientes:             {len(pending)} (siguen en preview para después)")
+            json.dumps(remaining, ensure_ascii=False, indent=2), encoding="utf-8")
+        n_rem = sum(1 for e in remaining for c in e["candidates"]
+                    if c.get("status", "pending") == "pending")
+        print(f"  Pendientes:              {n_rem} candidatas (siguen en preview)")
     else:
         _PREVIEW_PATH.unlink()
         print(f"  Preview limpiado (todo procesado).")
+
+    return {
+        "ok": True,
+        "applied": n_approved,
+        "rejected": n_rejected,
+        "pending": n_rem,
+        "replaced": replaced,
+        "galleried": galleried,
+        "reverted": reverted,
+        "cleaned_old": cleaned_old,
+        "cleaned_new": cleaned_new,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
