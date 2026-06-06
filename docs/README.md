@@ -67,6 +67,15 @@ App Next.js 16 + Tailwind v4 para el público. Server Components, SSG, diseño P
 
 ## Contexto para AI
 
-[`CLAUDE.md`](../CLAUDE.md) en la raíz del proyecto — contexto completo para agentes AI:
-convenciones, gotchas, schema de datos, decisiones de diseño, corpus state.
-Es el documento más completo del proyecto y la fuente de verdad operativa.
+[`CLAUDE.md`](../CLAUDE.md) en la raíz — núcleo siempre-inyectado para agentes AI:
+policies, orientación, índice de referencias y gists de las 7 decisiones de diseño.
+El detalle se carga **bajo demanda** desde `docs/reference/`:
+
+| Doc | Qué cubre |
+|---|---|
+| [`reference/architecture.md`](reference/architecture.md) | Pipeline, storage, corpus state, las 7 decisiones de diseño (completas) |
+| [`reference/gotchas.md`](reference/gotchas.md) | Las 36 known gotchas (referenciadas por #N en todo el repo) |
+| [`reference/conventions.md`](reference/conventions.md) | Convenciones de cambio de código + playbooks "when user reports X" |
+| [`reference/file-map.md`](reference/file-map.md) | Qué vive dónde (módulos, wikis, retrofits, data files) |
+| [`reference/dashboard.md`](reference/dashboard.md) | Curación humana: feedback, edición inline, aprobación |
+| [`reference/images.md`](reference/images.md) | Convención images[], espejo local, URL-como-referencia |
