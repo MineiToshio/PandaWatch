@@ -14,6 +14,9 @@ Endpoints:
     POST /api/item/update           → editar metadata del item (detalle, inmediato)
     POST /api/approve               → aprobar/desaprobar una card (golden record)
     POST /api/approve-edition       → aprobar/desaprobar todos los tomos de una edición
+    POST /api/batch/approve         → aprobar/desaprobar N cards/ediciones a la vez
+    POST /api/batch/move            → mover N items a una edición a la vez
+    POST /api/quality/check         → re-evalúa N items (live-update del Panel de Calidad)
     GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
     POST /api/save-cover-preview    → guarda data/cover_preview.json
     GET  /api/health                → liveness probe
@@ -27,6 +30,7 @@ Endpoints:
     POST /api/image-manager/save    → guarda images[] de un item
     POST /api/image-manager/download → descarga imagen por URL al espejo
     POST /api/image-manager/scrape  → extrae <img> URLs de una página
+    POST /api/image-search          → busca portadas candidatas (ISBN + Tavily)
 
 Uso:
     python scripts/serve.py             # port 8000 (default), 0.0.0.0
@@ -631,6 +635,111 @@ def _apply_approve_edition(edition_key: str, approved: bool, reason: str = "") -
     return "ok", len(affected)
 
 
+@_serialized
+def _apply_batch_approve(item_urls: list[str], edition_keys: list[str],
+                         approved: bool, reason: str = "") -> tuple[str, int]:
+    """Aprobar/desaprobar muchas cards a la vez en UNA sola reescritura atómica.
+
+    `item_urls` aporta clusters (cada url → todas las filas de su cluster_key);
+    `edition_keys` aporta ediciones enteras (todas las filas con ese edition_key).
+    Marca approved_at/by en la unión, escribe una vez, y loguea una entrada por
+    cluster afectado a approvals.jsonl. Devuelve (status, n_filas).
+    """
+    items = _load_items()
+    now = datetime.now(timezone.utc).isoformat()
+
+    url_set = set(item_urls or [])
+    ek_set = set(k for k in (edition_keys or []) if k and not k.startswith("__solo__"))
+
+    # Clusters seleccionados vía item_urls (una card = un cluster).
+    sel_clusters: set[str] = set()
+    for it in items:
+        if it.get("url") in url_set:
+            sel_clusters.add(it.get("cluster_key") or f"url:{it.get('url','')}")
+
+    affected: list[dict] = []
+    for it in items:
+        cl = it.get("cluster_key") or f"url:{it.get('url','')}"
+        if cl in sel_clusters or it.get("edition_key") in ek_set:
+            affected.append(it)
+            if approved:
+                it["approved_at"] = now
+                it["approved_by"] = "owner"
+            else:
+                it["approved_at"] = ""
+                it["approved_by"] = ""
+    if not affected:
+        return "Nada que aprobar", 0
+
+    _write_items(items)
+
+    APPROVALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    with APPROVALS_PATH.open("a", encoding="utf-8") as fh:
+        for it in affected:
+            cluster = it.get("cluster_key") or f"url:{it.get('url','')}"
+            if cluster in seen:
+                continue
+            seen.add(cluster)
+            fh.write(json.dumps({
+                "cluster_key": cluster,
+                "url": it.get("url", ""),
+                "action": "approve" if approved else "unapprove",
+                "approved_at": now if approved else "",
+                "approved_by": "owner" if approved else "",
+                "reason": reason or "batch via UI",
+                "submitted_at": now,
+                "series_key": it.get("series_key", ""),
+                "edition_key": it.get("edition_key", ""),
+                "title": it.get("title", ""),
+                "volume": it.get("volume", ""),
+            }, ensure_ascii=False) + "\n")
+
+    return "ok", len(affected)
+
+
+@_serialized
+def _apply_batch_move(item_urls: list[str], to_edition_key: str,
+                      reason: str = "") -> tuple[str, int]:
+    """Mover muchos items a una edición destino en UNA sola reescritura.
+
+    Reasigna edition/series + cluster_key de cada url y consolida UNA vez al
+    final (modelo 1-fila-por-producto). Loguea cada move a feedback.jsonl.
+    Devuelve (status, n_movidos).
+    """
+    if not to_edition_key:
+        return "Falta to_edition", 0
+    items = _load_items()
+    target = [i for i in items if i.get("edition_key") == to_edition_key]
+    if not target:
+        return f"Edición destino '{to_edition_key}' no existe", 0
+    ref = target[0]
+
+    url_set = set(item_urls or [])
+    moved: list[tuple[str, str]] = []  # (url, old_edition)
+    for it in items:
+        if it.get("url") in url_set and it.get("edition_key") != to_edition_key:
+            old_ek = it.get("edition_key", "")
+            it["edition_key"] = to_edition_key
+            it["edition_display"] = ref.get("edition_display", "")
+            it["series_key"] = ref.get("series_key", it.get("series_key", ""))
+            it["series_display"] = ref.get("series_display", it.get("series_display", ""))
+            vol = (it.get("volume") or "").strip()
+            it["cluster_key"] = f"edition:{to_edition_key}|{vol}"
+            moved.append((it.get("url", ""), old_ek))
+    if not moved:
+        return "Nada que mover", 0
+
+    if consolidate_by_cluster is not None:
+        items = consolidate_by_cluster(items)
+    _write_items(items)
+
+    for url, old_ek in moved:
+        _log_feedback(url, reason or "batch move via UI", action="move",
+                      extra={"from_edition": old_ek, "to_edition": to_edition_key})
+    return "ok", len(moved)
+
+
 # El editor inline del detalle permite editar CUALQUIER atributo del item,
 # EXCEPTO estos dos grupos:
 #
@@ -984,6 +1093,7 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             "/panel.html":        ROOT / "web" / "panel.html",
             "/cover-preview.html": ROOT / "web" / "cover-preview.html",
             "/image-manager.html": ROOT / "web" / "image-manager.html",
+            "/quality.html":      ROOT / "web" / "quality.html",
         }
         # Comparar sin el query string: /image-manager.html?item=... debe
         # matchear el alias /image-manager.html (el query lo lee el JS del
@@ -1071,13 +1181,28 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/approve-edition":
             self._handle_approve_edition()
             return
+        if self.path == "/api/batch/approve":
+            self._handle_batch_approve()
+            return
+        if self.path == "/api/batch/move":
+            self._handle_batch_move()
+            return
+        if self.path == "/api/quality/check":
+            self._handle_quality_check()
+            return
         if self.path == "/api/save-cover-preview":
             self._handle_save_cover_preview()
+            return
+        if self.path == "/api/apply-cover-preview":
+            self._handle_apply_cover_preview()
             return
 
         # Image manager API
         if self.path == "/api/image-manager/save":
             self._handle_image_save()
+            return
+        if self.path == "/api/image-search":
+            self._handle_image_search()
             return
         if self.path == "/api/image-manager/download":
             self._handle_image_download()
@@ -1292,6 +1417,75 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         else:
             self._json(400, {"error": result})
 
+    def _handle_batch_approve(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=2_000_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        urls = payload.get("urls") or []
+        edition_keys = payload.get("edition_keys") or []
+        approved = bool(payload.get("approved", True))
+        reason = (payload.get("reason") or "").strip()
+        if not isinstance(urls, list) or not isinstance(edition_keys, list):
+            self._json(400, {"error": "'urls'/'edition_keys' deben ser listas"})
+            return
+        if not urls and not edition_keys:
+            self._json(400, {"error": "Selección vacía"})
+            return
+        result, n = _apply_batch_approve(urls, edition_keys, approved, reason)
+        if result == "ok":
+            self._json(200, {"ok": True, "approved": approved, "count": n})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_batch_move(self) -> None:
+        try:
+            payload = self._read_json(max_bytes=2_000_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        urls = payload.get("urls") or []
+        to_edition = (payload.get("to_edition") or "").strip()
+        reason = (payload.get("reason") or "").strip()
+        if not isinstance(urls, list) or not urls:
+            self._json(400, {"error": "Selección vacía"})
+            return
+        if not to_edition:
+            self._json(400, {"error": "Falta 'to_edition'"})
+            return
+        result, n = _apply_batch_move(urls, to_edition, reason)
+        if result == "ok":
+            self._json(200, {"ok": True, "count": n})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_quality_check(self) -> None:
+        """Re-evalúa SOLO los items pedidos (live-update del Panel de Calidad).
+
+        Devuelve {results: {url: [cat_ids que aún dispara]}}. Es de SOLO LECTURA
+        (no toca items.jsonl), por eso no necesita @_serialized."""
+        try:
+            payload = self._read_json(max_bytes=200_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        urls = payload.get("urls") or []
+        if not isinstance(urls, list) or not urls:
+            self._json(400, {"error": "Falta 'urls' (lista)"})
+            return
+        audit_dir = str(ROOT / "scripts" / "audit")
+        if audit_dir not in sys.path:
+            sys.path.insert(0, audit_dir)
+        try:
+            import data_quality as _dq  # type: ignore
+            items = _load_items()
+            results = _dq.check_urls(urls[:500], items=items)
+        except Exception as e:  # pragma: no cover
+            self._json(500, {"error": f"recheck falló: {e}"})
+            return
+        self._json(200, {"results": results})
+
     def _handle_save_cover_preview(self) -> None:
         try:
             entries = self._read_json(max_bytes=5_000_000)
@@ -1304,6 +1498,25 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         dst = ROOT / "data" / "cover_preview.json"
         dst.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
         self._json(200, {"ok": True, "saved": len(entries)})
+
+    @_serialized
+    def _handle_apply_cover_preview(self) -> None:
+        """Aplica al catálogo las candidatas APROBADAS del cover_preview.json y
+        quita del JSON las decididas (aprobadas + rechazadas), dejando solo las
+        pendientes. Reusa apply_preview() de fetch_better_covers. Muta items.jsonl
+        + borra archivos huérfanos → va bajo @_serialized (gotcha #34)."""
+        retro_dir = str(ROOT / "scripts" / "retrofit")
+        if retro_dir not in sys.path:
+            sys.path.insert(0, retro_dir)
+        try:
+            import fetch_better_covers as _fbc  # type: ignore
+            # apply_preview lee su _PREVIEW_PATH global; lo apuntamos al archivo real.
+            _fbc._PREVIEW_PATH = ROOT / "data" / "cover_preview.json"
+            summary = _fbc.apply_preview(ITEMS_PATH, IMAGES_DIR)
+        except Exception as e:  # noqa: BLE001
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        self._json(200, summary or {"ok": True, "applied": 0})
 
     # ---------- Image manager handlers ----------
 
@@ -1344,6 +1557,63 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(200, {"ok": True, "local": local, "url": image_url, "file_size": file_size})
         else:
             self._json(422, {"error": err or "Failed to download image"})
+
+    def _handle_image_search(self) -> None:
+        """Busca portadas candidatas para un item (búsqueda integrada del gestor).
+
+        Reúsa la infra de scripts/retrofit/fetch_better_covers.py:
+          - por ISBN → Amazon CDN + PRH CDN + OpenLibrary + Google Books (gratis)
+          - por texto → Tavily Search API con include_images (TAVILY_API_KEY en .env)
+        Devuelve solo las URLs candidatas; el frontend las muestra y, al elegir
+        una, la baja con /api/image-manager/download. Solo lectura."""
+        try:
+            payload = self._read_json(max_bytes=100_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        query = (payload.get("query") or "").strip()
+        isbn = (payload.get("isbn") or "").strip()
+        if not query and not isbn:
+            self._json(400, {"error": "Falta 'query' o 'isbn'"})
+            return
+
+        retro_dir = str(ROOT / "scripts" / "retrofit")
+        if retro_dir not in sys.path:
+            sys.path.insert(0, retro_dir)
+        try:
+            import fetch_better_covers as _fbc  # type: ignore
+            import requests  # type: ignore
+            _fbc._load_dotenv()
+            session = requests.Session()
+            session.headers.update({"User-Agent": "manga-watch-personal/0.2"})
+            urls: list[str] = []
+            if isbn:
+                for fn in ("_candidates_from_isbn",
+                           "_candidates_from_isbn_openlibrary",
+                           "_candidates_from_isbn_google_books"):
+                    try:
+                        urls += list(getattr(_fbc, fn)(isbn, session) or [])
+                    except Exception:
+                        pass
+            tavily_key = os.environ.get("TAVILY_API_KEY", "")
+            if query and tavily_key:
+                try:
+                    urls += list(_fbc._search_tavily_for_cover(query, tavily_key, session) or [])
+                except Exception:
+                    pass
+            seen: set[str] = set()
+            out: list[str] = []
+            for u in urls:
+                if u and u not in seen:
+                    seen.add(u)
+                    out.append(u)
+            self._json(200, {
+                "results": out,
+                "tavily": bool(tavily_key),
+                "isbn_used": bool(isbn),
+            })
+        except Exception as e:  # pragma: no cover
+            self._json(500, {"error": f"búsqueda falló: {e}"})
 
     def _handle_image_scrape(self) -> None:
         try:
