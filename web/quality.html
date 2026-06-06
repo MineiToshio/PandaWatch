@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manga Watch — Calidad de datos</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  :root { --accent: #d63384; --bg: #fafaf7; }
+  body { background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .accent { color: var(--accent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 5px; }
+  [x-cloak] { display: none !important; }
+  .thumb { width: 36px; height: 48px; object-fit: cover; background: #f3f3ee; border-radius: 4px; flex-shrink: 0; }
+  .thumb-ph { width: 36px; height: 48px; display: flex; align-items: center; justify-content: center; background: #f3f3ee; border-radius: 4px; color: #bbb; flex-shrink: 0; }
+</style>
+</head>
+<body x-data="qualityApp()" x-init="init()" class="min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-30">
+  <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+    <div>
+      <h1 class="text-2xl font-bold accent">🩺 Calidad de datos</h1>
+      <p class="text-sm text-gray-500">
+        <template x-if="report">
+          <span>
+            <span x-text="report.total"></span> items ·
+            <strong x-text="totalAlerts"></strong> alertas ·
+            generado <span x-text="formatDate(report.generated_at)"></span>
+            <span x-show="!report.pillow" class="text-amber-600">· (sin medición de píxeles)</span>
+          </span>
+        </template>
+        <template x-if="!report && !loading"><span>Sin reporte aún — generá la primera auditoría.</span></template>
+        <template x-if="loading"><span>Cargando reporte…</span></template>
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="regenerate()" :disabled="running"
+              class="text-sm bg-pink-600 text-white rounded-lg px-4 py-2 hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2">
+        <span x-show="!running">🔄 Regenerar auditoría</span>
+        <span x-show="running" class="flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
+          Auditando…
+        </span>
+      </button>
+      <a href="./index.html" class="text-sm text-gray-500 hover:text-pink-600 border border-gray-200 rounded-lg px-3 py-2 hover:border-pink-300">← Catálogo</a>
+    </div>
+  </div>
+  <div x-show="syncMsg" x-cloak x-transition
+       class="max-w-screen-xl mx-auto px-6 pb-2">
+    <span class="inline-block text-sm bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-3 py-1" x-text="syncMsg"></span>
+  </div>
+  <div x-show="running && lastLine" class="max-w-screen-xl mx-auto px-6 pb-2">
+    <p class="text-xs text-gray-400 font-mono truncate" x-text="lastLine"></p>
+  </div>
+</header>
+
+<main class="max-w-screen-xl mx-auto px-6 py-6 space-y-6">
+
+  <!-- Error -->
+  <template x-if="error">
+    <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 text-sm" x-text="error"></div>
+  </template>
+
+  <!-- Empty -->
+  <template x-if="!report && !loading && !error">
+    <div class="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-500">
+      <p class="text-lg mb-2">Todavía no hay reporte de calidad.</p>
+      <p class="text-sm">Hacé clic en <strong>Regenerar auditoría</strong> para escanear el catálogo.</p>
+    </div>
+  </template>
+
+  <!-- Resumen por grupo -->
+  <template x-if="report">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <template x-for="g in groupSummary" :key="g.id">
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+          <p class="text-xs uppercase tracking-wider text-gray-500 font-semibold" x-text="g.label"></p>
+          <p class="text-3xl font-bold mt-1" :class="g.alerts > 0 ? 'accent' : 'text-emerald-600'">
+            <span x-text="g.alerts"></span>
+          </p>
+          <p class="text-xs text-gray-400" x-text="g.alerts === 0 ? '✓ todo limpio' : (g.cats + ' categorías con alertas')"></p>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- Categorías (worklists) -->
+  <template x-if="report">
+    <div class="space-y-3">
+      <template x-for="cat in activeCategories" :key="cat.id">
+        <div class="bg-white border rounded-lg overflow-hidden"
+             :class="cat.severity === 'error' ? 'border-red-200' : 'border-amber-200'">
+          <button @click="toggle(cat.id)"
+                  class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition">
+            <span class="text-lg" x-text="cat.severity === 'error' ? '🔴' : '🟡'"></span>
+            <span class="font-semibold text-gray-800 flex-1" x-text="cat.label"></span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold"
+                  :class="cat.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
+                  x-text="cat.count"></span>
+            <span class="text-gray-400 text-sm" x-text="open[cat.id] ? '▾' : '▸'"></span>
+          </button>
+          <div x-show="open[cat.id]" x-cloak class="border-t border-gray-100">
+            <div class="px-4 py-2 text-xs text-gray-500 bg-gray-50 flex items-center justify-between">
+              <span x-text="cat.target === 'image' ? 'Clic en un item → abre el gestor de imágenes' : 'Clic en un item → abre el detalle'"></span>
+              <span x-show="cat.count > cat.items.length" class="text-amber-600"
+                    x-text="'mostrando ' + cat.items.length + ' de ' + cat.count"></span>
+            </div>
+            <ul class="divide-y divide-gray-100 max-h-[28rem] overflow-y-auto">
+              <template x-for="(it, i) in cat.items" :key="i">
+                <li>
+                  <a :href="linkFor(cat, it)" :target="targetFor(cat)" rel="noopener"
+                     @click="markVisited(it.url)"
+                     class="flex items-center gap-3 px-4 py-2 hover:bg-pink-50 transition group">
+                    <template x-if="coverSrc(it)">
+                      <img :src="coverSrc(it)" class="thumb" loading="lazy"
+                           @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
+                    </template>
+                    <div class="thumb-ph" :style="coverSrc(it) ? 'display:none' : ''">📚</div>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-sm font-medium text-gray-800 truncate group-hover:text-pink-700" x-text="it.title || '(sin título)'"></p>
+                      <p class="text-xs text-gray-400 truncate" x-text="it.source"></p>
+                    </div>
+                    <span x-show="it.detail" class="text-xs text-gray-500 font-mono flex-shrink-0" x-text="it.detail"></span>
+                    <span class="text-gray-300 group-hover:text-pink-500 flex-shrink-0" x-text="cat.target === 'image' ? '🖼️' : '↗'"></span>
+                  </a>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </div>
+      </template>
+
+      <!-- Todo limpio -->
+      <template x-if="activeCategories.length === 0">
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-8 text-center">
+          <p class="text-2xl mb-1">✓</p>
+          <p class="font-medium">Ninguna alerta. El catálogo está limpio.</p>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- Cobertura -->
+  <template x-if="report">
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+      <h2 class="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-3">Cobertura de campos</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <template x-for="row in coverageRows" :key="row.field">
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="text-gray-600" x-text="row.field"></span>
+              <span class="font-semibold" :class="row.pct >= 80 ? 'text-emerald-600' : (row.pct >= 50 ? 'text-amber-600' : 'text-red-500')" x-text="row.pct + '%'"></span>
+            </div>
+            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div class="h-full rounded-full" :class="row.pct >= 80 ? 'bg-emerald-500' : (row.pct >= 50 ? 'bg-amber-500' : 'bg-red-400')" :style="'width:' + row.pct + '%'"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+</main>
+
+<script>
+function qualityApp() {
+  return {
+    report: null,
+    loading: true,
+    error: null,
+    running: false,
+    lastLine: "",
+    open: {},
+    // Live-update: ítems que fui a arreglar (clic en la worklist) y que hay que
+    // re-verificar al volver, sin regenerar todo. Persistido para sobrevivir un
+    // reload (flujo same-tab). El sync entre pestañas usa BroadcastChannel.
+    recheckQueue: {},
+    _hasSavedOpen: false,
+    syncMsg: "",
+    bc: null,
+
+    async init() {
+      this._restoreState();
+      await this.loadReport();
+      this._setupSync();
+      // Si volví al reporte (mismo-tab) tras arreglar ítems, re-verificarlos
+      // ya en el load para que aparezcan quitados sin esperar el foco.
+      this.recheckVisited();
+    },
+
+    async loadReport() {
+      this.loading = true;
+      try {
+        const res = await fetch("../data/quality_report.json?_=" + Date.now(), { cache: "no-store" });
+        if (res.ok) {
+          this.report = await res.json();
+          // Si no hay estado de collapse guardado, abrir las categorías con
+          // alertas de tipo error por default. Si lo hay, respetar al usuario.
+          if (!this._hasSavedOpen) {
+            for (const c of this.report.categories) {
+              if (c.count > 0 && c.severity === "error") this.open[c.id] = true;
+            }
+          }
+        }
+      } catch (e) { /* sin reporte aún */ }
+      this.loading = false;
+    },
+
+    // --- Persistencia de estado (collapse + cola de re-verificación) ---
+    _restoreState() {
+      try {
+        const o = localStorage.getItem("mw_quality_open");
+        if (o) { this.open = JSON.parse(o) || {}; this._hasSavedOpen = true; }
+        const q = localStorage.getItem("mw_quality_recheck");
+        if (q) this.recheckQueue = JSON.parse(q) || {};
+      } catch (e) { /* ignore */ }
+    },
+    _persistOpen() {
+      try { localStorage.setItem("mw_quality_open", JSON.stringify(this.open)); } catch (e) {}
+    },
+    _persistQueue() {
+      try { localStorage.setItem("mw_quality_recheck", JSON.stringify(this.recheckQueue)); } catch (e) {}
+    },
+
+    // --- Sincronización en vivo ---
+    _setupSync() {
+      // Al volver a esta pestaña, re-verificar lo que fui a arreglar.
+      window.addEventListener("focus", () => this.recheckVisited());
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") this.recheckVisited();
+      });
+      // Cross-tab: el gestor de imágenes / el detalle avisan al guardar.
+      try {
+        this.bc = new BroadcastChannel("manga-quality");
+        this.bc.onmessage = (e) => {
+          const url = e && e.data && e.data.url;
+          if (url) this.recheckUrls([url], { silent: false });
+        };
+      } catch (e) { /* navegador viejo sin BroadcastChannel */ }
+    },
+    // Marca un ítem como "fui a arreglarlo" (clic en la worklist).
+    markVisited(url) {
+      if (!url) return;
+      this.recheckQueue[url] = true;
+      this._persistQueue();
+    },
+    // Re-verifica los ítems de la cola (al recuperar foco / volver).
+    async recheckVisited() {
+      const urls = Object.keys(this.recheckQueue);
+      if (!urls.length || !this.report) return;
+      await this.recheckUrls(urls, { silent: true, fromQueue: true });
+    },
+    // Llama al endpoint por-ítem y saca de la worklist los que ya se arreglaron.
+    async recheckUrls(urls, { silent = false, fromQueue = false } = {}) {
+      if (!this.report || !urls.length) return;
+      let results;
+      try {
+        const res = await fetch("/api/quality/check", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls }),
+        });
+        if (!res.ok) return;
+        results = (await res.json()).results || {};
+      } catch (e) { return; }
+
+      let resolved = 0;
+      for (const [url, stillCats] of Object.entries(results)) {
+        const still = new Set(stillCats);
+        for (const cat of this.report.categories) {
+          if (still.has(cat.id)) continue;          // sigue disparando esa alerta
+          const before = cat.items.length;
+          cat.items = cat.items.filter(it => it.url !== url);
+          const removed = before - cat.items.length;
+          if (removed > 0) { cat.count = Math.max(0, cat.count - removed); resolved += removed; }
+        }
+        // Si vino de la cola y ya no dispara NINGUNA de sus categorías previas,
+        // lo sacamos de la cola; si vino por broadcast, también.
+        delete this.recheckQueue[url];
+      }
+      this._persistQueue();
+      if (resolved > 0) {
+        this.syncMsg = `✓ ${resolved} resuelto${resolved === 1 ? "" : "s"} y quitado${resolved === 1 ? "" : "s"} de la lista`;
+        setTimeout(() => { this.syncMsg = ""; }, 3500);
+      }
+    },
+
+    get totalAlerts() {
+      if (!this.report) return 0;
+      return this.report.categories.reduce((a, c) => a + c.count, 0);
+    },
+
+    get activeCategories() {
+      if (!this.report) return [];
+      // Errores primero, luego por count desc.
+      return this.report.categories
+        .filter(c => c.count > 0)
+        .sort((a, b) => {
+          if (a.severity !== b.severity) return a.severity === "error" ? -1 : 1;
+          return b.count - a.count;
+        });
+    },
+
+    get groupSummary() {
+      if (!this.report) return [];
+      const labels = { estructura: "Estructura", procedencia: "Procedencia", imagenes: "Imágenes" };
+      const out = {};
+      for (const c of this.report.categories) {
+        const g = c.group;
+        if (!out[g]) out[g] = { id: g, label: labels[g] || g, alerts: 0, cats: 0 };
+        out[g].alerts += c.count;
+        if (c.count > 0) out[g].cats += 1;
+      }
+      return ["estructura", "procedencia", "imagenes"].map(g => out[g]).filter(Boolean);
+    },
+
+    get coverageRows() {
+      if (!this.report || !this.report.coverage) return [];
+      return Object.entries(this.report.coverage).map(([field, v]) => ({ field, pct: v.pct, count: v.count }));
+    },
+
+    toggle(id) { this.open[id] = !this.open[id]; this._persistOpen(); },
+
+    coverSrc(it) {
+      if (it.image_local) return "../data/images/" + it.image_local;
+      return it.image_url || "";
+    },
+
+    linkFor(cat, it) {
+      const u = encodeURIComponent(it.url || "");
+      // Imagen → gestor en la MISMA pestaña, pasando `return` a este reporte
+      // para que el botón "← Volver al reporte" funcione. Al volver, el panel
+      // re-verifica el ítem tocado y lo saca si se arregló. (Los ítems de
+      // estructura/metadata → detalle, en pestaña nueva: index.html no tiene
+      // botón de retorno a Calidad y son casos raros.)
+      if (cat.target === "image") {
+        const ret = encodeURIComponent(window.location.pathname + window.location.search);
+        return "image-manager.html?item=" + u + "&return=" + ret;
+      }
+      return "index.html#/volume/" + u;
+    },
+    // Imagen abre en la misma pestaña (round-trip con botón Volver); estructura
+    // en pestaña nueva (el panel queda y se actualiza por foco/broadcast).
+    targetFor(cat) { return cat.target === "image" ? "_self" : "_blank"; },
+
+    formatDate(iso) {
+      if (!iso) return "";
+      try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    },
+
+    // Regenera la auditoría vía el job runner del panel (POST /api/run +
+    // polling de /api/jobs/<id>), y al terminar recarga el JSON.
+    async regenerate() {
+      if (this.running) return;
+      this.running = true;
+      this.lastLine = "Lanzando auditoría…";
+      this.error = null;
+      try {
+        const res = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ script_id: "data_quality", flags: {} }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await this.pollJob(data.job_id);
+        await this.loadReport();
+      } catch (e) {
+        this.error = "Error al regenerar: " + e.message
+          + " — ¿está corriendo el server (scripts/serve.py)?";
+      } finally {
+        this.running = false;
+        this.lastLine = "";
+      }
+    },
+
+    async pollJob(jobId) {
+      for (let i = 0; i < 400; i++) {        // ~10 min máx
+        await new Promise(r => setTimeout(r, 1500));
+        const res = await fetch("/api/jobs/" + jobId);
+        if (!res.ok) throw new Error("job no encontrado");
+        const job = await res.json();
+        if (Array.isArray(job.lines) && job.lines.length) {
+          this.lastLine = job.lines[job.lines.length - 1];
+        }
+        if (job.status !== "running") {
+          if (job.status === "error") throw new Error("la auditoría falló (ver Panel de control)");
+          return;
+        }
+      }
+      throw new Error("timeout esperando la auditoría");
+    },
+  };
+}
+</script>
+</body>
+</html>

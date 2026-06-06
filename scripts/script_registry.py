@@ -1886,6 +1886,59 @@ SCRIPTS: list[dict[str, Any]] = [
                   placeholder="reports/source-health.md", advanced=True),
         ],
     },
+    {
+        "id": "data_quality",
+        "category": "🔍 Calidad",
+        "icon": "🩺",
+        "name": "Auditoría de calidad de datos",
+        "tagline": "Detecta fotos malas, mismatches e incongruencias. Solo lectura.",
+        "what": (
+            "Recorre todo data/items.jsonl SIN modificar nada y levanta alertas: "
+            "imágenes (sin foto, ref local rota, archivo basura, portada con URL "
+            "basura, pixelada midiendo píxeles con Pillow, card != carrusel, "
+            "archivo compartido entre obras), procedencia (sin sources[], source "
+            "sin url) y estructura (clusters con >1 fila, estandarizados sin keys, "
+            "sin slug) + cobertura. Escribe data/quality_report.json que consume "
+            "el Panel de Calidad (web/quality.html) como worklists clickeables."
+        ),
+        "when": (
+            "Cuando quieras revisar la salud del catálogo, después de un scrape "
+            "grande, o desde el botón 'Regenerar' del Panel de Calidad. Tarda "
+            "~10-30s (la medición de píxeles abre cada imagen)."
+        ),
+        "command": [PYTHON, "scripts/audit/data_quality.py"],
+        "presets": [
+            {
+                "id": "completo",
+                "label": "🩺 Auditoría completa (con píxeles)",
+                "desc": "Mide píxeles de cada portada. La más exhaustiva.",
+                "values": {},
+            },
+            {
+                "id": "rapido",
+                "label": "⚡ Rápida (sin medir píxeles)",
+                "desc": "Saltea Pillow. Más rápida; no detecta 'pixelada'.",
+                "values": {"--no-measure": True},
+            },
+        ],
+        "flags": [
+            _flag("--px", "Umbral de píxeles 'pequeña'",
+                  "Una portada con menos de estos píxeles se marca pixelada. "
+                  "Default 90000 (≈300×300).",
+                  type="int", default=90000, advanced=True),
+            _flag("--examples", "Ejemplos por categoría (stdout)",
+                  "Cuántos ejemplos imprimir en el log de cada alerta.",
+                  type="int", default=6, advanced=True),
+            _flag("--no-measure", "No medir píxeles (rápido)",
+                  "Saltea abrir cada imagen con Pillow. Pierde la detección "
+                  "de 'pixelada' pero corre mucho más rápido.",
+                  type="bool", default=False),
+            _flag("--no-json", "No escribir el JSON",
+                  "Solo imprime el reporte humano, sin actualizar "
+                  "data/quality_report.json.",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
 ]
 
 

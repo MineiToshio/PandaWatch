@@ -53,7 +53,17 @@ endpoints `/api/*` conviven en el mismo servidor:
 | `POST /api/curation/{move,merge,remove}` | curación inmediata de items (catálogo) |
 | `POST /api/approve` | aprobar/desaprobar una card — golden record (catálogo) |
 | `POST /api/approve-edition` | aprobar/desaprobar todos los tomos de una edición (catálogo) |
+| `POST /api/batch/approve` | aprobar/desaprobar N cards/ediciones a la vez (catálogo) |
+| `POST /api/batch/move` | mover N items a una edición a la vez (catálogo) |
+| `POST /api/quality/check` | re-evalúa N items — live-update del Panel de Calidad (solo lectura) |
+| `POST /api/image-search` | busca portadas candidatas por ISBN + Tavily (gestor de imágenes, solo lectura) |
 | `POST /api/save-cover-preview` | guarda revisiones de portadas (catálogo) |
+
+El catálogo (`web/index.html`) además expone **selección múltiple** (acciones
+batch sobre los endpoints `/api/batch/*`) y un **modo curación rápida** por
+teclado. El **Panel de Calidad** (`web/quality.html`) lanza
+`data_quality.py` vía `POST /api/run` y consume `data/quality_report.json`.
+Ver `docs/web-html/PRD.md`.
 
 El servidor usa `ThreadingMixIn` para soportar múltiples conexiones SSE
 en paralelo mientras atiende requests HTTP normales concurrentemente.
@@ -65,7 +75,8 @@ en paralelo mientras atiende requests HTTP normales concurrentemente.
 Tres zonas:
 
 1. **Izquierda** — Lista de scripts agrupados por categoría
-   (Día a día / Mantenimiento / Auditoría), más historial de jobs
+   (⭐ Canónicos / Día a día / Mantenimiento / Retrofit / Auditoría /
+   🔍 Calidad), más historial de jobs
    recientes.
 2. **Centro** — Detalle del script seleccionado:
    - "¿Qué hace?" y "¿Cuándo usarlo?" en lenguaje natural.

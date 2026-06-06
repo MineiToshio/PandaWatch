@@ -23,3 +23,6 @@ logs/
 
 # Artefacto regenerable de la cola de revisión de portadas (familia items.jsonl)
 data/cover_preview.json
+
+# Reporte regenerable de la auditoría de calidad (lo genera data_quality.py)
+data/quality_report.json
