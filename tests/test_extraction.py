@@ -6065,6 +6065,20 @@ def test_normalize_url_strips_amazon_affiliate_params():
             == "https://example.com/p/123/ref=foo")
 
 
+def test_is_digital_only_url_rejects_honto_ebook():
+    """honto.jp/ebook/ es Kindle/digital, nunca edición física → se filtra.
+    PandaWatch cataloga ediciones físicas (caso 2026-06-04: 7 items Honto
+    ebook, 4 con título-basura del artefacto 作品)."""
+    assert mw.is_digital_only_url("https://honto.jp/ebook/pd_35206914.html")
+    assert mw.is_digital_only_url("https://HONTO.jp/EBOOK/pd_1.html")  # case-insensitive
+    # netstore (físico) NO se filtra.
+    assert not mw.is_digital_only_url(
+        "https://honto.jp/netstore/pd-book_12345.html")
+    assert not mw.is_digital_only_url("")
+    # "ebook" en un slug legítimo de otro host no se rechaza (filtro por host+path).
+    assert not mw.is_digital_only_url("https://example.com/the-ebook-guide")
+
+
 def test_extract_volume_patterns():
     assert mw._extract_volume("One Piece vol. 100") == "100"
     assert mw._extract_volume("Naruto Tomo 5") == "5"
@@ -7973,6 +7987,27 @@ def test_canonical_series_key_prefix_matching():
 # ---------------------------------------------------------------------------
 # derive_product_type priority (list order = specificity)
 # ---------------------------------------------------------------------------
+
+
+def test_detect_signals_artbook_booklet_bonus_demoted_to_bonus():
+    """画集付き / イラスト集付き特装版 = artbook INCLUIDO como bonus → el producto
+    es el tomo, no un artbook. detect_signals demuele artbook→bonus (queja del
+    owner 2026-06-04: tomos con "Artbook" en el título). Un artbook propio
+    (画集 standalone, sin 付き) NO se demuele."""
+    # Tomo con cuadernillo de ilustraciones incluido → bonus, NO artbook.
+    for t in ("宇宙兄弟(39) 画集付き特装版",
+              "暁のヨナ YONA MEMORIAL イラスト集付き特装版 47",
+              "彼女、お借りします(41) 水原千鶴ミニ画集付き特装版"):
+        _, _, types = mw.detect_signals(t)
+        assert "artbook" not in types, f"{t!r}: artbook NO debería estar: {types}"
+        assert "bonus" in types, f"{t!r}: debería tener bonus: {types}"
+    # Artbook GENUINO (el producto ES el artbook) → conserva artbook.
+    for t in ("笠井あゆみ画集 麗人1993-2025 特装版",
+              "貞本義行画集 EVANGELION 限定版",
+              "枢やな画集 黒執事3",
+              "Beasts Art Book"):
+        _, _, types = mw.detect_signals(t)
+        assert "artbook" in types, f"{t!r}: artbook DEBERÍA estar: {types}"
 
 
 def test_derive_product_type_priority_artbook_over_boxset():

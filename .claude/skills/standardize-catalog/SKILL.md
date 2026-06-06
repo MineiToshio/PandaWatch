@@ -302,8 +302,22 @@ edition_slug (pick ONE — NEVER compound two together):
 When format-slug (boxset/hardcover/coffret) conflicts with edition-name
 (collector/ultimate/limited), choose the edition-name.
 
-**ARTBOOK vs SPECIAL**: If the item has a volume number → `special` (never `artbook`).
-Only standalone illustration books without volume → `artbook`.
+**ARTBOOK vs SPECIAL**: If the item has a volume number → `special`/`limited`
+(never `artbook`). Only standalone illustration books WITHOUT a volume → `artbook`.
+
+CRITICAL — "画集付き" / "イラスト集付き" = artbook INCLUDED AS BONUS, not the product.
+A Japanese title like "宇宙兄弟(39) 画集付き特装版" / "暁のヨナ イラスト集付き特装版 47"
+is a regular VOLUME (note the number) that ships WITH a mini art booklet. It is NOT an
+artbook. Rule:
+- 画集/イラスト集/アートワーク immediately followed by 付き/付/つき/同梱 (= "with/included")
+  → the artbook is a BONUS → edition = `special` (特装版/同梱版) or `limited` (限定版),
+  product_type = `manga`, and DO NOT put "Artbook" in the title.
+  e.g. "宇宙兄弟(39) 画集付き特装版" → title "Uchuu Kyoudai Special 39",
+  edition_key `space-brothers-kodansha-special`.
+- 画集/イラスト集 as the standalone product, NO 付き (e.g. "笠井あゆみ画集 麗人") → real
+  `artbook`. Same logic for "ファンブック付き" (fanbook bonus) vs a standalone "Visual Fanbook".
+(detect_signals/derive_product_type now demote this automatically, but assign the
+edition_key/title correctly here too — those are curated fields.)
 
 ### volume
 String. Digits only. "1", "100", "1-3" for sets, "" if absent.

@@ -650,6 +650,26 @@ def canonicalize_url(base_url: str, href: str | None) -> str:
     return absolute
 
 
+# URLs que son productos DIGITALES (ebooks), nunca ediciones físicas. PandaWatch
+# cataloga ediciones físicas especiales — un ebook nunca califica. La búsqueda
+# de Honto (`netstore/search.html`) mezcla resultados `/ebook/` (Kindle/digital)
+# con los físicos; sin este filtro entraban al catálogo como falsos "限定版"
+# (caso 2026-06-04: 7 items Honto, todos `/ebook/`, 4 con título-basura
+# "〈autor〉 Work 限定版" del artefacto 作品). El patrón es por host+path para no
+# rechazar otras URLs que contengan "ebook" en un slug legítimo.
+_DIGITAL_ONLY_URL_PATTERNS: tuple[str, ...] = (
+    "honto.jp/ebook/",
+)
+
+
+def is_digital_only_url(url: str) -> bool:
+    """True si la URL es un producto puramente digital (ebook), no físico."""
+    if not url:
+        return False
+    low = url.lower()
+    return any(p in low for p in _DIGITAL_ONLY_URL_PATTERNS)
+
+
 # Query params que NO identifican al producto, solo tracking / posición.
 TRACKING_PARAMS: frozenset[str] = frozenset({
     # Shopify (Dark Horse Direct, Milky Way, Kinokuniya, etc.)
@@ -804,6 +824,20 @@ def _phrase_pattern(normalized_phrase: str) -> re.Pattern[str]:
     return pat
 
 
+# Cuadernillo de ilustraciones (画集/イラスト集/アートワーク) ADJUNTO como bonus
+# (付/つき/同梱/付属) — el producto es el tomo, no un artbook. Ver demotion en
+# detect_signals (queja del owner 2026-06-04: tomos con "Artbook" en el título).
+_ARTBOOK_BONUS_ATTACH_RE = re.compile(
+    r"(画集|イラスト集|アートワーク)[^。]{0,8}?(付|つき|同梱|付属)"
+)
+# Frases artbook que designan un CUADERNILLO (no un artbook como producto). Si el
+# artbook se detectó SOLO por estas (no por "art book"/"画集" standalone propio),
+# y aparece adjunto como bonus, se demuele a `bonus`.
+_ARTBOOK_BOOKLET_PHRASES = frozenset(
+    normalize_text(p) for p in ("画集", "イラスト集", "アートワーク", "mini artbook")
+)
+
+
 def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     normalized = normalize_text(text)
     matched_phrases: list[str] = []
@@ -831,6 +865,23 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
                     matched_types.append(rule_type)
                     score += rule_score // _DETECT_FUZZY_DIVISOR
                     break
+
+    # "画集付き" / "イラスト集付き特装版" = un cuadernillo de ilustraciones INCLUIDO
+    # como bonus, NO el producto. El producto es el tomo de manga (特装版/限定版).
+    # Sin esto, el skill /standardize-catalog clasificaba estos tomos como edición
+    # "Artbook" y reescribía el título a "X Artbook Special N" (queja del owner
+    # 2026-06-04). Demuele artbook→bonus SOLO cuando el único indicio de artbook
+    # es un cuadernillo adjunto (画集/イラスト集/アートワーク + 付/つき/同梱/付属)
+    # y NO un artbook propio (p. ej. "笠井あゆみ画集" NO se demuele — no hay 付き).
+    if "artbook" in matched_types and _ARTBOOK_BONUS_ATTACH_RE.search(normalized):
+        artbook_phrases = {
+            normalize_text(p) for p, t in zip(matched_phrases, matched_types)
+            if t == "artbook"
+        }
+        if artbook_phrases and artbook_phrases <= _ARTBOOK_BOOKLET_PHRASES:
+            matched_types = [t for t in matched_types if t != "artbook"]
+            if "bonus" not in matched_types:
+                matched_types.append("bonus")
 
     matched_phrases = list(dict.fromkeys(matched_phrases))
     matched_types = list(dict.fromkeys(matched_types))
@@ -2927,10 +2978,16 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
     # is_collectible_edition() vía _UMBRELLA_JP_MAGAZINE_PATTERN.
     if re.search(r"\bMagazine\b", title or ""):
         return "magazine"
+    # "画集付き特装版" = el artbook es un cuadernillo INCLUIDO como bonus, no el
+    # producto → NO clasificar como artbook (el producto es el tomo). Mismo
+    # criterio que la demotion de detect_signals. Ver queja del owner 2026-06-04.
+    suppress_artbook = bool(_ARTBOOK_BONUS_ATTACH_RE.search(text))
     # Word-boundary match (igual que detect_signals). Antes hacíamos substring
     # match, lo que causaba que "Manga Artbooks" en descripción etiquetara
     # tomos regulares como product_type=artbook (Rin-ne, Bleach, etc.).
     for ptype, words in PRODUCT_TYPE_KEYWORDS:
+        if ptype == "artbook" and suppress_artbook:
+            continue
         for w in words:
             if _phrase_pattern(normalize_text(w)).search(text):
                 return ptype
@@ -4424,6 +4481,9 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             description = clean_text(desc_el.get_text(" ", strip=True) if desc_el else "")
         if not description:
             description = clean_text(card.get_text(" ", strip=True))
+
+        if is_digital_only_url(link):
+            continue  # ebook/digital — PandaWatch cataloga ediciones físicas
 
         if title or description:
             candidate = candidate_from_source(source, title, link or source.url, description)
