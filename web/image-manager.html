@@ -186,7 +186,7 @@
     <h1>Gestor de Imagenes</h1>
     <span class="stats" x-text="`${filtered.length} items`"></span>
     <span style="flex:1"></span>
-    <a href="#" x-show="returnUrl" @click.prevent="goBackToDashboard()" class="nav-link" style="color:var(--accent);font-weight:600">&#x2190; Volver al detalle</a>
+    <a href="#" x-show="returnUrl" @click.prevent="goBackToDashboard()" class="nav-link" style="color:var(--accent);font-weight:600" x-text="returnLabel"></a>
     <a href="/" class="nav-link">Catalogo</a>
     <a href="/panel.html" class="nav-link">Panel</a>
   </div>
@@ -256,7 +256,7 @@
   <div class="overlay" x-show="selected" x-cloak>
 
     <div class="overlay-header">
-      <button class="btn btn-accent btn-sm" x-show="returnUrl" @click="goBackToDashboard()" title="Volver a la página de detalle">&#x2190; Volver al detalle</button>
+      <button class="btn btn-accent btn-sm" x-show="returnUrl" @click="goBackToDashboard()" :title="returnLabel" x-text="returnLabel"></button>
       <button class="btn btn-sm" @click="closeDetail()" x-text="returnUrl ? 'Grilla' : '← Volver'"></button>
       <button class="btn btn-icon btn-sm" title="Item anterior" @click="goToPrevItem()" :disabled="!hasPrevItem()">&#x25C0;</button>
       <button class="btn btn-icon btn-sm" title="Item siguiente" @click="goToNextItem()" :disabled="!hasNextItem()">&#x25B6;</button>
@@ -303,6 +303,10 @@
         <div class="preview-actions">
           <div class="action-group">
             <div class="action-group-title">Agregar imagenes</div>
+            <a class="btn btn-accent" :href="googleCoverSearchUrl()" target="_blank" rel="noopener"
+               title="Abre Google Imágenes con el título original + la editorial">
+              &#x1F50D; Buscar portada en Google
+            </a>
             <button class="btn" @click="showAddUrlModal = true">
               + Agregar por URL
             </button>
@@ -641,6 +645,75 @@
     </div>
   </div>
 
+  <!-- ==================== BUSCAR PORTADA EN LA WEB ==================== -->
+  <div class="modal-backdrop" x-show="showSearchModal" x-cloak @click.self="showSearchModal = false">
+    <div class="modal" style="max-width:820px">
+      <div class="modal-header">
+        <h3>&#x1F50D; Buscar portada en la web</h3>
+        <button class="btn btn-sm" @click="showSearchModal = false">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--text2); margin-bottom:10px">
+          Busca candidatas por <strong>texto</strong> (Tavily) y por <strong>ISBN</strong>
+          (Amazon · PRH · OpenLibrary · Google Books). Hacé clic en las que sirvan y
+          <strong>Agregar seleccionadas</strong>. Se descargan al espejo local.
+        </p>
+        <div class="url-input-group">
+          <input type="text" class="url-input" placeholder="Berserk Deluxe Volume 1 cover" x-model="searchQuery"
+                 @keydown.enter="searchCovers()">
+          <button class="btn btn-accent" @click="searchCovers()" :disabled="(!searchQuery.trim() && !selected?.isbn) || searching">
+            <span x-show="searching" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Buscar
+          </button>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:11px; align-items:center">
+          <button class="btn btn-sm" x-show="selected?.isbn" @click="searchByIsbnOnly()" :disabled="searching"
+                  :title="'Solo por ISBN ' + (selected?.isbn||'')">&#x1F4D8; Solo por ISBN</button>
+          <span style="color:var(--text3)">o abrir en una pestaña:</span>
+          <a class="btn btn-sm" :href="googleImagesUrl()" target="_blank" rel="noopener">Google Imágenes</a>
+          <a class="btn btn-sm" x-show="currentPreviewSrc()" :href="googleLensUrl()" target="_blank" rel="noopener"
+             title="Buscar esta portada en Google Lens (imágenes similares)">Google Lens</a>
+          <span x-show="searchSearched && !searchTavily" style="color:var(--text3)">· (sin TAVILY_API_KEY: solo ISBN)</span>
+        </div>
+        <template x-if="searchResults.length > 0">
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <span style="font-size:12px; color:var(--text2)" x-text="searchResults.length + ' candidatas (las rotas se ocultan)'"></span>
+              <div style="display:flex; gap:6px">
+                <button class="btn btn-sm" @click="searchResults.forEach(i => i._selected = true)">Seleccionar todas</button>
+                <button class="btn btn-sm" @click="searchResults.forEach(i => i._selected = false)">Deseleccionar</button>
+              </div>
+            </div>
+            <div class="scrape-grid">
+              <template x-for="(img, idx) in searchResults" :key="idx">
+                <div class="scrape-item" :class="{ selected: img._selected }" x-show="!img._broken" @click="img._selected = !img._selected">
+                  <img :src="img.url" loading="lazy" alt="candidata"
+                       @error="img._broken = true">
+                  <div class="check">&#x2713;</div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+        <template x-if="searchResults.length === 0 && searchSearched && !searching">
+          <p style="text-align:center; color:var(--text3); padding:20px; font-size:13px">
+            No se encontraron candidatas. Probá otro texto, o usá Google Imágenes / Lens
+            y pegá la URL con "Agregar por URL".
+          </p>
+        </template>
+      </div>
+      <div class="modal-footer" x-show="searchResults.some(i => i._selected)">
+        <span style="font-size:12px; color:var(--text2)" x-text="searchResults.filter(i => i._selected).length + ' seleccionadas'"></span>
+        <span x-show="bulkProgress.total > 0" style="font-size:12px; color:var(--text2)"
+              x-text="bulkProgress.done + '/' + bulkProgress.total"></span>
+        <button class="btn btn-accent" @click="addSelectedSearchImages()" :disabled="downloading || !searchResults.some(i => i._selected)">
+          <span x-show="downloading" class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+          Agregar seleccionadas
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div class="toast" :class="toast.type" x-show="toast.show" x-cloak x-text="toast.msg"></div>
 
@@ -657,6 +730,8 @@
       showAddUrlModal: false, showReplaceModal: false, showScrapeModal: false,
       addUrl: '', addUrlsMulti: '', replaceUrl: '', replaceIdx: 0,
       scrapeUrl: '', scrapeResults: [], scrapeSearched: false,
+      showSearchModal: false, searchQuery: '', searchResults: [], searching: false,
+      searchSearched: false, searchTavily: true,
       dragIdx: -1, dragOverIdx: -1,
       loading: true, saving: false, downloading: false, scraping: false,
       bulkProgress: { done: 0, total: 0 },
@@ -696,6 +771,14 @@
           if (it) this.selectItem(it);
           else this.showToast('No encontré ese item en el catálogo.', 'error');
         }
+      },
+
+      // Etiqueta del botón según de dónde se entró (lo dice la URL de return).
+      get returnLabel() {
+        const r = this.returnUrl || '';
+        if (/quality\.html/.test(r)) return '← Volver al reporte';
+        if (/cover-preview\.html/.test(r)) return '← Volver a portadas';
+        return '← Volver al detalle';
       },
 
       goBackToDashboard() {
@@ -766,12 +849,20 @@
       _clusterImages() {
         const key = (u) => (u || '').split('?')[0].replace(/^https?:\/\//, '').toLowerCase();
         const seen = new Set();
+        const seenLocal = new Set();
         const out = [];
         const push = (im) => {
           if (!im || !im.url) return;
           const k = key(im.url);
+          // Dedup por archivo local ADEMÁS de por URL: dos URLs distintas que
+          // apuntan al MISMO archivo descargado son la misma foto (p. ej.
+          // KADOKAWA cover_b vs cover_500 de la misma portada). Sin esto el
+          // gestor mostraba 2 thumbnails idénticos.
+          const lk = (im.local || '').toLowerCase();
           if (seen.has(k)) return;
+          if (lk && seenLocal.has(lk)) return;
           seen.add(k);
+          if (lk) seenLocal.add(lk);
           out.push(JSON.parse(JSON.stringify(im)));
         };
         // 1) portada de la fila seleccionada primero.
@@ -1020,6 +1111,92 @@
         } finally { this.downloading = false; this.bulkProgress = { done: 0, total: 0 }; }
       },
 
+      // ==================== BUSCAR PORTADA EN LA WEB ====================
+
+      // Buscar portada = abrir Google Imágenes en pestaña nueva con el título
+      // original + la editorial del item. Simple, sin API ni límites: navegás
+      // Google libre. (El modal Tavily quedó parado — ver openSearchModal.)
+      googleCoverSearchUrl() {
+        const t = (this.selected?.title_original || this.selected?.title || '').trim();
+        const p = (this.selected?.publisher || '').trim();
+        const q = [t, p].filter(Boolean).join(' ');
+        return 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q);
+      },
+      openSearchModal() {
+        // [PARADO] Modal de búsqueda Tavily/ISBN. Ya no se usa: el botón ahora
+        // abre Google Imágenes directo (googleCoverSearchUrl). Se conserva por
+        // si en el futuro se quiere reactivar.
+        const t = (this.selected?.title || '').trim();
+        const a = (this.selected?.author || '').trim();
+        this.searchQuery = [t, a].filter(Boolean).join(' ');
+        this.searchResults = []; this.searchSearched = false;
+        this.showSearchModal = true;
+      },
+      googleImagesUrl() {
+        const q = (this.searchQuery || this.selected?.title || '').trim();
+        return 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q);
+      },
+      googleLensUrl() {
+        // Lens por URL de la portada actual (imágenes similares / mejor versión).
+        const src = this.currentPreviewSrc();
+        // Las locales (../data/images/..) no sirven para Lens; preferimos image_url.
+        const remote = (this.currentImage()?.url) || this.selected?.image_url || '';
+        const u = /^https?:/.test(remote) ? remote : src;
+        return 'https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(u);
+      },
+      async searchByIsbnOnly() {
+        await this._runSearch({ query: '', isbn: this.selected?.isbn || '' });
+      },
+      async searchCovers() {
+        await this._runSearch({
+          query: (this.searchQuery || '').trim(),
+          isbn: this.selected?.isbn || '',
+        });
+      },
+      async _runSearch({ query, isbn }) {
+        if (!query && !isbn) return;
+        this.searching = true; this.searchResults = []; this.searchSearched = false;
+        try {
+          const resp = await fetch('/api/image-search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, isbn }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Search failed');
+          this.searchTavily = !!data.tavily;
+          this.searchResults = (data.results || []).map(url => ({ url, _selected: false, _broken: false }));
+          this.searchSearched = true;
+          if (this.searchResults.length) this.showToast(this.searchResults.length + ' candidatas', 'success');
+          else this.showToast('Sin candidatas', 'error');
+        } catch (e) {
+          this.showToast('Error: ' + e.message, 'error'); this.searchSearched = true;
+        } finally { this.searching = false; }
+      },
+      async addSelectedSearchImages() {
+        const sel = this.searchResults.filter(i => i._selected && !i._broken);
+        if (!sel.length) return;
+        this.downloading = true; this.bulkProgress = { done: 0, total: sel.length };
+        let added = 0;
+        try {
+          for (const img of sel) {
+            try {
+              const resp = await fetch('/api/image-manager/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_url: img.url }) });
+              const data = await resp.json();
+              if (resp.ok) {
+                if (data.file_size) this.fileSizes[data.local] = data.file_size;
+                if (!this.selected.images) this.selected.images = [];
+                this.selected.images.push({ url: data.url, local: data.local, kind: 'gallery', description: '', _fileSize: data.file_size || this.fileSizes[data.local] || 0 });
+                added++;
+              }
+            } catch {}
+            this.bulkProgress.done++;
+          }
+          if (added > 0) { this.previewIdx = this.selected.images.length - 1; this.markDirty(); }
+          this.showSearchModal = false; this.searchResults = [];
+          this.showToast(`${added}/${sel.length} agregada${added === 1 ? '' : 's'}`, added > 0 ? 'success' : 'error');
+        } finally { this.downloading = false; this.bulkProgress = { done: 0, total: 0 }; }
+      },
+
       // ==================== SAVE ====================
 
       async saveChanges() {
@@ -1046,6 +1223,9 @@
           }
           this.originalImages = JSON.parse(JSON.stringify(cleanImages));
           this.dirty = false; this.computeCounts();
+          // Avisar al Panel de Calidad (si está abierto en otra pestaña) para
+          // que re-verifique este ítem y lo saque de la worklist si se arregló.
+          try { new BroadcastChannel('manga-quality').postMessage({ url: this.selected.url }); } catch (e) {}
           const del = data.deleted_files?.length || 0;
           this.showToast('Cambios guardados' + (del ? ` (${del} archivo${del>1?'s':''} eliminado${del>1?'s':''} del disco)` : ''), 'success');
         } catch (e) { this.showToast('Error guardando: ' + e.message, 'error'); }

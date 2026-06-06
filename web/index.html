@@ -132,6 +132,11 @@
       <div class="text-right text-sm text-gray-500" x-show="!loading && view !== 'volume'">
         <span x-text="filtered.length"></span> resultados visibles
       </div>
+      <a href="./quality.html"
+         class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300"
+         title="Panel de calidad de datos — alertas accionables (fotos malas, mismatches, incongruencias)">
+        🩺 Calidad de datos
+      </a>
       <a href="./cover-preview.html"
          class="text-sm text-gray-500 hover:text-pink-600 transition-colors flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-pink-300"
          title="Revisar portadas mejoradas con baja confianza">
@@ -354,9 +359,9 @@
   <!-- MAIN CONTENT -->
   <main>
 
-    <!-- Sort + page info -->
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex items-center gap-2 text-sm">
+    <!-- Sort + acciones + page info -->
+    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+      <div class="flex items-center gap-2 text-sm flex-wrap">
         <label class="text-gray-500">Ordenar:</label>
         <select x-model="sort" class="px-3 py-1.5 border border-gray-300 rounded-md text-sm">
           <option value="detected_desc">Detección (más reciente)</option>
@@ -364,10 +369,32 @@
           <option value="title_asc">Título A→Z</option>
           <option value="title_desc">Título Z→A</option>
         </select>
+        <span class="w-px h-5 bg-gray-200 mx-1"></span>
+        <button @click="toggleSelectMode()"
+                :class="selectMode ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-300 text-gray-600 hover:border-pink-300'"
+                class="px-3 py-1.5 border rounded-md text-sm transition flex items-center gap-1"
+                :title="selectMode ? 'Salir del modo selección' : 'Seleccionar varias cards y actuar en lote'">
+          ☑️ <span x-text="selectMode ? 'Selección activa' : 'Selección múltiple'"></span>
+        </button>
+        <button @click="startReview()"
+                :disabled="sorted.length === 0"
+                class="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md text-sm transition hover:border-pink-300 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                title="Revisar la cola filtrada de a un item con el teclado (A=aprobar, R=reportar, →=siguiente)">
+          ⚡ Curación rápida <span class="text-gray-400" x-text="'(' + sorted.length + ')'"></span>
+        </button>
       </div>
       <div class="text-sm text-gray-500" x-show="totalPages > 1">
         Página <span x-text="page"></span> / <span x-text="totalPages"></span>
       </div>
+    </div>
+
+    <!-- Barra de selección (cuando selectMode está activo) -->
+    <div x-show="selectMode" x-cloak
+         class="mb-4 flex items-center gap-3 text-sm bg-pink-50 border border-pink-200 rounded-md px-3 py-2 flex-wrap">
+      <span class="text-gray-600">Modo selección — clic en las cards para marcarlas.</span>
+      <button @click="selectAllVisible()" class="text-pink-700 underline hover:text-pink-900">Seleccionar visibles</button>
+      <button @click="clearSelection()" class="text-gray-500 underline hover:text-gray-700">Limpiar</button>
+      <span class="ml-auto font-semibold text-pink-700" x-show="selectionCount > 0" x-text="selectionCount + ' seleccionada(s)'"></span>
     </div>
 
     <!-- VIEW: catalog (grid de EDICIONES) -->
@@ -383,13 +410,20 @@
                   <div class="stack-leaf stack-leaf-1"></div>
                 </div>
               </template>
-              <div @click="ed.tomoCount > 1 ? openEditionByKey(ed.edition_key) : openVolume(ed.leader)"
-                   class="card group bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+              <div @click="selectMode ? toggleSelect('e:'+ed.edition_key) : (ed.tomoCount > 1 ? openEditionByKey(ed.edition_key) : openVolume(ed.leader))"
+                   class="card group bg-white rounded-lg border overflow-hidden cursor-pointer flex flex-col"
+                   :class="selectMode && isSelected('e:'+ed.edition_key) ? 'border-pink-500 ring-2 ring-pink-400' : 'border-gray-200'">
                 <div class="img-wrap relative">
                   <template x-if="ed.leader.image_local || ed.leader.image_url">
                     <img :src="coverSrc(ed.leader)" :data-fallback="ed.leader.image_url" :alt="ed.leader.title" loading="lazy" @error="onCoverError($event)">
                   </template>
                   <div class="img-placeholder" :style="(ed.leader.image_local || ed.leader.image_url) ? 'display:none' : ''">📚</div>
+                  <template x-if="selectMode">
+                    <div class="absolute top-2 left-2 z-20">
+                      <input type="checkbox" :checked="isSelected('e:'+ed.edition_key)" @click.stop="toggleSelect('e:'+ed.edition_key)"
+                             class="w-5 h-5 rounded border-gray-300 text-pink-600 focus:ring-pink-400 cursor-pointer shadow">
+                    </div>
+                  </template>
                   <template x-if="ed.tomoCount > 1">
                     <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
                       <span x-text="ed.tomoCount"></span> tomos
@@ -497,13 +531,20 @@
         </div>
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
           <template x-for="item in paginated" :key="item.url">
-            <div @click="openVolume(item)"
-                 class="card group bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer flex flex-col">
+            <div @click="selectMode ? toggleSelect('i:'+item.url) : openVolume(item)"
+                 class="card group bg-white rounded-lg border overflow-hidden cursor-pointer flex flex-col"
+                 :class="selectMode && isSelected('i:'+item.url) ? 'border-pink-500 ring-2 ring-pink-400' : 'border-gray-200'">
               <div class="img-wrap relative">
                 <template x-if="item.image_local || item.image_url">
                   <img :src="coverSrc(item)" :data-fallback="item.image_url" :alt="item.title" loading="lazy" @error="onCoverError($event)">
                 </template>
                 <div class="img-placeholder" :style="(item.image_local || item.image_url) ? 'display:none' : ''">📚</div>
+                <template x-if="selectMode">
+                  <div class="absolute top-2 left-2 z-20">
+                    <input type="checkbox" :checked="isSelected('i:'+item.url)" @click.stop="toggleSelect('i:'+item.url)"
+                           class="w-5 h-5 rounded border-gray-300 text-pink-600 focus:ring-pink-400 cursor-pointer shadow">
+                  </div>
+                </template>
                 <template x-if="item.volume">
                   <span class="edition-count-badge absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold">
                     Tomo <span x-text="item.volume"></span>
@@ -652,7 +693,7 @@
           </div>
           <template x-if="selectedItem.title_original && selectedItem.title_original !== selectedItem.title">
             <p class="text-sm text-gray-500 italic mt-0.5" :title="'Título original de la fuente'">
-              <span class="text-gray-400 text-xs not-italic mr-1">原題:</span>
+              <span class="text-gray-400 text-xs not-italic mr-1">Título original:</span>
               <span x-text="selectedItem.title_original"></span>
             </p>
           </template>
@@ -1109,6 +1150,122 @@
   </div>
 </div>
 
+<!-- ================= BARRA DE ACCIONES BATCH (P2) ================= -->
+<div x-show="selectionCount > 0 && view !== 'volume' && !reviewMode" x-cloak
+     class="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+  <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+    <span class="font-semibold text-pink-700 text-sm">
+      <span x-text="selectionCount"></span> seleccionada(s)
+    </span>
+    <span class="w-px h-6 bg-gray-200"></span>
+    <button @click="batchApprove(true)" :disabled="batchBusy"
+            class="px-3 py-1.5 rounded-md text-sm bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 transition">✓ Aprobar</button>
+    <button @click="batchApprove(false)" :disabled="batchBusy"
+            class="px-3 py-1.5 rounded-md text-sm border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition">Desaprobar</button>
+    <div class="relative">
+      <button @click="batchMoveOpen = !batchMoveOpen" :disabled="batchBusy"
+              class="px-3 py-1.5 rounded-md text-sm border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50 transition">↪ Mover a edición…</button>
+      <div x-show="batchMoveOpen" x-cloak @click.outside="batchMoveOpen = false"
+           class="absolute bottom-full mb-2 left-0 w-80 bg-white border border-gray-200 rounded-lg shadow-xl p-3 z-50">
+        <input type="text" x-model="batchMoveSearch" @input.debounce.300ms="searchBatchEditions()"
+               placeholder="Buscar edición destino…"
+               class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+        <ul class="mt-2 max-h-60 overflow-y-auto divide-y divide-gray-100">
+          <template x-for="ed in batchMoveResults" :key="ed.edition_key">
+            <li @click="batchMove(ed.edition_key)"
+                class="px-2 py-1.5 text-sm cursor-pointer hover:bg-blue-50 rounded">
+              <span class="font-medium" x-text="(ed.series_display || '') + ' ' + (ed.edition_display || '')"></span>
+              <span class="text-gray-400 text-xs" x-text="' · ' + ed.volume_count + ' tomos · ' + (ed.country||'')"></span>
+            </li>
+          </template>
+          <li x-show="batchMoveSearch.length >= 2 && batchMoveResults.length === 0" class="px-2 py-2 text-xs text-gray-400">Sin resultados</li>
+        </ul>
+      </div>
+    </div>
+    <button @click="batchReport()" :disabled="batchBusy"
+            class="px-3 py-1.5 rounded-md text-sm border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition">⚐ Reportar</button>
+    <span x-show="batchMsg" class="text-sm" :class="batchMsg.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'" x-text="batchMsg"></span>
+    <button @click="clearSelection()" class="ml-auto text-sm text-gray-500 hover:text-gray-700 underline">Limpiar selección</button>
+  </div>
+</div>
+
+<!-- ================= MODO CURACIÓN RÁPIDA (P3) ================= -->
+<div x-show="reviewMode" x-cloak class="fixed inset-0 z-50 bg-gray-900/95 flex flex-col" style="backdrop-filter: blur(2px)">
+  <template x-if="reviewItem">
+    <div class="flex flex-col h-full">
+      <!-- Top bar -->
+      <div class="flex items-center justify-between px-6 py-3 text-white/90 border-b border-white/10">
+        <div class="flex items-center gap-3">
+          <span class="font-semibold">⚡ Curación rápida</span>
+          <span class="text-white/60 text-sm" x-text="(reviewIdx + 1) + ' / ' + reviewTotal"></span>
+          <span x-show="reviewFlash" class="text-sm px-2 py-0.5 rounded-full bg-white/15" x-text="reviewFlash"></span>
+        </div>
+        <button @click="exitReview()" class="text-white/70 hover:text-white text-sm border border-white/20 rounded-lg px-3 py-1.5">Salir (Esc)</button>
+      </div>
+      <!-- progress -->
+      <div class="h-1 bg-white/10">
+        <div class="h-full bg-pink-500 transition-all" :style="'width:' + (reviewTotal ? ((reviewIdx+1)/reviewTotal*100) : 0) + '%'"></div>
+      </div>
+      <!-- Card -->
+      <div class="flex-1 overflow-y-auto flex items-center justify-center p-6">
+        <div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full flex flex-col sm:flex-row overflow-hidden max-h-[78vh]">
+          <div class="sm:w-2/5 bg-gray-100 flex items-center justify-center p-4 cursor-zoom-in"
+               @click="selectedItem = reviewItem; modalImageIdx = 0; openLightbox()">
+            <template x-if="coverSrc(reviewItem)">
+              <img :src="coverSrc(reviewItem)" :data-fallback="reviewItem.image_url" :alt="reviewItem.title"
+                   @error="onCoverError($event)" class="max-h-[60vh] w-auto object-contain rounded shadow">
+            </template>
+            <div class="text-6xl text-gray-300" :style="coverSrc(reviewItem) ? 'display:none' : ''">📚</div>
+          </div>
+          <div class="sm:w-3/5 p-5 overflow-y-auto">
+            <template x-if="reviewItem.series_display">
+              <p class="text-xs text-pink-600 font-medium" x-text="reviewItem.series_display"></p>
+            </template>
+            <h2 class="text-xl font-bold text-gray-900 leading-tight mb-1" x-text="reviewItem.title"></h2>
+            <div class="flex items-center gap-2 flex-wrap mb-3">
+              <span x-show="reviewItem.approved_at" class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">✓ Aprobado</span>
+              <span x-show="isReported(reviewItem.url)" class="badge-reported">⚠ Reportado</span>
+              <span x-show="reviewItem.rarity && reviewItem.rarity !== 'rare'" class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700" x-text="reviewItem.rarity"></span>
+            </div>
+            <dl class="text-sm space-y-1.5 text-gray-700">
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">Edición</dt><dd x-text="reviewItem.edition_display || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">Volumen</dt><dd x-text="reviewItem.volume || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">Editorial</dt><dd x-text="reviewItem.publisher || reviewItem.source || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">País</dt><dd x-text="reviewItem.country || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">Precio</dt><dd x-text="reviewItem.price || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">ISBN</dt><dd x-text="reviewItem.isbn || '—'"></dd></div>
+              <div class="flex gap-2"><dt class="text-gray-400 w-24 flex-shrink-0">Señales</dt><dd x-text="(reviewItem.signal_types || []).join(', ') || '—'"></dd></div>
+            </dl>
+            <a :href="reviewItem.url" target="_blank" rel="noopener" class="inline-block mt-3 text-xs text-blue-600 hover:underline truncate max-w-full" x-text="reviewItem.url"></a>
+            <!-- inline report -->
+            <div x-show="reviewReportOpen" x-cloak class="mt-3 p-2 bg-red-50 border border-red-200 rounded-md">
+              <input type="text" x-model="reviewReason" @keydown.enter="reviewSubmitReport()" @keydown.escape="reviewReportOpen=false" @keydown.stop
+                     placeholder="Motivo del reporte + Enter"
+                     class="w-full px-2 py-1.5 border border-red-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-red-300" x-ref="reviewReasonInput">
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Action bar -->
+      <div class="px-6 py-3 border-t border-white/10 flex items-center justify-center gap-2 flex-wrap text-sm">
+        <button @click="reviewPrev()" :disabled="reviewIdx === 0" class="px-3 py-2 rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-30">‹ Anterior <span class="text-white/40">K</span></button>
+        <button @click="reviewApprove()" class="px-4 py-2 rounded-md bg-emerald-500 text-white hover:bg-emerald-600 font-medium">✓ Aprobar <span class="opacity-70">A</span></button>
+        <button @click="reviewUnapprove()" x-show="reviewItem.approved_at" class="px-3 py-2 rounded-md bg-white/10 text-white/80 hover:bg-white/20">Desaprobar <span class="text-white/40">U</span></button>
+        <button @click="reviewOpenReport()" class="px-3 py-2 rounded-md bg-red-500/90 text-white hover:bg-red-600">⚐ Reportar <span class="opacity-70">R</span></button>
+        <button @click="reviewEdit()" class="px-3 py-2 rounded-md bg-blue-500/90 text-white hover:bg-blue-600">✏️ Editar <span class="opacity-70">E</span></button>
+        <button @click="reviewSkip()" class="px-3 py-2 rounded-md bg-white/10 text-white/80 hover:bg-white/20">Saltar <span class="text-white/40">S</span></button>
+        <button @click="reviewNext()" :disabled="reviewIdx >= reviewTotal - 1" class="px-3 py-2 rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-30">Siguiente › <span class="text-white/40">J / →</span></button>
+      </div>
+    </div>
+  </template>
+  <template x-if="!reviewItem">
+    <div class="flex-1 flex flex-col items-center justify-center text-white/80 gap-3">
+      <p class="text-lg">No quedan items en la cola.</p>
+      <button @click="exitReview()" class="px-4 py-2 rounded-md bg-white/10 hover:bg-white/20">Salir</button>
+    </div>
+  </template>
+</div>
+
 <script>
 function mangaApp() {
   return {
@@ -1122,6 +1279,25 @@ function mangaApp() {
     modalImageIdx: 0,
     // Lightbox: ver la imagen del detalle en grande (clic en la portada).
     lightboxOpen: false,
+
+    // --- Selección múltiple + acciones batch (P2) ---
+    // selected: { key: true }. key = 'e:'+edition_key (catálogo) | 'i:'+url (edición).
+    selectMode: false,
+    selected: {},
+    batchBusy: false,
+    batchMsg: "",
+    batchMoveOpen: false,
+    batchMoveSearch: "",
+    batchMoveResults: [],
+
+    // --- Modo curación rápida (P3) ---
+    reviewMode: false,
+    reviewUrls: [],        // snapshot de URLs de la cola al entrar (estable)
+    reviewIdx: 0,
+    reviewReportOpen: false,
+    reviewReason: "",
+    reviewBusy: false,
+    reviewFlash: "",
 
     // Navegación de vistas: 'catalog' | 'edition' | 'volume'
     view: 'catalog',
@@ -2015,6 +2191,218 @@ function mangaApp() {
       }
     },
 
+    // ====================================================================
+    // Selección múltiple + acciones batch (P2)
+    // ====================================================================
+    toggleSelectMode() {
+      this.selectMode = !this.selectMode;
+      if (!this.selectMode) this.clearSelection();
+    },
+    isSelected(key) { return !!this.selected[key]; },
+    toggleSelect(key) {
+      const next = { ...this.selected };
+      if (next[key]) delete next[key]; else next[key] = true;
+      this.selected = next;
+    },
+    get selectionCount() { return Object.keys(this.selected).length; },
+    clearSelection() { this.selected = {}; this.batchMoveOpen = false; this.batchMoveSearch = ""; this.batchMoveResults = []; },
+    selectAllVisible() {
+      const next = { ...this.selected };
+      if (this.view === 'edition') {
+        for (const it of this.paginated) next['i:' + it.url] = true;
+      } else {
+        for (const ed of this.paginated) next['e:' + ed.edition_key] = true;
+      }
+      this.selected = next;
+    },
+    // Expande la selección a parámetros del API batch/approve:
+    // editions enteras → edition_keys; cards solo / tomos sueltos → urls.
+    _expandSelection() {
+      const item_urls = [], edition_keys = [];
+      for (const k of Object.keys(this.selected)) {
+        if (k.startsWith('i:')) item_urls.push(k.slice(2));
+        else if (k.startsWith('e:')) {
+          const ek = k.slice(2);
+          if (ek.startsWith('__solo__')) item_urls.push(ek.slice('__solo__'.length));
+          else edition_keys.push(ek);
+        }
+      }
+      return { item_urls, edition_keys };
+    },
+    // Todos los URLs concretos de la selección (expande ediciones a sus tomos).
+    _selectedItemUrls() {
+      const urls = new Set();
+      for (const k of Object.keys(this.selected)) {
+        if (k.startsWith('i:')) urls.add(k.slice(2));
+        else if (k.startsWith('e:')) {
+          const ek = k.slice(2);
+          if (ek.startsWith('__solo__')) urls.add(ek.slice('__solo__'.length));
+          else for (const it of this.items) if (it.edition_key === ek) urls.add(it.url);
+        }
+      }
+      return [...urls];
+    },
+    async batchApprove(approved) {
+      if (this.batchBusy || this.selectionCount === 0) return;
+      this.batchBusy = true; this.batchMsg = "";
+      const { item_urls, edition_keys } = this._expandSelection();
+      try {
+        const res = await fetch('/api/batch/approve', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls: item_urls, edition_keys, approved }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        // Reflejar en memoria sin recargar.
+        const stamp = approved ? new Date().toISOString() : "";
+        const owner = approved ? "owner" : "";
+        const urlSet = new Set(item_urls), ekSet = new Set(edition_keys);
+        const clusters = new Set();
+        for (const it of this.items) if (urlSet.has(it.url)) clusters.add(it.cluster_key || ('url:' + it.url));
+        for (const it of this.items) {
+          const cl = it.cluster_key || ('url:' + it.url);
+          if (clusters.has(cl) || ekSet.has(it.edition_key)) { it.approved_at = stamp; it.approved_by = owner; }
+        }
+        this.batchMsg = `${data.count} tomo(s) ${approved ? 'aprobados' : 'desaprobados'}`;
+        this.clearSelection();
+        setTimeout(() => { this.batchMsg = ""; }, 2500);
+      } catch (e) {
+        this.batchMsg = "Error: " + e.message;
+      } finally { this.batchBusy = false; }
+    },
+    async searchBatchEditions() {
+      const q = (this.batchMoveSearch || "").trim();
+      if (q.length < 2) { this.batchMoveResults = []; return; }
+      try {
+        const res = await fetch("/api/editions/search?q=" + encodeURIComponent(q));
+        const data = await res.json();
+        this.batchMoveResults = data.results || [];
+      } catch { this.batchMoveResults = []; }
+    },
+    async batchMove(editionKey) {
+      if (this.batchBusy || !editionKey) return;
+      const urls = this._selectedItemUrls();
+      if (!urls.length) return;
+      this.batchBusy = true; this.batchMsg = "";
+      try {
+        const res = await fetch('/api/batch/move', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls, to_edition: editionKey }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        this.batchMsg = `${data.count} item(s) movidos`;
+        this.clearSelection();
+        await this.loadItems();   // estructura cambió → re-agrupar
+        setTimeout(() => { this.batchMsg = ""; }, 2500);
+      } catch (e) {
+        this.batchMsg = "Error: " + e.message;
+      } finally { this.batchBusy = false; }
+    },
+    async batchReport() {
+      if (this.batchBusy || this.selectionCount === 0) return;
+      const reason = window.prompt("Motivo del reporte (se aplica a la selección):", "");
+      if (reason === null) return;          // cancelado
+      const urls = this._selectedItemUrls();
+      this.batchBusy = true; this.batchMsg = "";
+      let ok = 0;
+      try {
+        for (const url of urls) {
+          const it = this.items.find(i => i.url === url) || {};
+          const res = await fetch('/api/feedback', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: it.title || "(sin título)", url, reason: reason || "batch report" }),
+          });
+          if (res.ok) { ok++; this.reportedUrls = { ...this.reportedUrls, [url]: true }; }
+        }
+        this.batchMsg = `${ok} item(s) reportados`;
+        this.clearSelection();
+        setTimeout(() => { this.batchMsg = ""; }, 2500);
+      } catch (e) {
+        this.batchMsg = "Error: " + e.message;
+      } finally { this.batchBusy = false; }
+    },
+
+    // ====================================================================
+    // Modo curación rápida (P3) — recorre la cola filtrada con el teclado.
+    // ====================================================================
+    // La cola = items filtrados+ordenados (sorted). Snapshot de URLs al
+    // entrar para que aprobar/reportar no reordene la cola bajo los pies.
+    startReview() {
+      const queue = this.sorted;
+      if (!queue.length) return;
+      this.reviewUrls = queue.map(i => i.url);
+      this.reviewIdx = 0;
+      this.reviewReportOpen = false;
+      this.reviewReason = "";
+      this.reviewMode = true;
+      document.body.style.overflow = 'hidden';
+    },
+    exitReview() {
+      this.reviewMode = false;
+      this.reviewReportOpen = false;
+      document.body.style.overflow = '';
+    },
+    get reviewItem() {
+      const url = this.reviewUrls[this.reviewIdx];
+      if (!url) return null;
+      return this.items.find(i => i.url === url) || null;
+    },
+    get reviewTotal() { return this.reviewUrls.length; },
+    reviewNext() {
+      this.reviewReportOpen = false;
+      if (this.reviewIdx < this.reviewUrls.length - 1) this.reviewIdx++;
+    },
+    reviewPrev() {
+      this.reviewReportOpen = false;
+      if (this.reviewIdx > 0) this.reviewIdx--;
+    },
+    _reviewFlash(msg) {
+      this.reviewFlash = msg;
+      setTimeout(() => { if (this.reviewFlash === msg) this.reviewFlash = ""; }, 1200);
+    },
+    async reviewApprove() {
+      const it = this.reviewItem;
+      if (!it || this.reviewBusy) return;
+      if (!it.approved_at) { this.reviewBusy = true; await this.toggleApprove(it); this.reviewBusy = false; }
+      this._reviewFlash("✓ aprobado");
+      this.reviewNext();
+    },
+    async reviewUnapprove() {
+      const it = this.reviewItem;
+      if (!it || this.reviewBusy) return;
+      if (it.approved_at) { this.reviewBusy = true; await this.toggleApprove(it); this.reviewBusy = false; }
+      this._reviewFlash("✗ desaprobado");
+    },
+    reviewSkip() { this._reviewFlash("→ saltado"); this.reviewNext(); },
+    reviewOpenReport() {
+      this.reviewReportOpen = true; this.reviewReason = "";
+      this.$nextTick(() => { try { this.$refs.reviewReasonInput?.focus(); } catch (e) {} });
+    },
+    async reviewSubmitReport() {
+      const it = this.reviewItem;
+      if (!it || this.reviewBusy) return;
+      const reason = (this.reviewReason || "").trim();
+      if (!reason) return;
+      this.reviewBusy = true;
+      try {
+        const res = await fetch('/api/feedback', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: it.title || "(sin título)", url: it.url, reason }),
+        });
+        if (res.ok) this.reportedUrls = { ...this.reportedUrls, [it.url]: true };
+        this._reviewFlash("⚐ reportado");
+      } catch (e) { /* noop */ }
+      finally { this.reviewBusy = false; this.reviewReportOpen = false; this.reviewNext(); }
+    },
+    reviewEdit() {
+      const it = this.reviewItem;
+      if (!it) return;
+      this.exitReview();
+      this.openVolume(it);
+      this.$nextTick(() => this.startEdit());
+    },
+
     // --- Edición inline de la metadata del item ---
     // Arma el schema editable desde las keys reales del item (menos imágenes),
     // infiriendo el tipo de control por el valor: text / textarea / number /
@@ -2132,6 +2520,9 @@ function mangaApp() {
         this.editMode = false;
         this.editFlash = true;
         setTimeout(() => { this.editFlash = false; }, 2500);
+        // Avisar al Panel de Calidad (otra pestaña) para que re-verifique este
+        // ítem y lo saque de la worklist si la edición arregló la alerta.
+        try { new BroadcastChannel('manga-quality').postMessage({ url }); } catch (e) {}
         // Si cambió algo estructural (keys/grouping), recargamos el dataset
         // para que el catálogo se re-agrupe correctamente al volver.
         if (structuralChanged) await this.loadItems();
@@ -2268,6 +2659,21 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.preventDefault(); d.closeLightbox(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); d.lightboxPrev(); }
     else if (e.key === "ArrowRight") { e.preventDefault(); d.lightboxNext(); }
+    return;
+  }
+  // Modo curación rápida: atajos de teclado para revisar la cola sin el mouse.
+  // (Si el input de reporte tiene foco, sus propios @keydown lo manejan con
+  // .stop, así que este handler no se dispara mientras escribís el motivo.)
+  if (d.reviewMode) {
+    const k = e.key.toLowerCase();
+    if (e.key === "Escape") { e.preventDefault(); if (d.reviewReportOpen) d.reviewReportOpen = false; else d.exitReview(); return; }
+    if (k === "a") { e.preventDefault(); d.reviewApprove(); return; }
+    if (k === "u") { e.preventDefault(); d.reviewUnapprove(); return; }
+    if (k === "r") { e.preventDefault(); d.reviewOpenReport(); return; }
+    if (k === "e") { e.preventDefault(); d.reviewEdit(); return; }
+    if (k === "s") { e.preventDefault(); d.reviewSkip(); return; }
+    if (k === "j" || e.key === "ArrowRight") { e.preventDefault(); d.reviewNext(); return; }
+    if (k === "k" || e.key === "ArrowLeft") { e.preventDefault(); d.reviewPrev(); return; }
     return;
   }
   if (e.key === "Escape") {
