@@ -439,10 +439,44 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
     fi
 
+    # [4f1] regla dura país=edición: sufija el país al edition_key para que dos
+    # mercados nunca compartan edición/cluster. Idempotente.
+    echo ">>> [4f1] fix_edition_country (país = edición)"
+    "$VENV_PY" scripts/retrofit/fix_edition_country.py \
+        > "$LOG_DIR/04f1-edition-country.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f2] alinea items raw a la edición estandarizada de su MISMA coleccion
+    # (regla coleccion=edición). Re-scrapear una coleccion ya estandarizada deja
+    # el item raw nuevo con edition_key/cluster_key distinto del viejo → no
+    # consolidan (dup raw-vs-std, ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1").
+    # Debe correr ANTES de consolidate_sources para que el merge los fusione.
+    echo ">>> [4f2] align_raw_to_std_coleccion (dedup raw-vs-estandarizado)"
+    "$VENV_PY" scripts/retrofit/align_raw_to_std_coleccion.py \
+        > "$LOG_DIR/04f2-align-raw-std.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f3] una /coleccion = UNA página de edición: unifica el edition_key de
+    # todos los tomos de la coleccion (regular+especial+cofres+variantes) al de
+    # su edición base; el cluster (tier-0 lmc) sigue distinguiendo variantes.
+    echo ">>> [4f3] unify_coleccion_edition (coleccion = una edición)"
+    "$VENV_PY" scripts/retrofit/unify_coleccion_edition.py \
+        > "$LOG_DIR/04f3-unify-coleccion.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
     "$VENV_PY" scripts/retrofit/consolidate_sources.py \
         > "$LOG_DIR/04g-consolidate-sources.log" 2>&1
     echo "    items: $(count_lines)"
+
+    # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
+    # fuentes hermanas → puede quedar la MISMA portada en dos resoluciones. Quita
+    # la de menor resolución (hash perceptual). Network-bound (descarga thumbs).
+    echo ">>> [4h] dedup_carousel_images (misma portada en 2 resoluciones)"
+    P4H_START=$(date +%s)
+    _run_timed 2400 "$VENV_PY" scripts/retrofit/dedup_carousel_images.py --all \
+        > "$LOG_DIR/04h-dedup-carousel.log" 2>&1
+    echo "    duración: $(($(date +%s) - P4H_START))s — items: $(count_lines)"
 
     echo " ✓ PHASE 3 cleanup done"
 else
@@ -460,6 +494,14 @@ if [ "$SKIP_BUILD" != "1" ]; then
 else
     echo "[SKIP] PHASE 4 (build) saltada por SKIP_BUILD=1"
 fi
+
+# ============================================================
+# PHASE 5: Validación estructural del corpus (gate de salud)
+# ============================================================
+echo
+echo ">>> [5] validate_corpus (invariantes estructurales — gotcha #54)"
+"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log" || \
+    echo " ⚠ validate_corpus reportó violaciones DURAS — revisar $LOG_DIR/05-validate-corpus.log"
 
 # ============================================================
 # FINAL SUMMARY
@@ -486,6 +528,6 @@ echo "Recordatorio:"
 echo "  - Este es el scrape FULL (recorrido del catálogo completo)."
 echo "  - Frecuencia recomendada: 1x/mes o 1x/trimestre."
 echo "  - Para deltas diarios/semanales (más rápido): ./scripts/scrape_delta.sh"
-echo "  - Siguiente paso recomendado: correr /standardize-catalog si llegaron"
+echo "  - Siguiente paso recomendado: correr /watch-standardize-catalog si llegaron"
 echo "    items nuevos sin standardized_at (chequear con el snippet del skill)."
 echo

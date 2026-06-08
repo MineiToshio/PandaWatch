@@ -5,12 +5,13 @@
 # Detecta novedades RECIENTES. Pensado para correr **diario / semanal**.
 # Es rápido (~30-60 min) y barato (pocos requests).
 #
-# Para listadomanga.es usa **`calendario.php`** (mes actual + recientes)
-# en vez de `lista.php`. Eso cubre solo lanzamientos del mes — no
-# recorre las ~3432 colecciones del catálogo.
+# Para listadomanga.es usa **`listadomanga-collections --coleccion-mode
+# calendar`**: descubre los ids de colección con actividad en `calendario.php`
+# en los últimos meses y parsea SOLO esas colecciones completas. Da la misma
+# riqueza que el full (ediciones especiales / cofres / portadas alternativas /
+# en preparación) pero acotado a lo reciente (~500-600 colecciones vs 3432).
 #
-# Para descubrir TODAS las colecciones del catálogo (incluyendo ediciones
-# especiales / extras / portadas alternativas históricas), usar
+# Para recorrer TODO el catálogo (~3432 colecciones vía lista.php), usar
 # `scrape_full.sh` en su lugar (correr 1x/mes o 1x/trimestre).
 #
 # El resto de fuentes (Mangavariant, SocialAnime, BBM, Manga-Sanctuary,
@@ -20,7 +21,7 @@
 #
 # Encadena las fases:
 #   1. Scrape principal (sources del YAML, --max-pages 5, --enable-js)
-#   2. Wiki bootstraps DELTA (listadomanga calendario mes actual,
+#   2. Wiki bootstraps DELTA (listadomanga-collections modo calendar,
 #      manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm,
 #      booksprivilege, sumikko, mangapassion DE, animeclick IT,
 #      prhcomics US/CA, kinokuniya US, yenpress US)
@@ -172,16 +173,22 @@ fi
 if [ "$SKIP_WIKIS" != "1" ]; then
     phase_header 2 "Wiki bootstraps (delta — mes actual / recientes)"
 
-    # 2a. listadomanga CALENDARIO (últimos 3 meses → mes actual)
-    # NO usamos listadomanga-collections aquí — eso es para scrape_full.sh.
-    echo ">>> [2a] listadomanga (calendario delta: ${LISTADO_CAL_FROM} → mes actual)"
+    # 2a. listadomanga-collections en modo CALENDAR (paridad con el full).
+    # Descubre los ids con actividad en calendario.php (últimos 3 meses) y
+    # parsea esas colecciones completas con el parser de colecciones — captura
+    # ediciones especiales / cofres / variantes / en preparación, no solo el
+    # entry del calendario. (El módulo de calendario plano `--bootstrap-wiki
+    # listadomanga` sigue disponible pero ya no se usa en el pipeline canónico:
+    # collections-calendar es estrictamente más rico sobre los mismos ids.)
+    echo ">>> [2a] listadomanga-collections (calendar delta: actividad ${LISTADO_CAL_FROM} → mes actual)"
     P2A_START=$(date +%s)
-    _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
-        --bootstrap-wiki listadomanga \
+    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki listadomanga-collections \
+        --coleccion-mode calendar \
         --wiki-from "$LISTADO_CAL_FROM" \
-        --sleep-seconds 0.5 \
+        --sleep-seconds 0.3 \
         --min-score 20 \
-        > "$LOG_DIR/02a-listadomanga-calendar.log" 2>&1
+        > "$LOG_DIR/02a-listadomanga-collections-calendar.log" 2>&1
     echo "    duración: $(($(date +%s) - P2A_START))s — items: $(count_lines)"
 
     # 2b. manga-sanctuary (FR planning)
@@ -395,10 +402,44 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
     fi
 
+    # [4f1] regla dura país=edición: sufija el país al edition_key para que dos
+    # mercados nunca compartan edición/cluster. Idempotente.
+    echo ">>> [4f1] fix_edition_country (país = edición)"
+    "$VENV_PY" scripts/retrofit/fix_edition_country.py \
+        > "$LOG_DIR/04f1-edition-country.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f2] alinea items raw a la edición estandarizada de su MISMA coleccion
+    # (regla coleccion=edición). Re-scrapear una coleccion ya estandarizada deja
+    # el item raw nuevo con edition_key/cluster_key distinto del viejo → no
+    # consolidan (dup raw-vs-std, ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1").
+    # Debe correr ANTES de consolidate_sources para que el merge los fusione.
+    echo ">>> [4f2] align_raw_to_std_coleccion (dedup raw-vs-estandarizado)"
+    "$VENV_PY" scripts/retrofit/align_raw_to_std_coleccion.py \
+        > "$LOG_DIR/04f2-align-raw-std.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f3] una /coleccion = UNA página de edición: unifica el edition_key de
+    # todos los tomos de la coleccion (regular+especial+cofres+variantes) al de
+    # su edición base; el cluster (tier-0 lmc) sigue distinguiendo variantes.
+    echo ">>> [4f3] unify_coleccion_edition (coleccion = una edición)"
+    "$VENV_PY" scripts/retrofit/unify_coleccion_edition.py \
+        > "$LOG_DIR/04f3-unify-coleccion.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
     "$VENV_PY" scripts/retrofit/consolidate_sources.py \
         > "$LOG_DIR/04g-consolidate-sources.log" 2>&1
     echo "    items: $(count_lines)"
+
+    # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
+    # fuentes hermanas → puede quedar la MISMA portada en dos resoluciones. Quita
+    # la de menor resolución (hash perceptual). Network-bound (descarga thumbs).
+    echo ">>> [4h] dedup_carousel_images (misma portada en 2 resoluciones)"
+    P4H_START=$(date +%s)
+    _run_timed 1200 "$VENV_PY" scripts/retrofit/dedup_carousel_images.py \
+        > "$LOG_DIR/04h-dedup-carousel.log" 2>&1
+    echo "    duración: $(($(date +%s) - P4H_START))s — items: $(count_lines)"
 
     echo " ✓ PHASE 3 cleanup done"
 else
@@ -416,6 +457,14 @@ if [ "$SKIP_BUILD" != "1" ]; then
 else
     echo "[SKIP] PHASE 4 (build) saltada por SKIP_BUILD=1"
 fi
+
+# ============================================================
+# PHASE 5: Validación estructural del corpus (gate de salud)
+# ============================================================
+echo
+echo ">>> [5] validate_corpus (invariantes estructurales — gotcha #54)"
+"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log" || \
+    echo " ⚠ validate_corpus reportó violaciones DURAS — revisar $LOG_DIR/05-validate-corpus.log"
 
 # ============================================================
 # FINAL SUMMARY
