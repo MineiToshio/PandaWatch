@@ -65,7 +65,7 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "edicion especial", "score": 40, "type": "special_edition"},
     {"phrase": "edición coleccionista", "score": 45, "type": "collector"},
     {"phrase": "edicion coleccionista", "score": 45, "type": "collector"},
-    {"phrase": "coleccionista", "score": 28, "type": "collector"},
+    {"phrase": "coleccionista", "score": 32, "type": "collector"},
     {"phrase": "numerada", "score": 40, "type": "limited"},
     {"phrase": "pack limitado", "score": 35, "type": "pack"},
     {"phrase": "preventa", "score": 10, "type": "availability"},
@@ -76,7 +76,7 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "cartone", "score": 35, "type": "hardcover"},
     {"phrase": "gran formato", "score": 22, "type": "oversized"},
     {"phrase": "mayor formato", "score": 22, "type": "oversized"},
-    {"phrase": "kanzenban", "score": 25, "type": "premium_format"},
+    {"phrase": "kanzenban", "score": 35, "type": "premium_format"},
     {"phrase": "integral", "score": 18, "type": "omnibus"},
     {"phrase": "3 en 1", "score": 16, "type": "omnibus"},
     {"phrase": "2 en 1", "score": 14, "type": "omnibus"},
@@ -189,7 +189,7 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     # -------------------------
     {"phrase": "édition collector", "score": 45, "type": "collector"},
     {"phrase": "edition collector", "score": 45, "type": "collector"},
-    {"phrase": "collector", "score": 28, "type": "collector"},
+    {"phrase": "collector", "score": 32, "type": "collector"},
     {"phrase": "édition limitée", "score": 45, "type": "limited"},
     {"phrase": "edition limitee", "score": 45, "type": "limited"},
     {"phrase": "tirage limité", "score": 45, "type": "limited"},
@@ -396,6 +396,20 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^Adicionar\s+(?:à|a)\s+lista(?:\s+de\s+desejos)?\s+", re.IGNORECASE),
 )
 
+# Prefijos de botón "leer más" que el scraper captura cuando el selector toma
+# el wrapper completo del producto (el CTA queda incluido en el texto del nodo).
+# Afectan `description` (y por ende `description_es`). Gotcha #37.
+DESCRIPTION_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^EN\s+SAVOIR\s+PLUS\s*", re.IGNORECASE),   # FR Meian
+    re.compile(r"^MÁS\s+INFORMACIÓN\s*", re.IGNORECASE),    # ES genérico
+    re.compile(r"^LEER\s+MÁS\s*", re.IGNORECASE),           # ES genérico
+    re.compile(r"^VER\s+MÁS\s*", re.IGNORECASE),            # ES genérico
+    re.compile(r"^APRENDE\s+MÁS\s*", re.IGNORECASE),        # ES (variante traducción)
+    re.compile(r"^READ\s+MORE\s*", re.IGNORECASE),           # EN genérico
+    re.compile(r"^MEHR\s+ERFAHREN\s*", re.IGNORECASE),      # DE genérico
+    re.compile(r"^SCOPRI\s+DI\s+PIÙ\s*", re.IGNORECASE),   # IT genérico
+)
+
 # Retailers cuyo "(X Exclusive)" en el sufijo es metadata redundante.
 # Si el paréntesis menciona algo distinto (un artista, un evento), se mantiene.
 _RETAILER_NAMES_ALT = (
@@ -581,7 +595,7 @@ def clean_title(title: str) -> str:
       3) Strip de markers de volumen HUÉRFANOS (sin número adyacente).
          Ej. "Ataque a los Titanes nº Collector's Edition" → "Ataque a los
          Titanes Collector's Edition". Sin esto, el LLM del skill
-         `/standardize-catalog` ve "nº" suelto y lo interpreta como parte
+         `/watch-standardize-catalog` ve "nº" suelto y lo interpreta como parte
          del nombre (lo deja como "no" residual en title y series_key —
          gotcha #29).
     Iterando hasta estabilizar para que patrones cascading se resuelvan.
@@ -606,6 +620,16 @@ def clean_title(title: str) -> str:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if cleaned == prev:
             break
+    return cleaned
+
+
+def clean_description(desc: str) -> str:
+    """Quita prefijos de botón 'leer más' capturados por el scraper (gotcha #37)."""
+    if not desc:
+        return desc
+    cleaned = desc
+    for pattern in DESCRIPTION_JUNK_PREFIXES:
+        cleaned = pattern.sub("", cleaned).strip()
     return cleaned
 
 
@@ -868,7 +892,7 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
 
     # "画集付き" / "イラスト集付き特装版" = un cuadernillo de ilustraciones INCLUIDO
     # como bonus, NO el producto. El producto es el tomo de manga (特装版/限定版).
-    # Sin esto, el skill /standardize-catalog clasificaba estos tomos como edición
+    # Sin esto, el skill /watch-standardize-catalog clasificaba estos tomos como edición
     # "Artbook" y reescribía el título a "X Artbook Special N" (queja del owner
     # 2026-06-04). Demuele artbook→bonus SOLO cuando el único indicio de artbook
     # es un cuadernillo adjunto (画集/イラスト集/アートワーク + 付/つき/同梱/付属)
@@ -1439,7 +1463,7 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
 
             # description
             if not result["description"] and item.get("description"):
-                result["description"] = clean_text(str(item["description"]))[:2000]
+                result["description"] = clean_description(clean_text(str(item["description"])))[:2000]
 
             # author / creator
             if not result["author"]:
@@ -2102,7 +2126,7 @@ def fetch_metadata_from_detail(
         ):
             meta = soup.find("meta", attrs=attrs)
             if meta and meta.get("content"):
-                value = clean_text(meta["content"])
+                value = clean_description(clean_text(meta["content"]))
                 if value:
                     result["description"] = value
                     break
@@ -3222,6 +3246,11 @@ def _normalize_series_name(title: str, volume: str) -> str:
         return ""
     text = _BRACKETED_RE.sub(" ", title)
     text = _SERIES_STRIP_RE.sub(" ", text)
+    # Quitar el MARCADOR de volumen + número juntos (nº1, n°1, #5, 巻3, 第3巻).
+    # Sin esto, al quitar solo el dígito más abajo quedaba el marcador suelto
+    # "nº" y el slug terminaba en "-no" (bug 2026-06-07: "Slam Dunk nº1" →
+    # series_key "slam-dunk-no"). El `º`/`°` hace inequívoco que es marcador.
+    text = re.sub(r"(?:n[º°]|＃|#|第)\s*\d*\s*巻?", " ", text, flags=re.IGNORECASE)
     # Quitar el número de volumen específico si lo conocemos
     if volume:
         text = re.sub(rf"(?<!\d){re.escape(volume)}(?!\d)", " ", text)
@@ -3283,7 +3312,7 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
 
     Estrategia en cascada (más autoritativo primero):
     1. `edition_key` + `volume` → "edition:<edition_key>|<volume>". El
-       edition_key lo asigna `/standardize-catalog` (LLM-verified) o el
+       edition_key lo asigna `/watch-standardize-catalog` (LLM-verified) o el
        heurístico del scraper, y representa la misma edición + publisher
        + mercado. Dos items con el MISMO edition_key + volume son el mismo
        producto físico aunque vengan de fuentes distintas — incluso si
@@ -3310,7 +3339,34 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     `_variant_tier` colapsa esa varianza eligiendo solo el tier más
     específico — más tolerante, sigue diferenciando tomo-regular vs especial.
     """
-    # Tier 1: edition_key (set by skill /standardize-catalog o por el
+    # Tier 0 (listadomanga): TODO item de una /coleccion clusteriza por
+    # coleccion+kind+volumen, ANTES del edition_key. Regla del owner (gotcha #42/#48):
+    # una /coleccion = UNA página de edición (todos sus tomos comparten edition_key),
+    # PERO el dedup debe seguir distinguiendo variantes del mismo volumen (regular-34
+    # vs especial-34) → la clave de cluster lleva el KIND. Los items de listadomanga
+    # NUNCA se fusionan cross-fuente (verificado: 0 sources externas), así que usar
+    # lmc en vez de edition_key no rompe ningún merge multi-fuente.
+    #   - kind del synthetic URL `&item=<kind>-<vol>` si existe;
+    #   - si no (old-format sin item=), del campo `lm_kind` (seteado por el retrofit
+    #     unify_coleccion_edition); default 'regular'.
+    _cole = re.search(r"listadomanga\.es/coleccion\.php\?id=(\d+)", item.get("url") or "")
+    if _cole:
+        # Canonicalizar el kind: el synthetic URL usa español (especial/alternativa/
+        # limitada) y el lm_kind viejo usa el edition_slug inglés (special/variant/
+        # limited). Mapeamos a UN vocabulario para que el MISMO producto (old-format
+        # std vs new raw) comparta cluster y deduplique (gotcha #52).
+        _LMC_KIND_CANON = {"especial": "special", "alternativa": "variant",
+                           "limitada": "limited"}
+        _it = re.search(r"[?&]item=([a-z]+)-([^-&]+)", item.get("url") or "")
+        if _it:
+            kind = _LMC_KIND_CANON.get(_it.group(1), _it.group(1))
+            return f"lmc:{_cole.group(1)}:{kind}:{_it.group(2)}"
+        kind = (item.get("lm_kind") or "regular").strip() or "regular"
+        kind = _LMC_KIND_CANON.get(kind, kind)
+        vol = (item.get("volume") or "").strip()
+        return f"lmc:{_cole.group(1)}:{kind}:{vol}"
+
+    # Tier 1: edition_key (set by skill /watch-standardize-catalog o por el
     # heurístico de candidate_to_json). Cuando dos items comparten
     # edition_key, son por definición la misma edición/publisher/market.
     # Volume los distingue (tomo 1 vs tomo 2 de la misma edición).
@@ -3423,6 +3479,13 @@ def is_collectible_edition(
     has_product_url = (
         bool(_PRODUCT_URL_SHAPE.search(_url))
         and not _BLOG_URL_PATTERN.search(_url)
+    ) or bool(
+        # URL sintética de listadomanga (coleccion.php?id=N&item=<kind>-<vol>):
+        # es un producto catalogado VERIFICADO (una /coleccion real). Cuenta como
+        # prueba-de-producto (gotcha #50) — si no, ediciones premium de 1 tomo sin
+        # número en el título (ej. "21st Century Boys" Kanzenban) caían como
+        # `regular_tomo` porque su signal premium viene del título de la coleccion.
+        re.search(r"listadomanga\.es/coleccion\.php\?id=\d+&item=", _url)
     )
 
     # 1) Signal types de edición especial — exigiendo prueba de producto.
@@ -3436,13 +3499,17 @@ def is_collectible_edition(
         # vía; seguimos evaluando reglas 2-4 por si encajan.
 
     # 2) Extras de primera edición (bonus/finish): requiere que el título
-    # tenga un NÚMERO (volumen). Esto distingue:
-    #   - "Naruto 12 con marcapáginas exclusivo" → tiene "12" → KEEP
-    #   - "Fandango your tickets, posters, trailers" → no tiene número → REJECT
-    # Los news/social posts rara vez incluyen un número aislado al estilo
-    # de un volumen de manga.
+    # tenga shape de VOLUMEN de manga. Esto distingue:
+    #   - "Naruto 12 con marcapáginas exclusivo" → vol 12 → KEEP
+    #   - "Ataque a los Titanes nº1" (cofre 1ª ed.) → vol 1 → KEEP
+    #   - "Fandango your tickets, posters, trailers" → sin volumen → REJECT
+    # El número puede venir suelto ("Naruto 12 con marcapáginas") O pegado a
+    # "nº"/"n°" ("Ataque a los Titanes nº1", los cofres de 1ª ed. de listadomanga).
+    # `\b\d+\b` SOLO NO basta: la "º" es word-char Unicode → sin boundary, y
+    # tumbaba TODOS los cofres "nºN" con sólo signal `bonus` (caso real Attack on
+    # Titan cole 1606: regular-1/17/27 rechazados como `regular_tomo`).
     matched_extras = sig_set & FIRST_EDITION_EXTRAS_SIGNAL_TYPES
-    if matched_extras and re.search(r"\b\d+\b", title):
+    if matched_extras and re.search(r"\b\d+\b|n[º°]\s*\d+", title):
         return True, f"extras:{','.join(sorted(matched_extras))}"
 
     # 3) Product type intrínsecamente coleccionable.
@@ -3807,7 +3874,7 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     # 2. Upsert con las rows nuevas (last-wins por URL).
     #
     # Excepción: si el row existente tiene `standardized_at`, preservamos los
-    # campos seteados por el skill `/standardize-catalog` (title canónico,
+    # campos seteados por el skill `/watch-standardize-catalog` (title canónico,
     # series_key/edition_key, volume, etc.). Los campos scrapeados (price,
     # image_url, isbn, author, stock_type, signal_types, score, detected_at)
     # SÍ se refrescan con la row nueva. Sin esta merge, un re-scrape borra
@@ -3854,7 +3921,7 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         if old and old.get("rarity") and old["rarity"] != row.get("rarity"):
             row["rarity"] = old["rarity"]
         # rarity_verified_at es sticky: preservar el timestamp de verificación
-        # web (skill /validate-rarity). Un re-scrape no debe borrar la marca
+        # web (skill /watch-validate-rarity). Un re-scrape no debe borrar la marca
         # de que este item ya fue verificado por búsqueda web.
         if old and old.get("rarity_verified_at") and not row.get("rarity_verified_at"):
             row["rarity_verified_at"] = old["rarity_verified_at"]
@@ -4766,7 +4833,7 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     title = _derive_title(card, anchor)
     if not title or len(title) < 3:
         return None
-    description = clean_text(card.get_text(" ", strip=True))
+    description = clean_description(clean_text(card.get_text(" ", strip=True)))
     # Filtro de longitudes: bloques contaminados (>2000) o ruido (<25).
     # 25 chars permite cards de e-commerce con título corto + precio.
     if len(description) < 25 or len(description) > 2000:
@@ -5401,7 +5468,10 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "nobi nobi": "nobinobi",
     "tomodomo": "tomodomo",
     "fandogamia": "fandogamia",
-    "rakuten": "rakuten",
+    # NOTA: NO mapear nombres de TIENDA (Rakuten, Sanyodo, Honto, Animate…) a un
+    # slug — son marketplaces multi-editorial, no editoriales. Mapearlos
+    # contaminaba el edition_key con el slug de la tienda (`...-rakuten-...`) y
+    # rompía el merge por ISBN con la ficha de la editorial oficial. Ver gotcha #44.
     "kurokawa": "kurokawa",
     "akita": "akita",
     "hakusensha": "hakusensha",
@@ -5452,6 +5522,32 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     # Publishers ES adicionales
     "distrito manga": "distrito",
     "distrito": "distrito",
+    "astiberri": "astiberri",
+    "ponent mon": "ponentmon",
+    "ponent": "ponentmon",
+    "ediciones b": "edicionesb",
+    "bruguera": "bruguera",
+    "debolsillo": "debolsillo",
+    "reservoir books": "reservoir",
+    "ooso comics": "ooso",
+    "ooso": "ooso",
+    "letrablanka": "letrablanka",
+    "héroes de papel": "heroesdepapel",
+    "heroes de papel": "heroesdepapel",
+    "nowevolution": "nowevolution",
+    "ominiky": "ominiky",
+    "loftur": "loftur",
+    "fujur": "fujur",
+    "anaya": "anaya",
+    "fanbooks": "fanbooks",
+    "monogatari": "monogatari",
+    "odaiba": "odaiba",
+    "ediciones babylon": "babylon",
+    "babylon": "babylon",
+    "la cúpula": "lacupula",
+    "la cupula": "lacupula",
+    "gamepress": "gamepress",
+    "shockdom": "shockdom",
     # Publishers BR adicionales
     "mpeg": "mpeg",
     # Publishers VN/TH adicionales
@@ -5491,6 +5587,73 @@ def _publisher_slug(publisher: str) -> str:
         if key in pub_lc:
             return slug
     return "unknown"
+
+
+# REGLA DE NEGOCIO DURA (2026-06-07): país distinto = edición distinta, SIEMPRE.
+# El país se hornea en el edition_key como sufijo (`…-{country_slug}`) para que
+# dos mercados NUNCA compartan edición/cluster aunque tengan la misma editorial
+# matriz (Panini IT vs Panini ES/MX/BR, Kazé FR vs DE, etc.). Ver gotcha #46.
+_COUNTRY_SLUG_MAP: dict[str, str] = {
+    "japón": "jp", "japon": "jp", "japan": "jp",
+    "italia": "it", "italy": "it",
+    "españa": "es", "espana": "es", "spain": "es",
+    "francia": "fr", "france": "fr",
+    "alemania": "de", "germany": "de", "deutschland": "de",
+    "estados unidos": "us", "usa": "us", "united states": "us",
+    "vietnam": "vn",
+    "méxico": "mx", "mexico": "mx",
+    "brasil": "br", "brazil": "br",
+    "tailandia": "th", "thailand": "th",
+    "argentina": "ar",
+    "taiwán": "tw", "taiwan": "tw",
+    "reino unido": "gb", "united kingdom": "gb", "uk": "gb",
+    "portugal": "pt",
+    "perú": "pe", "peru": "pe",
+    "chile": "cl",
+    "corea": "kr", "korea": "kr",
+    "españa / latam": "eslatam", "latam": "latam",
+}
+
+
+def _country_slug(country: str) -> str:
+    """Código corto del país para hornearlo en el edition_key (regla país=edición).
+
+    Devuelve 'xx' si el país es vacío/desconocido (así un item sin país no
+    colapsa con uno que sí lo tiene). Match exacto normalizado y, como fallback,
+    los 2 primeros chars alfabéticos del país slugificado.
+    """
+    if not country or not country.strip():
+        return "xx"
+    c = country.strip().lower()
+    if c in _COUNTRY_SLUG_MAP:
+        return _COUNTRY_SLUG_MAP[c]
+    # fallback determinístico: primeras letras del país (evita colisión silenciosa)
+    import unicodedata as _ud
+    norm = "".join(ch for ch in _ud.normalize("NFKD", c) if not _ud.combining(ch))
+    norm = "".join(ch for ch in norm if ch.isalpha())
+    return norm[:4] or "xx"
+
+
+_ESPECIAL_PARENS_RE = re.compile(r"^(.*\d)\s*\((?:Edici[óo]n\s+)?Especial\)\s*$", re.IGNORECASE)
+_ESPECIAL_REORDER_RE = re.compile(
+    r"^(.*?)\s+(?:Edici[óo]n\s+Especial|Especial|Special(?:\s+Edition)?)\s+(\d+(?:[.\-]\d+)?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def format_especial_title(title: str) -> str:
+    """Normaliza el título de una EDICIÓN ESPECIAL a "{serie} {vol} Edición Especial"
+    (gotcha #52). Idempotente. Sólo cambia títulos que ya tienen el patrón especial
+    (un regular como "Atelier of Witch Hat 5" no matchea → queda igual).
+      - "X N (Edición Especial)"        → "X N Edición Especial"
+      - "X Edición Especial N" / "X Especial N" / "X Special Edition N" → "X N Edición Especial"
+    """
+    t = (title or "").strip()
+    t = _ESPECIAL_PARENS_RE.sub(r"\1 Edición Especial", t)   # quitar paréntesis
+    m = _ESPECIAL_REORDER_RE.match(t)                         # mover el vol al frente
+    if m:
+        t = f"{m.group(1).strip()} {m.group(2)} Edición Especial"
+    return t
 
 
 def _slugify_kebab(s: str) -> str:
@@ -5590,7 +5753,7 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     """Asigna heurísticamente `series_key`, `edition_key`, etc. desde el title.
 
     Esto es la PRIMERA pasada cruda del scraper. Imperfecta a propósito —
-    el skill `/standardize-catalog` (subagentes con LLM) la verifica y
+    el skill `/watch-standardize-catalog` (subagentes con LLM) la verifica y
     corrige después. NO setea `standardized_at`, así el skill sabe que
     todavía debe procesar este item.
 
@@ -5657,7 +5820,10 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
         tier, title, candidate.language or "", pub_slug,
     )
 
-    edition_key = f"{series_key}-{pub_slug}-{edition_slug}"
+    # País SIEMPRE en el edition_key (regla dura país=edición, gotcha #46): dos
+    # mercados nunca comparten edición aunque coincidan series+publisher+edition.
+    country_slug = _country_slug(candidate.country or "")
+    edition_key = f"{series_key}-{pub_slug}-{edition_slug}-{country_slug}"
     _EDITION_NAME_MAP = {
         "deluxe": "Deluxe", "kanzenban": "Kanzenban", "boxset": "Box Set",
         "coffret": "Coffret", "cofanetto": "Cofanetto",
@@ -5676,11 +5842,16 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
         f"{edition_name} ({publisher_display})" if publisher_display else edition_name
     )
 
-    # 5) title_standardized
-    parts = [series_display.strip(), edition_name if edition_slug != "regular" else "", volume]
+    # 5) title_standardized. Edición especial → "{serie} {vol} Edición Especial"
+    # (el volumen ANTES del calificador, gotcha #52). Otras ediciones mantienen
+    # "{serie} {edición} {vol}".
+    if edition_slug == "special":
+        parts = [series_display.strip(), volume, "Edición Especial"]
+    else:
+        parts = [series_display.strip(), edition_name if edition_slug != "regular" else "", volume]
     title_standardized = " ".join(p for p in parts if p).strip()
 
-    # 6) Confidence tier for /standardize-catalog routing
+    # 6) Confidence tier for /watch-standardize-catalog routing
     #   Tier 1: series resolved in aliases + known publisher + unambiguous edition
     #   Tier 2: series resolved but edition ambiguous OR publisher unknown
     #   Tier 3: series NOT resolved (unknown series, CJK-only, etc.)
@@ -5715,7 +5886,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "title": candidate.title,
         # title_original preserva el título scrapeado tal como vino de la
         # fuente (con clean_title aplicado: mojibake fixed, junk removido).
-        # NO se sobrescribe cuando el skill /standardize-catalog estandariza
+        # NO se sobrescribe cuando el skill /watch-standardize-catalog estandariza
         # `title` a la forma international ("Demon Slayer Limited 23") — el
         # original "鬼滅の刃 23 特装版" queda preservado acá. Ver gotcha #22.
         "title_original": candidate.title,
@@ -5784,7 +5955,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         log_unmapped_series = None
     # Paso A: si el Candidate no tiene series_key/edition_key, derivar
     # heurísticamente desde el title (función rápida, regex-based). El skill
-    # `/standardize-catalog` luego corrige los casos raros.
+    # `/watch-standardize-catalog` luego corrige los casos raros.
     sk = getattr(candidate, "series_key", "") or ""
     sd = getattr(candidate, "series_display", "") or ""
     ek = getattr(candidate, "edition_key", "") or ""
@@ -5824,7 +5995,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         row["volume"] = vol
     # No re-escribimos el title si ya viene seteado; el `title_standardized`
     # de la heurística queda como reference pero no overridea el title scrapeado.
-    # El skill /standardize-catalog es el que reescribe título al merge.
+    # El skill /watch-standardize-catalog es el que reescribe título al merge.
 
     # Paso D: si el series_key NO está en aliases.yml, loguearlo al unmapped
     # queue para que el skill enrich-series-aliases lo procese.
@@ -6557,6 +6728,12 @@ def _run_wiki_bootstrap(
             "id_to": int(getattr(args, "coleccion_to", 6500) or 6500),
             "mode": str(getattr(args, "coleccion_mode", "lista") or "lista"),
         }
+        _ids_file = getattr(args, "coleccion_ids_file", "") or ""
+        if _ids_file:
+            with open(_ids_file) as _fh:
+                extra_kwargs["explicit_ids"] = [
+                    int(x) for x in _fh.read().split() if x.strip().isdigit()
+                ]
     # animeclick SIEMPRE necesita fetch_details=True — el calendario solo da
     # título + publisher + imagen; precio, fecha y descripción viven en el
     # detail page. El flag --fetch-details de la CLI es para el source loop
@@ -7452,10 +7629,18 @@ def parse_args() -> argparse.Namespace:
         help="Id final de la iteración para --bootstrap-wiki listadomanga-collections SOLO si --coleccion-mode=range. En el modo 'lista' (default) este flag se ignora.",
     )
     parser.add_argument(
+        "--coleccion-ids-file",
+        default="",
+        help="Archivo con ids de colección (uno o varios por línea, whitespace-sep) "
+             "para --bootstrap-wiki listadomanga-collections. Si se pasa, IGNORA "
+             "--coleccion-mode/from/to y procesa EXACTAMENTE esos ids en orden "
+             "(ingesta por chunks resumible).",
+    )
+    parser.add_argument(
         "--coleccion-mode",
-        choices=["lista", "range"],
+        choices=["lista", "range", "calendar"],
         default="lista",
-        help="Discovery para --bootstrap-wiki listadomanga-collections. 'lista' (default): usa lista.php como índice oficial alfabético (~3432 colecciones activas, modo recomendado). 'range': iteración numérica id_from..id_to (legacy, útil para re-procesar rangos específicos como ids problemáticos detectados en UNKNOWN h2).",
+        help="Discovery para --bootstrap-wiki listadomanga-collections. 'lista' (default): usa lista.php como índice oficial alfabético (~3432 colecciones activas, modo recomendado para el FULL). 'range': iteración numérica id_from..id_to (legacy). 'calendar' (DELTA): descubre los ids de colección con actividad en el calendario (calendario.php) en la ventana --wiki-from→--wiki-to y parsea SOLO esas colecciones completas — da la misma riqueza de ediciones/cofres/variantes que el full pero acotado a lo reciente.",
     )
     parser.add_argument(
         "--discover-sitemaps",

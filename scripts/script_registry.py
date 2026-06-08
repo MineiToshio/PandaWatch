@@ -65,11 +65,13 @@ SCRIPTS: list[dict[str, Any]] = [
         "tagline": "Detecta novedades de los últimos meses. Rápido (~30-60 min).",
         "what": (
             "Encadena toda la pipeline en modo INCREMENTAL: scrape de las "
-            "fuentes del YAML + listadomanga CALENDARIO (mes actual + 2 "
-            "anteriores) + manga-sanctuary + otaku-calendar + manga-mexico + "
-            "socialanime + blogbbm + search discovery + cleanup retrofits + "
-            "build_web. NO recorre las ~3432 colecciones de listadomanga "
-            "lista.php — eso es del scrape FULL."
+            "fuentes del YAML + listadomanga-collections modo CALENDAR (parsea "
+            "las colecciones con actividad en calendario.php del mes actual + 2 "
+            "anteriores, con ediciones especiales/cofres/variantes — misma "
+            "riqueza que el full pero acotado) + manga-sanctuary + "
+            "otaku-calendar + manga-mexico + socialanime + blogbbm + search "
+            "discovery + cleanup retrofits + build_web. NO recorre las ~3432 "
+            "colecciones de listadomanga lista.php — eso es del scrape FULL."
         ),
         "when": (
             "Diario o semanal. Es lo que querés correr cuando solo querés "
@@ -913,6 +915,44 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "clean_descriptions",
+        "category": "Mantenimiento",
+        "icon": "🧹",
+        "name": "Re-limpiar descripciones",
+        "tagline": "Strip de prefijos de botón 'leer más' en description/description_es.",
+        "what": (
+            "Aplica clean_description() sobre los campos description y description_es "
+            "de todos los items. Elimina prefijos tipo 'EN SAVOIR PLUS', 'MÁS INFORMACIÓN', "
+            "'READ MORE', etc. que el scraper captura del wrapper del CTA (gotcha #37). "
+            "Es seguro correrla varias veces."
+        ),
+        "when": (
+            "Después de scrapes de fuentes FR - Meian u otras que embeben el botón "
+            "'leer más' en el texto de la card."
+        ),
+        "command": [PYTHON, "scripts/retrofit/clean_descriptions.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Cuenta cuántos cambiarían sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Limpiar",
+                "desc": "Aplica la limpieza con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Cuenta cuántos items cambiarían sin guardar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "rescore",
         "category": "Mantenimiento",
         "icon": "📊",
@@ -1485,6 +1525,44 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "dedup_carousel_images",
+        "category": "Mantenimiento",
+        "icon": "🖼️",
+        "name": "Dedup portada del carrusel (misma foto, 2 resoluciones)",
+        "tagline": "Quita del carrusel la misma portada repetida en baja calidad, conservando la hi-res.",
+        "what": (
+            "Cuando un item termina con la MISMA portada en dos resoluciones en images[] (ej. la "
+            "cover hi-res del publisher + la misma como thumbnail de baja calidad de listadomanga), "
+            "la deduplica por hash perceptual (aHash 8×8, Hamming ≤6 + aspect ratio ±12%) y conserva "
+            "la de MAYOR resolución. SEGURO: solo toca kind=gallery — los `extra` (cofres, tomos del "
+            "box, bonuses) son contenido curado e intocables — y exige dims válidas. Nunca deja un "
+            "item sin imágenes; si la cover principal era una descartada, apunta a la kept hi-res. "
+            "Corre como paso [4h] del pipeline (después de consolidate_sources, que es donde se crea "
+            "el duplicado al unir imágenes de fuentes hermanas)."
+        ),
+        "when": (
+            "Cuando el carrusel muestra la misma portada en alta y baja calidad. Automático en el "
+            "pipeline; manual tras correr fetch_better_covers / upgrade_image_resolution. "
+            "Correr primero con --dry-run. Requiere: pip install Pillow."
+        ),
+        "command": [PYTHON, "scripts/retrofit/dedup_carousel_images.py"],
+        "presets": [
+            {"label": "🖼️ Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
+            {"label": "🖼️ Aplicar (solo items con imagen de listadomanga)", "flags": {}},
+            {"label": "🖼️ Aplicar a TODOS los items", "flags": {"--all": True}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo mostrar, no escribir",
+                  "Lista las imágenes que se quitarían sin tocar items.jsonl.",
+                  type="bool", default=False),
+            _flag("--all", "Todos los items (no solo listadomanga)",
+                  "Por defecto solo procesa items que tienen alguna imagen de listadomanga. "
+                  "Con --all revisa el carrusel de TODOS los items con ≥2 imágenes.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "wayback_recover",
         "category": "Mantenimiento",
         "icon": "🕰️",
@@ -1652,7 +1730,7 @@ SCRIPTS: list[dict[str, Any]] = [
             "el slug limpio). Idempotente: no re-escribe slugs que no cambiaron."
         ),
         "when": (
-            "Como último paso del skill /standardize-catalog, después de asignar "
+            "Como último paso del skill /watch-standardize-catalog, después de asignar "
             "edition_key y volume a los items nuevos. También correrlo una vez "
             "para generar slugs en todo el corpus existente. No corre "
             "automáticamente en scrape_delta ni scrape_full."
@@ -1684,7 +1762,7 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False),
             _flag("--only-missing", "Solo items sin slug",
                   "Salta los items que ya tienen slug. Ideal para corridas "
-                  "incrementales post-/standardize-catalog.",
+                  "incrementales post-/watch-standardize-catalog.",
                   type="bool", default=False),
             _flag("--verbose", "Log de cada asignación",
                   "Imprime el slug asignado y el título de cada item procesado.",
@@ -1806,6 +1884,198 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "align_raw_to_std_coleccion",
+        "category": "Retrofit",
+        "icon": "🔗",
+        "name": "Alinear raw a edición estandarizada (por coleccion)",
+        "tagline": "Dedup raw-vs-estandarizado al re-scrapear una coleccion ya conocida.",
+        "what": "Re-scrapear una /coleccion que YA tiene items estandarizados deja "
+                "el item raw nuevo con edition_key/cluster_key distinto del viejo → "
+                "no consolidan y aparece la misma coleccion dos veces (ej. "
+                "'Bastard!! nº1' raw vs 'Bastard!! Deluxe 1' estandarizado). Por la "
+                "regla coleccion=edición, los raw heredan series/edition del item "
+                "estandarizado de su misma coleccion y consolidan. No toca title ni "
+                "standardized_at. Idempotente. Corre como paso [4f2] del pipeline, "
+                "antes de consolidate_sources.",
+        "when": "Tras scrapear listadomanga-collections sobre colecciones que ya "
+                "estaban en el corpus estandarizadas.",
+        "command": [PYTHON, "scripts/retrofit/align_raw_to_std_coleccion.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "🔗 Alinear",
+                "desc": "Alinea raw a la edición estandarizada de su coleccion y consolida.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué items raw se re-keyarían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los items raw a alinear sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+    {
+        "id": "fix_store_publisher",
+        "category": "Retrofit",
+        "icon": "🏪",
+        "name": "Sacar nombre de tienda del publisher (Sanyodo/Rakuten)",
+        "tagline": "La tienda no es la editorial — limpia publisher y colapsa dups por ISBN.",
+        "what": "Las fuentes JP Sanyodo y Rakuten Books seteaban publisher=nombre "
+                "de la tienda, que contaminaba el edition_key (…-rakuten-… o "
+                "…-unknown-…) y generaba 'posibles productos duplicados' con la "
+                "ficha de la editorial oficial (mismo ISBN, distinto cluster_key). "
+                "Limpia el campo publisher (top-level y dentro de sources[]), "
+                "recupera la editorial real por slug del edition_key o por hermano "
+                "con el mismo ISBN (si no se puede, lo deja vacío), y colapsa los "
+                "dups de mismo-ISBN+mismo-series cuyo único conflicto era el slug "
+                "de publisher. No toca divergencias de romanización ni aprobados. "
+                "Idempotente. Correr generate_slugs después.",
+        "when": "1× sobre el corpus histórico (las fuentes ya quedaron sin "
+                "publisher de tienda para futuras corridas). Ver gotcha #44.",
+        "command": [PYTHON, "scripts/retrofit/fix_store_publisher.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Muestra qué cambiaría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Limpiar",
+                "desc": "Aplica la limpieza con backup y consolida.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Cuenta cuántos items cambiarían sin guardar nada.",
+                  type="bool", default=False),
+        ],
+    },
+    {
+        "id": "fix_listadomanga_edition_display",
+        "category": "Retrofit",
+        "icon": "🏷️",
+        "name": "Nombre oficial de edición (sin traducir)",
+        "tagline": "edition_display = título oficial de la /coleccion, no un slug traducido.",
+        "what": "El nombre de la edición debe ser el oficial (el título de la "
+                "coleccion en ListadoManga), sin traducir — no 'Special (Norma "
+                "Editorial)'. Re-fetchea el título de cada coleccion y lo asigna "
+                "a todos sus items. Sólo el nombre del tomo se traduce, el de la "
+                "edición no. Network-bound (re-fetch ~500 colecciones).",
+        "when": "1× sobre el corpus; el parser ya pone el título oficial en items nuevos.",
+        "command": [PYTHON, "scripts/retrofit/fix_listadomanga_edition_display.py"],
+        "presets": [
+            {"id": "apply", "label": "🏷️ Aplicar", "desc": "Asigna el nombre oficial de edición.", "values": {}},
+            {"id": "dryrun", "label": "🧪 Preview (no escribe)", "desc": "Muestra los cambios sin escribir.", "values": {"--dry-run": True}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)", "Muestra los edition_display a corregir.", type="bool", default=False),
+        ],
+    },
+    {
+        "id": "unify_coleccion_edition",
+        "category": "Retrofit",
+        "icon": "📂",
+        "name": "Una coleccion = una edición",
+        "tagline": "Agrupa todos los tomos de una /coleccion (regular+especial+cofres) en una página.",
+        "what": "Una /coleccion de ListadoManga es UNA página de edición. Unifica "
+                "el edition_key de todos sus tomos al de la edición base (regular, o "
+                "la predominante). Las variantes del mismo volumen (tomo 34 normal vs "
+                "especial) no se fusionan: las distingue el cluster_key por "
+                "coleccion+tipo+volumen. Idempotente.",
+        "when": "Tras scrapear ListadoManga; corre como paso [4f3] del pipeline.",
+        "command": [PYTHON, "scripts/retrofit/unify_coleccion_edition.py"],
+        "presets": [
+            {"id": "apply", "label": "📂 Unificar", "desc": "Agrupa los tomos de cada coleccion en una edición.", "values": {}},
+            {"id": "dryrun", "label": "🧪 Preview (no escribe)", "desc": "Muestra qué items se re-asignarían.", "values": {"--dry-run": True}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los items a re-asignar sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+    {
+        "id": "fix_edition_country",
+        "category": "Retrofit",
+        "icon": "🌍",
+        "name": "País en edition_key (país = edición)",
+        "tagline": "Regla dura: país distinto = edición distinta. Sufija el país al edition_key.",
+        "what": "Dos mercados nunca pueden ser la misma edición aunque coincidan "
+                "obra+editorial+tipo (Panini IT vs ES vs MX). Sufija el edition_key "
+                "con el código de país de la edición y recomputa cluster_key, de modo "
+                "que la vista de edición y el dedup separen mercados. El país es el de "
+                "la edición (editorial/idioma), NO el de la tienda — una tienda puede "
+                "revender la edición de otro país y sigue siendo una sola edición. "
+                "Idempotente.",
+        "when": "1× tras introducir la regla; el scraper ya hornea el país en items "
+                "nuevos. Correr generate_slugs.py después.",
+        "command": [PYTHON, "scripts/retrofit/fix_edition_country.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "🌍 Aplicar",
+                "desc": "Sufija país al edition_key, recomputa cluster_key y consolida.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra cuántos edition_keys se sufijarían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los edition_key a sufijar sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+    {
+        "id": "fix_publisher_unknown_edition_key",
+        "category": "Retrofit",
+        "icon": "🏷️",
+        "name": "Arreglar editorial 'unknown' en edition_key",
+        "tagline": "Reemplaza el slug 'unknown' por la editorial real cuando el publisher está poblado.",
+        "what": "El edition_key (series-publisher-edition) quedó con 'unknown' "
+                "porque la editorial no estaba en el mapa de slugs al estandarizar "
+                "(Norma, Planeta, Astiberri, Ponent Mon, Ediciones B, etc.). Esto "
+                "hacía que ediciones de editoriales distintas colapsaran bajo el "
+                "mismo slug. Recomputa el slug del publisher, reemplaza el segmento "
+                "'unknown', recompute cluster_key y consolida. No toca series ni "
+                "edition. Idempotente.",
+        "when": "Tras agregar editoriales nuevas al mapa, o tras estandarizar items "
+                "de editoriales que aún no estaban mapeadas.",
+        "command": [PYTHON, "scripts/retrofit/fix_publisher_unknown_edition_key.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "🏷️ Arreglar",
+                "desc": "Reemplaza 'unknown' por la editorial real y consolida.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué edition_keys se corregirían sin tocar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los edition_key a corregir sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+    {
         "id": "consolidate_sources",
         "category": "Retrofit",
         "icon": "🧩",
@@ -1817,7 +2087,7 @@ SCRIPTS: list[dict[str, Any]] = [
                 "duplicados conservando todas las fuentes, imágenes y extras. "
                 "El scraper ya deduplica al ingestar; esto re-consolida tras la "
                 "estandarización (que reasigna edition_key). Idempotente.",
-        "when": "Después de /standardize-catalog, o si ves cards duplicadas del "
+        "when": "Después de /watch-standardize-catalog, o si ves cards duplicadas del "
                 "mismo producto.",
         "command": [PYTHON, "scripts/retrofit/consolidate_sources.py"],
         "presets": [

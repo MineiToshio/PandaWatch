@@ -109,7 +109,7 @@ _VOL_PATTERNS = (
 )
 
 # Publisher canónico del 2do span de sab[1]. Mapeamos los más frecuentes
-# del corpus (los no listados quedan literales; el skill /standardize-catalog
+# del corpus (los no listados quedan literales; el skill /watch-standardize-catalog
 # los canonicaliza después).
 _PUBLISHER_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^KADOKAWA$|^角川"), "Kadokawa"),
@@ -164,7 +164,7 @@ def _virtual_source() -> Source:
 
 def _publisher_canonical(raw: str) -> str:
     """Mapea un publisher japonés a canonical si está en _PUBLISHER_MAP;
-    si no, devuelve el raw para que el skill /standardize-catalog lo
+    si no, devuelve el raw para que el skill /watch-standardize-catalog lo
     canonicalice después."""
     if not raw:
         return ""

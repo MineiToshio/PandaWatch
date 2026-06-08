@@ -1394,7 +1394,11 @@ sources:
   - name: "JP - Sanyodo Comic Limited Editions"
     country: "Japón"
     language: "Japonés"
-    publisher: "Sanyodo"
+    # SIN publisher: Sanyodo es una tienda multi-editorial que revende ediciones
+    # estándar de Square Enix, Akita Shoten, Kadokawa, etc. El nombre de la tienda
+    # NO es la editorial — dejarlo vacío evita contaminar el edition_key
+    # (`...-unknown-...`) y crear dups con la ficha de la editorial oficial. La
+    # editorial real la completa el merge por ISBN o el skill. Ver gotcha #44.
     source_class: "retailer"
     kind: "html"
     url: "https://www.sanyodo.co.jp/news/bks_new_comic_limited-edition"
@@ -1730,7 +1734,9 @@ sources:
   - name: "JP - Rakuten Books (search)"
     country: "Japón"
     language: "Japonés"
-    publisher: "Rakuten Books / 楽天ブックス"
+    # SIN publisher: Rakuten Books es un marketplace multi-editorial, no una
+    # editorial. El nombre de la tienda NO es el publisher — dejarlo vacío evita
+    # contaminar el edition_key y generar dups. Ver gotcha #44.
     source_class: "retailer"
     kind: "html"
     enabled: true

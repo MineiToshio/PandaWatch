@@ -72,7 +72,11 @@ def _virtual_source() -> Source:
         url=LISTING_URL,
         country="Estados Unidos",
         language="English",
-        publisher="Kinokuniya USA",
+        # Kinokuniya es el RETAILER, NO la editorial. NO poner el nombre de la
+        # tienda como publisher (gotcha: la tienda no es la editorial). La
+        # editorial real (Viz, Kodansha Comics, Seven Seas, TOKYOPOP…) la deriva
+        # /watch-standardize-catalog en el edition_key. Dejar vacío.
+        publisher="",
         source_class="retailer",
         kind="wiki",
         enabled=True,

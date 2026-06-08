@@ -33,8 +33,7 @@ Estructura típica del HTML:
     <h2>Otras ediciones de Berserk</h2>                ← descartado (links a otras pages)
     …
 
-**Fase 1 (esta implementación)**: solo Layout A — items en
-`<table class="ventana_id1" style="width: 184px;">`. Cubre:
+**Layout A** — items en `<table class="ventana_id1" style="width: 184px;">`. Cubre:
 - `Números editados` → solo si el `Formato:` de la página es premium
   (kanzenban, cartoné/tapa dura, A5, Tomo doble, doble sobrecubierta,
   Libro de ilustraciones).
@@ -45,8 +44,11 @@ Estructura típica del HTML:
 - `Números editados (Edición Revisada)` → descartado (re-impresión).
 - `Números en preparación` / `Números no editados` → descartado (sin precio).
 
-**Fase 2 (planeada)**: Layout B (`<table width="920">`) para
-Cofres/Regalos/Extras + vinculación extra→tomo + carrusel de imágenes.
+**Layout B** (`<table width="920">`) — IMPLEMENTADO: Cofres/Regalos/Extras. Cada
+extra se vincula a su tomo destino (`_merge_extras_into_items`): la foto del extra
+va al carrusel (`images[]`) del tomo y el extra se documenta en `extras[]`. Si el
+tomo regular destino fue descartado por el gate de premium, se crea un item
+`from_extras` con la foto del cofre (caso edición normal con cofre de 1ª edición).
 
 URLs sintéticas determinísticas: cada tomo genera
 `coleccion.php?id=<N>&item=<edition_slug>-<vol>` (gotcha #27 generalizada).
@@ -92,6 +94,10 @@ except ImportError:
 BASE_URL = "https://www.listadomanga.es/"
 COLECCION_URL_TEMPLATE = "https://www.listadomanga.es/coleccion.php?id={cid}"
 LISTA_URL = "https://www.listadomanga.es/lista.php"
+CALENDAR_URL_TEMPLATE = "https://www.listadomanga.es/calendario.php?mes={month}&ano={year}"
+# Hash del placeholder de "portada censurada" que listadomanga sirve para
+# algunas ediciones adultas / sin cover real (gotcha #40/#41). No es portada.
+CENSORED_COVER_HASH = "08a02c268a6d6b2304c152aa0acdc7a0"
 
 # Meses para parsear fechas tipo "23 Marzo 2023" o "Junio 2017"
 SPANISH_MONTHS = {
@@ -145,6 +151,57 @@ def _detect_collection_type_signals(collection_title: str) -> list[str]:
                     signals.append(s)
     return signals
 
+
+# Ediciones coleccionables identificadas por el TÍTULO de la colección
+# (no por formato). ListadoManga publica cada edición premium como una
+# colección SEPARADA cuyo título lleva el nombre de la edición entre
+# paréntesis ("Berserk (Maximum)", "Ataque a los Titanes (Edición Integral)").
+# Cuando el Formato NO trae keyword premium (caso real AoT Integral id=5639:
+# "Tomo (177x266) rústica (tapa blanda)") estos tomos se perdían ENTEROS por
+# el gate de "regular sin premium". Estas reglas fuerzan la captura de TODOS
+# los tomos con el signal correspondiente, igual que COLLECTION_TYPE_RULES.
+# Conservador a propósito: solo marcadores claros de edición coleccionista /
+# premium. NO se incluye "Nueva Edición" / "New Edition" (suelen ser
+# re-impresiones estándar, no coleccionables).
+EDITION_TITLE_RULES: list[tuple[re.Pattern[str], list[str]]] = [
+    (re.compile(r"\bkanzenban\b", re.IGNORECASE), ["kanzenban"]),
+    (re.compile(r"\b(?:edici[oó]n\s+integral|complete\s+edition|edici[oó]n\s+completa)\b", re.IGNORECASE | re.UNICODE), ["special_edition", "omnibus"]),
+    (re.compile(r"\b(?:edici[oó]n\s+coleccionista|collector'?s?\s+edition)\b", re.IGNORECASE | re.UNICODE), ["special_edition"]),
+    (re.compile(r"\b(?:edici[oó]n\s+(?:deluxe|de\s+lujo)|deluxe\s+edition)\b", re.IGNORECASE | re.UNICODE), ["deluxe", "special_edition"]),
+    (re.compile(r"\b(?:master\s+edition|maximum|ultimate\s+edition)\b", re.IGNORECASE), ["deluxe", "special_edition"]),
+    (re.compile(r"\b(?:eternal\s+edition|perfect\s+edition)\b", re.IGNORECASE), ["special_edition"]),
+    (re.compile(r"\b(?:black\s+edition|white\s+edition)\b", re.IGNORECASE), ["special_edition"]),
+    (re.compile(r"\bedici[oó]n\s+especial\b", re.IGNORECASE | re.UNICODE), ["special_edition"]),
+    # Paréntesis "(Especial)" / "(Special)" — convención de listadomanga para
+    # ediciones especiales (Ao Ashi, Edens Zero, Tokyo Revengers, Guardianes
+    # de la Noche…). SOLO la forma entre paréntesis: "Especial" suelto suele
+    # ser parte del nombre de la obra ("Patrulla Especial", "Detective Conan
+    # Especial") y NO una edición.
+    (re.compile(r"\(\s*(?:especial|special)\s*\)", re.IGNORECASE | re.UNICODE), ["special_edition"]),
+    (re.compile(r"\b(?:edici[oó]n\s+\d+\s*[ºo]?\s*aniversario|\d+\s*th\s+anniversary)\b", re.IGNORECASE | re.UNICODE), ["special_edition"]),
+]
+
+
+def _detect_edition_title_signals(collection_title: str) -> list[str]:
+    """Como `_detect_collection_type_signals` pero para ediciones premium /
+    coleccionista identificadas por el título (Integral, Coleccionista,
+    Kanzenban, Maximum, Master/Eternal/Black Edition, Deluxe, Aniversario…).
+    Devuelve los signal_types que fuerzan la captura de TODOS los tomos
+    aunque el Formato de la página no sea premium.
+    """
+    if not collection_title:
+        return []
+    signals: list[str] = []
+    seen: set[str] = set()
+    for pattern, sigs in EDITION_TITLE_RULES:
+        if pattern.search(collection_title):
+            for s in sigs:
+                if s not in seen:
+                    seen.add(s)
+                    signals.append(s)
+    return signals
+
+
 # Tokens en `Formato` que indican que la página entera ES un cofre/box
 # set. Cuando matchea, los tomos numerados (alt="X nº1", "X nº2"…) que
 # aparecen en `Números editados` NO se venden sueltos — viven dentro del
@@ -155,15 +212,28 @@ BOX_FORMAT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Prefijos de Formato que indican un producto NO-manga (cuentos ilustrados,
+# novelas gráficas occidentales). Se usan para NO ensuciar ZERO_YIELD_LOG con
+# libros que son cartoné (→ falso premium hardcover) pero no son tomos de manga
+# — el filtro de layout ya los excluye; acá solo evitamos el ruido de auditoría.
+NON_MANGA_FORMAT_PATTERN = re.compile(
+    r"^\s*(?:cuento\s+ilustrado|novela\s+gr[áa]fica|libro\s*\()",
+    re.IGNORECASE | re.UNICODE,
+)
+
 
 # Tokens en `Formato` que disparan "página entera = edición premium".
 # Cuando matchea, los items de `Números editados` reciben el signal
 # correspondiente automáticamente.
 PREMIUM_FORMAT_RULES: list[tuple[re.Pattern[str], list[str]]] = [
-    # A5 + doble sobrecubierta o cartoné suele ser kanzenban
     (re.compile(r"\bkanzenban\b", re.IGNORECASE), ["kanzenban"]),
-    (re.compile(r"\bdoble\s+sobrecubierta\b", re.IGNORECASE), ["kanzenban"]),
-    (re.compile(r"\bA5\b\s*\(\s*1[45]\d\s*x\s*\d{3}\s*\)", re.IGNORECASE), ["kanzenban"]),
+    # NOTE: NO hay rule por tamaño A5 ni por "doble sobrecubierta" (gotcha #51).
+    # El A5 (148x210) es el estándar de muchas series clásicas; y una "doble
+    # sobrecubierta" (dust jacket doble/reversible) es un detalle cosmético común
+    # en ediciones REGULARES, NO una Kanzenban (caso real: Zetman Ivrea cole 1648,
+    # "Tomo (133x185) rústica con doble sobrecubierta" — regular, no kanzenban).
+    # El kanzenban REAL lo da el título "(Kanzenban)" (P0-A) o el literal
+    # "kanzenban" en el formato. Ver gotcha #41/#51.
     # Cartoné / tapa dura: hardcover
     (re.compile(r"\bcarton[ée]\b", re.IGNORECASE | re.UNICODE), ["hardcover", "deluxe"]),
     (re.compile(r"\btapa\s+dura\b", re.IGNORECASE), ["hardcover", "deluxe"]),
@@ -181,6 +251,56 @@ PACK_EXTRAS_KEYWORDS = re.compile(
     r"regalo|extras?|tarjetas?|cards?|brinde|coleccionable|cofre)\b",
     re.IGNORECASE | re.UNICODE,
 )
+
+# Marcador de volumen "nº"/"n°" a quitar del título de display (gotcha #52):
+# "Atelier of Witch Hat nº5" → "Atelier of Witch Hat 5".
+_VOL_MARKER_RE = re.compile(r"\s*n[º°]\s*(\d+)", re.IGNORECASE)
+# "Edición Especial" en CUALQUIER posición del título (con o sin paréntesis). Se
+# remueve siempre y, si el tomo es especial, se re-apenda UNA sola vez al final —
+# así un "Edición Especial" embebido (contaminación) no queda en el medio (gotcha
+# #54/#56). Caso real: "The Promised Neverland Edición Especial 13".
+_ESP_ANY_RE = re.compile(r"\s*\(?\s*Edici[óo]n\s+Especial\s*\)?\s*", re.IGNORECASE)
+
+
+# Marcador de display por kind: distingue variantes del MISMO volumen que conviven
+# en una edición (regular vs especial vs variant vs limited) para que NO se vean
+# como tomos duplicados (gotcha #54/#56). El marcador va al FINAL.
+_KIND_MARKER = {
+    "especial": "Edición Especial", "special": "Edición Especial",
+    "variant": "Variant", "alternativa": "Variant",
+    "limited": "Edición Limitada", "limitada": "Edición Limitada",
+}
+_MARKER_PRESENT = {
+    "Edición Especial": r"especial|special",
+    "Variant": r"variant|alternativa",
+    "Edición Limitada": r"limitad|limited",
+}
+
+
+def normalize_display_title(title: str, edition_kind: str = "regular") -> str:
+    """Normaliza el título de display de un tomo de listadomanga (gotcha #52/#54/#56):
+    (a) quita el marcador de volumen "nº" ("…nº5" → "… 5");
+    (b) AUTORITATIVO sobre el marcador de kind, para distinguir variantes del MISMO
+        volumen que conviven en la edición:
+        - especial/special → "… Edición Especial"; variant → "… Variant";
+          limited → "… Edición Limitada" (lo apenda si falta);
+        - regular (u otro kind base: kanzenban/deluxe/…) → QUITA un sufijo
+          "Edición Especial" stale. Un tomo regular NUNCA lo lleva.
+    """
+    t = _VOL_MARKER_RE.sub(r" \1", title or "")
+    # Quitar SIEMPRE "Edición Especial" (en cualquier posición) — evita que un
+    # qualifier embebido quede en el medio o lo reordene otro paso al final.
+    t = _ESP_ANY_RE.sub(" ", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    marker = _KIND_MARKER.get(edition_kind)
+    if marker == "Edición Especial":
+        t = f"{t} Edición Especial"                      # especial: re-apendar al final
+    elif marker:                                          # variant / limited
+        if not re.search(_MARKER_PRESENT[marker], t, re.IGNORECASE):
+            t = f"{t} {marker}"
+    # regular/base: "Edición Especial" ya removido; nada más que hacer.
+    return t
+
 
 # Headers que indican secciones a procesar en Fase 1 (Layout A solamente).
 # El orden importa: más específico primero (paréntesis-variants antes que
@@ -240,14 +360,56 @@ SECTION_RULES: list[tuple[re.Pattern[str], str, str, list[str]]] = [
         "",
         [],
     ),
+    # P0-B: `Números en preparación (...)` — ediciones ANUNCIADAS aún no a la
+    # venta. Se clasifican IGUAL que sus contrapartes "editados"; los items
+    # resultantes se marcan con la tag `status:upcoming` en el loop de
+    # emisión. Habilita descubrimiento temprano de ediciones especiales /
+    # limitadas y de tomos de colecciones premium cuyos volúmenes viven
+    # solo en "en preparación" (caso real Berserk Master Edition id=6325:
+    # todos sus tomos cartoné están en preparación → antes daba 0 items).
+    # El plano "Números en preparación" (regular) queda gateado por
+    # premium_signals igual que "Números editados" (regular sin premium se
+    # descarta). Orden: parentéticos específicos antes que el base.
+    (
+        re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*\(\s*Ediciones?\s+Especiales?\s*\)", re.IGNORECASE),
+        "especial",
+        "Edición Especial",
+        ["special_edition"],
+    ),
+    (
+        re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*\(\s*Ediciones?\s+Limitadas?\s*\)", re.IGNORECASE),
+        "limitada",
+        "Edición Limitada",
+        ["limited", "special_edition"],
+    ),
+    (
+        re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*\(\s*Portadas?\s+alternativas?\s*\)", re.IGNORECASE),
+        "alternativa",
+        "Portada Alternativa",
+        ["variant_cover"],
+    ),
+    (
+        re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*$", re.IGNORECASE),
+        "regular",
+        "",
+        [],
+    ),
 ]
+
+# Header "en preparación" (cualquier variante) → los items emitidos se
+# marcan upcoming. Match por prefijo (no anclado al final).
+EN_PREPARACION_PATTERN = re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n", re.IGNORECASE)
 
 # Headers que descartamos explícitamente (no son productos comprables ni
 # tienen suficiente info como item independiente).
 DISCARD_SECTION_PATTERNS = [
     re.compile(r"^N[úu]meros\s+editados\s*\(\s*Edici[oó]n\s+Revisada\s*\)", re.IGNORECASE),
     re.compile(r"^N[úu]meros\s+no\s+editados", re.IGNORECASE),
-    re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n", re.IGNORECASE),
+    # NOTE (P0-B 2026-06-06): `Números en preparación` SE QUITÓ de DISCARD.
+    # Ahora se clasifica vía SECTION_RULES (variantes Especiales/Limitadas/
+    # Alternativas + base regular gateada por premium) y los items se marcan
+    # `status:upcoming`. Antes se descartaba entero → Berserk Master Edition
+    # (todos sus tomos en preparación) daba 0 items.
     re.compile(r"^Sinopsis\s+de\b", re.IGNORECASE),
     re.compile(r"^Otras\s+ediciones\s+de\b", re.IGNORECASE),
     re.compile(r"^T[íi]tulos\s+de\b", re.IGNORECASE),
@@ -523,7 +685,15 @@ def _parse_item_table(
     image_url = (img.get("src") or "").strip()
     alt = _decode_text(img.get("alt") or "")
     if not image_url:
-        return None
+        return None  # celda de relleno de la grid (sin img) → descartar
+    # Placeholder de portada CENSURADA (`08a02c…png`): listadomanga lo sirve
+    # server-side (sin la cookie CookieNSFW) para algunas ediciones adultas/
+    # sin cover real. NO es una portada → vaciamos image_url para que el item
+    # (que SÍ es válido: tiene título/precio) entre al worklist de search-covers
+    # en vez de mostrar el placeholder. NO descartamos el item.
+    # (Matiz de gotcha #40: la censura NO siempre es client-side.)
+    if CENSORED_COVER_HASH in image_url:
+        image_url = ""
 
     td = item_table.find("td", class_="cen") or item_table.find("td")
     if not td:
@@ -573,9 +743,19 @@ def _parse_item_table(
             if not title:
                 title = line
             else:
-                # Líneas de título extra (caso Grimorio: 2da línea con "Edición Grimorio nº1")
-                # — la unimos al title si parece parte del nombre, sino description.
-                if VOLUME_PATTERN.search(line) and not VOLUME_PATTERN.search(title):
+                # 2da+ línea no-metadata. Es parte del TÍTULO si:
+                #  (a) tiene volumen nº y el title aún no (caso Grimorio: la 2da
+                #      línea es "Edición Grimorio nº1"), o
+                #  (b) aparece dentro del `alt` canónico de listadomanga — un
+                #      subtítulo SIN número que va en 2da línea (ej.
+                #      "CLAMP Art-book" + "North Side" → alt "CLAMP Art-book
+                #      North Side"). Sin (b) se perdía el subtítulo y dos
+                #      artbooks distintos (North/South Side) quedaban con título
+                #      idéntico → la cover search los confundía (bug 2026-06-07).
+                line_norm = _decode_text(line).lower()
+                alt_norm = _decode_text(alt).lower()
+                is_subtitle = bool(line_norm) and bool(alt_norm) and line_norm in alt_norm
+                if (VOLUME_PATTERN.search(line) and not VOLUME_PATTERN.search(title)) or is_subtitle:
                     title_extra_lines.append(line)
                 else:
                     description_lines.append(line)
@@ -608,9 +788,20 @@ def _parse_item_table(
     }
 
 
+# Las tablas de item/tomo usan clase `ventana_id<N>` (width 184px) con la MISMA
+# estructura de celda `<td class="cen">` (img.portada + texto). El número <N>
+# es solo un skin CSS por tipo de edición/color: id1 = manga japonés B/N,
+# id3 = manhwa a color (Sweet Home), id9 = packs/especiales (His Little Amber),
+# etc. NO hay que whitelistar números concretos — matcheamos cualquier
+# `ventana_id\d+` a width 184. (Antes solo se leía id1 → manhwa y varias
+# ediciones especiales daban 0 items; detectado por ZERO_YIELD_LOG en el
+# dry-run 2026-06-06. Ver gotcha #41.)
+ITEM_TABLE_CLASS_RE = re.compile(r"^ventana_id\d+$")
+
+
 def _iter_item_tables_after(header_h2: Any) -> list[Any]:
-    """Devuelve las `<table class="ventana_id1" style="width: 184px;">`
-    que aparecen DESPUÉS del header h2 dado y ANTES del próximo h2.
+    """Devuelve las tablas de item (`ventana_id<N>`, width 184px) que aparecen
+    DESPUÉS del header h2 dado y ANTES del próximo h2.
 
     Estructura: el `<h2>` está dentro de una tabla wrapper de width 974px.
     Las items van en tablas hermanas posteriores en el DOM hasta encontrar
@@ -627,7 +818,7 @@ def _iter_item_tables_after(header_h2: Any) -> list[Any]:
         if elem.name != "table":
             continue
         classes = elem.get("class") or []
-        if "ventana_id1" not in classes:
+        if not any(ITEM_TABLE_CLASS_RE.match(c) for c in classes):
             continue
         style = (elem.get("style") or "").lower()
         if "184" not in style:  # 184px = item; 974px = header wrapper
@@ -719,6 +910,18 @@ def _parse_layout_b_cell(td: Any) -> dict[str, str] | None:
             if not target_volume:
                 target_volume = vm2.group(1)
 
+    # Cofre que referencia "Serie nºN" (volumen en línea 1) y cuya línea 2 es un
+    # descriptor de COFRE/EXTRA ("Cofre para tomos X a Y", "Cofre de regalo",
+    # "Postal exclusiva"…) SIN marker de edición especial → es el cofre de 1ª
+    # edición del tomo REGULAR N (gotcha #53). Sin esto, cofres comunes caían
+    # (Medaka Box, Aoha Ride, Cells at Work…): target_edition_kind vacío → skip.
+    # OJO: NO defaultear cuando la línea 2 es un marker de edición DESCONOCIDO
+    # (ej. "(Edición Aniversario 30)") — eso sí se saltea (no inventamos regular).
+    if (not target_edition_kind and target_volume
+            and re.search(r"\b(?:cofre|regalo|postal(?:es)?|marcap[áa]gin|l[áa]mina|"
+                          r"brinde|extras?|sticker|p[oó]ster|tarjeta)", line2, re.IGNORECASE)):
+        target_edition_kind = "regular"
+
     # Descripción del extra: líneas entre marker y fecha (excluye fecha).
     # Buscar índice de la línea con fecha al final.
     date_idx = -1
@@ -783,10 +986,14 @@ def _merge_extras_into_items(
     2. Si target ∈ layout_a_items → mutar el Candidate existente:
        - append imagen a `images` con kind=extra + description
        - append entry a `extras` con description + release_date
-    3. Si target NO existe Y target_edition_kind == "regular" → CREAR
-       Candidate nuevo para tomo regular con la imagen del extra y signal
-       `bonus`. Sin esta regla, los tomos regulares de 1ª edición con
-       marcapáginas/postales nunca entran al catálogo.
+    3. Si target NO existe Y target_edition_kind ∈ {regular, especial,
+       limitada, alternativa} → CREAR Candidate nuevo con la imagen del extra.
+       `regular` lleva signal `bonus` (1ª edición con marcapáginas/postales);
+       las demás llevan el signal de su edición (special_edition / limited /
+       variant_cover). Sin esta regla, los extras cuyo tomo no está en
+       Layout A (vive en "no editados" o sin sección propia) se perdían
+       (caso real Berserk Master Edition id=6325). Otros kinds (pack…) no
+       se crean acá.
     4. Casos sin volume detectado (packs Cofres tipo AoT "Pack iniciación
        tomos 1 y 2") → fuzzy-match contra packs Layout A por raw_series
        similarity. Si no hay match, descartar (no creamos packs nuevos —
@@ -822,29 +1029,41 @@ def _merge_extras_into_items(
                 "source_section": "layout_b",
             })
         else:
-            # CREATE: solo para target_kind=regular. Esto abre la puerta a
-            # tomos regulares de 1ª edición que llegaron con marcapáginas/
-            # postales y que el catálogo no captura hoy.
-            if target_kind != "regular":
+            # CREATE: el extra apunta a un tomo que NO está en Layout A
+            # (típicamente porque vive en "Números no editados" o no tiene
+            # sección propia). Creamos el item para no perder el extra.
+            #
+            # P0-C (2026-06-06): antes SOLO se creaba para target_kind=regular;
+            # ahora también para especial/limitada/alternativa. Caso real
+            # Berserk Master Edition (id=6325): los extras cuyo tomo limitado
+            # no estaba en Layout A se perdían enteros.
+            #
+            # Por kind: (nota de edición para la description, signal_keywords).
+            # `regular` mantiene EXACTAMENTE el comportamiento previo: NO se
+            # inyectan keywords de edición y la nota usa "regalos / brindes"
+            # (score=20 c/u) para superar el umbral del dashboard sin disparar
+            # box_set (la descripción literal del extra NUNCA se inyecta —
+            # "Cofre para tomos 1 a 7" dispararía product_type=boxset).
+            _CREATE_KINDS = {
+                "regular": ("1ª Edición con extras / regalos / brindes", []),
+                "especial": ("Edición Especial", ["edición especial"]),
+                "limitada": ("Edición Limitada", ["edición especial", "edición limitada"]),
+                "alternativa": ("Portada Alternativa", ["portada alternativa"]),
+            }
+            if target_kind not in _CREATE_KINDS:
                 continue
+            edition_note, signal_keywords = _CREATE_KINDS[target_kind]
             raw_series = ex.get("raw_series", "") or collection_title
             title = f"{raw_series} nº{target_vol}" if target_vol else raw_series
-            # IMPORTANTE: NO inyectar la descripción literal del extra en
-            # la `description` del item. Si lo hicimos, una palabra como
-            # "Cofre para tomos 1 a 7" disparaba el signal `box_set` y
-            # `product_type=boxset` — pero el item NO es un box set, es
-            # un tomo regular CON un cofre como extra de 1ª edición.
-            # La descripción usa "regalos" y "brindes" (score=20 c/u en
-            # KEYWORD_RULES) para que el score total ≥ 20 y el item sea
-            # visible en el dashboard (minScore default = 20).
-            desc_parts = [collection_title, "1ª Edición con extras / regalos / brindes"]
+            desc_parts = [collection_title, edition_note]
+            desc_parts.extend(signal_keywords)
             if formato:
                 desc_parts.append(f"Formato: {formato}")
             description = " · ".join(p for p in desc_parts if p)
 
             disambig = ex["image_url"].rsplit("/", 1)[-1].rsplit(".", 1)[0][:16]
             synth_url = _make_synthetic_url(
-                coleccion_id, "regular", target_vol, disambiguator=disambig,
+                coleccion_id, target_kind, target_vol, disambiguator=disambig,
             )
 
             cand = candidate_from_source(
@@ -856,9 +1075,10 @@ def _merge_extras_into_items(
             )
             cand.publisher = publisher
             cand.author = author
+            cand.edition_display = collection_title  # nombre oficial, sin traducir (gotcha #49)
             cand.release_date = ex.get("release_date", "")
             cand.tags = list(source.tags or []) + [
-                "edition:regular",
+                f"edition:{target_kind}",
                 f"coleccion:{coleccion_id}",
                 "from_extras",  # marca de procedencia
             ]
@@ -872,7 +1092,13 @@ def _merge_extras_into_items(
             images_list = []
             cover_url = None
             if layout_a_covers is not None:
-                cover_url = layout_a_covers.get(("regular", target_vol))
+                # Preferir la cover del MISMO kind/vol; fallback a la regular
+                # del mismo vol (caso típico: el tomo especial reusa la cover
+                # del tomo regular pre-capturada de "Números editados").
+                cover_url = (
+                    layout_a_covers.get((target_kind, target_vol))
+                    or layout_a_covers.get(("regular", target_vol))
+                )
             if cover_url and cover_url != ex["image_url"]:
                 images_list.append({
                     "url": cover_url,
@@ -915,6 +1141,14 @@ def _is_layout_b_section(header_text: str) -> bool:
 # patrones nuevos no cubiertos por DISCARD/SECTION_RULES/LAYOUT_B).
 UNKNOWN_H2_LOG: list[tuple[int, str]] = []
 
+# Registro de colecciones SOSPECHOSAS de miss: la página tenía indicación
+# premium (formato/título premium) o secciones de extras (Layout B) pero el
+# parser emitió 0 candidates. Es la señal que habría delatado el bug de
+# Berserk Master Edition (premium cartoné → 0 items) ANTES del fix P0-B.
+# Cada entry: (coleccion_id, collection_title, reason). Se vuelca al final
+# del bootstrap (módulo-level para que el caller lo inspeccione).
+ZERO_YIELD_LOG: list[tuple[int, str, str]] = []
+
 
 def parse_collection_page(
     html_text: str,
@@ -947,6 +1181,14 @@ def parse_collection_page(
 
     formato = _extract_formato(html_text)
     premium_signals = _detect_premium_signals(formato)
+    # NOTA (2026-06-06): el heurístico "A5 (148x210) → kanzenban" se ELIMINÓ.
+    # En España el formato A5 es el ESTÁNDAR de muchas series clásicas
+    # (Detective Conan, Monster, Dr. Slump, obras de Rumiko Takahashi…), no solo
+    # de kanzenban → marcaba como premium cientos de tomos estándar (sobre-
+    # captura confirmada en el run real sobre ids 1-100: 254/266 items). El
+    # kanzenban GENUINO se detecta por título "(Kanzenban)" (P0-A), formato
+    # "doble sobrecubierta" o literal "kanzenban" (PREMIUM_FORMAT_RULES). Decisión
+    # del owner 2026-06-06. Ver gotcha #41.
     # Detección por title de colección: si el título contiene "Fanbook" /
     # "Artbook" / "Guía" / "Databook" / etc., todos los tomos son
     # coleccionables aunque el formato sea regular. Combinamos esos signals
@@ -956,6 +1198,23 @@ def parse_collection_page(
         premium_signals = premium_signals + [
             s for s in collection_type_signals if s not in premium_signals
         ]
+    # P0-A: ediciones premium identificadas por el título (Integral,
+    # Coleccionista, Kanzenban, Maximum, Master/Eternal/Black Edition…).
+    # Igual que collection_type_signals: fuerzan que los tomos regulares
+    # pasen el gate aunque el Formato sea rústica (caso AoT Edición Integral).
+    edition_title_signals = _detect_edition_title_signals(collection_title)
+    if edition_title_signals:
+        premium_signals = premium_signals + [
+            s for s in edition_title_signals if s not in premium_signals
+        ]
+    # ¿La colección es premium por TÍTULO (P0-A) o tipo (fanbook/artbook)?
+    # Es evidencia FUERTE de edición coleccionista — entonces sí emitimos sus
+    # tomos regulares aunque estén en un layout no-id1 (caso real: ediciones
+    # catalanas premium "Berserk (Maximum) (Català)", "Ranma ½ (Kanzenban)
+    # (Català)" usan ventana_id2). Si el premium viene SOLO del formato (A5/
+    # cartoné), la sección regular se restringe a id1 para no inundar con
+    # ediciones estándar (manhwa id3, manga regional id2, revistas id12).
+    title_premium = bool(collection_type_signals or edition_title_signals)
     # Formato "en cofre" → emitimos UN solo item box-level y descartamos
     # los tomos numerados. Inyectamos box_set explícito al set de signals
     # premium para que el box item lo lleve (y se siga inyectando vía
@@ -992,13 +1251,13 @@ def parse_collection_page(
             layout_b_headers.append(h2)
             continue
 
-        # PRE-CAPTURA covers de TODA sección con items Layout A (INCLUSO
-        # las DISCARD como "Números en preparación" / "Números no editados").
-        # Razón: items from_extras pueden referenciar tomos que aún no salieron
-        # (caso Witch Hat Edición Grimorio vol 3 — el cofre con marcapáginas
-        # del vol 3 ya está documentado pero el tomo está en "preparación").
+        # PRE-CAPTURA covers de TODA sección DISCARD con items Layout A
+        # (hoy "Números no editados" / "Edición Revisada"). Razón: items
+        # from_extras pueden referenciar tomos que aún no salieron — el cofre
+        # con marcapáginas ya está documentado pero el tomo no se editó.
         # Sin esta captura, el item from_extras solo tiene foto del extra.
         # Tratamos las DISCARD como sección "regular" (para el key del index).
+        # (Nota P0-B: "en preparación" ya NO es DISCARD — se clasifica abajo.)
         if _is_discarded_section(header_text):
             for item_tbl in _iter_item_tables_after(h2):
                 parsed_for_cover = _parse_item_table(item_tbl, base_alt_fallback=collection_title)
@@ -1018,6 +1277,11 @@ def parse_collection_page(
             continue
 
         edition_kind, edition_display, signal_inject = classification
+        # P0-B: ediciones anunciadas (sección "en preparación") → items
+        # marcados upcoming (mismo edition_kind/signals que su contraparte
+        # "editados"; el dedup/cluster_key no cambia, así que cuando el tomo
+        # pase a "editados" hace upsert, no duplica).
+        is_upcoming = bool(EN_PREPARACION_PATTERN.match(header_text))
 
         # PRE-CAPTURA covers de TODA sección Layout A — antes de aplicar el
         # gate "regular sin premium". Garantiza que items from_extras puedan
@@ -1045,6 +1309,20 @@ def parse_collection_page(
             continue
 
         for item_tbl in _iter_item_tables_after(h2):
+            # La sección REGULAR ("Números editados") solo emite tomos
+            # `ventana_id1` (manga japonés B/N estándar) SALVO que la colección
+            # sea premium por título/tipo (title_premium). Otros layouts en la
+            # sección regular sin title_premium son ediciones estándar no-
+            # coleccionables: manhwa a color (id3), manga regional (id2),
+            # revistas/libros (id12) — emitirlos inundaría el catálogo (caso
+            # real Detectiu Conan id2, Mundo Manganime id12, dry-run 2026-06-06).
+            # Con title_premium SÍ se emiten (ediciones catalanas premium en id2:
+            # Berserk Maximum, Ranma Kanzenban). Las SECCIONES ESPECIALES
+            # siempre aceptan cualquier layout (His Little Amber especial = id9).
+            if edition_kind == "regular" and not title_premium:
+                classes = item_tbl.get("class") or []
+                if "ventana_id1" not in classes:
+                    continue
             parsed = _parse_item_table(item_tbl, base_alt_fallback=collection_title)
             if not parsed:
                 continue
@@ -1066,6 +1344,9 @@ def parse_collection_page(
             title = parsed["title"]
             if edition_kind == "pack" and parsed.get("description_extra"):
                 title = f"{title} — {parsed['description_extra']}"
+            else:
+                # Quitar "nº" + marcar edición especial en el display (gotcha #52).
+                title = normalize_display_title(title, edition_kind)
             desc_parts = [collection_title]
             if edition_display:
                 desc_parts.append(edition_display)
@@ -1149,6 +1430,11 @@ def parse_collection_page(
             )
             cand.publisher = publisher
             cand.author = author
+            # edition_display = nombre OFICIAL de la edición (título de la
+            # coleccion), SIN traducir (gotcha #49). NO el slug genérico
+            # "Special/Regular". El nombre del TOMO sí se traduce (lo hace el
+            # skill); el de la EDICIÓN no.
+            cand.edition_display = collection_title
             cand.image_url = parsed["image_url"]
             cand.release_date = parsed.get("release_date", "")
             # Price viene como "10,00 €" o "35,00 €" — normalizamos a "€ 10.00".
@@ -1160,6 +1446,16 @@ def parse_collection_page(
                 f"edition:{edition_kind}",
                 f"coleccion:{coleccion_id}",
             ]
+            if is_upcoming:
+                cand.tags.append("status:upcoming")
+            # Score floor para colecciones PREMIUM por título (gotcha #50):
+            # si el TÍTULO de la coleccion indica una edición premium
+            # (Kanzenban, Integral, Deluxe, Coleccionista…), TODOS sus tomos son
+            # de esa edición premium → garantizamos que superen min_score (30),
+            # aunque el signal puntual puntúe bajo. Sin esto, colecciones enteras
+            # tipo "20th Century Boys (Kanzenban)" caían por score 25<30.
+            if title_premium and cand.score < 31:
+                cand.score = 31
             # Inicializar images[] con la cover (Fase 2 schema). Cuando el
             # merge Layout B encuentre extras para este tomo, los appendea.
             if parsed["image_url"]:
@@ -1248,6 +1544,7 @@ def parse_collection_page(
         )
         box_cand.publisher = publisher
         box_cand.author = author
+        box_cand.edition_display = collection_title  # nombre oficial, sin traducir (gotcha #49)
 
         # Carrusel: box cover primero, luego cada tomo del cofre como
         # kind=extra (para dar contexto visual sin emitir cards separadas).
@@ -1338,6 +1635,21 @@ def parse_collection_page(
             )
             candidates.extend(created)
 
+    # P4: detección de miss. Si la página tenía indicación premium (formato/
+    # título) o secciones de extras pero NO emitió ningún candidate, lo
+    # registramos para auditoría (habría delatado Berserk Master pre-P0-B).
+    # NO flaggear productos NO-manga (cuentos ilustrados / novelas gráficas /
+    # libros-ensayo): son cartoné → falso premium hardcover, pero nunca son
+    # misses de manga (el filtro de layout ya los excluyó correctamente).
+    if not candidates and not NON_MANGA_FORMAT_PATTERN.match(formato or ""):
+        reasons = []
+        if premium_signals:
+            reasons.append(f"premium={','.join(premium_signals)}")
+        if layout_b_headers:
+            reasons.append(f"layout_b={len(layout_b_headers)}")
+        if reasons:
+            ZERO_YIELD_LOG.append((coleccion_id, collection_title[:80], "; ".join(reasons)))
+
     return candidates
 
 
@@ -1416,6 +1728,72 @@ def _discover_via_lista(
     return ids
 
 
+def _iter_calendar_months(
+    year_from: int, month_from: int, year_to: int, month_to: int
+) -> list[tuple[int, int]]:
+    """Lista (year, month) inclusive de from..to. Si el rango está invertido
+    o vacío, devuelve al menos el mes `from`."""
+    months: list[tuple[int, int]] = []
+    y, m = year_from, month_from
+    guard = 0
+    while (y, m) <= (year_to, month_to) and guard < 240:
+        months.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+        guard += 1
+    return months or [(year_from, month_from)]
+
+
+def _discover_via_calendar(
+    year_from: int,
+    month_from: int,
+    year_to: int,
+    month_to: int,
+    session: requests.Session,
+    timeout: tuple[int, int] = (10, 30),
+    sleep_seconds: float = 0.3,
+) -> list[int]:
+    """Discovery DELTA: ids de colección con actividad en `calendario.php`
+    dentro de la ventana [from..to] (inclusive).
+
+    Recorre cada mes del calendario y extrae los `coleccion.php?id=N`
+    referenciados (cada lanzamiento del mes apunta a su colección). Devuelve
+    los ids únicos en orden de primera aparición. Permite que el DELTA parsee
+    SOLO las colecciones tocadas recientemente — con toda la riqueza del
+    parser de colecciones (ediciones especiales / cofres / variantes / en
+    preparación) — en vez de las ~3432 del catálogo completo.
+
+    Fallo HTTP de un mes → se saltea ese mes (no aborta el resto).
+    """
+    import time
+
+    anchor_re = re.compile(r"coleccion\.php\?id=(\d+)")
+    seen: set[int] = set()
+    ids: list[int] = []
+    months = _iter_calendar_months(year_from, month_from, year_to, month_to)
+    for i, (y, m) in enumerate(months):
+        url = CALENDAR_URL_TEMPLATE.format(month=m, year=y)
+        try:
+            response = session.get(url, timeout=timeout)
+            response.raise_for_status()
+            if not response.encoding:
+                response.encoding = response.apparent_encoding
+            text = response.text
+        except requests.RequestException:
+            continue
+        for m_id in anchor_re.finditer(text):
+            cid = int(m_id.group(1))
+            if cid in seen:
+                continue
+            seen.add(cid)
+            ids.append(cid)
+        if sleep_seconds > 0 and i < len(months) - 1:
+            time.sleep(sleep_seconds)
+    return ids
+
+
 def bootstrap(
     year_from: int,
     month_from: int,
@@ -1436,23 +1814,36 @@ def bootstrap(
     """Recorre las colecciones de listadomanga.es.
 
     Args:
-        mode: `"lista"` (default) usa `lista.php` como discovery — ~3432
-            colecciones activas en orden alfabético, ignora id_from/id_to.
+        mode: `"lista"` (default, FULL) usa `lista.php` como discovery —
+            ~3432 colecciones activas en orden alfabético, ignora id_from/id_to.
             `"range"` itera secuencialmente desde `id_from` a `id_to`
             (modo legacy, útil para re-procesar rangos específicos).
+            `"calendar"` (DELTA) descubre los ids con actividad en
+            `calendario.php` dentro de [year_from/month_from .. year_to/
+            month_to] y parsea SOLO esas colecciones (misma riqueza que el
+            full, acotado a lo reciente).
         id_from, id_to: rango de ids para `mode=range`. Default 1..6500.
         skip_404_streak: cuando `mode=range`, corta tras esta cantidad de
-            ids consecutivos sin contenido. Ignorado en `mode=lista`.
+            ids consecutivos sin contenido. Ignorado en otros modos.
 
-    Ignora year/month (esta wiki no usa calendario). fetch_details no aplica
-    (cada coleccion.php ya contiene toda la info en una sola request).
+    year/month se usan SOLO en `mode=calendar` (ventana del calendario); los
+    demás modos los ignoran. fetch_details no aplica (cada coleccion.php ya
+    contiene toda la info en una sola request).
     """
     import time
 
     all_candidates: list[Candidate] = []
 
+    # Lista EXPLÍCITA de ids (mayor prioridad): para ingesta por chunks
+    # resumible — el driver descubre lista.php UNA vez, cachea el orden y pasa
+    # cada chunk de ids acá. Determinístico y reanudable.
+    explicit_ids = kwargs.get("explicit_ids")
+    if explicit_ids:
+        ids_to_process = [int(x) for x in explicit_ids]
+        print(f"[BOOTSTRAP] lista EXPLÍCITA de {len(ids_to_process)} ids (chunk resumible).")
+        mode = "explicit"
     # Resolver lista de ids según mode.
-    if mode == "lista":
+    elif mode == "lista":
         print(f"[BOOTSTRAP] discovery via lista.php (modo 'lista', recomendado)")
         ids_to_process = _discover_via_lista(session, timeout=timeout)
         if not ids_to_process:
@@ -1465,8 +1856,17 @@ def bootstrap(
     elif mode == "range":
         print(f"[BOOTSTRAP] iteración numérica {id_from}..{id_to} (modo 'range', legacy)")
         ids_to_process = list(range(id_from, id_to + 1))
+    elif mode == "calendar":
+        print(f"[BOOTSTRAP] discovery via calendario.php (modo 'calendar', DELTA): "
+              f"{year_from:04d}-{month_from:02d} → {year_to:04d}-{month_to:02d}")
+        ids_to_process = _discover_via_calendar(
+            year_from, month_from, year_to, month_to,
+            session, timeout=timeout, sleep_seconds=sleep_seconds,
+        )
+        print(f"[BOOTSTRAP] calendario devolvió {len(ids_to_process)} colecciones "
+              f"con actividad reciente.")
     else:
-        raise ValueError(f"mode desconocido: {mode!r} (esperado 'lista' o 'range')")
+        raise ValueError(f"mode desconocido: {mode!r} (esperado 'lista', 'range' o 'calendar')")
 
     total_ids = len(ids_to_process)
     consecutive_empty = 0
@@ -1522,6 +1922,25 @@ def bootstrap(
             with log_path.open("w", encoding="utf-8") as f:
                 for cid, h in UNKNOWN_H2_LOG:
                     f.write(f"{cid}\t{h}\n")
+            print(f"  Log completo: {log_path}")
+        except OSError:
+            pass
+
+    # P4: dump del log de colecciones premium/con-extras que dieron 0 items.
+    # Son candidatos a miss del parser (deben revisarse manualmente).
+    if ZERO_YIELD_LOG:
+        print(f"\n[ZERO-YIELD] {len(ZERO_YIELD_LOG)} colecciones con indicación "
+              f"premium/extras pero 0 items (posibles misses):")
+        for cid, title, reason in ZERO_YIELD_LOG[:30]:
+            print(f"  id={cid:<5} [{reason}] :: {title}")
+        if len(ZERO_YIELD_LOG) > 30:
+            print(f"  … y {len(ZERO_YIELD_LOG) - 30} más.")
+        try:
+            log_path = Path("logs") / "listadomanga_zero_yield.txt"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("w", encoding="utf-8") as f:
+                for cid, title, reason in ZERO_YIELD_LOG:
+                    f.write(f"{cid}\t{reason}\t{title}\n")
             print(f"  Log completo: {log_path}")
         except OSError:
             pass

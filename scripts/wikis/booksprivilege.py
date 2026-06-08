@@ -108,7 +108,7 @@ _AMAZON_COVER_TEMPLATE = "https://images-fe.ssl-images-amazon.com/images/P/{isbn
 
 # Publisher canónico desde el `shop_label` (imprint japonés). Cubre los
 # imprints más frecuentes; los no listados quedan con el label literal
-# como publisher y el skill /standardize-catalog los canonicaliza después.
+# como publisher y el skill /watch-standardize-catalog los canonicaliza después.
 _LABEL_TO_PUBLISHER: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"角川"), "Kadokawa"),
     (re.compile(r"KADOKAWA", re.I), "Kadokawa"),
@@ -156,7 +156,7 @@ def _virtual_source() -> Source:
 def _publisher_from_label(label: str) -> str:
     """Resuelve un imprint japonés (角川コミックス・エース) a publisher
     canónico (Kadokawa). Si no matchea ningún pattern, devuelve el label
-    como-está y que el skill /standardize-catalog lo normalice."""
+    como-está y que el skill /watch-standardize-catalog lo normalice."""
     if not label:
         return ""
     for pat, display in _LABEL_TO_PUBLISHER:
