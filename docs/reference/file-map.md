@@ -21,19 +21,23 @@ data/  (todo gi salvo los .yml versionados)
                                sources[]. Cada fila: cluster_key + slug. Ver decisión #1.
   state.json                 — cache de URLs vistas (detección incremental).
   feedback.jsonl             — cola del botón 👎. Item completo + reason + action
-                               (feedback|move|merge|remove). Skill /review-feedback.
+                               (feedback|move|merge|remove). Skill /watch-review-feedback.
   approvals.jsonl            — log append-only de aprobaciones (👍). Replay vía
                                retrofit/apply_approvals.py. Ver "Aprobación humana".
+  dup_decisions.jsonl        — log append-only de decisiones sobre "posibles
+                               duplicados" del Panel de Calidad (merged|distinct,
+                               por signature). data_quality.py no re-sugiere los
+                               ya decididos. Endpoints /api/dup/{merge,decide}.
   edits.jsonl                — log append-only de ediciones inline (auditoría).
   quality_report.json        — output de audit/data_quality.py; lo lee quality.html.
   cover_preview.json         — candidatas de portada pendientes de aprobación.
-  non_manga_blacklist.jsonl  — items movidos fuera por /standardize-catalog.
+  non_manga_blacklist.jsonl  — items movidos fuera por /watch-standardize-catalog.
   unmapped_series.jsonl      — FUENTE ÚNICA para flagear cualquier registro
                                incierto (serie/edición/publisher). NUNCA crear
                                archivos paralelos uncertain_X/review_X. Schema:
                                series_key (req) + contexto + flagged_by
                                (pipeline|audit:<n>|human) + opcionales libres.
-                               Lo vacía /enrich-series-aliases; el pipeline lo repuebla.
+                               Lo vacía /watch-enrich-series-aliases; el pipeline lo repuebla.
   images/                    — espejo local de portadas: <sha256(url)[:16]>.<ext>.
                                El JSONL referencia el filename en image_local.
   backups/<archivo>/         — backups rotativos (máx 3) vía backup_and_rotate().
@@ -62,6 +66,12 @@ scripts/
     listadomanga.py            ES — calendario mensual (delta).
     listadomanga_collections.py ES — coleccion.php?id=N (full vía lista.php). URLs
                                  sintéticas ?item= (#27). Box "en cofre" → #29.
+                                 `--coleccion-ids-file` procesa ids explícitos (chunks, #50).
+  ingest_listadomanga_full.py  — driver de ingesta COMPLETA por chunks resumibles: recorre
+                                 lista.php en orden alfabético, checkpoint en
+                                 data/listadomanga_full_progress.json (#50). Reanudable.
+  review_lista_chunk.py        — auditoría INDEPENDIENTE de un chunk: re-fetchea cada coleccion
+                                 y verifica que todo lo esperado (score≥30 + gate) esté en la DB.
     listadomanga_blog.py       ES — blog histórico (disponible, fuera del pipeline).
     manga_sanctuary.py         FR — planning. Valida title vs página (#2). visuel_defaut (#6).
     otaku_calendar.py          EN — releases del mes actual (sólo, ver #3).
@@ -99,9 +109,20 @@ scripts/
     sync_cover_images.py       saneamiento integral de imágenes (#31): portada mala, images[0]
                                sync, basura UI, productos relacionados.
     translate_descriptions.py  description → description_es (Google Translate + DeepL opcional).
-    generate_slugs.py          genera slug (último paso de /standardize-catalog).
+    generate_slugs.py          genera slug (último paso de /watch-standardize-catalog).
     set_rarity.py              aplica rarity vía derive_rarity_tier().
     apply_approvals.py         re-materializa approvals.jsonl tras reconstruir el catálogo.
+    fix_edition_key_anomalies.py  normaliza edition_key: panini-es→panini + xx→país (editorial mono-país). Enforcer 2b.
+    disambiguate_coleccion_editions.py  coleccion distinta=edición distinta: -c{cole} si edition_key colisiona (#57). Enforcer 3-0.
+    collapse_baseurl_tomos.py     fusiona fila base-url phantom en su tomo sintético del mismo (cole,vol) (#56). Enforcer 3-1.
+    merge_crosssource_into_lmc.py fusiona ficha de tienda (edition:) en su tomo lmc por edition_key+vol+título (#56). Enforcer 3-2.
+  validate_corpus.py           VALIDADOR ESTRUCTURAL (sin red, gate de salud del pipeline, paso [5]
+                               de scrape_*.sh). Chequea en UNA pasada TODAS las invariantes duras:
+                               SLUG, CLKEY (cluster_key auto-consistente), DUPCL, DUPSYN (#54),
+                               LMCKIND, TITLE, ONECOLE, DUPVOL (tomo duplicado en una edición, #56/#57)
+                               + warnings COLED/PAIS. Exit≠0 si hay violación dura.
+  audit_lista_full_bidir.py    auditoría de RED bidireccional: re-fetchea las 3436 colecciones de
+                               lista.php y compara (kind,vol) parser vs DB → FALTANTES + SOBRANTES.
   audit/
     source_health.py           clasifica fuentes desde N logs recientes.
     unmapped_series.py         series_keys sin alias, fuzzy-matched. Lo lee enrich-series-aliases.
@@ -111,6 +132,9 @@ scripts/
   enrich-series-aliases/       cola unmapped → series_aliases.yml vía Anilist (#20).
   evaluate-sources/            evalúa fuentes candidatas antes de implementar.
   review-feedback/             procesa feedback.jsonl (14 categorías A–N).
+  search-covers/               busca portadas hi-res para items con imagen pequeña (<min-pixels)
+                               o ausente. Usa Serper API (preferido) o Chrome (fallback). Escribe
+                               candidatas a cover_preview.json. NUNCA toca items.jsonl.
 web/  (dashboard HTML público + paneles)
   index.html                 — dashboard Alpine.js. Filtros, detalle, feedback 👎,
                                aprobación 👍, edición inline ✏️, selección batch,
@@ -127,7 +151,8 @@ web-next/                    — app Next.js 16 + Tailwind v4 (reemplazo del das
   lib/{types,data,filters,styles}.ts  — types + carga/agrupación + filtrado + cn().
   public/images → ../../data/images/  — symlink al espejo local.
 tests/test_extraction.py     — pytest suite (~538 tests, <2s).
-docs/                        — README.md índice + scraper/ (ARCHITECTURE, SOURCES, PRD)
+docs/                        — README.md índice + scraper/ (ARCHITECTURE, SOURCES, PRD,
+                               PIPELINE-WALKTHROUGH = runbook completo del ciclo de vida del dato)
                                + web-html/PRD + admin/README + web-next/ (FRDs, blueprints, WOs).
 ```
 

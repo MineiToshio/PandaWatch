@@ -406,7 +406,7 @@ even when their title and description had nothing about a boxset.
   fuente NO agrega fila: suma su entrada a `sources[]` (sticky+merge, preserva
   hermanas). El merge vive en `manga_watch.merge_cluster` / `source_entry`
   (fuente única de verdad; también lo usan build_web y `consolidate_sources.py`).
-  `cluster_key` no es estable hasta `/standardize-catalog` (asigna edition_key),
+  `cluster_key` no es estable hasta `/watch-standardize-catalog` (asigna edition_key),
   por eso `consolidate_sources.py` re-consolida como paso `[4g]` del pipeline.
 - Sort: by `detected_at` ascending (oldest first); rows without URL go
   at the end.
@@ -464,7 +464,7 @@ Row schema (the fields written by `candidate_to_json`):
   "edition_key":   "{series}-{publisher}-{edition_slug}, e.g. 'berserk-darkhorse-deluxe'",
   "edition_display":"display name e.g. 'Deluxe Edition (Dark Horse)'",
   "volume":        "string '1' | '100' | '1-3' for sets | '' for one-shots",
-  "standardized_at":"ISO-8601 UTC, set ONLY by /standardize-catalog skill",
+  "standardized_at":"ISO-8601 UTC, set ONLY by /watch-standardize-catalog skill",
 
   // --- Human approval / golden records (added 2026-06-01, see CLAUDE.md "Aprobación humana") ---
   "approved_at":   "ISO-8601 UTC. Presence = the owner approved this card as
@@ -526,7 +526,7 @@ get populated in **two passes**:
    (series_key < 3 chars, all digits, trailing-number pattern).
    **Does NOT set `standardized_at`** — items remain marked "pending".
 
-2. **Pass 2 — `/standardize-catalog` skill** (manual, parallel
+2. **Pass 2 — `/watch-standardize-catalog` skill** (manual, parallel
    subagents): processes items WITHOUT `standardized_at`. Subagents
    re-derive everything from scratch via LLM, fix scraper errors,
    apply `canonical_series_key()` for multilingual consolidation,
@@ -669,7 +669,7 @@ selection — the template already handles the conditional.
 Append-only log written by `series_aliases.log_unmapped_series()` (called
 from `candidate_to_json`) every time a candidate produces a `series_key`
 that is NOT a canonical entry in `data/series_aliases.yml`. The
-`/enrich-series-aliases` skill consumes this queue.
+`/watch-enrich-series-aliases` skill consumes this queue.
 
 Schema (one record per line):
 ```jsonc
@@ -685,12 +685,12 @@ Schema (one record per line):
 
 Dedup-by-key within a single scrape run (in-memory set
 `_UNMAPPED_LOGGED_THIS_RUN`). Across runs, duplicates accumulate —
-the `/enrich-series-aliases` skill aggregates by `series_key` when
+the `/watch-enrich-series-aliases` skill aggregates by `series_key` when
 processing.
 
 ### non_manga_blacklist.jsonl
 
-Items that the `/standardize-catalog` skill identified as NOT manga
+Items that the `/watch-standardize-catalog` skill identified as NOT manga
 get moved here (instead of staying in items.jsonl). Append-only. The
 skill is idempotent: checks existing URLs before appending.
 
@@ -731,7 +731,7 @@ demon-slayer:
   romanizations, native JP characters, FR/ES/IT publisher-specific
   titles.
 - Initially populated via Anilist API (~106 entries). Maintained
-  incrementally via `/enrich-series-aliases` skill processing the
+  incrementally via `/watch-enrich-series-aliases` skill processing the
   unmapped queue.
 
 ### state.json
@@ -765,7 +765,7 @@ Schema: all fields of the original `items.jsonl` row, plus:
 ```
 
 - **Append-only** — one line per feedback submission.
-- **Reader**: the `/review-feedback` skill — reads the queue, categorizes
+- **Reader**: the `/watch-review-feedback` skill — reads the queue, categorizes
   root causes (A–J filter issues + K–N data quality), proposes fixes,
   applies approved changes, and truncates the queue.
 - Gitignored.
@@ -952,7 +952,7 @@ y appendea el registro completo + `{reason, submitted_at}` a
 `data/feedback.jsonl` sin tocar `items.jsonl`. El item sigue visible en
 el catálogo. El JS muestra confirmación breve y cierra el panel.
 Ver también CLAUDE.md → "Feedback desde el modal" para el propósito
-(input para el skill `/review-feedback`).
+(input para el skill `/watch-review-feedback`).
 
 ## Wiki parsers
 
@@ -1510,9 +1510,9 @@ Two project-level skills under `.claude/skills/`. They live in the repo
 `/<skill-name>` from Claude Code. Both are designed to be incremental
 and idempotent — safe to re-run.
 
-### `/standardize-catalog`
+### `/watch-standardize-catalog`
 
-**File**: `.claude/skills/standardize-catalog/SKILL.md`
+**File**: `.claude/skills/watch-standardize-catalog/SKILL.md`
 
 **Purpose**: pass 2 of the schema standardization (see `items.jsonl`
 section above). Processes items WITHOUT `standardized_at`. Delegates
@@ -1537,9 +1537,9 @@ Incremental by default. `--force-all` snippet (embedded in the skill)
 clears `standardized_at` from all items to force a full re-run when
 standardization rules change substantively.
 
-### `/enrich-series-aliases`
+### `/watch-enrich-series-aliases`
 
-**File**: `.claude/skills/enrich-series-aliases/SKILL.md`
+**File**: `.claude/skills/watch-enrich-series-aliases/SKILL.md`
 
 **Purpose**: process the `data/unmapped_series.jsonl` queue, deciding
 for each new `series_key` whether it's an alias of an existing
@@ -1564,8 +1564,8 @@ Workflow:
 
 ```
 1. manga_watch.py runs (scrape) → new items with rough series_key, no standardized_at
-2. /standardize-catalog          → subagents verify/correct/timestamp
-3. /enrich-series-aliases        → consolidate any new multilingual series
+2. /watch-standardize-catalog          → subagents verify/correct/timestamp
+3. /watch-enrich-series-aliases        → consolidate any new multilingual series
 4. build_web.py                  → refresh dashboard
 ```
 

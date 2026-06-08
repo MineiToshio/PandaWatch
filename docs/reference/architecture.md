@@ -112,7 +112,7 @@ final por `cluster_key` vía `consolidate_by_cluster()`.
 (carrusel[0] == card) y une `extras[]`.
 
 `cluster_key` no es estable hasta estandarizar (el heurístico a veces deja
-`edition_key` vacío → `cluster_key=url:`; `/standardize-catalog` le asigna el real).
+`edition_key` vacío → `cluster_key=url:`; `/watch-standardize-catalog` le asigna el real).
 Por eso `consolidate_sources.py` corre como paso final del pipeline (`[4g]`),
 DESPUÉS de la estandarización. Idempotente.
 
@@ -198,4 +198,13 @@ clean_titles → backfill_metadata → [wayback_recover opt-in]) → consolidate
 cada fase en su log bajo `logs/`. Skips vía `SKIP_*`, opt-ins vía `INCLUDE_*`.
 `audit/source_health.py` clasifica fuentes desde los logs recientes (broken/declining/
 healthy/unseen). `retry_failed.sh` re-corre sólo lo que erró en el último log.
+
+**Paridad delta/full para listadomanga** (P1, 2026-06-06): ambos scripts corren el MISMO
+parser de colecciones (`listadomanga_collections.py`); difieren solo en el discovery
+(`--coleccion-mode`): `full = lista` (~3432 colecciones), `delta = calendar` (ids con
+actividad en `calendario.php` en la ventana reciente → ~500-600 colecciones, parseadas
+completas). Antes el delta usaba el calendario plano (`--bootstrap-wiki listadomanga`) que
+no parseaba ediciones especiales/cofres/variantes; ahora el delta captura la misma riqueza
+que el full, acotado a lo reciente. El dedup (synthetic URL + cluster_key, decisión #4)
+absorbe el overlap entre corridas.
 

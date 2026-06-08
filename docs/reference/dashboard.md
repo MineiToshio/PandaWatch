@@ -23,7 +23,7 @@ operativas inmediatas. El campo `action` distingue el tipo:
 
 `GET /api/editions/search?q=` = autocomplete de ediciones. Schema de feedback.jsonl:
 url + action + reason + submitted_at + spread del item. Sin auth, POST capado 100 kB.
-Lo procesa el skill `/review-feedback`.
+Lo procesa el skill `/watch-review-feedback`.
 
 ### ✏️ Edición inline de la metadata → `POST /api/item/update {url, fields}`
 

@@ -2,6 +2,47 @@
 
 How to add new manga sources without breaking the filter logic.
 
+## Índice de fichas por fuente
+
+Cada fuente ACTIVA tiene su propia ficha en [`sources/`](sources/) (proceso de
+ingestión, full/delta, problemas históricos, runbook). Léela ANTES de tocar la
+ingestión de esa fuente. Para documentar una fuente nueva, copiá la plantilla
+[`sources/_TEMPLATE.md`](sources/_TEMPLATE.md).
+
+**Wikis / módulos propios** (`scripts/wikis/`):
+
+- [listadomanga](sources/listadomanga.md) — ES · catálogo por colección (la más importante)
+- [manga-sanctuary](sources/manga-sanctuary.md) — FR · calendario de salidas
+- [otaku-calendar](sources/otaku-calendar.md) — EN/US · calendario de novedades
+- [manga-mexico](sources/manga-mexico.md) — MX · catálogo wiki comunitario
+- [mangavariant](sources/mangavariant.md) — Global · base de referencia de variants
+- [socialanime](sources/socialanime.md) — IT · feed JSON variant + cofanetti
+- [blogbbm](sources/blogbbm.md) — BR · posts curados (variantes, box, especiais)
+- [sumikko](sources/sumikko.md) — JP · tienda 限定版/特装版
+- [mangapassion](sources/mangapassion.md) — DE · API Sonderausgaben + Variant-Covers
+- [animeclick](sources/animeclick.md) — IT · calendario edizioni speciali
+- [prhcomics](sources/prhcomics.md) — US/CA · hardcovers + box sets EN
+- [kinokuniya](sources/kinokuniya.md) — US · exclusivos Kinokuniya USA
+- [yenpress](sources/yenpress.md) — US · calendario Yen Press collector's/deluxe
+- [shueisha](sources/shueisha.md) — JP · artbooks/databooks One Piece
+- [viz](sources/viz.md) — US · artbooks VIZ + búsqueda de ediciones especiales
+- [whakoom](sources/whakoom.md) — ES/LatAm · novedades + spider opt-in
+
+**Tiendas / editoriales / feeds del YAML** (fuentes simples, sin parser propio):
+
+- **Argentina** — [ar-ivrea-argentina](sources/ar-ivrea-argentina.md) · [ar-kemuri](sources/ar-kemuri.md) · [ar-distrito-manga-cuspide](sources/ar-distrito-manga-cuspide.md)
+- **México** — [mx-kamite](sources/mx-kamite.md) · [mx-panini-mexico](sources/mx-panini-mexico.md) · [mx-mangaline-mexico](sources/mx-mangaline-mexico.md)
+- **Brasil** — [br-panini-brasil](sources/br-panini-brasil.md) · [br-jbc](sources/br-jbc.md) · [br-newpop](sources/br-newpop.md) · [br-pipoca-nanquim](sources/br-pipoca-nanquim.md)
+- **España** — [es-planeta-comic](sources/es-planeta-comic.md) · [es-norma-editorial](sources/es-norma-editorial.md) · [es-panini-espana](sources/es-panini-espana.md) · [es-milky-way](sources/es-milky-way.md) · [es-distrito-manga](sources/es-distrito-manga.md) · [es-arechi-manga](sources/es-arechi-manga.md) · [es-pika-ediciones](sources/es-pika-ediciones.md) · [es-mangaline-espana](sources/es-mangaline-espana.md)
+- **Estados Unidos** — [us-dark-horse-direct](sources/us-dark-horse-direct.md) · [us-square-enix-manga](sources/us-square-enix-manga.md) · [us-kodansha-usa](sources/us-kodansha-usa.md)
+- **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) · [fr-akata](sources/fr-akata.md)
+- **Italia** — [it-panini-planet-manga](sources/it-panini-planet-manga.md) · [it-star-comics](sources/it-star-comics.md) · [it-dynit](sources/it-dynit.md) · [it-funside-variant](sources/it-funside-variant.md) · [it-manga-dreams](sources/it-manga-dreams.md) · [it-edizioni-bd](sources/it-edizioni-bd.md)
+- **Japón** — [jp-kadokawa](sources/jp-kadokawa.md) · [jp-square-enix-comics](sources/jp-square-enix-comics.md) · [jp-sanyodo](sources/jp-sanyodo.md) · [jp-honto](sources/jp-honto.md) · [jp-rakuten-books](sources/jp-rakuten-books.md)
+
+> Cada ficha de tienda/editorial agrupa todas las entradas de `sources.yml` de ese
+> mismo sitio (catálogo + boxsets + `search-template`, etc.). `booksprivilege` queda
+> sin ficha: su módulo existe pero está deshabilitado en el pipeline canónico.
+
 ## Anatomy of an entry in `sources.yml`
 
 Minimum:
@@ -16,6 +57,18 @@ Minimum:
   enabled: true
   tags: ["manga", "official", "store"]
 ```
+
+⚠️ **`publisher`: la TIENDA no es la EDITORIAL (gotcha #44).** Para una fuente
+`source_class: official` el `publisher` es la editorial real (Norma, VIZ, Square
+Enix…). Para un **retailer multi-editorial** que revende ediciones estándar de
+muchas editoriales (Rakuten Books, Sanyodo, Honto, Animate…), **NO pongas
+`publisher`** — dejalo sin setear. Si ponés el nombre de la tienda, se siembra
+como `publisher` del item, contamina el `edition_key` (`…-rakuten-…`/`…-unknown-…`)
+y el mismo libro (mismo ISBN) desde la editorial oficial cae en otro `cluster_key`
+→ "posibles productos duplicados". Mejor `""` que erróneo: el merge por ISBN o el
+skill completan la editorial. **Excepción:** tiendas mono-editorial (La
+Comiquería = Ivrea AR) o **exclusivas-retailer** donde la tienda ES el editor de
+la variante (Funside, Manga Dreams, Kinokuniya, MangaYo) SÍ llevan `publisher`.
 
 The five live `kind`s, in rough order of how often you'll add one:
 - **`html`** — most retailer catalogs. Listing-page parsing via
@@ -446,6 +499,11 @@ Cuándo aplicar este patrón:
 
 ### Per-collection page (listadomanga `coleccion.php?id=N` pattern)
 
+> 📄 **Doc completa de la fuente** (proceso full/delta, enforcer, validación,
+> problemas históricos, runbook): [sources/listadomanga.md](sources/listadomanga.md).
+> Leela ANTES de tocar la ingestión de ListadoManga. Para documentar OTRA fuente,
+> copiá la plantilla [sources/_TEMPLATE.md](sources/_TEMPLATE.md).
+
 Algunas wikis publican **una página HTML por colección** (= una edición
 concreta de una obra), con todos sus tomos y extras enumerados dentro,
 en lugar de un calendario mensual o un feed JSON. Listadomanga.es es el
@@ -487,20 +545,39 @@ Estructura típica del HTML:
 
 **Dos layouts mutuamente excluyentes**:
 - **Layout A** (productos comprables, `Números editados` y sus
-  paréntesis-variantes): `table.ventana_id1` + `img.portada` con `alt` =
-  título canónico.
+  paréntesis-variantes): `table.ventana_id<N>` (width 184px) + `img.portada`
+  con `alt` = título canónico. El `<N>` es un skin CSS por tipo: id1 = manga
+  japonés B/N, id3 = manhwa a color, id9 = packs/especiales (se aceptan todos;
+  ver gotcha #41).
 - **Layout B** (extras/cofres/regalos): `table[width="920"]` con
   `td[width="150"]` y texto separado por `<br/>` — la primera línea es
   `<Serie> nº<N>`, la segunda es marker de edición (`(1ª Edición)` /
   `Edición Especial Limitada` / `Portada Alternativa`), el resto es
   descripción y fecha.
 
-**Detección de página entera = edición premium**: en la cabecera hay
-`<b>Formato:</b> <valor>` (NO `<strong>`). Tokens premium a matchear:
-`cartoné`, `tapa dura`, `A5` (148x210 / 150x210), `Tomo doble`,
-`doble sobrecubierta`, `Libro de ilustraciones`, `Kanzenban`. Cuando
-matchea, los items regulares de "Números editados" reciben el signal
-correspondiente sin requerir sección de extras dedicada.
+**Detección de página entera = edición premium** (dos vías, ver gotcha #38):
+1. **Por Formato** — en la cabecera hay `<b>Formato:</b> <valor>` (NO
+   `<strong>`). Tokens premium a matchear: `cartoné`, `tapa dura`, `A5`
+   (148x210 / 150x210), `Tomo doble`, `doble sobrecubierta`,
+   `Libro de ilustraciones`, `Kanzenban` (`PREMIUM_FORMAT_RULES`).
+2. **Por TÍTULO** (`EDITION_TITLE_RULES` / `_detect_edition_title_signals`)
+   — ListadoManga publica cada edición premium como colección SEPARADA cuyo
+   título lleva el nombre entre paréntesis: `Edición Integral|Coleccionista|
+   Kanzenban|Maximum|Master/Eternal/Black Edition|Deluxe|de Lujo|Aniversario`.
+   Necesario porque hay ediciones coleccionista con Formato rústica sin
+   keyword (AoT Integral id=5639: "rústica 177×266"). NO incluye
+   `Nueva Edición`/`New Edition` (re-impresión estándar, no coleccionable).
+
+Cuando cualquiera matchea, los items regulares de "Números editados" (y de
+"Números en preparación") reciben el signal premium sin requerir sección de
+extras dedicada.
+
+**"Números en preparación" = ediciones anunciadas** (gotcha #38): se clasifica
+igual que "Números editados" (variantes Especiales/Limitadas/Alternativas +
+base regular gateada por premium) y los items llevan tag `status:upcoming`.
+Habilita descubrimiento temprano (Berserk Master Edition id=6325 tiene TODOS
+sus tomos cartoné en preparación). `Números no editados` / `Edición Revisada`
+siguen descartados.
 
 **URL sintética por item**: una URL `coleccion.php?id=N` cubre N tomos
 distintos. Para que `append_jsonl` no los pise, cada item genera
@@ -518,18 +595,35 @@ celda Layout B:
 1. Identifica `target_vol` y `target_edition` por el texto estructurado.
 2. Si el target existe → upsert con imagen en `images[]` (carrusel,
    nuevo campo `images: [{url, local, kind}]`).
-3. Si NO existe (el extra es de un tomo regular que no se listó por ser
-   tomo sin qualifier) → crea el tomo nuevo con la imagen del extra y
-   signal `bonus` — ahora pasa el gate `is_collectible_edition`.
+3. Si NO existe → crea el tomo nuevo con la imagen del extra. `regular`
+   lleva signal `bonus`; `especial/limitada/alternativa` llevan el signal de
+   su edición (gotcha #38, P0-C — antes solo se creaba `regular` y los extras
+   huérfanos de ediciones especiales se perdían). Pasa el gate
+   `is_collectible_edition`.
 
-Esto es lo que "abre la puerta" a tomos regulares de 1ª edición que
-trajeron marcapáginas/postales/cofres y que el catálogo no captura hoy.
+Esto es lo que "abre la puerta" a tomos de 1ª edición / ediciones especiales
+que trajeron marcapáginas/postales/cofres y que el catálogo no captura de otra
+forma.
 
-Ejemplo concreto: `scripts/wikis/listadomanga_collections.py`. Fase 1
-implementa Layout A + Formato premium; Fase 2 (futura) agrega Layout B
-y el merge extra→tomo + schema `images[]` aditivo (`image_url` /
-`image_local` quedan como alias del primer cover para no romper
-consumidores). Discovery por enumeración secuencial id=1..~6500.
+Ejemplo concreto: `scripts/wikis/listadomanga_collections.py`. Layout A +
+Formato/título premium + Layout B con merge extra→tomo + schema `images[]`
+aditivo (`image_url` / `image_local` son alias del primer cover para no romper
+consumidores). Tres modos de discovery (`--coleccion-mode`):
+- **`lista`** (default, FULL): `lista.php` → ~3436 colecciones activas.
+- **`calendar`** (DELTA, P1 2026-06-06): ids con actividad en `calendario.php`
+  dentro de `--wiki-from`→`--wiki-to` → parsea solo esas (~500-600). Da la
+  misma riqueza que el full acotado a lo reciente — reemplaza al calendario
+  plano `--bootstrap-wiki listadomanga` en `scrape_delta.sh`.
+- **`range`**: iteración numérica id=1..~6500 (legacy).
+
+**Observabilidad (gotcha #41)**: al final del bootstrap se vuelcan dos logs —
+`UNKNOWN_H2_LOG` (headers `<h2>` no reconocidos) y `ZERO_YIELD_LOG`
+(`logs/listadomanga_zero_yield.txt`: colecciones con formato/título premium o
+secciones de extras que dieron 0 items → posibles misses; la señal que habría
+delatado Berserk Master pre-P0-B). **Idempotencia**: el `item=` sintético lleva
+el hash de la portada, así que una re-subida cambia la URL; los items con volumen
+se re-fusionan por el fuzzy `cluster_key` (no hay dup visible). El volumen se
+deriva del título, no es campo de `Candidate`.
 
 Cuándo aplicar este patrón:
 - La fuente tiene **una URL por colección** con todos los tomos y
@@ -673,7 +767,7 @@ referencia"**. Reglas que se derivan:
 
 1. **Mangavariant SIEMPRE pasa `is_manga=true`**. Política del owner:
    "todo lo que venga de mangavariant tomalo como válido siempre".
-   El skill `/standardize-catalog` respeta esta regla — nunca mueve
+   El skill `/watch-standardize-catalog` respeta esta regla — nunca mueve
    items Mangavariant a la blacklist.
 2. **NO filtrar por falta de price / stock_type**. Una card sin precio
    es válida; el dashboard la muestra igual.

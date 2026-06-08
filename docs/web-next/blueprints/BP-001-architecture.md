@@ -149,7 +149,7 @@ siblings — intentional, as they may merge in the future.
 
 **Decision:** `loadClusters()` in `lib/data.ts` filters out any item whose
 `standardized_at` field is empty/null before grouping into clusters. Only items
-that have passed through the `/standardize-catalog` skill are visible in the app.
+that have passed through the `/watch-standardize-catalog` skill are visible in the app.
 
 **Rationale:** Items freshly scraped by `manga_watch.py` may have rough
 `series_key`, incorrect `edition_key`, or missing `slug` values — the scraper's
@@ -157,7 +157,7 @@ heuristic pass is intentionally conservative and leaves LLM-verification to the
 skill. Displaying unverified items would contaminate the catalog with uncurated
 entries and break `generateStaticParams()` (which iterates all slugs/editionKeys).
 
-**Consequence:** After each scrape run, the operator must invoke `/standardize-catalog`
+**Consequence:** After each scrape run, the operator must invoke `/watch-standardize-catalog`
 for newly scraped items to appear in the app. This is by design: the skill is the
 gate between raw data and curated presentation.
 

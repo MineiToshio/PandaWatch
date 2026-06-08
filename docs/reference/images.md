@@ -66,3 +66,47 @@ bucket de PandaTrack): blast radius de credenciales + GC mark-and-sweep seguro. 
 dominio propio (no `r2.dev`, rate-limited). PandaTrack ya usa el patrón con `@aws-sdk/client-s3`
 (env `ASSETS_STORAGE_*` / `ASSETS_PUBLIC_BASE_URL`).
 
+## Dedup de portada en el carrusel — `dedup_carousel_images.py`
+
+Cuando un item termina con la MISMA portada en dos resoluciones en `images[]` (ej.
+la cover hi-res del publisher + la misma como thumbnail de baja calidad de
+listadomanga), `scripts/retrofit/dedup_carousel_images.py` la deduplica por hash
+perceptual (aHash 8×8, Hamming ≤6 + aspect ±12%), conservando la de MAYOR
+resolución. Solo toca `kind=gallery` (los `extra` —cofres/tomos del box— son
+contenido curado y nunca se tocan) y exige dims válidas. Ver retrofit README.
+
+## Búsqueda de portadas hi-res — skill `/watch-search-covers`
+
+> **listadomanga es la causa raíz de la mayoría de portadas de baja calidad.** Verificado
+> (gotcha #39): `static.listadomanga.com` guarda las portadas capadas a ~150 px de alto
+> (≈100×150), en colecciones de 2012 a 2026, sin versión grande on-site (namespace plano
+> `/<md5>.jpg`, sin `srcset`/og:image/página por-volumen). NO hay forma de conseguir alta
+> resolución dentro de listadomanga — la única vía es externa con esta skill. Los items
+> sourced de listadomanga-collections quedan por debajo del umbral de calidad y son
+> candidatos naturales a `/watch-search-covers`.
+
+Skill manual (`.claude/skills/watch-search-covers/SKILL.md`) para encontrar portadas en mayor
+resolución para items con imagen pequeña o ausente. Usa **Chrome exclusivamente**
+(`mcp__Claude_in_Chrome__*`):
+
+1. Verifica que Chrome esté conectado (`list_connected_browsers`).
+2. Filtra `items.jsonl`: imagen < `--min-pixels` px (default 100 000), saltando slugs
+   que ya tienen candidatas `pending` en `cover_preview.json`.
+3. Para cada item, navega `https://www.google.com/search?tbm=isch&q={query}` con
+   `mcp__Claude_in_Chrome__navigate`. Query = `{title_original} {publisher_short} portada`.
+4. Extrae hasta 10 URLs full-res con `mcp__Claude_in_Chrome__javascript_tool` (campo
+   `"ou":"..."` de los `<script>` embebidos por Google).
+5. Valida cada URL con `_sc_validate.py` (script temporal en `scripts/retrofit/`):
+   - Píxeles: `new_px ≥ max(curr_px × 1.5, 30 000)` (si sin imagen actual: ≥ 10 000)
+   - Aspect ratio: `|new_w/h − curr_w/h| / (curr_w/h) ≤ 0.25`
+   - Identidad: aHash Hamming > 3 (≤ 3 = misma imagen → descartar)
+   - Dominio no es red social / baja calidad (pinterest, instagram, twitter, reddit…)
+6. Guarda imágenes válidas en `data/images/` (`_save_image`, nombre sha256).
+7. Flush atómico a `data/cover_preview.json` después de cada item.
+
+**Invariantes**:
+- Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
+- Máximo 10 candidatas por item.
+- `_sc_validate.py` es temporal — se borra al finalizar el skill.
+- **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
+

@@ -13,7 +13,7 @@
 | Fase 1 — Búsquedas dirigidas multi-keyword | ✅ Completo | `search_template + keywords` en sources.yml; N fuentes virtuales por editorial |
 | Fase 2 — Wikis comunitarias | ✅ Completo | 19 wikis implementados (ver lista abajo) |
 | Fase 3 — Sitemap mining | ✅ Completo | Mangavariant (~2700 entries), listadomanga lista.php (~3432 colecciones) |
-| Fase 4 — LLM enrichment | ✅ Completo | Skills `/standardize-catalog` + `/enrich-series-aliases` |
+| Fase 4 — LLM enrichment | ✅ Completo | Skills `/watch-standardize-catalog` + `/watch-enrich-series-aliases` |
 
 ---
 
@@ -107,12 +107,12 @@ Ver `docs/scraper/ARCHITECTURE.md` para el detalle técnico completo del pipelin
 
 ### Estandarización (doble pasada)
 - **Pasada 1 (scraper)**: heurístico rápido asigna `series_key/edition_key/volume` rough
-- **Pasada 2 (skill `/standardize-catalog`)**: LLM verifica y corrige, marca `standardized_at`
+- **Pasada 2 (skill `/watch-standardize-catalog`)**: LLM verifica y corrige, marca `standardized_at`
 
 ### Aliases multilingüe
 `data/series_aliases.yml` colapsa variantes de nombre por idioma/mercado
 (Demon Slayer = Kimetsu no Yaiba = Guardianes de la Noche = 鬼滅の刃).
-Mantenido vía skill `/enrich-series-aliases`.
+Mantenido vía skill `/watch-enrich-series-aliases`.
 
 ---
 

@@ -58,14 +58,14 @@ JSON parsing are silently skipped with a `console.warn`.
 ### FR-1b: Filtro por `standardized_at`
 
 Solo se cargan items con `standardized_at` no vacío. Items sin este campo (scrapeados pero aún
-no procesados por el skill `/standardize-catalog`) **no aparecen en el app**.
+no procesados por el skill `/watch-standardize-catalog`) **no aparecen en el app**.
 
 **Rationale:** Garantiza que `edition_key`, `series_key`, `title` estandarizado y `slug` están
 correctamente asignados antes de mostrar el item. Sin este filtro, items recién scrapeados con
 series_key crudos o edition_keys incorrectos contaminarían las rutas estáticas generadas por
 `generateStaticParams()`.
 
-**Consecuencia operativa:** Después de cada scrape, correr `/standardize-catalog` para que los
+**Consecuencia operativa:** Después de cada scrape, correr `/watch-standardize-catalog` para que los
 items nuevos aparezcan en la app.
 
 ### FR-2: Cluster grouping
