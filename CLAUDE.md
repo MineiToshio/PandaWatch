@@ -5,9 +5,21 @@
 > conventions, and the gotchas that are not obvious from the code.
 > The goal is that a new conversation can resume work with full context.
 
+## ⚠️ Comunicación con el owner — SIEMPRE
+
+- **Habla SIEMPRE en español NEUTRO de Latinoamérica** (tú/formas estándar:
+  puedes, haz, muestra, déjame; NADA de voseo ni modismos de España). Nada de
+  texto en inglés en las respuestas al owner (el contenido técnico del repo
+  —código, docs, commits— sigue su idioma).
+- **Cierre puntual y a nivel producto, no exhaustivo.** Al terminar, dar un
+  resumen corto y de alto nivel: qué se hizo, para qué sirve y por qué. NO el
+  paso a paso ni el detalle técnico, salvo que sea una decisión arquitectónica
+  que valga la pena entender, o que el owner pida explicaciones explícitamente.
+- Default: breve y entendible a nivel producto. La profundidad técnica es opt-in.
+
 ## ⚠️ Skills invocation policy — READ BEFORE RUNNING SKILLS
 
-**NEVER invoke `/standardize-catalog` or `/enrich-series-aliases` automatically.**
+**NEVER invoke `/watch-standardize-catalog` or `/watch-enrich-series-aliases` automatically.**
 These skills consume significant tokens (subagents × chunks × LLM calls) and the
 owner (sergiomineiro) wants to decide consciously when to run them. After any
 scrape or data ingestion, **leave items.jsonl in raw state** (without `standardized_at`).
@@ -47,6 +59,7 @@ comportamiento (probado por la suite), typos.
 | Archivo/módulo/wiki/retrofit nuevo | `docs/reference/file-map.md` |
 | Dashboard / serve.py / curación | `docs/reference/dashboard.md` |
 | Imágenes (extractor, espejo, carrusel) | `docs/reference/images.md` |
+| **Cambio en el FLUJO end-to-end o que impacta la BASE DE DATOS** (nueva etapa/paso del ciclo de vida del dato, nuevo proceso post-scrape, reordenamiento de etapas, campo nuevo en items.jsonl, nueva funcionalidad del workflow) | `docs/scraper/PIPELINE-WALKTHROUGH.md` (runbook completo — **mantener SIEMPRE sincronizado**) |
 | Scraper — pipeline internals, data flow (deep dive) | `docs/scraper/ARCHITECTURE.md` |
 | Scraper — agregar/mantener fuentes, recetas | `docs/scraper/SOURCES.md` |
 | Scraper — roadmap, wikis activos, no-goals | `docs/scraper/PRD.md` |
@@ -83,15 +96,14 @@ scraper periódicamente y navega resultados en una UI web local.
 ## 2 scripts canónicos: full vs delta
 
 Hay dos scripts top-level que encadenan todo el pipeline. Operan sobre las
-mismas fuentes pero con distinto método de descubrimiento para listadomanga.es
-(la fuente más estructural). **El resto de fuentes se comportan igual** entre
-los dos por ahora — la única diferencia importante es cómo se descubre
-listadomanga (decisión 2026-05-23):
+mismas fuentes y **ambos usan el MISMO parser de colecciones de listadomanga**
+(`listadomanga_collections.py`); la única diferencia es el **discovery** de qué
+colecciones parsear (decisión 2026-05-23, paridad delta/full 2026-06-06):
 
 | Script | Listadomanga discovery | Frecuencia | Tiempo | Cuándo |
 |---|---|---|---|---|
-| `scripts/scrape_delta.sh` | `calendario.php` mes actual + 2 anteriores | diaria / semanal | ~30-60 min | detectar novedades recientes |
-| `scripts/scrape_full.sh` | `lista.php` → ~3432 colecciones activas en orden alfabético | mensual / trimestral | ~2-4 horas | refresh completo del catálogo |
+| `scripts/scrape_delta.sh` | `--coleccion-mode calendar`: ids con actividad en `calendario.php` (mes actual + 2 anteriores) → parsea esas colecciones completas (~500-600) | diaria / semanal | ~30-60 min | detectar novedades recientes |
+| `scripts/scrape_full.sh` | `--coleccion-mode lista`: `lista.php` → ~3432 colecciones activas en orden alfabético | mensual / trimestral | ~2-4 horas | refresh completo del catálogo |
 
 Ambos corren las mismas fases:
 1. Scrape sources del YAML (`manga_watch.py` con `--workers 8`)
@@ -102,12 +114,17 @@ Ambos corren las mismas fases:
 
 `scripts/overnight_run.sh` queda como alias deprecated de `scrape_delta.sh`.
 
-**Modelo simplificado para listadomanga**: `full = lista.php` (~3432 colecciones),
-`delta = calendar`, sin overlap (lista.php ya cubre todas las colecciones activas).
-`scrape_full` además hace mangavariant sitemap completo. `listadomanga-blog` está
-REMOVIDO del pipeline canónico (son posts de noticias, 0 items netos; el módulo
-sigue disponible para invocación manual). El resto de mejoras "full vs delta"
-por-fuente quedan pendientes (por ahora la única diferencia es listadomanga).
+**Modelo simplificado para listadomanga**: ambos modos corren el parser de
+colecciones (`listadomanga-collections`); `full = lista.php` (~3432), `delta =
+calendar` (ids con actividad reciente, ~500-600). Antes el delta usaba el
+calendario plano (`--bootstrap-wiki listadomanga`) que NO parseaba ediciones
+especiales/cofres/variantes — ahora hay **paridad**: el delta captura la misma
+riqueza que el full, acotado a lo reciente (P1, 2026-06-06). El módulo de
+calendario plano (`wikis/listadomanga.py`) sigue disponible pero fuera del
+pipeline canónico. `scrape_full` además hace mangavariant sitemap completo.
+`listadomanga-blog` REMOVIDO del pipeline canónico (posts de noticias, 0 items
+netos; módulo disponible para invocación manual). El resto de mejoras "full vs
+delta" por-fuente quedan pendientes (por ahora la única diferencia es listadomanga).
 
 ## 📚 Documentos de referencia — cargar bajo demanda
 
@@ -117,12 +134,14 @@ chico. ANTES de tocar código de un área, leé su doc:
 
 | Vas a… | Leé primero |
 |---|---|
-| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 36 gotchas) |
+| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 53 gotchas) |
 | Cambiar storage, cluster_key, el pipeline, o entender el modelo de datos | [docs/reference/architecture.md](docs/reference/architecture.md) (pipeline + corpus state + las 7 decisiones) |
 | Escribir/modificar un retrofit, fuente, wiki, o script del registry | [docs/reference/conventions.md](docs/reference/conventions.md) (filtros, backup/flush/nohup, registry, playbooks) |
 | Ubicar un archivo o entender qué hace cada módulo | [docs/reference/file-map.md](docs/reference/file-map.md) |
 | Tocar el dashboard HTML / serve.py / curación (feedback, edición, aprobación) | [docs/reference/dashboard.md](docs/reference/dashboard.md) |
 | Tocar imágenes (extractor, espejo local, carrusel, portadas) | [docs/reference/images.md](docs/reference/images.md) |
+| Entender / ejecutar el **proceso completo** para dejar el dato 100% listo (scrape → standardize → aliases → imágenes → rareza → traducción → slugs → feedback → aprobación → build), con runbooks por etapa | [docs/scraper/PIPELINE-WALKTHROUGH.md](docs/scraper/PIPELINE-WALKTHROUGH.md) |
+| Tocar la ingestión de una **fuente específica** (proceso full/delta, problemas, runbook) | `docs/scraper/sources/<fuente>.md` — TODAS las fuentes activas tienen ficha; el índice está en [SOURCES.md](docs/scraper/SOURCES.md#índice-de-fichas-por-fuente). La más importante: [listadomanga.md](docs/scraper/sources/listadomanga.md). Para una fuente nueva, copiá [_TEMPLATE.md](docs/scraper/sources/_TEMPLATE.md) |
 
 Las gotchas se referencian por número (#N) a lo largo del repo — ese número es
 estable y vive en `docs/reference/gotchas.md`.
@@ -223,7 +242,7 @@ strictly to prevent autocompact thrashing.
 
 Last updated: 2026-06-05. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 36 gotchas, convenciones, dashboard,
+referencia (file map, las 7 decisiones, las 53 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,
