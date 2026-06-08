@@ -66,6 +66,7 @@ ITEMS_PATH     = ROOT / "data" / "items.jsonl"
 FEEDBACK_PATH  = ROOT / "data" / "feedback.jsonl"
 APPROVALS_PATH = ROOT / "data" / "approvals.jsonl"
 EDITS_PATH     = ROOT / "data" / "edits.jsonl"
+DUP_DECISIONS_PATH = ROOT / "data" / "dup_decisions.jsonl"
 IMAGES_DIR     = ROOT / "data" / "images"
 
 MAX_BUFFERED_LINES = 5000
@@ -98,9 +99,13 @@ try:
         from scripts import manga_watch as _mw_mod  # type: ignore
     merge_cluster = _mw_mod.merge_cluster
     consolidate_by_cluster = _mw_mod.consolidate_by_cluster
+    derive_cluster_key = _mw_mod.derive_cluster_key
+    backup_and_rotate = _mw_mod.backup_and_rotate
 except Exception:  # pragma: no cover
     merge_cluster = None  # type: ignore
     consolidate_by_cluster = None  # type: ignore
+    derive_cluster_key = None  # type: ignore
+    backup_and_rotate = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +584,83 @@ def _apply_approve(item_url: str, approved: bool, reason: str = "") -> str:
     with APPROVALS_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    return "ok"
+
+
+def _log_dup_decision(signature: str, dup_key: str, decision: str,
+                      urls: list[str]) -> None:
+    """Registra una decisión sobre un grupo de 'posibles duplicados' en el log
+    durable data/dup_decisions.jsonl. data_quality.py lo lee y NO vuelve a
+    mostrar los grupos ya decididos (mismo `signature`). decision ∈
+    'distinct' (son productos distintos, mantener separados) | 'merged'."""
+    now = datetime.now(timezone.utc).isoformat()
+    DUP_DECISIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with DUP_DECISIONS_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "signature": signature,
+            "dup_key": dup_key,
+            "decision": decision,
+            "urls": urls,
+            "submitted_at": now,
+        }, ensure_ascii=False) + "\n")
+
+
+@_serialized
+def _apply_dup_decide(signature: str, dup_key: str, urls: list[str]) -> str:
+    """Marca un grupo de posibles duplicados como PRODUCTOS DISTINTOS: no toca
+    items.jsonl, solo registra la decisión para no volver a sugerirlo."""
+    _log_dup_decision(signature, dup_key, "distinct", urls)
+    return "ok"
+
+
+# Campos de IDENTIDAD que definen "de qué edición/producto se trata". Al unir
+# duplicados, las fotos y tiendas se juntan SIEMPRE, pero estos campos se toman
+# de UNA sola ficha (la elegida por el usuario, o la canónica por defecto) para
+# no mezclar "Special" con "Special Edition" ni la editorial-tienda con la real.
+_DUP_IDENTITY_FIELDS = (
+    "title", "title_original", "series_key", "series_display",
+    "edition_key", "edition_display", "volume", "publisher",
+)
+
+
+@_serialized
+def _apply_dup_merge(signature: str, dup_key: str, urls: list[str],
+                     keep_url: str = "") -> str:
+    """Fusiona las filas del grupo (mismo producto en fichas distintas) en UNA
+    sola con sources[] e imágenes unidas, vía merge_cluster (la primitiva
+    canónica). La INFO de identidad (título/editorial/edición) se toma de
+    `keep_url` si se indicó; si no, de la canónica que elige merge_cluster.
+    Hace backup, recomputa cluster_key, y registra la decisión."""
+    if merge_cluster is None:
+        return "merge_cluster no disponible"
+    urlset = {u for u in (urls or []) if u}
+    if len(urlset) < 2:
+        return "Necesito al menos 2 fichas para fusionar"
+    items = _load_items()
+    members = [it for it in items if it.get("url") in urlset]
+    if len(members) < 2:
+        return "No encontré las fichas a fusionar"
+    merged = merge_cluster(members)
+    # Override de identidad con la ficha elegida (fotos/tiendas ya están unidas).
+    chosen = next((m for m in members if m.get("url") == keep_url), None) if keep_url else None
+    if chosen:
+        _ek_before = merged.get("edition_key", "")
+        for f in _DUP_IDENTITY_FIELDS:
+            v = chosen.get(f)
+            if v not in (None, ""):
+                merged[f] = v
+        # Si cambió el edition_key, el slug viejo queda desincronizado: lo
+        # limpiamos para que generate_slugs lo regenere (el panel ya lo flagea).
+        if merged.get("edition_key", "") != _ek_before:
+            merged.pop("slug", None)
+    if derive_cluster_key is not None:
+        merged["cluster_key"] = derive_cluster_key(merged)
+    rest = [it for it in items if it.get("url") not in urlset]
+    rest.append(merged)
+    if backup_and_rotate is not None:
+        backup_and_rotate(ITEMS_PATH, "dup-merge")
+    _write_items(rest)
+    _log_dup_decision(signature, dup_key, "merged", sorted(urlset))
     return "ok"
 
 
@@ -1190,6 +1272,12 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/quality/check":
             self._handle_quality_check()
             return
+        if self.path == "/api/dup/decide":
+            self._handle_dup_decide()
+            return
+        if self.path == "/api/dup/merge":
+            self._handle_dup_merge()
+            return
         if self.path == "/api/save-cover-preview":
             self._handle_save_cover_preview()
             return
@@ -1485,6 +1573,47 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(500, {"error": f"recheck falló: {e}"})
             return
         self._json(200, {"results": results})
+
+    def _handle_dup_decide(self) -> None:
+        """Marca un grupo de posibles duplicados como productos DISTINTOS
+        (no se vuelve a sugerir). Body: {signature, dup_key, urls}."""
+        try:
+            payload = self._read_json(max_bytes=200_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        sig = (payload.get("signature") or "").strip()
+        dup_key = (payload.get("dup_key") or "").strip()
+        urls = [u for u in (payload.get("urls") or []) if u]
+        if not sig or not urls:
+            self._json(400, {"error": "Falta 'signature' o 'urls'"})
+            return
+        result = _apply_dup_decide(sig, dup_key, urls)
+        if result == "ok":
+            self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
+
+    def _handle_dup_merge(self) -> None:
+        """Fusiona las fichas de un grupo de duplicados en una sola.
+        Body: {signature, dup_key, urls}."""
+        try:
+            payload = self._read_json(max_bytes=200_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._json(400, {"error": f"Invalid body: {e}"})
+            return
+        sig = (payload.get("signature") or "").strip()
+        dup_key = (payload.get("dup_key") or "").strip()
+        urls = [u for u in (payload.get("urls") or []) if u]
+        keep_url = (payload.get("keep_url") or "").strip()
+        if not sig or len(urls) < 2:
+            self._json(400, {"error": "Faltan 'signature' / al menos 2 'urls'"})
+            return
+        result = _apply_dup_merge(sig, dup_key, urls, keep_url)
+        if result == "ok":
+            self._json(200, {"ok": True})
+        else:
+            self._json(400, {"error": result})
 
     def _handle_save_cover_preview(self) -> None:
         try:

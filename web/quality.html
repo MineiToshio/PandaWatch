@@ -73,6 +73,87 @@
     </div>
   </template>
 
+  <!-- Preparación del dato (qué falta correr) -->
+  <template x-if="report && readinessSteps.length">
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+      <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+        <h2 class="text-base font-bold text-gray-800">🧰 Preparación del dato — ¿qué falta correr?</h2>
+        <span class="text-xs px-2 py-1 rounded-full" :class="readinessTodo ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'"
+              x-text="readinessTodo ? (readinessTodo + ' paso' + (readinessTodo===1?'':'s') + ' por hacer') : '✓ todo al día'"></span>
+      </div>
+      <p class="text-xs text-gray-500 mb-3 leading-relaxed">
+        Pasos para dejar los datos completos después de un scrapeo. Cada fila dice cuántos items le faltan.
+        <strong class="text-pink-600">▶ Arreglar</strong> = lo corre el sistema acá mismo.
+        <strong class="text-violet-600">🧠 IA</strong> = lo hace un asistente: copiás el comando y lo pegás en Claude.
+        <strong class="text-sky-600">Revisar</strong> = lo revisás a mano en otra página.
+      </p>
+      <div class="space-y-2">
+        <template x-for="step in readinessSteps" :key="step.id">
+          <div class="px-3 py-2.5 rounded-lg border"
+               :class="stepWork(step) ? (step.severity==='error' ? 'border-red-200 bg-red-50/40' : (step.severity==='warn' ? 'border-amber-200 bg-amber-50/30' : 'border-sky-200 bg-sky-50/30')) : 'border-gray-100 bg-gray-50'">
+            <div class="flex items-start gap-3">
+              <span class="text-lg flex-shrink-0 leading-6" x-text="stepWork(step) ? (step.severity==='error'?'🔴':(step.severity==='warn'?'🟡':'🔵')) : '✅'"></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <p class="text-sm font-semibold text-gray-800" x-text="step.label"></p>
+                  <template x-if="step.pending > 0">
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700" x-text="step.pending + ' pendiente' + (step.pending===1?'':'s')"></span>
+                  </template>
+                  <template x-if="step.stale > 0">
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-orange-200 text-orange-800" title="ya se corrió pero quedó desactualizado (p. ej. cambió la edición)" x-text="step.stale + ' desactualizado' + (step.stale===1?'':'s')"></span>
+                  </template>
+                  <template x-if="!stepWork(step)">
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">al día</span>
+                  </template>
+                </div>
+                <p class="text-xs text-gray-500 mt-0.5" x-text="step.hint"></p>
+                <!-- Pasos con IA: mostrar el comando exacto + copiar -->
+                <template x-if="step.kind==='skill' && stepWork(step)">
+                  <div class="mt-2 flex items-center gap-2 flex-wrap">
+                    <span class="text-xs text-gray-400">🧠 Pegá esto en Claude:</span>
+                    <code class="text-xs font-mono bg-violet-50 text-violet-800 border border-violet-200 rounded px-2 py-1" x-text="step.skill"></code>
+                    <button @click="copySkill(step)"
+                            class="text-xs rounded px-2 py-1 border border-violet-300 text-violet-700 hover:bg-violet-50 transition">
+                      <span x-text="copiedStep===step.id ? '✓ copiado' : '📋 copiar'"></span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+              <!-- Acción a la derecha: script (botón) o link -->
+              <div class="flex-shrink-0">
+                <template x-if="step.kind==='script'">
+                  <button @click="runStep(step)" :disabled="running || !stepWork(step)"
+                          class="text-xs rounded-lg px-3 py-1.5 transition w-32 disabled:cursor-not-allowed"
+                          :class="stepWork(step) ? 'bg-pink-600 text-white hover:bg-pink-700 disabled:opacity-50' : 'bg-gray-100 text-gray-400'">
+                    <span x-show="runningStep !== step.id" x-text="stepWork(step) ? '▶ Arreglar' : 'al día'"></span>
+                    <span x-show="runningStep === step.id" class="flex items-center gap-1 justify-center">
+                      <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
+                      corriendo…
+                    </span>
+                  </button>
+                </template>
+                <template x-if="step.kind==='link'">
+                  <a :href="step.link + '?return=' + encodeURIComponent(location.pathname + location.search)"
+                     class="text-xs rounded-lg px-3 py-1.5 border inline-block w-32 text-center"
+                     :class="stepWork(step) ? 'border-sky-300 text-sky-700 hover:bg-sky-50' : 'border-gray-200 text-gray-400 pointer-events-none'"
+                     x-text="stepWork(step) ? 'Revisar →' : 'al día'"></a>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <!-- Auditoría de calidad: problemas ya presentes en los datos -->
+  <template x-if="report">
+    <div class="pt-1">
+      <h2 class="text-base font-bold text-gray-800">🔍 Auditoría de calidad — problemas detectados</h2>
+      <p class="text-xs text-gray-500 mt-0.5">Cosas que ya están mal en el catálogo. Hacé clic en una categoría para ver la lista y arreglar item por item.</p>
+    </div>
+  </template>
+
   <!-- Resumen por grupo -->
   <template x-if="report">
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -96,40 +177,169 @@
              :class="cat.severity === 'error' ? 'border-red-200' : 'border-amber-200'">
           <button @click="toggle(cat.id)"
                   class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition">
-            <span class="text-lg" x-text="cat.severity === 'error' ? '🔴' : '🟡'"></span>
-            <span class="font-semibold text-gray-800 flex-1" x-text="cat.label"></span>
-            <span class="text-xs px-2 py-0.5 rounded-full font-bold"
+            <span class="text-lg flex-shrink-0" x-text="cat.severity === 'error' ? '🔴' : '🟡'"></span>
+            <span class="flex-1 min-w-0">
+              <span class="block font-semibold text-gray-800" x-text="cat.label"></span>
+              <span class="block text-xs text-gray-500 font-normal mt-0.5" x-text="cat.desc"></span>
+            </span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0"
                   :class="cat.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
                   x-text="cat.count"></span>
-            <span class="text-gray-400 text-sm" x-text="open[cat.id] ? '▾' : '▸'"></span>
+            <span class="text-gray-400 text-sm flex-shrink-0" x-text="open[cat.id] ? '▾' : '▸'"></span>
           </button>
           <div x-show="open[cat.id]" x-cloak class="border-t border-gray-100">
-            <div class="px-4 py-2 text-xs text-gray-500 bg-gray-50 flex items-center justify-between">
-              <span x-text="cat.target === 'image' ? 'Clic en un item → abre el gestor de imágenes' : 'Clic en un item → abre el detalle'"></span>
-              <span x-show="cat.count > cat.items.length" class="text-amber-600"
-                    x-text="'mostrando ' + cat.items.length + ' de ' + cat.count"></span>
-            </div>
-            <ul class="divide-y divide-gray-100 max-h-[28rem] overflow-y-auto">
-              <template x-for="(it, i) in cat.items" :key="i">
-                <li>
-                  <a :href="linkFor(cat, it)" :target="targetFor(cat)" rel="noopener"
-                     @click="markVisited(it.url)"
-                     class="flex items-center gap-3 px-4 py-2 hover:bg-pink-50 transition group">
-                    <template x-if="coverSrc(it)">
-                      <img :src="coverSrc(it)" class="thumb" loading="lazy"
-                           @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
-                    </template>
-                    <div class="thumb-ph" :style="coverSrc(it) ? 'display:none' : ''">📚</div>
-                    <div class="min-w-0 flex-1">
-                      <p class="text-sm font-medium text-gray-800 truncate group-hover:text-pink-700" x-text="it.title || '(sin título)'"></p>
-                      <p class="text-xs text-gray-400 truncate" x-text="it.source"></p>
+            <!-- Cómo arreglar esta categoría (dup_product trae su propio revisor por grupo) -->
+            <template x-if="cat.fix && cat.id !== 'dup_product'">
+              <div class="px-4 py-3 border-b border-gray-100 bg-pink-50/40 flex items-start gap-3 flex-wrap">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-semibold text-gray-700">🛠️ Cómo arreglarlo</p>
+                  <p class="text-xs text-gray-500 mt-0.5" x-text="cat.fix.hint"></p>
+                  <template x-if="cat.fix.kind === 'skill'">
+                    <div class="mt-2 flex items-center gap-2 flex-wrap">
+                      <span class="text-xs text-gray-400">🧠 Pegá en Claude:</span>
+                      <code class="text-xs font-mono bg-violet-50 text-violet-800 border border-violet-200 rounded px-2 py-1" x-text="cat.fix.skill"></code>
+                      <button @click="copyText(cat.fix.skill, 'catskill:'+cat.id)"
+                              class="text-xs rounded px-2 py-1 border border-violet-300 text-violet-700 hover:bg-violet-50 transition">
+                        <span x-text="copiedStep==='catskill:'+cat.id ? '✓ copiado' : '📋 copiar'"></span>
+                      </button>
                     </div>
-                    <span x-show="it.detail" class="text-xs text-gray-500 font-mono flex-shrink-0" x-text="it.detail"></span>
-                    <span class="text-gray-300 group-hover:text-pink-500 flex-shrink-0" x-text="cat.target === 'image' ? '🖼️' : '↗'"></span>
-                  </a>
-                </li>
-              </template>
-            </ul>
+                  </template>
+                </div>
+                <div class="flex-shrink-0">
+                  <template x-if="cat.fix.kind === 'script'">
+                    <button @click="runCategoryFix(cat)" :disabled="running"
+                            class="text-xs rounded-lg px-3 py-1.5 bg-pink-600 text-white hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition w-36">
+                      <span x-show="runningStep !== 'cat:'+cat.id">▶ Arreglar todo</span>
+                      <span x-show="runningStep === 'cat:'+cat.id" class="flex items-center gap-1 justify-center">
+                        <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
+                        corriendo…
+                      </span>
+                    </button>
+                  </template>
+                  <template x-if="cat.fix.kind === 'prompt'">
+                    <button @click="copyText(cat.fix.prompt, 'catprompt:'+cat.id)"
+                            class="text-xs rounded-lg px-3 py-1.5 border border-violet-300 text-violet-700 hover:bg-violet-50 transition w-44 text-center">
+                      <span x-text="copiedStep==='catprompt:'+cat.id ? '✓ copiado — pegá en Claude' : '📋 Copiar prompt para Claude'"></span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <!-- Worklist genérica (todas las categorías menos duplicados) -->
+            <template x-if="cat.id !== 'dup_product'">
+              <div>
+                <div class="px-4 py-2 text-xs text-gray-500 bg-gray-50 flex items-center justify-between">
+                  <span x-text="cat.target === 'image' ? 'Clic en un item → abre el gestor de imágenes' : 'Clic en un item → abre el detalle'"></span>
+                  <span x-show="cat.count > cat.items.length" class="text-amber-600"
+                        x-text="'mostrando ' + cat.items.length + ' de ' + cat.count"></span>
+                </div>
+                <ul class="divide-y divide-gray-100 max-h-[28rem] overflow-y-auto">
+                  <template x-for="(it, i) in cat.items" :key="i">
+                    <li>
+                      <a :href="linkFor(cat, it)" :target="targetFor(cat)" rel="noopener"
+                         @click="markVisited(it.url)"
+                         class="flex items-center gap-3 px-4 py-2 hover:bg-pink-50 transition group">
+                        <template x-if="coverSrc(it)">
+                          <img :src="coverSrc(it)" class="thumb" loading="lazy"
+                               @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
+                        </template>
+                        <div class="thumb-ph" :style="coverSrc(it) ? 'display:none' : ''">📚</div>
+                        <div class="min-w-0 flex-1">
+                          <p class="text-sm font-medium text-gray-800 truncate group-hover:text-pink-700" x-text="it.title || '(sin título)'"></p>
+                          <p class="text-xs text-gray-400 truncate" x-text="it.source"></p>
+                        </div>
+                        <span x-show="it.detail" class="text-xs text-gray-500 font-mono flex-shrink-0" x-text="it.detail"></span>
+                        <span class="text-gray-300 group-hover:text-pink-500 flex-shrink-0" x-text="cat.target === 'image' ? '🖼️' : '↗'"></span>
+                      </a>
+                    </li>
+                  </template>
+                </ul>
+              </div>
+            </template>
+
+            <!-- Revisor de posibles duplicados: grupos con comparación lado a lado -->
+            <template x-if="cat.id === 'dup_product'">
+              <div>
+                <div class="px-4 py-2 text-xs text-gray-500 bg-gray-50 leading-relaxed">
+                  Cada bloque son fichas que parecen el MISMO producto. Compará y decidí: <strong class="text-emerald-700">unir</strong> o <strong class="text-gray-600">son distintos</strong> (no vuelve a aparecer).
+                  Al unir se juntan <strong>todas las fotos y tiendas</strong>; la <strong>info</strong> (título, editorial, edición) se queda de la ficha que marques con <span class="text-emerald-700">✓ Conservar</span>.
+                  <span class="text-gray-400">Tip: el <span class="font-mono">ISBN</span> en <span class="text-emerald-600">verde</span> = coincide (mismo libro físico). La editorial a veces difiere porque algunas tiendas se ponen a sí mismas como "editorial".</span>
+                </div>
+                <div class="p-3 space-y-3 max-h-[40rem] overflow-y-auto">
+                  <template x-for="g in cat.items" :key="g.signature">
+                    <div class="border border-gray-200 rounded-lg overflow-hidden">
+                      <div class="px-3 py-2 border-b flex items-center justify-between gap-2 flex-wrap"
+                           :class="g.match === 'isbn' ? 'bg-emerald-50/70 border-emerald-100' : 'bg-amber-50/60 border-amber-100'">
+                        <span class="text-xs font-semibold flex items-center gap-1"
+                              :class="g.match === 'isbn' ? 'text-emerald-800' : 'text-amber-800'">
+                          <span x-text="g.match === 'isbn' ? '🟢' : '🟡'"></span>
+                          <span x-text="g.match === 'isbn' ? 'Mismo ISBN — muy probablemente el mismo' : 'Misma edición (sin ISBN) — revisar'"></span>
+                        </span>
+                        <span class="text-xs font-mono text-gray-400" x-text="g.dup_key"></span>
+                      </div>
+                      <!-- miembros lado a lado -->
+                      <div class="p-3 grid gap-3" :class="g.members.length > 2 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'">
+                        <template x-for="(m, mi) in g.members" :key="mi">
+                          <div class="rounded-lg p-2 border-2 transition cursor-pointer"
+                               :class="keepUrlFor(g) === m.url ? 'border-emerald-400 bg-emerald-50/40' : 'border-gray-100 bg-gray-50/50 hover:border-gray-200'"
+                               @click="setKeep(g, m.url)">
+                            <label class="flex items-center gap-1.5 mb-1.5 cursor-pointer">
+                              <input type="radio" :checked="keepUrlFor(g) === m.url" @change="setKeep(g, m.url)"
+                                     class="accent-emerald-600">
+                              <span class="text-xs font-semibold"
+                                    :class="keepUrlFor(g) === m.url ? 'text-emerald-700' : 'text-gray-400'"
+                                    x-text="keepUrlFor(g) === m.url ? '✓ Conservar esta info' : 'Usar esta info'"></span>
+                            </label>
+                            <div class="flex gap-2">
+                              <template x-if="coverSrc(m)">
+                                <img :src="coverSrc(m)" class="object-cover rounded bg-gray-100 flex-shrink-0"
+                                     style="width:4rem;height:5.5rem"
+                                     @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
+                              </template>
+                              <div class="thumb-ph flex-shrink-0" style="width:4rem;height:5.5rem" :style="coverSrc(m) ? 'display:none' : ''">📚</div>
+                              <div class="min-w-0 flex-1">
+                                <p class="text-sm font-semibold text-gray-800 leading-tight" x-text="m.title || '(sin título)'"></p>
+                                <a :href="'index.html#/volume/' + encodeURIComponent(m.url)" target="_blank" rel="noopener"
+                                   @click.stop
+                                   class="text-xs text-pink-600 hover:underline">ver detalle ↗</a>
+                              </div>
+                            </div>
+                            <dl class="mt-2 text-xs text-gray-600 space-y-0.5">
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">Tienda</dt><dd class="text-right truncate" x-text="m.source || '—'"></dd></div>
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">Editorial</dt><dd class="text-right truncate" x-text="m.publisher || '—'"></dd></div>
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">País</dt><dd class="text-right truncate" x-text="m.country || '—'"></dd></div>
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">Edición</dt><dd class="text-right truncate" x-text="m.edition_display || '—'"></dd></div>
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">Volumen</dt><dd class="text-right" x-text="m.volume || '—'"></dd></div>
+                              <div class="flex justify-between gap-2"><dt class="text-gray-400">Precio</dt><dd class="text-right" x-text="m.price || '—'"></dd></div>
+                              <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400">ISBN</dt>
+                                <dd class="text-right font-mono text-[10px] px-1 rounded"
+                                    :class="isbnClass(g, m)" x-text="m.isbn || '—'"></dd>
+                              </div>
+                            </dl>
+                          </div>
+                        </template>
+                      </div>
+                      <!-- acciones -->
+                      <div class="px-3 py-2 border-t border-gray-100 bg-white flex items-center justify-between gap-2 flex-wrap">
+                        <span class="text-xs text-gray-400">Se conserva la info de: <strong class="text-emerald-700" x-text="keepTitle(g)"></strong></span>
+                        <div class="flex items-center gap-2">
+                          <button @click="keepDup(cat, g)" :disabled="dupBusy"
+                                  class="text-xs rounded-lg px-3 py-1.5 border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition">
+                            ✗ Son distintos
+                          </button>
+                          <button @click="mergeDup(cat, g)" :disabled="dupBusy"
+                                  class="text-xs rounded-lg px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition">
+                            <span x-show="dupBusy !== g.signature">✓ Son el mismo → unir</span>
+                            <span x-show="dupBusy === g.signature">uniendo…</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </template>
@@ -173,6 +383,10 @@ function qualityApp() {
     loading: true,
     error: null,
     running: false,
+    runningStep: null,   // id del paso de preparación que está corriendo
+    copiedStep: "",      // id del paso cuyo skill se acaba de copiar
+    dupBusy: "",         // signature del grupo de duplicados que se está resolviendo
+    dupKeep: {},         // signature → url de la ficha cuya info se conserva al unir
     lastLine: "",
     open: {},
     // Live-update: ítems que fui a arreglar (clic en la worklist) y que hay que
@@ -322,6 +536,23 @@ function qualityApp() {
       return Object.entries(this.report.coverage).map(([field, v]) => ({ field, pct: v.pct, count: v.count }));
     },
 
+    // --- Preparación del dato ---
+    stepWork(step) { return ((step.pending || 0) + (step.stale || 0)) > 0; },
+    get readinessSteps() {
+      if (!this.report || !this.report.readiness) return [];
+      const sev = { error: 0, warn: 1, info: 2 };
+      // Con trabajo primero; dentro de cada grupo, por severidad.
+      return [...this.report.readiness].sort((a, b) => {
+        const aw = this.stepWork(a), bw = this.stepWork(b);
+        if (aw !== bw) return aw ? -1 : 1;
+        return (sev[a.severity] ?? 3) - (sev[b.severity] ?? 3);
+      });
+    },
+    get readinessTodo() {
+      if (!this.report || !this.report.readiness) return 0;
+      return this.report.readiness.filter(s => this.stepWork(s)).length;
+    },
+
     toggle(id) { this.open[id] = !this.open[id]; this._persistOpen(); },
 
     coverSrc(it) {
@@ -351,30 +582,170 @@ function qualityApp() {
       try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
     },
 
-    // Regenera la auditoría vía el job runner del panel (POST /api/run +
-    // polling de /api/jobs/<id>), y al terminar recarga el JSON.
+    // Lanza un script del registry vía el job runner (POST /api/run) y espera
+    // a que termine, reflejando la última línea de log. Throws si falla.
+    async _runScript(scriptId, flags) {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ script_id: scriptId, flags: flags || {} }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      await this.pollJob(data.job_id);
+    },
+
+    // Regenera la auditoría (corre data_quality) y recarga el JSON.
     async regenerate() {
       if (this.running) return;
       this.running = true;
+      this.runningStep = "audit";
       this.lastLine = "Lanzando auditoría…";
       this.error = null;
       try {
-        const res = await fetch("/api/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ script_id: "data_quality", flags: {} }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        await this.pollJob(data.job_id);
+        await this._runScript("data_quality", {});
         await this.loadReport();
       } catch (e) {
         this.error = "Error al regenerar: " + e.message
           + " — ¿está corriendo el server (scripts/serve.py)?";
       } finally {
         this.running = false;
+        this.runningStep = null;
         this.lastLine = "";
       }
+    },
+
+    // Core: corre un script del registry y al terminar RE-AUDITA (data_quality)
+    // para refrescar los conteos, luego recarga el JSON. `key` identifica el
+    // botón que muestra el spinner.
+    async _runAndReaudit(scriptId, flags, key, label) {
+      if (this.running) return;
+      this.running = true;
+      this.runningStep = key;
+      this.error = null;
+      try {
+        this.lastLine = "Ejecutando " + label + "…";
+        await this._runScript(scriptId, flags || {});
+        this.lastLine = "Recalculando auditoría…";
+        await this._runScript("data_quality", {});
+        await this.loadReport();
+        this.syncMsg = "✓ " + label + " — listo";
+        setTimeout(() => { this.syncMsg = ""; }, 3500);
+      } catch (e) {
+        this.error = "Error al arreglar '" + label + "': " + e.message
+          + " — ¿está corriendo scripts/serve.py?";
+      } finally {
+        this.running = false;
+        this.runningStep = null;
+        this.lastLine = "";
+      }
+    },
+
+    // Paso de preparación (botón ▶ Arreglar).
+    runStep(step) {
+      if (step.kind !== "script" || !this.stepWork(step)) return;
+      return this._runAndReaudit(step.script_id, step.flags || {}, step.id, step.label);
+    },
+
+    // Fix de una categoría de auditoría (botón ▶ Arreglar todo).
+    runCategoryFix(cat) {
+      if (!cat.fix || cat.fix.kind !== "script") return;
+      return this._runAndReaudit(cat.fix.script_id, cat.fix.flags || {}, "cat:" + cat.id, cat.label);
+    },
+
+    // Copia texto al portapapeles con fallback (contexto inseguro / navegador
+    // viejo) y feedback visible. `key` marca qué botón mostró "✓ copiado".
+    async copyText(text, key) {
+      if (!text) return;
+      let ok = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } catch (e) { /* contexto inseguro o sin permiso → fallback */ }
+      if (!ok) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.focus(); ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch (e) { /* ignore */ }
+      }
+      this.copiedStep = key;
+      const short = text.length > 60 ? text.slice(0, 57) + "…" : text;
+      this.syncMsg = ok ? `✓ Copiado — pegalo en Claude` : `Copiá a mano: ${short}`;
+      setTimeout(() => { if (this.copiedStep === key) this.copiedStep = ""; }, 2500);
+      setTimeout(() => { this.syncMsg = ""; }, 4000);
+    },
+
+    // Paso de preparación 🧠 (copia el comando del skill).
+    copySkill(step) { return this.copyText(step.skill, step.id); },
+
+    // --- Revisor de posibles duplicados --- (coverSrc ya está definido arriba)
+    // URL de la ficha cuya info se conserva (elegida por el usuario, o la
+    // sugerida por el backend = la más completa).
+    keepUrlFor(g) {
+      return this.dupKeep[g.signature] || g.suggested_keep || (g.members[0] && g.members[0].url) || "";
+    },
+    setKeep(g, url) { this.dupKeep[g.signature] = url; },
+    keepTitle(g) {
+      const u = this.keepUrlFor(g);
+      const m = g.members.find(x => x.url === u) || g.members[0];
+      return m ? (m.title || "(sin título)") : "";
+    },
+    // Color del ISBN: verde si coincide con el ISBN común del grupo, rojo si difiere.
+    isbnClass(g, m) {
+      if (!m.isbn) return "text-gray-400";
+      if (g.common_isbn && m.isbn === g.common_isbn) return "bg-emerald-100 text-emerald-700";
+      if (g.common_isbn && m.isbn !== g.common_isbn) return "bg-red-100 text-red-700";
+      return "text-gray-600";
+    },
+    // "Son el mismo" → fusiona las fichas del grupo en una (servidor).
+    async mergeDup(cat, g) {
+      if (this.dupBusy) return;
+      this.dupBusy = g.signature;
+      this.error = null;
+      try {
+        await this._dupCall("/api/dup/merge", g, { keep_url: this.keepUrlFor(g) });
+        this._removeDupGroup(cat, g, "✓ Fusionados — se conservó la info de: " + this.keepTitle(g));
+      } catch (e) {
+        this.error = "Error al unir: " + e.message + " — ¿está corriendo scripts/serve.py?";
+      } finally { this.dupBusy = ""; }
+    },
+    // "Son distintos" → registra la decisión para no volver a sugerirlo.
+    async keepDup(cat, g) {
+      if (this.dupBusy) return;
+      this.dupBusy = g.signature;
+      this.error = null;
+      try {
+        await this._dupCall("/api/dup/decide", g);
+        this._removeDupGroup(cat, g, "✓ Marcados como distintos — no vuelven a aparecer");
+      } catch (e) {
+        this.error = "Error: " + e.message + " — ¿está corriendo scripts/serve.py?";
+      } finally { this.dupBusy = ""; }
+    },
+    async _dupCall(path, g, extra = {}) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signature: g.signature,
+          dup_key: g.dup_key,
+          urls: g.members.map(m => m.url),
+          ...extra,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.error || ("HTTP " + res.status));
+    },
+    _removeDupGroup(cat, g, msg) {
+      cat.items = cat.items.filter(x => x.signature !== g.signature);
+      cat.count = Math.max(0, cat.count - 1);
+      this.syncMsg = msg;
+      setTimeout(() => { this.syncMsg = ""; }, 3500);
     },
 
     async pollJob(jobId) {

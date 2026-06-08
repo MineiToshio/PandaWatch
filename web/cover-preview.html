@@ -88,6 +88,11 @@
                                           color: var(--green); font-weight: 600; }
   .cand-controls button.outline-reject { background: transparent; border: 1px solid var(--red);
                                          color: var(--red); font-weight: 600; }
+  /* flechas de navegación del modal de comparación — hit area grande */
+  .nav-arrow { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+               border-radius: 8px; font-size: 1.1rem; line-height: 1; font-weight: 400;
+               padding: 0.45rem 0.9rem; cursor: pointer; }
+  .nav-arrow:hover { background: var(--accent); border-color: var(--accent); color: #fff; opacity: 1; }
   .empty { text-align: center; padding: 3rem; color: var(--muted); }
   .toast { position: fixed; bottom: 2rem; right: 2rem; padding: 0.8rem 1.5rem;
            border-radius: 8px; font-weight: 600; font-size: 0.85rem;
@@ -140,13 +145,12 @@
 
   <nav style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem;
               padding-bottom:1rem; border-bottom:1px solid var(--border);">
-    <a href="./index.html"
+    <a :href="returnUrl || './index.html'"
        style="color:var(--muted); font-size:0.85rem; text-decoration:none; display:flex;
               align-items:center; gap:0.4rem; transition:color 0.15s;"
        onmouseover="this.style.color='var(--accent)'"
-       onmouseout="this.style.color='var(--muted)'">
-      &larr; Catálogo
-    </a>
+       onmouseout="this.style.color='var(--muted)'"
+       x-text="returnLabel"></a>
     <span style="font-size:0.8rem; color:var(--muted);">PandaWatch</span>
   </nav>
 
@@ -198,6 +202,14 @@
               </span>
               <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
                     x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
+              <button class="card-toggle" @click="flagIrrelevant(e)"
+                      style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
+                             padding:0.1rem 0.45rem; font-size:0.68rem;"
+                      title="Marcar como irrelevante: lo agrega a feedback.jsonl para excluirlo del scraper">Excluir</button>
+              <button class="card-toggle" x-show="pendingInEntry(e) > 0"
+                      @click="rejectEntryPending(e)"
+                      style="color:var(--red);"
+                      title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
               <button class="card-toggle" @click="toggleCollapse(e)"
                       x-text="isCollapsed(e) ? '▸' : '▾'"></button>
             </div>
@@ -223,46 +235,66 @@
                 </div>
               </div>
 
-              <!-- candidatas -->
-              <template x-for="(c, ci) in e.candidates" :key="ci">
-                <div class="cand" :class="c.status">
+              <!-- candidatas — carrusel: una a la vez -->
+              <div>
+                <!-- nav bar: sólo si hay más de una candidata -->
+                <div x-show="e.candidates.length > 1"
+                     style="display:flex; align-items:center; justify-content:space-between;
+                            margin-bottom:0.5rem; padding:0 0.1rem;">
+                  <button class="card-toggle" @click="prevCand(e)"
+                          style="font-size:0.9rem; padding:0.1rem 0.5rem;">◀</button>
+                  <div style="display:flex; gap:0.4rem; align-items:center;">
+                    <template x-for="(_, di) in e.candidates" :key="di">
+                      <span @click="setCandIdx(e, di)" :style="dotStyle(e, di)"></span>
+                    </template>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.4rem;">
+                    <span style="font-size:0.7rem; color:var(--muted);"
+                          x-text="(getCandIdx(e) + 1) + ' / ' + e.candidates.length"></span>
+                    <button class="card-toggle" @click="nextCand(e)"
+                            style="font-size:0.9rem; padding:0.1rem 0.5rem;">▶</button>
+                  </div>
+                </div>
+                <!-- candidata visible -->
+                <div class="cand" :class="currentCand(e).status">
                   <div class="cand-top">
                     <div class="cand-thumb">
-                      <img :src="candSrc(c)" alt="Candidata"
-                           @click="openCompare(e, c)"
-                           @error="if(!$event.target.dataset.fb && c.new_url){$event.target.dataset.fb=1; $event.target.src=c.new_url}else{$event.target.style.opacity=0.3}">
+                      <img :src="candSrc(currentCand(e))" alt="Candidata"
+                           @click="openCompare(e, currentCand(e))"
+                           :data-new-url="currentCand(e).new_url"
+                           @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
                       <div class="px">
-                        <span x-text="formatPx(c.new_pixels)"></span>
+                        <span x-text="formatPx(currentCand(e).new_pixels)"></span>
                         <span class="gain" x-show="e.old_pixels"
-                              x-text="'x' + (c.new_pixels / e.old_pixels).toFixed(1)"></span>
+                              x-text="'x' + (currentCand(e).new_pixels / e.old_pixels).toFixed(1)"></span>
                       </div>
                     </div>
                     <div class="cand-info">
                       <span class="cand-status"
-                            :class="c.status === 'approved' ? 'ok' : c.status === 'rejected' ? 'bad' : 'pending'"
-                            x-text="c.status === 'approved' ? 'Aprobada' : c.status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
+                            :class="currentCand(e).status === 'approved' ? 'ok' : currentCand(e).status === 'rejected' ? 'bad' : 'pending'"
+                            x-text="currentCand(e).status === 'approved' ? 'Aprobada' : currentCand(e).status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
                       <br>
-                      <template x-if="c.domain">
-                        <span>Fuente: <span class="domain" x-text="c.domain"></span><br></span>
+                      <template x-if="currentCand(e).domain">
+                        <span>Fuente: <span class="domain" x-text="currentCand(e).domain"></span><br></span>
                       </template>
-                      <template x-if="c.page_title">
-                        <span x-text="c.page_title.substring(0, 70)"></span>
+                      <template x-if="currentCand(e).page_title">
+                        <span x-text="currentCand(e).page_title.substring(0, 70)"></span>
                       </template>
                     </div>
                   </div>
                   <div class="cand-controls">
-                    <select x-model="c._choice" @change="applyChoice(e, c)">
+                    <select x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))">
                       <template x-for="opt in candidateOptions(e)" :key="opt.value">
                         <option :value="opt.value" x-text="opt.label"></option>
                       </template>
                     </select>
-                    <button :class="c.status === 'approved' ? 'active-approve' : 'outline-approve'"
-                            @click="setStatus(e, c, 'approved')">✓</button>
-                    <button :class="c.status === 'rejected' ? 'active-reject' : 'outline-reject'"
-                            @click="setStatus(e, c, 'rejected')">✕</button>
+                    <button :class="currentCand(e).status === 'approved' ? 'active-approve' : 'outline-approve'"
+                            @click="setStatus(e, currentCand(e), 'approved')">✓</button>
+                    <button :class="currentCand(e).status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                            @click="setStatus(e, currentCand(e), 'rejected')">✕</button>
                   </div>
                 </div>
-              </template>
+              </div>
             </div>
           </div>
         </template>
@@ -270,12 +302,17 @@
     </div>
   </template>
 
-  <!-- Modal de comparación de imágenes en grande -->
+  <!-- Modal de comparación de imágenes en grande — navegable entre candidatas -->
   <template x-if="compareEntry">
-    <div class="modal-overlay" @click.self="compareEntry = null" @keydown.escape.window="compareEntry = null">
+    <div class="modal-overlay" @click.self="compareEntry = null"
+         @keydown.escape.window="compareEntry = null"
+         @keydown.arrow-left.window="compareEntry && compareEntry.candidates.length > 1 && prevCand(compareEntry)"
+         @keydown.arrow-right.window="compareEntry && compareEntry.candidates.length > 1 && nextCand(compareEntry)">
+      <!-- flex column: header + nav + footer FIJOS; solo el área de imágenes scrollea -->
       <div style="background:var(--card); border:1px solid var(--border); border-radius:12px;
-                  max-width:90vw; width:900px; max-height:90vh; overflow-y:auto;">
-        <div style="padding:0.8rem 1rem; border-bottom:1px solid var(--border);
+                  max-width:90vw; width:900px; max-height:90vh;
+                  display:flex; flex-direction:column; overflow:hidden;">
+        <div style="flex:0 0 auto; padding:0.8rem 1rem; border-bottom:1px solid var(--border);
                     display:flex; justify-content:space-between; align-items:center;">
           <div>
             <span style="font-weight:700; font-size:0.95rem;" x-text="compareEntry.title"></span>
@@ -285,38 +322,68 @@
           <button class="close" @click="compareEntry = null" style="background:none; border:none;
                   color:var(--muted); font-size:1.5rem; cursor:pointer; padding:0;">&times;</button>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1rem;">
-          <div style="text-align:center;">
-            <img :src="'../data/images/' + compareEntry.old_image"
-                 title="Clic para ver a tamaño original"
-                 @click="openZoom('../data/images/' + compareEntry.old_image)"
-                 style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
-                        border:2px solid var(--red); cursor:zoom-in;"
-                 @error="if(!$event.target.dataset.fb && compareEntry.old_url){$event.target.dataset.fb=1; $event.target.src=compareEntry.old_url}else{$event.target.style.opacity=0.3}">
-            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
-              Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
+
+        <!-- nav entre candidatas: ◀ N / M ▶ en una sola línea centrada (solo si hay >1) — FIJA -->
+        <div x-show="compareEntry.candidates.length > 1"
+             style="flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+                    gap:1rem; padding:0.5rem 1rem; border-bottom:1px solid var(--border);">
+          <button class="nav-arrow" @click="prevCand(compareEntry)" title="Anterior (←)">◀</button>
+          <span style="font-size:0.8rem; color:var(--text); font-weight:600; white-space:nowrap;
+                       min-width:3.5rem; text-align:center;"
+                x-text="(getCandIdx(compareEntry) + 1) + ' / ' + compareEntry.candidates.length"></span>
+          <button class="nav-arrow" @click="nextCand(compareEntry)" title="Siguiente (→)">▶</button>
+        </div>
+
+        <!-- área scrolleable: solo las imágenes + fuente -->
+        <div style="flex:1 1 auto; overflow-y:auto; min-height:0;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1rem;">
+            <div style="text-align:center;">
+              <img :src="'../data/images/' + compareEntry.old_image"
+                   title="Clic para ver a tamaño original"
+                   @click="openZoom('../data/images/' + compareEntry.old_image)"
+                   style="max-width:100%; max-height:58vh; object-fit:contain; border-radius:6px;
+                          border:2px solid var(--red); cursor:zoom-in;"
+                   @error="if(!$event.target.dataset.fb && compareEntry.old_url){$event.target.dataset.fb=1; $event.target.src=compareEntry.old_url}else{$event.target.style.opacity=0.3}">
+              <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
+                Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
+              </div>
+            </div>
+            <div style="text-align:center;">
+              <img :src="candSrc(currentCand(compareEntry))"
+                   title="Clic para ver a tamaño original"
+                   @click="openZoom(candSrc(currentCand(compareEntry)))"
+                   :style="'max-width:100%; max-height:58vh; object-fit:contain; border-radius:6px; cursor:zoom-in; border:2px solid ' + (currentCand(compareEntry).status === 'approved' ? 'var(--green)' : currentCand(compareEntry).status === 'rejected' ? 'var(--red)' : 'var(--yellow)')"
+                   :data-new-url="currentCand(compareEntry).new_url"
+                   @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
+              <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;">
+                Nueva — <span x-text="formatPx(currentCand(compareEntry).new_pixels)"></span>
+                <span class="gain" x-show="compareEntry.old_pixels"
+                      x-text="'x' + (currentCand(compareEntry).new_pixels / compareEntry.old_pixels).toFixed(1)"></span>
+              </div>
             </div>
           </div>
-          <div style="text-align:center;" x-show="compareCandidate">
-            <img :src="candSrc(compareCandidate)"
-                 title="Clic para ver a tamaño original"
-                 @click="openZoom(candSrc(compareCandidate))"
-                 style="max-width:100%; max-height:70vh; object-fit:contain; border-radius:6px;
-                        border:2px solid var(--green); cursor:zoom-in;"
-                 @error="if(!$event.target.dataset.fb && compareCandidate && compareCandidate.new_url){$event.target.dataset.fb=1; $event.target.src=compareCandidate.new_url}else{$event.target.style.opacity=0.3}">
-            <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;"
-                 x-show="compareCandidate">
-              Nueva — <span x-text="compareCandidate ? formatPx(compareCandidate.new_pixels) : ''"></span>
-              <span class="gain" x-show="compareCandidate && compareEntry.old_pixels"
-                    x-text="compareCandidate ? 'x' + (compareCandidate.new_pixels / compareEntry.old_pixels).toFixed(1) : ''"></span>
-            </div>
+
+          <div style="padding:0 1rem 0.6rem; font-size:0.7rem; color:var(--muted);">
+            Fuente: <span style="color:var(--accent);" x-text="currentCand(compareEntry).domain"></span>
+            <template x-if="currentCand(compareEntry).page_title">
+              <span> · <span x-text="currentCand(compareEntry).page_title.substring(0, 80)"></span></span>
+            </template>
           </div>
         </div>
-        <div style="padding:0 1rem 0.8rem; font-size:0.7rem; color:var(--muted);" x-show="compareCandidate">
-          Fuente: <span style="color:var(--accent);" x-text="compareCandidate ? compareCandidate.domain : ''"></span>
-          <template x-if="compareCandidate && compareCandidate.page_title">
-            <span> · <span x-text="compareCandidate.page_title.substring(0, 80)"></span></span>
-          </template>
+
+        <!-- controles de la candidata visible: acción + aprobar / rechazar — FIJOS -->
+        <div class="cand-controls" style="flex:0 0 auto; padding:0.8rem 1rem;
+                    border-top:1px solid var(--border); background:var(--card);">
+          <select x-model="currentCand(compareEntry)._choice"
+                  @change="applyChoice(compareEntry, currentCand(compareEntry))">
+            <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
+              <option :value="opt.value" x-text="opt.label"></option>
+            </template>
+          </select>
+          <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
+                  @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
+          <button :class="currentCand(compareEntry).status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                  @click="setStatus(compareEntry, currentCand(compareEntry), 'rejected')">✕ Rechazar</button>
         </div>
       </div>
     </div>
@@ -408,11 +475,14 @@ function previewApp() {
     loaded: false,
     modalItem: null,
     compareEntry: null,
-    compareCandidate: null,
     zoomSrc: null,
     collapsed: {},
+    candIdx: {},
     itemsBySlug: {},
     _itemsLoaded: false,
+    // ?return=<url> habilita el botón de volver al lugar de origen (p. ej. el
+    // Panel de Calidad). Sin el param, vuelve al catálogo.
+    returnUrl: '',
 
     // Construye la galería actual a partir de la entry (current_images del JSON,
     // o un fallback con la portada vieja para entries del schema viejo).
@@ -461,8 +531,18 @@ function previewApp() {
     },
 
     async init() {
+      const ret = new URLSearchParams(window.location.search).get('return');
+      if (ret) this.returnUrl = ret;
       await this.loadEntries();
       this.loaded = true;
+    },
+
+    // Etiqueta del botón de volver según de dónde se entró (lo dice el ?return=).
+    get returnLabel() {
+      const r = this.returnUrl || '';
+      if (/quality\.html/.test(r)) return '← Volver al reporte';
+      if (/image-manager\.html/.test(r)) return '← Volver al gestor';
+      return '← Catálogo';
     },
 
     // Carga (o recarga) cover_preview.json. items.jsonl (25MB) se carga LAZY
@@ -557,6 +637,26 @@ function previewApp() {
     isCollapsed(e) { return !!this.collapsed[this.entryKey(e)]; },
     toggleCollapse(e) { this.collapsed[this.entryKey(e)] = !this.collapsed[this.entryKey(e)]; },
 
+    getCandIdx(e) { return this.candIdx[this.entryKey(e)] || 0; },
+    setCandIdx(e, i) { this.candIdx[this.entryKey(e)] = i; },
+    currentCand(e) { return e.candidates[this.getCandIdx(e)] || e.candidates[0]; },
+    prevCand(e) {
+      const n = e.candidates.length;
+      this.setCandIdx(e, (this.getCandIdx(e) - 1 + n) % n);
+    },
+    nextCand(e) {
+      const n = e.candidates.length;
+      this.setCandIdx(e, (this.getCandIdx(e) + 1) % n);
+    },
+    dotStyle(e, di) {
+      const c = e.candidates[di];
+      const color = c.status === 'approved' ? 'var(--green)' : c.status === 'rejected' ? 'var(--red)' : 'var(--yellow)';
+      const current = di === this.getCandIdx(e);
+      const opacity = current ? '1' : (c.status === 'rejected' ? '0.35' : '0.6');
+      const shadow = current ? ';box-shadow:0 0 0 2px ' + color + ',0 0 0 3px var(--card)' : '';
+      return 'width:8px;height:8px;border-radius:50%;display:inline-block;cursor:pointer;transition:opacity 0.15s;background:' + color + ';opacity:' + opacity + shadow;
+    },
+
     entryDone(e) {
       return e.candidates.every(c => c.status === 'approved' || c.status === 'rejected');
     },
@@ -621,8 +721,11 @@ function previewApp() {
     },
 
     openCompare(entry, candidate) {
+      // Abrir el modal en la candidata clickeada; la navegación interna
+      // reutiliza candIdx, así card y modal quedan sincronizados.
+      const idx = entry.candidates.indexOf(candidate);
+      if (idx >= 0) this.setCandIdx(entry, idx);
       this.compareEntry = entry;
-      this.compareCandidate = candidate;
     },
 
     modalFields() {
@@ -650,6 +753,57 @@ function previewApp() {
       const verb = status === 'approved' ? 'aprobada' : 'rechazada';
       await this.save((entry.title || entry.slug) + ' → ' + verb);
       // Colapsar el producto cuando todas sus candidatas están decididas.
+      if (this.entryDone(entry)) this.collapsed[this.entryKey(entry)] = true;
+    },
+
+    async flagIrrelevant(entry) {
+      if (!confirm(
+        `¿Marcar "${entry.title || entry.slug}" como irrelevante?\n\n` +
+        `Se enviará a feedback.jsonl con el motivo:\n` +
+        `"Obra irrelevante para el catálogo de ediciones especiales de manga. ` +
+        `Excluida manualmente desde revisión de portadas."\n\n` +
+        `El skill /watch-review-feedback lo procesará para evitar que vuelva a aparecer.`
+      )) return;
+      await this._ensureItems();
+      const item = this.itemsBySlug[entry.slug];
+      if (!item || !item.url) {
+        this.showToast('No se encontró el item en el catálogo (slug no mapeado)', 'err');
+        return;
+      }
+      try {
+        const r = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: item.title || entry.title,
+            url: item.url,
+            reason: 'Obra irrelevante para el catálogo de ediciones especiales de manga. Excluida manualmente desde revisión de portadas.',
+          }),
+        });
+        if (r.ok) {
+          this.entries = this.entries.filter(e => e.slug !== entry.slug);
+          await fetch('/api/save-cover-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.cleanPayload()),
+          });
+          this.showToast(`"${entry.title || entry.slug}" → feedback.jsonl`, 'ok');
+        } else {
+          const data = await r.json().catch(() => ({}));
+          this.showToast('Error: ' + (data.error || 'no se pudo guardar feedback'), 'err');
+        }
+      } catch (err) {
+        this.showToast('Error: ' + err.message, 'err');
+      }
+    },
+
+    async rejectEntryPending(entry) {
+      const n = this.pendingInEntry(entry);
+      if (!n) return;
+      entry.candidates.forEach(c => {
+        if ((c.status || 'pending') === 'pending') c.status = 'rejected';
+      });
+      await this.save((entry.title || entry.slug) + ' → rechazadas pendientes');
       if (this.entryDone(entry)) this.collapsed[this.entryKey(entry)] = true;
     },
 
