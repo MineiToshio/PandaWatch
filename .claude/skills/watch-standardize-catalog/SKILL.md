@@ -1,6 +1,7 @@
 ---
-name: standardize-catalog
+name: watch-standardize-catalog
 description: Standardize new manga items in data/items.jsonl that haven't been processed yet (missing standardized_at field). Uses a 3-tier approach — Tier 1 items are auto-standardized deterministically (no LLM), Tier 2 get lightweight LLM validation, and only Tier 3 (unknown series, CJK) get full LLM derivation. Delegates Tier 2/3 to parallel subagents in small batches (~20 items). Skips items already standardized (incremental). Trigger manually after each scrape or weekly.
+argument-hint: "[--limit N] [--force-all]"
 ---
 
 # Standardize catalog
@@ -9,16 +10,55 @@ You are processing manga items in `data/items.jsonl` that haven't been standardi
 
 ## Preferred method: Workflow script
 
-For batches of **30+ items**, use the saved workflow instead of manual steps:
+### Paso 0 — Verificar progreso anterior
 
-```
-Workflow({ name: 'standardize-catalog' })
+Antes de invocar el workflow, verificar si existe `data/standardize-progress.json`:
+
+```bash
+python3 -c "
+import json, os
+if not os.path.exists('data/standardize-progress.json'):
+    print('NO_PROGRESS')
+else:
+    d = json.load(open('data/standardize-progress.json'))
+    t2 = d.get('tier2_results') or []
+    t3 = d.get('tier3_results') or []
+    print('PROGRESS_FOUND')
+    print(f\"  Tier 1: {'✅ completado' if d.get('tier1_done') else '⏳ pendiente'}\")
+    print(f\"  Tier 2: {'✅ ' + str(len(t2)) + ' items guardados' if d.get('has_tier2') else '⏳ pendiente'}\")
+    print(f\"  Tier 3: {'✅ ' + str(len(t3)) + ' items guardados' if d.get('has_tier3') else '⏳ pendiente'}\")
+"
 ```
 
-The workflow at `.claude/workflows/standardize-catalog.js` automates the entire
-pipeline: audit → Tier 1 auto-standardize → Tier 2 haiku validation → Tier 3
-sonnet derivation → merge + dedup + slugs + translation. Schema-validated output
-eliminates truncated URLs and session-limit data loss.
+- **Si no existe** (`NO_PROGRESS`) → proceder directamente, sin preguntar nada.
+- **Si existe** (`PROGRESS_FOUND`) → mostrar el estado al usuario y preguntar:
+  - **"¿Continuar desde donde quedó?"** → usar `args: { resume_progress: true }`
+  - **"¿Empezar de cero?"** → `rm data/standardize-progress.json` y correr sin ese arg
+
+**Regla**: solo debe existir UN `data/standardize-progress.json` en todo el proyecto. Si el usuario pide empezar de cero, borrar el existente antes de invocar el workflow.
+
+### Invocar el workflow
+
+Para batches de **30+ items**, usar el workflow guardado:
+
+```javascript
+// Continuar desde progreso guardado:
+Workflow({ name: 'watch-standardize-catalog', args: { resume_progress: true } })
+Workflow({ name: 'watch-standardize-catalog', args: { limit: 100, resume_progress: true } })
+
+// Empezar de cero (o sin progreso previo):
+Workflow({ name: 'watch-standardize-catalog' })
+Workflow({ name: 'watch-standardize-catalog', args: { limit: 100 } })
+Workflow({ name: 'watch-standardize-catalog', args: { limit: 100, force_all: true } })
+```
+
+El workflow guarda checkpoints automáticamente en `data/standardize-progress.json` después de
+cada fase LLM (Tier 1, Tier 2, Tier 3). Al finalizar exitosamente, elimina el archivo.
+Si el workflow se interrumpe a mitad, el progreso queda guardado para retomar.
+
+The workflow automates the entire pipeline: audit → Tier 1 auto-standardize → Tier 2
+validation → Tier 3 derivation → merge + dedup + slugs + translation. Schema-validated
+output eliminates truncated URLs and session-limit data loss.
 
 For **< 30 items**, process inline using the manual steps below.
 
@@ -276,7 +316,28 @@ to VALIDATE and optionally CORRECT:
 ### series_key
 Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized name.
 
-### edition_key — `{series}-{publisher_slug}-{edition_slug}`
+### edition_key — `{series}-{publisher_slug}-{edition_slug}-{country_slug}`
+
+**NO RE-DERIVES la edición si el item YA tiene `edition_key` asignado.** El scraper ya
+aplicó las reglas duras de agrupación (coleccion=edición, país, nombre oficial) — está
+bien. Para esos items tu trabajo es SOLO: serie canónica + traducir el título del TOMO +
+detectar non-manga. El apply del skill conserva el `edition_key`/`edition_display`
+existentes. Sólo derivá la edición desde cero para items SIN `edition_key` (ej. algunas
+fuentes que no son listadomanga). Las reglas de abajo aplican a esos casos.
+
+**REGLA DE NEGOCIO DURA (gotcha #46): país distinto = edición distinta, SIEMPRE.**
+El `edition_key` TERMINA con el código de país de la EDICIÓN (derivado de
+editorial/idioma del item, NO de la tienda). Dos mercados NUNCA comparten
+edition_key aunque coincidan series+publisher+edición (Panini IT vs Panini ES/MX/BR,
+Kazé FR vs DE, etc.). country_slug (allowlist):
+"jp", "it", "es", "fr", "de", "us", "vn", "mx", "br", "th", "ar", "tw", "gb", "pt",
+"pe", "cl", "kr", "eslatam". Si no sabés el país → "xx".
+Ejemplo: Hunter x Hunter variante de Panini España = `hunter-x-hunter-panini-variant-es`;
+la de Panini Italia = `hunter-x-hunter-panini-variant-it` (NUNCA el mismo).
+NOTA: como el país ya va en el sufijo, NO uses slugs de publisher con país embebido
+(usá "panini", NO "panini-es"; "ivrea", NO "ivrea-ar" salvo que sean editoriales
+legalmente distintas). El país lo aporta el sufijo.
+
 publisher_slug (allowlist — use literal slug from this list):
 "darkhorse", "glenat", "viz", "panini", "norma", "planeta", "ivrea", "ivrea-ar",
 "kana", "pika", "kaze", "kioon", "star", "kodansha", "kodansha-us", "shueisha",
@@ -304,6 +365,31 @@ When format-slug (boxset/hardcover/coffret) conflicts with edition-name
 
 **ARTBOOK vs SPECIAL**: If the item has a volume number → `special`/`limited`
 (never `artbook`). Only standalone illustration books WITHOUT a volume → `artbook`.
+EXCEPCIÓN: si la COLECCIÓN ENTERA es un libro de ilustraciones (su título dice
+"Libro de Ilustraciones" / "Illustrations" / "Art Works" / "The Art of" / 画集),
+entonces TODOS sus tomos son `artbook` aunque estén numerados (es una serie de
+artbooks, no tomos especiales). Ej. FMA cole=524 "Libro de Ilustraciones 1/2".
+
+**listadomanga — REGLA DURA: cada `/coleccion?id=N` es UNA edición = UNA página.**
+La MISMA obra en `/coleccion` distintos = ediciones DISTINTAS → NUNCA el mismo
+edition_key. Y al revés (gotcha #48): TODOS los tomos de una MISMA `/coleccion`
+(regulares, especiales, cofres, variantes) comparten el MISMO edition_key — el de
+la edición BASE de la coleccion (la `regular` si existe; si no, la predominante,
+ej. Berserk Maximum). NO separes el tomo 34 "Edición Especial" en
+`…-special` aparte de los regulares de su coleccion: va en la misma página, con el
+mismo edition_key. Lo que distingue al especial-34 del regular-34 es el `cluster_key`
+(tier-0 `lmc:{coleccion}:{kind}:{vol}`), NO el edition_key. Un post-paso determinístico
+(`unify_coleccion_edition.py`) lo fuerza, pero generá ya el edition_key base. Los
+tomos REGULARES con cofre/extras de 1ª edición (description con "regalos / brindes"
+o tag `from_extras`) son edición `regular`, el cofre es un bonus.
+
+**`edition_display` = NOMBRE OFICIAL de la edición, SIN traducir (gotcha #49).** NO un
+slug genérico traducido ("Special (Norma Editorial)", "Regular"). Sólo el `title`
+(nombre del TOMO) se traduce; el nombre de la EDICIÓN va tal cual. Para items de
+listadomanga, el item YA trae el `edition_display` correcto (= título de la coleccion,
+ej. "Ataque a los Titanes", "Guardianes de la Noche (Kimetsu no Yaiba)", "Berserk
+(Maximum) (Castellano)"): **CONSÉRVALO, no lo regeneres ni lo traduzcas.** Para otras
+fuentes, usá el nombre oficial de la edición (no inventes un slug traducido).
 
 CRITICAL — "画集付き" / "イラスト集付き" = artbook INCLUDED AS BONUS, not the product.
 A Japanese title like "宇宙兄弟(39) 画集付き特装版" / "暁のヨナ イラスト集付き特装版 47"
@@ -324,6 +410,10 @@ String. Digits only. "1", "100", "1-3" for sets, "" if absent.
 
 ### title_standardized
 `{Series Display} {Edition Suffix} {Volume}`. Short, clean.
+**EXCEPCIÓN edición ESPECIAL (gotcha #52):** `{Series Display} {Volume} Edición Especial`
+— el volumen ANTES del calificador, sin paréntesis (ej. "Witch Hat Atelier 5 Edición
+Especial", NO "… Edición Especial 5"). El enforcer (`fix_especial_title_order.py`) lo
+normaliza igual, pero generá ya ese orden.
 
 ## EXECUTION
 1. Read input. 2. Process EVERY item. 3. Output line count MUST equal input. 4. Report totals.
@@ -434,9 +524,18 @@ for it in items:
         continue
     it['series_key'] = r.get('series_key','')
     it['series_display'] = r.get('series_display','')
-    it['edition_key'] = r.get('edition_key','')
-    it['edition_display'] = r.get('edition_display','')
-    it['volume'] = r.get('volume','')
+    # PRESERVAR la EDICIÓN ya asignada determinísticamente: el parser (scraper) ya
+    # aplicó las reglas duras (coleccion=edición, país, nombre oficial). El LLM NO
+    # re-agrupa — sólo asigna edición a items que NO tienen una. Si el item ya trae
+    # edition_key, conservamos edition_key + edition_display + volume; el LLM sólo
+    # aporta serie (canónica) + título del tomo (traducido). Evita que el LLM
+    # deshaga el ordenamiento (decisión owner 2026-06-07).
+    if (it.get('edition_key') or '').strip():
+        it['volume'] = it.get('volume','') or r.get('volume','')
+    else:
+        it['edition_key'] = r.get('edition_key','')
+        it['edition_display'] = r.get('edition_display','')
+        it['volume'] = r.get('volume','')
     new_title = r.get('title_standardized','').strip()
     if new_title:
         if not it.get('title_original'):
@@ -482,6 +581,95 @@ for gk, grp in _groups.items():
 
 print(f"[CONSISTENCY] outliers fixed: {_outliers_fixed}")
 
+# ENFORCE regla del owner (2026-06-06): cada /coleccion?id=N es UNA edición.
+# Colecciones distintas de la misma obra = ediciones DISTINTAS, NUNCA el mismo
+# edition_key. + corregir dos mislabels frecuentes del LLM. Determinístico, sobre
+# los mismos campos confiables del parser (tag edition:KIND, from_extras, título
+# de colección en description). Mantener sincronizado con
+# scripts/retrofit/fix_listadomanga_editions.py.
+_ARTBOOK_RE = _re.compile(r"\b(?:artbook|art\s*book|art\s*works?|illustrations?|"
+                          r"ilustraciones|libro\s+de\s+ilustraciones|the\s+art\s+of|"
+                          r"画集|イラスト集)\b", _re.IGNORECASE)
+_WRONG_COFRE = {"special","limited","collector","integral","deluxe","variant"}
+def _ed_kind(it):
+    for t in it.get('tags') or []:
+        if t.startswith('edition:'): return t.split(':',1)[1]
+    return 'regular'
+def _split_ek(ek, sk):
+    if not ek or not sk or not ek.startswith(sk+'-'): return None
+    rem = ek[len(sk)+1:]
+    if '-' not in rem: return None
+    pub, slug = rem.rsplit('-',1); return pub, slug
+_lmc = [it for it in final if 'coleccion.php' in (it.get('url','') or '')]
+_prop = {}  # id(it) -> (new_ek_base, slug_changed, slug, cid)
+for it in _lmc:
+    sk = it.get('series_key',''); sp = _split_ek(it.get('edition_key',''), sk)
+    m = _re.search(r'coleccion\.php\?id=(\d+)', it.get('url',''))
+    if not sp or not m: continue
+    pub, old_slug = sp; cid = m.group(1)
+    ct = (it.get('description','') or '').split(' · ')[0]
+    tags = it.get('tags') or []
+    slug = old_slug
+    if _ed_kind(it)=='regular' and 'from_extras' in tags and old_slug in _WRONG_COFRE:
+        slug = 'regular'
+    elif old_slug in (_WRONG_COFRE | {'regular'}) and _ARTBOOK_RE.search(ct):
+        slug = 'artbook'
+    _prop[id(it)] = (f"{sk}-{pub}-{slug}", slug!=old_slug, slug, cid)
+_ek_cids = _dd(set)
+for ekb, _, _, cid in _prop.values(): _ek_cids[ekb].add(cid)
+_collide = {ek for ek, cids in _ek_cids.items() if len(cids) > 1}
+_LMC_DISPLAY = {"regular":"","artbook":"Artbook"}
+_lmc_fixed = 0
+for it in _lmc:
+    pr = _prop.get(id(it))
+    if not pr: continue
+    ekb, changed, slug, cid = pr
+    new_ek = f"{ekb}-c{cid}" if ekb in _collide else ekb
+    if new_ek == it.get('edition_key',''): continue
+    it['edition_key'] = new_ek
+    if changed and slug in _LMC_DISPLAY:  # solo special->regular / ->artbook
+        # NO tocar edition_display (gotcha #49): es el NOMBRE OFICIAL de la
+        # coleccion (sin traducir), ya viene correcto en el item. Sólo el title
+        # del TOMO se ajusta.
+        sd = it.get('series_display') or ''; vol = it.get('volume') or ''
+        if sd: it['title'] = ' '.join(x for x in [sd, _LMC_DISPLAY[slug], vol] if x).strip()
+    _lmc_fixed += 1
+print(f"[LMC-EDITIONS] coleccion=edicion enforced: {_lmc_fixed} fixed, {len(_collide)} collisions split")
+
+# Desambiguar TÍTULOS de display que colisionan entre EDICIONES distintas de la
+# misma obra (gotcha #42): dos ediciones (publishers/idiomas/años distintos) con
+# el MISMO title se ven idénticas aunque su edition_key las distinga. Prioridad:
+# editorial → idioma → año → coleccion. Sincronizado con
+# scripts/retrofit/fix_listadomanga_title_collisions.py.
+_PUBLAB = [(_re.compile(r"planeta",_re.I),"Planeta"),(_re.compile(r"norma",_re.I),"Norma"),
+           (_re.compile(r"panini",_re.I),"Panini"),(_re.compile(r"ivrea",_re.I),"Ivrea"),
+           (_re.compile(r"gl[ée]nat",_re.I),"Glénat"),(_re.compile(r"\bedt\b",_re.I),"EDT")]
+def _publab(p):
+    for rx,l in _PUBLAB:
+        if rx.search(p or ""): return l
+    return (p or "").split()[0] if p else ""
+_tgroups = _dd(list)
+for it in final:
+    if 'coleccion.php' in (it.get('url','') or '') and it.get('edition_key'):
+        _tgroups[(it.get('series_key',''), _re.sub(r"\s+"," ",(it.get('title','') or '')).strip().lower())].append(it)
+_disamb = 0
+for _k, _g in _tgroups.items():
+    if len({i.get('edition_key') for i in _g}) < 2: continue
+    _pubs={_publab(i.get('publisher','')) for i in _g}
+    _langs={(i.get('language') or '').strip() for i in _g}
+    _yrs={(i.get('release_date','') or '')[:4] for i in _g if (i.get('release_date','') or '')[:4]}
+    _mode = 'pub' if len(_pubs)>1 else 'lang' if len(_langs)>1 else 'year' if (len(_yrs)>1 and all((i.get('release_date','') or '')[:4] for i in _g)) else 'cole'
+    for it in _g:
+        if _mode=='pub': _tag=_publab(it.get('publisher',''))
+        elif _mode=='lang': _tag=(it.get('language') or '').strip()
+        elif _mode=='year': _tag=(it.get('release_date','') or '')[:4]
+        else:
+            _m=_re.search(r'id=(\d+)', it.get('url','')); _tag=f"col. {_m.group(1)}" if _m else ''
+        _t=it.get('title','') or ''
+        if _tag and f"({_tag})" not in _t:
+            it['title']=it['title_standardized']=f"{_t} ({_tag})"; _disamb+=1
+print(f"[LMC-EDITIONS] títulos desambiguados por colisión: {_disamb}")
+
 # Consolidar por producto (modelo 1-fila-por-producto).
 # El edition_key/volume cambió al estandarizar, así que recomputamos cluster_key
 # y FUSIONAMOS los duplicados con merge_cluster (NO los borramos — borrar
@@ -518,6 +706,24 @@ print(f'Deduped: {dedup_removed}')
 PY
 ```
 
+## Step 6b — Enforce REGLAS DE AGRUPACIÓN (determinístico, AUTORIDAD FINAL)
+
+**El LLM NO es la autoridad sobre la agrupación.** El skill puede haber re-derivado
+`edition_key`/`edition_display` vía LLM; este paso RE-APLICA determinísticamente las
+reglas duras y sobreescribe lo que haya quedado mal — es la fuente de verdad de:
+- **#49** `edition_display` = nombre OFICIAL de la coleccion (sin traducir; se recupera
+  del `description`, sin red).
+- **#48** una `/coleccion` = UNA edición (unify).
+- **#46** país = edición (sufijo de país en `edition_key`).
+- cluster_key tier-0 lmc, desambiguación de títulos, consolidate, dedup de portadas, slugs.
+
+Corré SIEMPRE esto al final (reemplaza el viejo enforcement embebido `[LMC-EDITIONS]`
+y el Step 8 de slugs — ambos quedan cubiertos acá). Idempotente.
+
+```bash
+.venv/bin/python scripts/retrofit/enforce_listadomanga_rules.py
+```
+
 ## Step 7 — Run tests
 
 ```bash
@@ -549,7 +755,7 @@ Report to the user:
 - Non-manga removed.
 - Items deduplicated.
 - Items translated.
-- Suggest running `/enrich-series-aliases` if new series_keys appeared.
+- Suggest running `/watch-enrich-series-aliases` if new series_keys appeared.
 
 ## Anti-patterns
 

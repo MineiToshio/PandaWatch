@@ -1,6 +1,7 @@
 ---
-name: validate-rarity
+name: watch-validate-rarity
 description: Verifica la rareza de items ambiguos (boxsets y artbooks con rarity="rare" de publishers grandes) buscando en la web si están en stock hoy. Actualiza a "common" cuando confirma stock activo. Solo procesa items sin rarity_verified_at (incremental). Correr después de scrapes grandes o cuando quieras validar items nuevos.
+argument-hint: "[--limit N] [--dry-run]"
 ---
 
 # Validate rarity — verificación web de items ambiguos
@@ -261,4 +262,4 @@ for tier in ['common', 'rare', 'super_rare', 'ultra_rare']:
 **Cuándo correr:**
 - Después de un scrape grande que agregó boxsets/artbooks nuevos.
 - No necesita correr después de scrapes pequeños (delta diario) — el default `rare` está bien.
-- No integrar en `/standardize-catalog` para no inflar el costo de tokens.
+- No integrar en `/watch-standardize-catalog` para no inflar el costo de tokens.

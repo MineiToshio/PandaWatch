@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'standardize-catalog',
+  name: 'watch-standardize-catalog',
   description: 'Standardize pending manga items using 3-tier approach: deterministic auto-standardize, LLM validation, and full LLM derivation',
   phases: [
     { title: 'Audit', detail: 'Count pending items and compute tier distribution' },
@@ -71,6 +71,20 @@ const TIER3_BATCH_SCHEMA = {
     },
   },
   required: ['items'],
+}
+
+// Schema para cargar data/standardize-progress.json
+const PROGRESS_LOAD_SCHEMA = {
+  type: 'object',
+  properties: {
+    exists:        { type: 'boolean', description: 'true si el archivo existe' },
+    tier1_done:    { type: 'boolean', description: 'Tier 1 ya completado en la corrida anterior' },
+    has_tier2:     { type: 'boolean', description: 'Resultados Tier 2 guardados' },
+    has_tier3:     { type: 'boolean', description: 'Resultados Tier 3 guardados' },
+    tier2_results: { type: 'array',   items: { type: 'object' }, description: 'Resultados LLM Tier 2' },
+    tier3_results: { type: 'array',   items: { type: 'object' }, description: 'Resultados LLM Tier 3' },
+  },
+  required: ['exists', 'tier1_done', 'has_tier2', 'has_tier3'],
 }
 
 // --- Publisher and edition slug allowlists for prompts ---
@@ -156,6 +170,44 @@ Process ALL items. Same series/publisher → same keys consistently. Output coun
 
 // ====== WORKFLOW BODY ======
 
+// args: { limit?: number, force_all?: boolean }
+// limit   — max items to process (0 = unlimited)
+// force_all — if true, re-process already-standardized items too (within limit);
+//             if false, only process items missing standardized_at
+const limit = (args && args.limit) ? parseInt(args.limit) : 0
+const forceAll = !!(args && args.force_all)
+if (limit || forceAll) {
+  log(`Mode: ${forceAll ? 'force-all' : 'incremental'}, limit: ${limit || 'none'}`)
+}
+
+// --- Progreso persistente ---
+// data/standardize-progress.json guarda los resultados LLM de corridas anteriores.
+// Si args.resume_progress === true, cargamos ese estado y saltamos las fases ya completadas.
+// Al finalizar exitosamente, el archivo se elimina.
+const PROGRESS_FILE = 'data/standardize-progress.json'
+const resumeProgress = !!(args && args.resume_progress)
+
+let savedTier1Done = false
+let savedTier2Results = null   // null = aún no procesado; array = ya procesado (puede estar vacío)
+let savedTier3Results = null
+
+if (resumeProgress) {
+  const prog = await agent(
+    `Check if ${PROGRESS_FILE} exists using Bash (ls command).
+If it exists, read it with the Read tool and return its contents parsed as structured output.
+If it does not exist, return { "exists": false, "tier1_done": false, "has_tier2": false, "has_tier3": false, "tier2_results": [], "tier3_results": [] }.`,
+    { label: 'load-progress', phase: 'Audit', schema: PROGRESS_LOAD_SCHEMA }
+  )
+  if (prog && prog.exists) {
+    savedTier1Done    = !!prog.tier1_done
+    savedTier2Results = prog.has_tier2 ? (prog.tier2_results || []) : null
+    savedTier3Results = prog.has_tier3 ? (prog.tier3_results || []) : null
+    log(`Progreso cargado — T1:${savedTier1Done ? '✅' : '⏳'}  T2:${prog.has_tier2 ? `✅ (${(savedTier2Results||[]).length} items)` : '⏳'}  T3:${prog.has_tier3 ? `✅ (${(savedTier3Results||[]).length} items)` : '⏳'}`)
+  } else {
+    log('No se encontró archivo de progreso — empezando de cero')
+  }
+}
+
 phase('Audit')
 
 // Step 1: Read pending items and compute tier distribution
@@ -170,8 +222,16 @@ sys.path.insert(0, 'scripts')
 from manga_watch import derive_series_metadata, Candidate
 from pathlib import Path
 
+FORCE_ALL = ${forceAll ? 'True' : 'False'}
+LIMIT = ${limit}
+
 items = [json.loads(l) for l in open('data/items.jsonl')]
-pending = [it for it in items if not it.get('standardized_at')]
+if FORCE_ALL:
+    pending = [it for it in items if not it.get('approved_at')]
+else:
+    pending = [it for it in items if not it.get('standardized_at') and not it.get('approved_at')]
+if LIMIT:
+    pending = pending[:LIMIT]
 print(f'TOTAL:{len(items)}')
 print(f'PENDING:{len(pending)}')
 
@@ -250,7 +310,9 @@ log(`Tier 1 (auto): ${tier1Count}, Tier 2 (validate): ${tier2Count}, Tier 3 (der
 // Step 2: Auto-standardize Tier 1 deterministically
 phase('Auto-standardize')
 
-if (tier1Count > 0) {
+if (savedTier1Done) {
+  log('Tier 1: saltando — ya completado en la corrida anterior')
+} else if (tier1Count > 0) {
   await agent(
     `Auto-standardize Tier 1 items. Run this Python script:
 
@@ -259,6 +321,7 @@ if (tier1Count > 0) {
 import json, datetime as dt
 from pathlib import Path
 
+FORCE_ALL = ${forceAll ? 'True' : 'False'}
 ITEMS = Path('data/items.jsonl')
 BASE = Path('/tmp/manga-standardize-run')
 tier1 = json.load(open(BASE / 'tier1.json'))
@@ -272,7 +335,7 @@ now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
 applied = 0
 
 for it in items:
-    if it.get('standardized_at'):
+    if it.get('standardized_at') and not FORCE_ALL:
         continue
     md = url_to_md.get(it.get('url',''))
     if not md:
@@ -302,6 +365,12 @@ Report the count.`,
     { label: 'auto-t1', phase: 'Auto-standardize' }
   )
   log(`Tier 1 auto-standardized: ${tier1Count} items`)
+  // Checkpoint: Tier 1 completo, T2/T3 aún pendientes
+  await agent(
+    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
+${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: false, has_tier3: false, tier2_results: null, tier3_results: null }, null, 2)}`,
+    { label: 'checkpoint-t1', phase: 'Auto-standardize' }
+  )
 } else {
   log('No Tier 1 items to auto-standardize.')
 }
@@ -309,8 +378,10 @@ Report the count.`,
 // Step 3: Process Tier 2 with haiku (lightweight validation)
 phase('Classify')
 
-const tier2Results = []
-if (tier2Count > 0) {
+const tier2Results = savedTier2Results ? [...savedTier2Results] : []
+if (savedTier2Results !== null) {
+  log(`Tier 2: saltando — ${savedTier2Results.length} resultados cargados del progreso guardado`)
+} else if (tier2Count > 0) {
   const t2ChunkSize = 20
   const t2Agent = await agent(
     `Read /tmp/manga-standardize-run/tier2.json. Split into chunks of ${t2ChunkSize} items.
@@ -349,6 +420,12 @@ Read the file, then return structured output with your validation results for AL
     }
     log(`Tier 2 validated: ${tier2Results.length} items via sonnet`)
   }
+  // Checkpoint: T1+T2 completos, T3 aún pendiente
+  await agent(
+    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
+${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: true, has_tier3: false, tier2_results: tier2Results, tier3_results: null }, null, 2)}`,
+    { label: 'checkpoint-t2', phase: 'Classify' }
+  )
 } else {
   log('No Tier 2 items.')
 }
@@ -356,8 +433,10 @@ Read the file, then return structured output with your validation results for AL
 // Step 4: Process Tier 3 with sonnet (full derivation)
 phase('Derive')
 
-const tier3Results = []
-if (tier3Count > 0) {
+const tier3Results = savedTier3Results ? [...savedTier3Results] : []
+if (savedTier3Results !== null) {
+  log(`Tier 3: saltando — ${savedTier3Results.length} resultados cargados del progreso guardado`)
+} else if (tier3Count > 0) {
   const t3ChunkSize = 15  // smaller for complex items
 
   const t3Agent = await agent(
@@ -396,6 +475,12 @@ Read the file, then return structured output for ALL items.`,
     }
     log(`Tier 3 derived: ${tier3Results.length} items via sonnet`)
   }
+  // Checkpoint: T1+T2+T3 completos — solo queda el merge
+  await agent(
+    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
+${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: true, has_tier3: true, tier2_results: tier2Results, tier3_results: tier3Results }, null, 2)}`,
+    { label: 'checkpoint-t3', phase: 'Derive' }
+  )
 } else {
   log('No Tier 3 items.')
 }
@@ -466,6 +551,7 @@ from collections import defaultdict, Counter
 ITEMS = Path("data/items.jsonl")
 BLACKLIST = Path("data/non_manga_blacklist.jsonl")
 
+FORCE_ALL = ${forceAll ? 'True' : 'False'}
 results_list = json.load(open("/tmp/manga-standardize-run/llm_results.json"))
 results = {r["url"]: r for r in results_list}
 
@@ -491,7 +577,7 @@ left_pending = 0  # items with a result but no usable keys → retried next run
 non_manga = []
 final = []
 for it in items:
-    if it.get("standardized_at"):
+    if it.get("standardized_at") and not FORCE_ALL:
         final.append(it); continue
     r = results.get(it.get("url",""))
     if not r:
@@ -617,9 +703,9 @@ Report all results.`,
 
 log(`Merge complete: ${mergeAgent}`)
 
-// Cleanup
+// Cleanup: borrar temporales Y el archivo de progreso (corrida exitosa)
 await agent(
-  'Run: rm -rf /tmp/manga-standardize-run',
+  `Run: rm -rf /tmp/manga-standardize-run && rm -f ${PROGRESS_FILE} && echo "Cleanup OK"`,
   { label: 'cleanup', phase: 'Merge' }
 )
 

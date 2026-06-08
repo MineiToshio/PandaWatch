@@ -1,6 +1,7 @@
 ---
-name: enrich-series-aliases
+name: watch-enrich-series-aliases
 description: Process queue of unmapped manga series (data/unmapped_series.jsonl), group them under existing canonicals or create new entries in data/series_aliases.yml via Anilist API and web search. Trigger manually whenever new items appear without a known series canonical (e.g., after each scrape). Updates the YAML, runs the backfill on items.jsonl, and reports what was done.
+argument-hint: "[--limit N]"
 ---
 
 # Enrich series aliases

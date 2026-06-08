@@ -17,7 +17,7 @@ inmediatamente disponibles.
 
 ## Skills disponibles
 
-### `/standardize-catalog`
+### `/watch-standardize-catalog`
 
 **Propósito**: pasada 2 de la estandarización de schema. Procesa items
 de `data/items.jsonl` que NO tienen el campo `standardized_at` —
@@ -61,7 +61,7 @@ heurística cruda (o sin asignación) del pipeline.
 }
 ```
 
-### `/enrich-series-aliases`
+### `/watch-enrich-series-aliases`
 
 **Propósito**: procesar la queue de series sin canonical
 (`data/unmapped_series.jsonl`) y mantener `data/series_aliases.yml`
@@ -82,12 +82,12 @@ actualizado con traducciones multilingües.
 5. Trunca la queue (`data/unmapped_series.jsonl`).
 
 **Cuándo invocarlo**:
-- Después de `/standardize-catalog` cuando aparecieron series_keys
+- Después de `/watch-standardize-catalog` cuando aparecieron series_keys
   nuevas.
 - Semanal junto con el otro skill.
 - Cuando ves la misma obra con nombres diferentes en el dashboard.
 
-### `/evaluate-sources`
+### `/watch-evaluate-sources`
 
 **Propósito**: auditar fuentes candidatas ANTES de implementarlas. Evitar
 incorporar fuentes que no aportan valor real al catálogo (lección: BooksPrivilege
@@ -119,7 +119,7 @@ contexto adicional o sin él.
 - Al recibir una lista de sitios a evaluar ("evalúa estas páginas").
 - Cuando una fuente existente parece redundante con una nueva.
 
-### `/review-feedback`
+### `/watch-review-feedback`
 
 **Propósito**: revisar el feedback que el usuario dejó via el botón 👎 del
 dashboard (`data/feedback.jsonl`). Cada entrada ya contiene todos los campos
@@ -152,7 +152,7 @@ y trunca la queue.
 - Al decir "revisar feedback", "mejorar los filtros", "corregir datos".
 - Periódicamente después de scrapes grandes.
 
-### `/validate-rarity`
+### `/watch-validate-rarity`
 
 **Propósito**: verificar vía búsqueda web si los **boxsets y artbooks de
 publishers grandes** que tienen `rarity="rare"` por default están
@@ -174,7 +174,46 @@ candidatos por corrida.
 **Cuándo invocarlo**:
 - Después de scrapes grandes que trajeron boxsets/artbooks nuevos.
 - No para corridas delta diarias (10-20 items nuevos, el default `rare` está bien).
-- Nunca integrar en `/standardize-catalog` — separa el costo de tokens.
+- Nunca integrar en `/watch-standardize-catalog` — separa el costo de tokens.
+
+---
+
+### `/watch-search-covers`
+
+**Propósito**: buscar portadas en alta resolución para items con imagen de baja
+calidad (`image_local` < `min-pixels` px) o sin imagen. Usa **Chrome exclusivamente**
+(`mcp__Claude_in_Chrome__*`) para navegar **Google Imágenes** (vista `udm=2`), con **fallback
+a Bing** si Google muestra un consent wall. Escribe candidatas a `data/cover_preview.json` para
+aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
+
+> **Google vs Bing (verificado 2026-06-06)**: versiones viejas usaban Bing porque el método
+> antiguo de Google (patrón `"ou":"..."`) da vacío. Pero en `udm=2` las URLs full-res SÍ están
+> en el HTML crudo y se extraen con regex (corta antes de `?` → sin query strings → sin bloqueo
+> del MCP). Solo Google **Lens** (reversa por foto) sigue bloqueado. Por eso ahora el default es
+> Google (preferencia del owner) y Bing queda de fallback.
+
+**Cómo funciona**:
+1. Verifica que Chrome esté disponible (`mcp__Claude_in_Chrome__list_connected_browsers`).
+2. Filtra `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin imagen con `--include-no-image`), saltando los que ya tienen candidatas pendientes.
+3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<image_url>` — la imagen actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
+4. Valida cada URL con Python: píxeles ≥ 1.5× actual, y **`fetch_better_covers._same_cover()`** — aspect ratio ±25% + aHash Hamming ≤ `MAX_HASH_DIST` (10 base; `_same_cover` relaja +4 para portadas actuales < 30k px). Solo pasa si es **la MISMA portada en mejor resolución** (otro volumen / edición / arte = hash distinto = descartada). Items sin imagen actual (`--include-no-image`) no se pueden verificar → quedan `verified: false`. Esto es lo que elimina las candidatas no relacionadas que antes se colaban (el filtro viejo de "Hamming > 3" hacía justo lo contrario: descartaba la misma portada y dejaba pasar las distintas).
+5. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json` con `confidence: "low"`, `status: "pending"`, más `match_dist`/`verified`. Flush **self-healing** después de cada item (acumulador propio + reescritura completa → resiste un save concurrente del dashboard).
+
+> **Motores reverse-image — comparativa probada 2026-06-06**: **Yandex** (`rpt=imageview`) es el mejor gratis: accesible, sin captcha, devuelve portadas del tomo/edición correctos → es la fuente primaria del skill. **Google Lens** es accesible (regex sobre `innerHTML`, NO leer `location.href` que dispara `[BLOCKED]`) pero **inefectivo** con thumbnails de 150×150: cae en matching a nivel franquicia (fan art, wikis, merch, Mercari) → 0 matches. **Bing Visual Search** redirige a búsqueda web de entidad y se bloquea. **Serper Lens** (`fetch_better_covers._search_serper_lens`, `SERPER_API_KEY` de pago, comentada en `.env`) es la reversa server-side de mejor calidad. **Limitación de fondo**: el catálogo son ediciones especiales; texto y reversa suelen traer la edición regular/hermana (arte distinto) → `_same_cover` la rechaza, así que varios items quedan sin candidata (el hi-res del scan especial exacto no está indexado). Esperado, no bug.
+
+**Umbral de calidad**: 90 000 px — mismo valor que `data_quality.py --px` (el panel de
+calidad). Si el panel lo marca como "pixelada", este skill lo procesa.
+
+**Args opcionales**:
+- `--limit N` (default 20) — máximo de items por sesión
+- `--slug SLUG` — procesar solo un item específico
+- `--include-no-image` — incluir items sin ninguna imagen
+- `--query-extra "texto"` — añadir texto al final de cada query de búsqueda
+
+**Cuándo invocarlo**:
+- Cuando quieras mejorar la calidad visual del catálogo (imágenes pequeñas o ausentes).
+- Antes de publicar un build fresco si hay items con portadas de baja resolución.
+- No integrar en el pipeline canónico automático — requiere decisión consciente.
 
 ---
 
@@ -183,13 +222,15 @@ candidatos por corrida.
 ```
 manga_watch.py scrape
        ↓ items.jsonl con series_key rough + sin standardized_at
-/standardize-catalog
+/watch-standardize-catalog
        ↓ subagentes verifican/corrigen, marcan timestamp,
          loguean series desconocidas a unmapped_series.jsonl
-/enrich-series-aliases    (si aparecieron series_keys nuevas)
+/watch-enrich-series-aliases    (si aparecieron series_keys nuevas)
        ↓ consolida nuevas series multilingües
-/validate-rarity          (opcional — solo si scrape trajo boxsets/artbooks)
+/watch-validate-rarity          (opcional — solo si scrape trajo boxsets/artbooks)
        ↓ 1 búsqueda web por edición, actualiza common/rare
+/watch-search-covers            (opcional — si querés mejorar portadas pequeñas)
+       ↓ candidatas en cover_preview.json → aprobar en cover-preview.html
 build_web.py  (opcional)
        ↓ refresh del dashboard
 ```
@@ -206,8 +247,14 @@ sin cambios en el corpus no rompe nada.
    name: <nombre>
    description: Una descripción CLARA de cuándo y por qué invocarlo.
                 Claude Code usa esta descripción para decidir activación.
+   argument-hint: "[--flag-a VALUE] [--flag-b]"
    ---
    ```
+   **`argument-hint` es obligatorio** si el skill acepta argumentos. Es la
+   única pista que aparece en el tooltip de autocompletado de `/` — sin él
+   el usuario no sabe qué puede pasarle. Usa corchetes para opcionales y
+   ángulos para requeridos: `<fuente>`, `[--limit N]`, `[--dry-run]`.
+
    **NO** crear el skill como `.claude/skills/<nombre>.md` (archivo
    suelto) — ese formato no lo descubre Claude Code y el skill no
    aparecerá en el autocompletado de `/`.

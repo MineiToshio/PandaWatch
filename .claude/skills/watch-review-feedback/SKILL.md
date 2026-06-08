@@ -1,6 +1,7 @@
 ---
-name: review-feedback
+name: watch-review-feedback
 description: Analyze items in data/feedback.jsonl that the user flagged via the 👎 dashboard button. Each entry already contains the full item data plus the user's reason. Categorize each feedback (filter issue vs. data quality issue), propose concrete fixes, apply approved changes with tests, run the relevant retrofit scripts, and finally truncate data/feedback.jsonl. Invoke whenever data/feedback.jsonl has entries, or when the user says they want to review feedback or improve the scraper/data.
+argument-hint: "[--dry-run]"
 ---
 
 # Review feedback and improve catalog quality
@@ -401,7 +402,7 @@ backup_and_rotate(Path('data/feedback.jsonl'), 'review')
 ## Step 8 — Final report + update CLAUDE.md
 
 ```
-RESUMEN DE /review-feedback
+RESUMEN DE /watch-review-feedback
 ============================
 Items revisados          : N
   → Problemas de filtros : X  (categorías A–J)

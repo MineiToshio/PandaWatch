@@ -1,6 +1,7 @@
 ---
-name: evaluate-sources
+name: watch-evaluate-sources
 description: Evaluate candidate data sources before adding them to the scraping pipeline. Pass a list of URLs or source names in any format. The skill inspects each site, samples real items, checks data quality against catalog requirements, estimates corpus overlap, and outputs a concise viability table — no implementation.
+argument-hint: "<url-o-nombre> [url-o-nombre ...]"
 ---
 
 # Evaluate candidate data sources
