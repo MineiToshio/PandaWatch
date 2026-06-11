@@ -2367,8 +2367,10 @@ _TOKUTEN_SOURCES = frozenset({
 })
 
 # Fuentes de referencia: catalogan qué EXISTE, no qué está disponible hoy.
-# Items que solo vienen de estas fuentes no tienen verificación de stock.
-# Guard: no promover a common si el item solo proviene de aquí.
+# Catalogan SOLO ediciones de colección, no catálogo de tienda.
+# Guard activo en derive_rarity_tier: si el item proviene ÚNICAMENTE de estas
+# fuentes y ninguna regla de evidencia lo clasificó, la incertidumbre se
+# resuelve a 'rare' (fallback, 2026-06-10, decisión owner).
 _REFERENCE_ONLY_SOURCES = frozenset({
     "mangavariant", "sumikko", "booksprivilege", "blogbbm",
 })
@@ -2452,6 +2454,7 @@ def derive_rarity_tier(
     title: str,
     publisher: str = "",
     stock_status: str = "",
+    sources: list[str] | None = None,
 ) -> str:
     """Clasifica un item en uno de 4 tiers de rareza — modelo default-common.
 
@@ -2468,12 +2471,17 @@ def derive_rarity_tier(
        verificado, retailer_exclusive/tokuten sin verificación, keyword de
        no-reimpresión (_SINGLE_RUN_KEYWORDS), o patrón de evento/furoku/OOP
        (_SINGLE_RUN_PATTERNS: Lucca word-boundary, exclusivas de festival,
-       furoku/appendix de revista, exclusivas de retailer en texto, out-of-print).
+       furoku/appendix de revista, exclusivas de retailer en texto, out-of-print),
+       o item exclusivamente de fuentes de referencia sin evidencia en ningún
+       sentido (fallback de incertidumbre — ver _REFERENCE_ONLY_SOURCES).
     4. common: default. Sin badge en la UI; se promueve solo con evidencia
        (retrofit check_stock.py llena stock_status desde las páginas fuente).
 
     `stock_status`: '' (desconocido) | 'in_stock' | 'out_of_stock' — lo llena
     el retrofit check_stock.py con timestamp en stock_checked_at.
+
+    `sources`: lista de nombres de TODAS las fuentes del item (para el fallback
+    de referencia). Si es None se usa [source] como fallback de un solo origen.
 
     Returns: 'ultra_rare' | 'super_rare' | 'rare' | 'common'
     """
@@ -2515,6 +2523,17 @@ def derive_rarity_tier(
     if any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
         return "rare"
     if any(p.search(text) for p in _SINGLE_RUN_PATTERNS):
+        return "rare"
+
+    # --- Fallback fuentes de referencia (2026-06-10, decisión owner) ---
+    # Mangavariant/Sumikko/BooksPrivilege catalogan SOLO coleccionables, no
+    # catálogo de tienda. Si el item proviene ÚNICAMENTE de ahí y ninguna
+    # regla de evidencia lo clasificó, la incertidumbre se resuelve a 'rare'
+    # (no a common): que esté documentado en una DB de coleccionismo y en
+    # ninguna tienda ES la señal. Con stock verificado sigue common.
+    all_sources = sources if sources is not None else ([source] if source else [])
+    if all_sources and stock_status != "in_stock" \
+            and all(_is_reference_only_source(s) for s in all_sources):
         return "rare"
 
     # --- Common: default (sin evidencia de escasez) ---
@@ -6269,6 +6288,8 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     # Rarity — derivar solo si el item no tiene ya un valor curado. Los items
     # que pasaron por web-search en set_rarity.py tienen 'common' asignado;
     # no pisarlo con 'rare' en un re-scrape. Ver gotcha sobre _CURATED_FIELDS.
+    # sources= no se pasa aquí: al momento del scrape el row tiene una sola
+    # fuente y el fallback default ([source]) la cubre correctamente.
     if not row.get("rarity"):
         row["rarity"] = derive_rarity_tier(
             signal_types=row.get("signal_types") or [],

@@ -8,6 +8,10 @@ o stock agotado verificado vía `stock_status`, que llena el retrofit
 check_stock.py). El default para "sin evidencia" es 'common' — el modelo
 viejo dejaba 81% del corpus en 'rare' con 54% de precisión medida.
 
+Desde 2026-06-10 también aplica el fallback de fuentes de referencia: items
+que provienen ÚNICAMENTE de Mangavariant/Sumikko/BooksPrivilege sin ninguna
+evidencia de escasez → 'rare' (incertidumbre estructural, no default).
+
 Lo que SE recomputa:
     rarity  (solo si --force o el item no tiene rarity ya asignado)
 
@@ -46,6 +50,18 @@ RARITY_LABEL = {
     "super_rare": "🟪 super_rare",
     "ultra_rare": "🟨 ultra_rare",
 }
+
+
+def _item_sources(item: dict) -> list[str]:
+    """Extrae la lista de nombres de fuentes de un item.
+
+    Recorre item['sources'] (lista de dicts con 'name' o 'source') y devuelve
+    los nombres no-vacíos. Si la lista está ausente o vacía, devuelve el campo
+    top-level 'source' como único elemento.
+    """
+    raw = [s.get("name") or s.get("source") or "" for s in (item.get("sources") or [])]
+    names = [n for n in raw if n]
+    return names or ([item.get("source") or ""] if item.get("source") else [])
 
 
 def main() -> int:
@@ -117,6 +133,7 @@ def main() -> int:
             title=item.get("title") or "",
             publisher=item.get("publisher") or "",
             stock_status=item.get("stock_status") or "",
+            sources=_item_sources(item),
         )
 
         if new != old:
@@ -157,6 +174,7 @@ def main() -> int:
                     title=item.get("title") or "",
                     publisher=item.get("publisher") or "",
                     stock_status=item.get("stock_status") or "",
+                    sources=_item_sources(item),
                 )] += 1
         print("Distribución simulada (dry-run):")
         for r, n in sorted(sim.items()):

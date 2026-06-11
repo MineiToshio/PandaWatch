@@ -8601,13 +8601,13 @@ def test_rarity_variant_cover_no_longer_blocks_common():
     assert r == "common"
 
 
-def test_rarity_reference_source_is_common_without_evidence():
-    """Fuente de referencia sin evidencia de escasez → common (sin badge)."""
+def test_rarity_reference_source_is_rare_without_evidence():
+    """Fuente de referencia (solo Mangavariant) sin evidencia → rare (fallback incertidumbre)."""
     r = mw.derive_rarity_tier(
         ["deluxe", "hardcover"], "Global - Mangavariant", "",
         "Berserk Deluxe 1", publisher="Dark Horse Comics"
     )
-    assert r == "common"
+    assert r == "rare"
 
 
 def test_rarity_common_not_blocked_by_bonus():
@@ -8675,11 +8675,71 @@ def test_rarity_jp_juchu_seisan_is_rare():
     assert r == "rare"
 
 
-def test_rarity_english_limited_title_from_sumikko_is_common():
-    """Título EN con 'Limited' sin marcador JP ni evidencia → common."""
+def test_rarity_english_limited_title_from_sumikko_is_rare():
+    """Título EN con 'Limited' de Sumikko sin marcador JP → rare (fallback ref source)."""
     r = mw.derive_rarity_tier(
         ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
         "Kimetsu no Yaiba Limited 23", publisher="Shueisha"
+    )
+    assert r == "rare"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — fallback fuentes de referencia (2026-06-10)
+# ---------------------------------------------------------------------------
+
+def test_rarity_mangavariant_no_evidence_is_rare():
+    """Mangavariant sin evidencia (sources=None → usa source) → rare."""
+    r = mw.derive_rarity_tier(
+        [], "Global - Mangavariant", "",
+        "One Piece Deluxe Edition 1",
+    )
+    assert r == "rare"
+
+
+def test_rarity_sumikko_no_evidence_is_rare():
+    """JP - Sumikko sin evidencia → rare (fallback ref source)."""
+    r = mw.derive_rarity_tier(
+        [], "JP - Sumikko (限定版・特装版)", "",
+        "Frieren 10 Special Box",
+    )
+    assert r == "rare"
+
+
+def test_rarity_mangavariant_in_stock_is_common():
+    """Mangavariant con stock verificado → common (stock gana al fallback)."""
+    r = mw.derive_rarity_tier(
+        [], "Global - Mangavariant", "",
+        "Berserk Vol 1", stock_status="in_stock",
+    )
+    assert r == "common"
+
+
+def test_rarity_mixed_sources_reference_and_store_is_common():
+    """Mangavariant + fuente de tienda → no aplica fallback → common."""
+    r = mw.derive_rarity_tier(
+        [], "Global - Mangavariant", "",
+        "Berserk Deluxe 1", publisher="Dark Horse Comics",
+        sources=["Global - Mangavariant", "ES - Casa del Libro"],
+    )
+    assert r == "common"
+
+
+def test_rarity_mangavariant_print_run_300_is_ultra_rare():
+    """Mangavariant con 'limited to 300 copies' → ultra_rare (evidencia gana)."""
+    r = mw.derive_rarity_tier(
+        [], "Global - Mangavariant",
+        "limited to 300 copies, hand-numbered",
+        "Berserk Art Edition",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_normal_source_no_evidence_is_common():
+    """Fuente de tienda normal sin evidencia de escasez → common (regresión)."""
+    r = mw.derive_rarity_tier(
+        [], "ES - Norma Editorial", "",
+        "Berserk Deluxe 1", publisher="Norma Editorial",
     )
     assert r == "common"
 
