@@ -379,10 +379,12 @@ def test_extract_image_url_from_data_src():
 
 
 def test_extract_image_url_from_srcset():
+    # srcset con descriptores 'w': debe tomar el de mayor resolución (720w), no el primero.
+    # Comportamiento corregido: antes tomaba el primero (menor), ahora toma el mayor.
     soup = make_soup('<div><img srcset="/img/480.jpg 480w, /img/720.jpg 720w"></div>')
     div = soup.find("div")
     url = mw.extract_image_url(div, "https://example.com/")
-    assert url == "https://example.com/img/480.jpg"
+    assert url == "https://example.com/img/720.jpg"
 
 
 def test_extract_image_url_empty_when_no_img():
@@ -457,6 +459,31 @@ def test_img_to_url_skips_data_uri():
     soup = make_soup('<img src="data:image/svg+xml;base64,PHN2Zz4=" data-src="/img/real.jpg">')
     img = soup.find("img")
     assert mw._img_to_url(img, "https://example.com/") == "https://example.com/img/real.jpg"
+
+
+def test_img_to_url_srcset_picks_largest_w_descriptor():
+    # srcset con descriptores 'w': debe tomar el de mayor N, no el primero.
+    soup = make_soup(
+        '<img srcset="/img/cover_100w.jpg 100w, /img/cover_400w.jpg 400w, /img/cover_800w.jpg 800w">'
+    )
+    img = soup.find("img")
+    assert mw._img_to_url(img, "https://example.com/") == "https://example.com/img/cover_800w.jpg"
+
+
+def test_img_to_url_srcset_picks_last_when_no_descriptor():
+    # srcset sin descriptores: la última entrada es la de mayor resolución por convención.
+    soup = make_soup(
+        '<img srcset="/img/cover-small.jpg, /img/cover-medium.jpg, /img/cover-large.jpg">'
+    )
+    img = soup.find("img")
+    assert mw._img_to_url(img, "https://example.com/") == "https://example.com/img/cover-large.jpg"
+
+
+def test_img_to_url_srcset_single_entry():
+    # srcset de 1 sola entrada: devuelve esa entrada.
+    soup = make_soup('<img srcset="/img/cover.jpg 1x">')
+    img = soup.find("img")
+    assert mw._img_to_url(img, "https://example.com/") == "https://example.com/img/cover.jpg"
 
 
 def test_extract_image_url_skips_data_uri_placeholder():
@@ -4320,6 +4347,94 @@ def test_append_jsonl_cover_local_is_sticky(tmp_path):
     assert imgstore.cover_local(items[0]) == "abc123def4567890.jpg"
     assert "image_local" not in items[0] and "image_url" not in items[0]
     assert items[0]["detected_at"] == "2026-02-01"
+
+
+def test_extract_images_anchor_href_wins_over_src():
+    """Patrón Magento/Fotorama: <a href="full.jpg"><img src="thumb.jpg"></a>.
+    _extract_images_from_detail_soup debe devolver la URL full del href, no el thumb."""
+    html = """
+    <html><body>
+    <main>
+      <div class="product-gallery">
+        <a href="/media/catalog/product/full.jpg">
+          <img src="/media/catalog/product/cache/thumb.jpg" alt="Cover">
+        </a>
+      </div>
+    </main>
+    </body></html>
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    images = mw._extract_images_from_detail_soup(soup, "https://shop.example.com/product/1")
+    assert len(images) >= 1
+    assert images[0]["url"] == "https://shop.example.com/media/catalog/product/full.jpg"
+
+
+def test_extract_images_anchor_non_image_href_falls_back_to_src():
+    """Si el <a> que envuelve el <img> no apunta a una imagen, usar el src del img."""
+    html = """
+    <html><body>
+    <main>
+      <a href="/products/detail-page">
+        <img src="/media/catalog/product/cover.jpg" alt="Cover">
+      </a>
+    </main>
+    </body></html>
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    images = mw._extract_images_from_detail_soup(soup, "https://shop.example.com/product/1")
+    assert len(images) >= 1
+    assert images[0]["url"] == "https://shop.example.com/media/catalog/product/cover.jpg"
+
+
+def test_append_jsonl_dedup_images_by_normalized_url(tmp_path):
+    """La misma imagen en thumb y full-res (URLs que difieren solo en sufijo
+    de Shopify) produce un solo entry en images[] después del merge."""
+    path = tmp_path / "items.jsonl"
+    # Primera pasada: URL thumbnail (Shopify suffix)
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A",
+        "images": [{"url": "https://cdn.shopify.com/s/files/cover_100x100.jpg",
+                    "kind": "gallery", "description": ""}],
+        "detected_at": "2026-01-01",
+    }])
+    # Segunda pasada: misma imagen sin suffix (full-res)
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A",
+        "images": [{"url": "https://cdn.shopify.com/s/files/cover.jpg",
+                    "kind": "gallery", "description": ""}],
+        "detected_at": "2026-02-01",
+    }])
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    # No debe haber duplicados de la misma imagen
+    assert len(items[0].get("images", [])) == 1
+
+
+def test_append_jsonl_images_backfilled_at_is_sticky(tmp_path):
+    """images_backfilled_at sobrevive un re-scrape: el valor del old se conserva
+    si la nueva fila no lo trae (ningún scraper lo escribe)."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A",
+        "images": [{"url": "https://cdn.example.com/a.jpg", "kind": "gallery", "description": ""}],
+        "images_backfilled_at": "2026-05-01T10:00:00+00:00",
+        "detected_at": "2026-01-01",
+    }])
+    # Re-scrape: la nueva fila no trae images_backfilled_at
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "A v2",
+        "images": [{"url": "https://cdn.example.com/a.jpg", "kind": "gallery", "description": ""}],
+        "detected_at": "2026-02-01",
+    }])
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0].get("images_backfilled_at") == "2026-05-01T10:00:00+00:00"
 
 
 # ----- image_store.py (espejo local de portadas, Image storage Fase 1) -----

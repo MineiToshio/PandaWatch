@@ -1083,7 +1083,32 @@ def _img_to_url(img: Any, source_url: str) -> str:
         if not val:
             continue
         if "srcset" in attr:
-            val = val.split(",")[0].strip().split(" ")[0]
+            # Los srcset listan entradas de menor a mayor resolución; tomar la mayor.
+            # Formato por entrada: "<url> [<N>w|<Nx>]" separadas por coma.
+            entries = [e.strip() for e in val.split(",") if e.strip()]
+            if not entries:
+                continue
+            best_url = ""
+            best_w = -1
+            for entry in entries:
+                parts = entry.split()
+                if not parts:
+                    continue
+                entry_url = parts[0]
+                if len(parts) >= 2:
+                    desc = parts[-1]
+                    m = re.match(r"(\d+)[wx]$", desc, re.IGNORECASE)
+                    w = int(m.group(1)) if m else 0
+                else:
+                    # Sin descriptor: tomar la última entrada (heurística: orden ascendente)
+                    w = 0
+                if w > best_w or (w == 0 and best_w <= 0):
+                    best_w = w
+                    best_url = entry_url
+            # Sin descriptores numéricos: la última entrada es la mayor
+            if best_w <= 0:
+                best_url = entries[-1].split()[0]
+            val = best_url
         val = val.strip()
         if val.lower().startswith("data:"):
             continue
@@ -1682,6 +1707,46 @@ _PRODUCT_SCOPE_SELECTORS: tuple[str, ...] = (
 )
 
 
+_IMAGE_EXT_RE = re.compile(
+    r"\.(jpe?g|png|webp|avif|gif)$", re.IGNORECASE
+)
+
+
+def _img_anchor_full_url(img_node: Any, source_url: str) -> str:
+    """Si el <img> está envuelto en un <a href="full.ext"> (padre o abuelo),
+    devuelve la URL del href como versión full-res (patrón Magento/Fotorama/
+    PrestaShop/LightGallery: thumb en src, full-res en el link que lo envuelve).
+
+    Devuelve "" si no hay ancla, si el href no termina en extensión de imagen
+    (ignorando query string), o si el href queda fuera del scope del producto
+    (mismo dominio, sin marcadores de "relacionados" — gotcha #31).
+    """
+    for ancestor in (img_node.parent, img_node.parent.parent if img_node.parent else None):
+        if ancestor is None:
+            continue
+        if ancestor.name != "a":
+            continue
+        href = (ancestor.get("href") or "").strip()
+        if not href:
+            continue
+        # Verificar que el href termina en extensión de imagen (sin query string)
+        href_path = href.split("?", 1)[0].split("#", 1)[0]
+        if not _IMAGE_EXT_RE.search(href_path):
+            continue
+        url = canonicalize_url(source_url, href)
+        if not url:
+            continue
+        # No salir del dominio del producto (gotcha #31): el href debe ser del
+        # mismo host que source_url, o relativo.
+        from urllib.parse import urlparse as _urlparse
+        src_host = _urlparse(source_url).netloc
+        href_host = _urlparse(url).netloc
+        if src_host and href_host and src_host != href_host:
+            continue
+        return url
+    return ""
+
+
 def _find_product_scope(soup: BeautifulSoup):
     """Devuelve el contenedor del producto principal o None si no hay match."""
     for selector in _PRODUCT_SCOPE_SELECTORS:
@@ -1813,7 +1878,10 @@ def _extract_images_from_detail_soup(
             if not node:
                 continue
             if node.name == "img":
-                url = _img_to_url(node, source_url)
+                # Preferir el href del <a> envolvente cuando apunta a full-res
+                # (patrón Magento/Fotorama/PrestaShop/LightGallery: thumb en src,
+                # full en el link). Fallback a _img_to_url si no hay ancla válida.
+                url = _img_anchor_full_url(node, source_url) or _img_to_url(node, source_url)
                 alt = (node.get("alt") or "").strip()
             else:
                 # `[data-zoom-image]` y similares: leer el atributo directo.
@@ -3936,7 +4004,16 @@ def source_entry(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _img_stem(url: str) -> str:
-    return re.sub(r"^https?://", "", (url or "").split("?", 1)[0]).lower()
+    """Clave de dedup para images[]: normaliza la URL para que la misma imagen
+    en distintas resoluciones de CDN (Shopify thumb/full, WP -NxM, query params
+    irrelevantes) produzca el mismo stem y no genere entradas duplicadas.
+
+    Delega en _gallery_url_normalize (strip Shopify size suffix + strip query
+    params irrelevantes) ANTES de quitar el protocolo, para que
+    "cdn.example.com/img_100x100.jpg" == "cdn.example.com/img.jpg".
+    """
+    normalized = _gallery_url_normalize(url or "")
+    return re.sub(r"^https?://", "", normalized.split("?", 1)[0]).lower()
 
 
 # Portada del row = primer images[] con url (images[0]). Es la ÚNICA fuente de
@@ -4172,19 +4249,27 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # de que este item ya fue verificado por búsqueda web.
         if old and old.get("rarity_verified_at") and not row.get("rarity_verified_at"):
             row["rarity_verified_at"] = old["rarity_verified_at"]
+        # images_backfilled_at es sticky: lo setea backfill_metadata.py --only images
+        # tras hacer el fetch de galería completo. Un re-scrape no debe re-encolar
+        # items que ya fueron procesados. Si la nueva fila no lo trae (ningún scraper
+        # lo escribe), preservar el que ya estaba.
+        if old and old.get("images_backfilled_at") and not row.get("images_backfilled_at"):
+            row["images_backfilled_at"] = old["images_backfilled_at"]
         # images[] es UNION-MERGE entre old y new (Fase 2 listadomanga-collections):
         # un re-scrape que sólo trae la cover no debe borrar los extras que
         # se agregaron en una pasada previa con merge extra→tomo, y viceversa
         # — un re-scrape de extras no debe borrar la cover. Deduplicamos por
-        # (kind, url) preservando el orden (primero los del old, después los
-        # nuevos del row que no estén). Si ambos están vacíos, no escribir.
+        # (kind, url_normalizada) para que la misma imagen en thumb vs full-res
+        # de CDN (Shopify, WP, Amazon) no produzca entradas duplicadas.
+        # Preservamos el orden (primero los del old, después los nuevos).
+        # Si ambos están vacíos, no escribir.
         old_images = list((old or {}).get("images") or [])
         new_images = list(row.get("images") or [])
         if old_images or new_images:
             seen_keys: set[tuple[str, str]] = set()
             merged_images: list[dict[str, Any]] = []
             for im in old_images + new_images:
-                k = (im.get("kind", ""), im.get("url", ""))
+                k = (im.get("kind", ""), _img_stem(im.get("url", "")))
                 if k in seen_keys:
                     continue
                 seen_keys.add(k)

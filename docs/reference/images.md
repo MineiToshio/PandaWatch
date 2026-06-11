@@ -71,6 +71,11 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   Shopify/Tiendanube/WooCommerce/Magento + genéricos), acotado al scope del producto y
   filtrando "productos relacionados" (gotcha #31). Un solo `<img>` → lista de 1. La portada
   es `images[0]`; el mirror puebla `local` para TODAS las fotos, no solo la portada.
+  - **`srcset` → mayor resolución**: `_img_to_url` parsea todas las entradas del `srcset` y
+    elige la de mayor descriptor `<N>w`; sin descriptores, toma la última (gotcha #67).
+  - **`<a href="full.jpg">` envolviendo `<img>`**: cuando el `<a>` apunta a imagen del mismo
+    dominio, se prefiere el href (full-res) sobre el src del `<img>` (thumb — patrón
+    Magento/Fotorama/LightGallery; gotcha #68).
 - La `url` remota de cada entry queda como provenance + fallback (espejo falla → url remota → 📚).
 - On por defecto en todo scrape; `--skip-image-download` lo desactiva. Primitivas en
   `image_store.py` (incluye los helpers `cover_url`/`cover_local`/`set_cover`); orquestado
@@ -89,6 +94,23 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
 bucket de PandaTrack): blast radius de credenciales + GC mark-and-sweep seguro. Serving por
 dominio propio (no `r2.dev`, rate-limited). PandaTrack ya usa el patrón con `@aws-sdk/client-s3`
 (env `ASSETS_STORAGE_*` / `ASSETS_PUBLIC_BASE_URL`).
+
+## Upgrade de resolución — `upgrade_image_resolution.py`
+
+Re-descarga portadas en resolución completa eliminando parámetros/segmentos CDN de
+resize. Corre como fase `[4g2]` de `scrape_full.sh` (después de `consolidate_sources`,
+antes de `dedup_carousel`). NO corre en el delta.
+
+**Patrones verificados empíricamente (2026-06-11)** — además de los 5 anteriores
+(Magento query params, WordPress -NxM, Shopify _Nx, Amazon ._SY300_., Rakuten ?_ex=):
+- **Buscalibre** (`images.cdnN.buscalibre.com`): quita segmento `fit-in/<W>x<H>/` → ganancia 2-22×.
+- **Cultura** (`cdn.cultura.com`): quita segmento `cdn-cgi/image/width=<N>/` (Cloudflare Polish) → hasta 2×.
+- **Whakoom** (`i1.whakoom.com`): `/small/` o `/thumb/` o `/medium/` → `/large/` → 3×.
+- **Magento cache path** (`/media/catalog/product/cache/<hex>/`): quita el segmento → acceso a la imagen original. **⚠️ Requiere validación same_cover** (bdfugue y similares ~20% devuelven imagen distinta); el script la aplica automáticamente cuando está disponible PIL.
+
+Patrones **no agregados** (verificados como no viables): Amazon (los modificadores no controlan resolución), Manga-Sanctuary `/objet/300/` (es el máximo del servidor), Rakuten (404 sin ?_ex).
+
+El download pasa `referer=<url del item>` para evitar 403 de CDNs con anti-hotlink. La comparación de píxeles (umbral `--min-gain 0.10`) evita reemplazar por la misma imagen o peor.
 
 ## Dedup de portada en el carrusel — `dedup_carousel_images.py`
 
