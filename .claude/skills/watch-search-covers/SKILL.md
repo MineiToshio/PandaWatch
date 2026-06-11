@@ -312,127 +312,24 @@ for t in targets:
 
 ---
 
-## Step 2 — Escribir el validador de imágenes (antes del loop)
+## Step 2 — El validador de imágenes (permanente, NO se regenera)
 
-El validador descarga cada candidata y la acepta **solo si es la misma portada en mejor
-resolución**, usando `fetch_better_covers._same_cover()`. Esto es lo que elimina los otros
-volúmenes / ediciones / arte no relacionado.
+La validación vive en `scripts/retrofit/sc_validate.py` — un script PERMANENTE y
+testeado (`tests/test_sc_validate.py`) que delega todo el criterio de identidad en
+`fetch_better_covers` (`_same_cover` AND-gate + `candidate_metadata_conflict`).
+**No escribas ni copies código de validación en esta corrida**: las versiones
+anteriores de este skill regeneraban una copia embebida y esa copia drifteó de
+producción (umbral laxo, sin filtro de volumen/ISBN) — fue la causa de los falsos
+positivos pre-2026-06-11. Si la validación necesita cambios, se cambia el script
+(y sus tests), no este documento.
+
+Sanity check antes del loop:
 
 ```python
-from pathlib import Path
-
-SC_VALIDATE = r'''
-import sys, json, requests
-from pathlib import Path
-
-sys.path.insert(0, 'scripts/retrofit')
-import fetch_better_covers as fbc
-
-# Umbral aHash: usar el MISMO default endurecido que producción (6/64).
-# _same_cover es un AND-gate (aHash ∧ dHash ∧ pHash ∧ NCC + entropía +
-# denylist de placeholders); el relax de +4 para originales chicas fue
-# ELIMINADO en el audit 2026-06-10 (era la vía de entrada de falsos positivos).
-MAX_HASH_DIST = fbc.DEFAULT_MAX_HASH_DIST
-
-SKIP_DOMAINS = frozenset({
-    'instagram.com', 'twitter.com', 'x.com', 'facebook.com',
-    'pinterest.com', 'pinimg.com', 'tiktok.com', 'reddit.com', 'redd.it',
-    'youtube.com', 'ytimg.com', 'tumblr.com', 'gstatic.com',
-    'zerochan.net', 'danbooru', 'donmai.us', 'goodreads.com', 'gr-assets.com',
-    'redbubble.com', 'redbubble.net', 'picclick.com', 'picclickimg.com',
-    'mercari.com', 'mercdn.net',
-})
-
-tmp_inputs = sorted(Path('.').glob('.tmp_sc_input_*.json'))
-if not tmp_inputs:
-    print(json.dumps({'validated': [], 'error': 'no input file found'}))
-    sys.exit(0)
-
-data       = json.loads(tmp_inputs[0].read_text(encoding='utf-8'))
-item       = data['item']
-candidates = data['candidate_urls']
-curr_px    = data.get('curr_px', 0)
-
-images_dir = Path('data/images')
-session    = requests.Session()
-session.headers.update({'User-Agent': fbc._UA})
-# Usar ref_image_local si se pasó (foto de galería); si no, la portada (images[0])
-ref_local  = data.get('ref_image_local') or ''
-if ref_local and (images_dir / ref_local).exists():
-    curr_bytes = (images_dir / ref_local).read_bytes()
-else:
-    # _get_current_bytes lee el espejo local de images[0].
-    curr_bytes = fbc._get_current_bytes(item, images_dir) or b''
-
-validated = []
-for cand in candidates[:25]:    # tope de candidatas evaluadas por llamada (Google trae ~70+/query)
-    url    = (cand.get('url') or '').strip()
-    domain = cand.get('domain') or (url.split('/')[2] if url.startswith('http') else '')
-    if not url or not url.startswith('http'):
-        continue
-    if any(bad in domain for bad in SKIP_DOMAINS):
-        continue
-    # R5 — conflicto de metadata declarada: la URL/título de la candidata
-    # declara OTRO volumen u OTRO ISBN que el item → hard reject (es el filtro
-    # para "mismo manga, tomo equivocado"; producción lo aplica igual).
-    if fbc.candidate_metadata_conflict(item, url, cand.get('page_title', '')):
-        continue
-    try:
-        img_bytes = fbc._fetch(url, session)
-    except Exception:
-        img_bytes = None
-    if not img_bytes or len(img_bytes) < 5_000:
-        continue
-    new_px = fbc._get_pixels_from_bytes(img_bytes)
-    if new_px < 10_000:
-        continue
-    # Debe ser MEJOR resolución que la actual (si hay actual)
-    if curr_px > 0 and new_px < max(curr_px * fbc.DEFAULT_MIN_GAIN, 30_000):
-        continue
-
-    # ─── VERIFICACIÓN DE RELEVANCIA (el corazón del skill) ───
-    match_dist = None
-    if curr_bytes:
-        # Exigir misma portada: aspect ratio (±25%) + perceptual hash.
-        if not fbc._same_cover(curr_bytes, img_bytes, MAX_HASH_DIST):
-            continue
-        h1 = fbc._ahash(curr_bytes); h2 = fbc._ahash(img_bytes)
-        if h1 is not None and h2 is not None:
-            match_dist = fbc._hamming(h1, h2)
-        verified = True
-    else:
-        # Item sin imagen actual (--include-no-image): no hay con qué verificar.
-        # Se acepta pero queda marcado sin verificar para revisión más estricta.
-        verified = False
-
-    filename = fbc._save_image(img_bytes, images_dir)
-    if not filename:
-        continue
-    validated.append({
-        'new_image'  : filename,
-        'new_url'    : url,
-        'new_pixels' : new_px,
-        'ref_pixels' : curr_px,      # px de la imagen específica que esta candidata reemplaza
-        'match_dist' : match_dist,   # distancia Hamming vs portada actual (None si no había)
-        'verified'   : verified,     # True = pasó _same_cover
-        'page_title' : cand.get('page_title', ''),
-        'domain'     : domain,
-        'query'      : cand.get('query', ''),
-        'confidence' : 'low',
-        'action'     : 'replace_cover',
-        'target'     : '',
-        'kind'       : 'gallery',
-        'status'     : 'pending',
-    })
-
-# Mejor primero: menor distancia (más parecida), luego mayor resolución
-validated.sort(key=lambda c: (c['match_dist'] if c['match_dist'] is not None else 99,
-                              -c['new_pixels']))
-print(json.dumps({'validated': validated}))
-'''
-
-Path('scripts/retrofit/_sc_validate.py').write_text(SC_VALIDATE, encoding='utf-8')
-print("Validador escrito → scripts/retrofit/_sc_validate.py")
+import subprocess
+r = subprocess.run(['.venv/bin/python', 'scripts/retrofit/sc_validate.py', '/nonexistent'],
+                   capture_output=True, text=True)
+print(r.stdout.strip())   # debe imprimir {"validated": [], "error": "input not found: ..."}
 ```
 
 ---
@@ -546,7 +443,7 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    tmp_in.write_text(json.dumps({'item': item, 'candidate_urls': candidate_urls,
                                  'curr_px': curr_px,
                                  'ref_image_local': image_ref_local}, ensure_ascii=False), encoding='utf-8')
-   result = subprocess.run(['.venv/bin/python', 'scripts/retrofit/_sc_validate.py'],
+   result = subprocess.run(['.venv/bin/python', 'scripts/retrofit/sc_validate.py', str(tmp_in)],
                            capture_output=True, text=True)
    tmp_in.unlink(missing_ok=True)
    got = json.loads(result.stdout).get('validated', []) if result.returncode == 0 else []
@@ -654,14 +551,13 @@ if item_candidates:
 
 ## Step 4 — Limpiar y reportar
 
-Borrar el validador y los archivos temporales, luego reportar:
+Borrar los archivos temporales, luego reportar:
 
 ```python
 import json
 from pathlib import Path
 
 # Cleanup
-Path('scripts/retrofit/_sc_validate.py').unlink(missing_ok=True)
 for p in ['.tmp_sc_plan.json', '.tmp_sc_acc.json']:
     Path(p).unlink(missing_ok=True)
 for f in Path('.').glob('.tmp_sc_input_*.json'):
@@ -700,4 +596,4 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
    (`--include-no-image`) queda `verified: false` para revisión más estricta.
 6. Máximo 10 candidatas por item; máx 3 matches dispara el corte de iteración
 7. El skill es incremental: slugs con candidatas pendientes se saltan automáticamente
-8. Borrar `scripts/retrofit/_sc_validate.py` y los `.tmp_sc_*` al finalizar (son temporales)
+8. Borrar los `.tmp_sc_*` al finalizar (son temporales). `scripts/retrofit/sc_validate.py` es PERMANENTE — nunca borrarlo ni regenerarlo inline.

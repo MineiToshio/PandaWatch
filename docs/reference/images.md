@@ -151,7 +151,14 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
 
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
-- `_sc_validate.py` (validador temporal en `scripts/retrofit/`) se borra al finalizar.
+- El validador es permanente: `scripts/retrofit/sc_validate.py`, testeado en
+  `tests/test_sc_validate.py`. El skill **NUNCA regenera código de validación inline**
+  (la copia embebida que había en Step 2 del SKILL.md drifteó de producción — umbral laxo,
+  sin `candidate_metadata_conflict` — y fue la causa de los falsos positivos pre-2026-06-11).
+- `cover-preview.html` muestra un badge **✓ verificada** (verde) cuando la candidata pasó
+  `_same_cover` contra la imagen actual, o **⚠ sin verificar** (ámbar) cuando no fue posible
+  verificar (p.ej. items sin imagen con `--include-no-image`). El badge aparece tanto en la
+  card compacta como en el modal de comparación.
 - **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
 - Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-no-image`,
   `--query-extra "texto"`.
