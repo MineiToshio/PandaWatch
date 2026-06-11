@@ -72,7 +72,19 @@ de producto que busca PandaWatch, sin tener que filtrar el catálogo general.
 
 - Sin parser propio: el comportamiento depende del extractor genérico Magento. Cualquier
   problema de captura es del extractor compartido, no de un módulo de esta fuente.
-- {{pendiente: no se registró ningún problema específico de panini.it (mojibake,
+- **Títulos "bare" sin señal en las categorías coleccionables (audit 2026-06-10)**: las
+  categorías "Variant ed Esclusive" y "Edizioni da Collezione e Cofanetti" listan títulos
+  pelados ("Sakamoto Days 25") sin keyword de edición en el card → `detect_signals` daba
+  0 y el gate de `manga_watch.py` descartaba ~50 items IT pese a que la categoría entera
+  ES coleccionable. ✅ Fix: se agregó un tag `search:` a cada entrada en `sources.yml`
+  (`"search:variant esclusiva"` y `"search:edizione da collezione cofanetto"`); el gate
+  inyecta ese keyword en el texto combinado (mecanismo existente de search-context,
+  `manga_watch.py` ~5001-5009), y en `score_candidate` los items sin señal propia reciben
+  score base 10 (no decisivo — el keyword NO entra a `signal_types` ni rescata
+  `is_collectible_edition`). **Efecto secundario conocido**: las sources con tag
+  `search:` quedan excluidas del sitemap mining (filtro en `manga_watch.py` ~6927);
+  aceptable porque estas dos categorías se scrapean como listings HTML normales.
+- {{pendiente: no se registró ningún otro problema específico de panini.it (mojibake,
   anti-bot, lazy-loading de imágenes) en esta revisión.}}
 
 ---

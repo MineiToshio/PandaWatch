@@ -188,6 +188,13 @@ Parser: [`scripts/wikis/prhcomics.py`](../../../scripts/wikis/prhcomics.py). Se 
 - **Dedup por ISBN dentro del run**: el mismo tomo aparece en varios carruseles de la página.
   ✅ `seen_isbns` evita duplicados en una misma corrida (el dedup global por URL/ISBN aguas
   abajo lo cubre entre corridas).
+- **`release_date` perdido por mes abreviado + tabs (audit 2026-06-10)**: la página
+  renderiza la fecha con mes ABREVIADO y whitespace embebido
+  (`"On sale \t\t\t\tNov 22, 2022"`), pero `_parse_release_date` sólo probaba
+  `strptime('%B %d, %Y')` (mes completo) sobre el string crudo → 82/86 items quedaban
+  sin fecha. ✅ Fix: se colapsa el whitespace (`re.sub(r"\s+", " ", …)`) y se prueban
+  ambos formatos `%b`/`%B` (también para el fallback "Mes Año" → día 01). Tests en
+  `tests/test_wiki_parser_fixes.py` (`test_prh_*`).
 - **Decisiones (lo que NO se hace)**: no se hitean páginas de detalle (todo el metadato está
   en el listing); no se mergea cross-país (#46); un paperback regular sin señal coleccionable
   no entra.

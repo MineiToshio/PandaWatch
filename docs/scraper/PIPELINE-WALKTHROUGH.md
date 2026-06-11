@@ -89,7 +89,7 @@ incrementales: solo tocan lo que falta).
 | **3** | **Aliases de series** 🧠 | skill `/watch-enrich-series-aliases` | `series_aliases.yml` + backfill |
 | **4** | **Slugs** | `generate_slugs.py` (último paso del skill #2) | `slug` |
 | **5** | **Traducción** | `translate_descriptions.py` (último paso del skill #2) | `description_es` |
-| **6** | **Imágenes / portadas** | sub-pipeline de 7 pasos (ver §3.6) | `image_url`, `image_local`, `images[]` en hi-res |
+| **6** | **Imágenes / portadas** | sub-pipeline de 7 pasos (ver §3.6) | `images[]` en hi-res (`images[0]` = portada; cada entry con `url`+`local`) |
 | **7** | **Rareza** | `set_rarity.py` + skill `/watch-validate-rarity` 🧠 | `rarity`, `rarity_verified_at` |
 | **8** | **Feedback** 🧠 | skill `/watch-review-feedback` | corrige errores reportados (👎) |
 | **9** | **Aprobación humana** | dashboard → `approved_at` + `apply_approvals.py` | golden records congelados |
@@ -269,7 +269,7 @@ Detalle de los 10 pasos por cada candidato (vale para sources y wikis):
 5. **Collectible gate** `is_collectible_edition()` — solo ediciones especiales/variants/deluxe/limited/boxsets/artbooks/fanbooks/magazines. Signals **recomputados desde el título** dentro del gate.
 6. **State diff** `process_state()` — `content_hash` vs `state.json`: new/changed/seen.
 7. **Flush incremental** — escribe tras CADA fuente (resiliencia).
-8. **Image mirror** `mirror_candidate_images()` — descarga portada a `data/images/<sha256>.<ext>`, setea `image_local`. También `_extract_images_from_detail_soup` trae el carrusel a `images[]`.
+8. **Image mirror** `mirror_candidate_images()` — descarga CADA imagen a `data/images/<sha256>.<ext>` y setea su `local` en `images[]` (`images[0]` = portada). `_extract_images_from_detail_soup` trae el carrusel a `images[]`. (Ya no hay campos top-level `image_url`/`image_local`; el `Candidate` runtime los lleva como input y `candidate_to_json` los vuelca en `images[0]`.)
 9. **`derive_cluster_key`** — `isbn:` > `edition:` > `fuzzy:` > `url:`.
 10. **Persist** `append_jsonl` — upsert por URL normalizada + `consolidate_by_cluster` (1 fila/producto + `sources[]`). Escritura atómica. `_CURATED_FIELDS` sticky; `approved_at` congela la fila.
 
@@ -289,7 +289,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 |---|---|---|
 | 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. |
 | 4b | `filter_non_manga.py` | Re-aplica `is_likely_manga`+`is_pure_novel`+`is_comic_not_manga`; expulsa rechazados. |
-| 4c | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. |
+| 4c | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. **Consecuencia: NO correr `rescore.py` blanket sobre corpus estandarizado** (dry-run 2026-06-10: cambiaría señales de 1393 items con 87 transiciones special→manga). |
 | 4d | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). |
 | 4e | `backfill_metadata.py --only image_url` | Rellena portadas faltantes (HTTP por item). |
 | 4e2 | `backfill_metadata.py --only images` | **[full]** galería multi-imagen (carrusel). |
@@ -365,7 +365,7 @@ translate_descriptions.py --workers 4
 
 El scrape ya baja la portada de items nuevos (Fase 1 del espejo). Esta etapa **mejora la calidad** del corpus histórico. Orden recomendado (cada paso es idempotente; corré `--dry-run` primero):
 
-1. **`mirror_images.py`** — espejo local del histórico: baja a `data/images/` la portada de items con `image_url` y sin `image_local`. GC mark-and-sweep saca archivos huérfanos (→ `_orphans/` o `--gc-delete`).
+1. **`mirror_images.py`** — espejo local del histórico: baja a `data/images/` el `local` faltante de CADA entry de `images[]` (portada `images[0]` + galería). GC mark-and-sweep saca archivos huérfanos (cuenta `images[].local` + `sources[].image_local`; → `_orphans/` o `--gc-delete`).
 2. **`upgrade_image_resolution.py`** — quita parámetros de redimensionado del CDN (Magento `?width=222`, WP `-300x300.jpg`, Shopify `_540x.jpg`). Compara píxeles (`--min-gain 0.10`). Barato y gran ganancia. → luego `mirror_images.py --gc`.
 3. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
 4. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
@@ -378,7 +378,16 @@ El scrape ya baja la portada de items nuevos (Fase 1 del espejo). Esta etapa **m
 ---
 
 ### 3.7 ETAPA 7 — Rareza
-1. **`set_rarity.py`** — mecánico: aplica `rarity` (`common`/`rare`/`super_rare`/`ultra_rare`) vía `derive_rarity_tier()`. Solo items sin valor (o `--force`). Respeta valores de web-search (`common` no se degrada).
+
+Modelo **default-common** rediseñado en 2026-06-10 (ver detalle completo en
+[docs/reference/architecture.md → "Modelo de rareza"](../../reference/architecture.md)).
+Resumen: `ultra_rare` = numerado/firmado a mano/lotería/≤500 uds.; `super_rare` = print run
+≤2500 o retailer_exclusive+agotado; `rare` = agotado verificado, retailer_exclusive sin
+verificar, tokuten, o keyword de no-reimpresión; `common` = **default sin evidencia**.
+Campo `stock_status` (`''`|`in_stock`|`out_of_stock`) reservado para el retrofit
+`check_stock.py` (PENDIENTE, no escrito).
+
+1. **`set_rarity.py`** — mecánico: aplica `rarity` vía `derive_rarity_tier()`. Solo items sin valor (o `--force`). Respeta valores de web-search (`common` no se degrada).
 2. **🧠 `/watch-validate-rarity`** — verifica items ambiguos (boxsets/artbooks `rare` de publishers grandes): busca en la web si están en stock hoy; baja a `common` si confirma stock. Solo items sin `rarity_verified_at` (incremental).
 
 ---

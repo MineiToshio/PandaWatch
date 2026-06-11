@@ -67,18 +67,20 @@ Observability: scripts/audit/source_health.py parses N recent overnight
 
 ## Current corpus state
 
-Baseline para sanity-check (medido ~2026-06-04). Si un retrofit tira la image
-coverage de 99% a 60%, algo se rompió. Números aproximados; se vuelven stale —
-re-medí con un snippet sobre items.jsonl si necesitás precisión.
+Baseline para sanity-check (medido 2026-06-10 tras auditoría/fixes). Si un retrofit
+tira la image coverage de 99% a 60%, algo se rompió. Números aproximados; se vuelven
+stale — re-medí con un snippet sobre items.jsonl si necesitás precisión.
 
 | Métrica | Valor aprox. |
 |---|---|
-| Total items (1 fila por producto) | ~10334 |
-| Movidos a non_manga_blacklist.jsonl (acum.) | ~574 |
+| Total items (1 fila por producto) | **10 645** |
+| Movidos a non_manga_blacklist.jsonl (acum.) | ~591 (+17 audit 2026-06-10 incl. Sorayama artbook bajo "Venom") |
+| Removidos por umbrella URL-gate (ATOM FR) | 21 (revista Manga-Sanctuary; ver gotcha #62) |
+| Removidos quirúrgicamente (junk confirmado) | 5 (respaldados en `data/diagnostics/items.audit_fp_removed-20260610.jsonl`) |
 | series_aliases.yml | ~2844 canónicos (~32% con aliases multilingüe) |
 | Sources en YAML / enabled | 138 / 67 (17 mixed, 15 bluesky todas off) |
 | Wikis (`--bootstrap-wiki`) | 19 |
-| Top sources | Sumikko ~2717, Mangavariant ~1606, AnimeClick IT ~1037, ListadoManga colecciones ~987, Manga-Sanctuary ~947, Manga-Passion DE ~793 |
+| Top sources | Sumikko ~2717, Mangavariant ~1606, AnimeClick IT ~1037, ListadoManga colecciones ~987, Manga-Sanctuary ~926, Manga-Passion DE ~793 |
 | Image / image_local coverage | ~99.9% / ~99.8% |
 | series_key / edition_key / standardized_at | ~99% / ~99% / ~99.6% |
 | slug | 100% |
@@ -86,9 +88,40 @@ re-medí con un snippet sobre items.jsonl si necesitás precisión.
 | cluster_key populado | 100% |
 | carrusel real (images.length > 1) | ~2623 (26%) |
 | Países | 13 (top: Japón ~3758, Italia ~2182, Francia ~1295, España ~1279, Alemania ~841, EEUU ~309) |
+| validate_corpus | 0 violaciones duras; 7 warnings PAIS (editoriales multi-país / `unknown`) |
 
 ISBN/price/author bajos NO son regresión: muchas filas curadas (Mangavariant,
 wikis) catalogan "qué variant existe", no "dónde comprarlo" (ver "URL como referencia").
+
+
+## Modelo de rareza — `derive_rarity_tier()` en `set_rarity.py`
+
+Rediseño 2026-06-10: **default-common** (antes default-rare con 54% de precisión medida).
+
+### Tiers (de mayor a menor)
+
+| Tier | Criterio |
+|---|---|
+| `ultra_rare` | Numerado/firmado A MANO (`_has_hand_signed` con guard de firma impresa), lotería-evento, o print run ≤ 500 |
+| `super_rare` | Print run ≤ 2500, o `retailer_exclusive` + `out_of_stock` |
+| `rare` | Print run > 2500 y confirmado agotado; o `retailer_exclusive` sin verificar; o tokuten; o keyword de no-reimpresión (`_SINGLE_RUN_KEYWORDS`: incluye 限定版, 特装版 y similares; se removió la familia genérica "limited edition" para evitar FP) |
+| `common` | **Default** — sin evidencia de escasez |
+
+### Campo `stock_status`
+Campo nuevo reservado: `''` | `'in_stock'` | `'out_of_stock'`. Lo poblará el retrofit
+`check_stock.py` (PENDIENTE — no escrito). `set_rarity` lo lee pero no lo escribe.
+
+### Distribución del corpus post-migración (2026-06-10, `--force`)
+
+| Tier | Items | % |
+|---|---|---|
+| `common` | 7 342 | 69% |
+| `rare` | 3 128 | 29% |
+| `super_rare` | 66 | <1% |
+| `ultra_rare` | 110 | ~1% |
+
+Antes del rediseño: ~81% `rare` con ~54% de precisión medida. La mejora viene de que
+"sin evidencia" ya no implica escasez.
 
 
 ## The 7 design decisions you MUST understand
@@ -198,6 +231,22 @@ clean_titles → backfill_metadata → [wayback_recover opt-in]) → consolidate
 cada fase en su log bajo `logs/`. Skips vía `SKIP_*`, opt-ins vía `INCLUDE_*`.
 `audit/source_health.py` clasifica fuentes desde los logs recientes (broken/declining/
 healthy/unseen). `retry_failed.sh` re-corre sólo lo que erró en el último log.
+
+**Ordenamiento de tomos dentro de una edición (regla global, gotcha #60):** aplica a
+TODAS las fuentes y TODAS las UIs (app HTML + Next.js). Dos reglas duras:
+1. **Orden por volumen ascendente** — los tomos de una edición se ordenan de menor a mayor
+   número de volumen. Items sin volumen (artbooks standalone, box sets sin número) van al
+   final.
+2. **Desempate por kind-rank** cuando el mismo volumen tiene >1 item (regular + variant +
+   especial del mismo tomo): `regular(0) → variant(1) → special/limited(2) → deluxe/
+   kanzenban(3) → artbook(4) → boxset(5) → desconocido(10)`. El kind se extrae por prioridad:
+   (a) cluster_key lmc (`lmc:N:kind:vol`) → (b) penúltimo segmento del `edition_key` →
+   (c) `signal_types`. Implementado en `web/index.html` (`_kindRank`) y
+   `web-next/lib/data.ts` (`kindRank`).
+   El `volume` del item DEBE estar populado para que el ordenamiento funcione. Para LMC,
+   si `_extract_volume` falla en el título (número antes de calificador de edición),
+   el parser lo propaga vía `cand.volume = parsed["volume"]`. Retrofit de corrección:
+   `scripts/retrofit/backfill_volume_from_cluster.py`.
 
 **Paridad delta/full para listadomanga** (P1, 2026-06-06): ambos scripts corren el MISMO
 parser de colecciones (`listadomanga_collections.py`); difieren solo en el discovery

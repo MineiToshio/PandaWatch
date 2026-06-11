@@ -145,6 +145,18 @@ Parser: [`scripts/wikis/sumikko.py`](../../../scripts/wikis/sumikko.py).
 - **Sin calendario** — el sitio no filtra por fecha; `iter_year_months` devuelve batch
   único y `bootstrap` ignora los argumentos de año/mes. El catálogo completo se recorre
   siempre (igual en full y delta).
+- **Falsos positivos por boilerplate de description (audit 2026-06-10)** — el parser
+  inyecta `"限定版・特装版 / limited edition / special edition / bonus edition."` en la
+  description de TODOS los items, así que títulos donde el 限定 sólo aparece DENTRO de
+  los corchetes de obra 『』「」 (es parte del nombre del manga, p.ej.
+  サツジンゲーム『配神限定』) se volvían falsos positivos; también pasaban títulos junk
+  tipo `>>>>>>&`. ✅ Fix: gate `_has_edition_marker_outside_brackets()` en `sumikko.py`
+  — se strippean los spans 『…』/「…」 y se exige un marcador de edición
+  (特装版|限定版|完全版|愛蔵版|豪華版|同梱|付き|付録|BOX|ＢＯＸ|セット|画集|特典) en lo que
+  queda; sin marcador → el item NO se emite. Además se descartan títulos con <3
+  caracteres alfanuméricos/CJK. Auditado contra los 2671 items sumikko existentes: el
+  gate sólo excluye los 2 falsos positivos confirmados (cero riesgo de falso negativo).
+  Tests en `tests/test_wiki_parser_fixes.py` (`test_sk_*`).
 
 ---
 

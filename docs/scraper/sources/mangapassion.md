@@ -170,6 +170,11 @@ Parser: [`scripts/wikis/mangapassion.py`](../../../scripts/wikis/mangapassion.py
   divide entre 100. ✅
 - **`title` del volumen ≠ título de serie** — el campo `title` es el qualifier de la edición
   ("Limited Edition"); la serie sale de `edition.title`. ✅
+- **`day=null` con year/month válidos (audit 2026-06-10)** — la API manda `day: null`
+  cuando el día exacto aún no está anunciado; el parser exigía los 3 campos y descartaba
+  la fecha entera. ✅ Fix en `parse_volume()`: con year+month (sin day) el `release_date`
+  queda como `"YYYY-MM"` en vez de vacío. Tests en `tests/test_wiki_parser_fixes.py`
+  (`test_mp_*`).
 
 **Decisiones (lo que NO se hace):** no se mergea cross-país (#46, la edición es alemana);
 las dos queries se deduplican por `id` para no duplicar un volumen que matchee ambas.

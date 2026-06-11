@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-10.
 
 ---
 
@@ -181,6 +181,26 @@ Se activa con `--bootstrap-wiki manga-sanctuary` (bypassea el loop de fuentes de
   antes de extraer autor/galería; si no matchea, no enriquece.
 - **#6 (placeholder de imagen)**: `visuel_defaut` es un thumbnail "sin imagen". ✅ El parser
   lo descarta para que el backfill re-fetchee una portada real.
+- **Labels de edición "bare" sin señal (audit 2026-06-10)**: la planning page expone el
+  tipo de edición como label pelado tras el `/` de `.sortie-edition` ("Perfect",
+  "Ultimate", "Prestige", "limitée", "unlimited double", "Collector"…) pero
+  `detect_signals()` sólo matchea bigramas ("perfect edition", "édition limitée"…), así
+  que ~100+ ediciones especiales FR puntuaban 0 y se perdían (verificado:
+  `detect_signals('Prestige') == 0`). ✅ Fix: mapeo canónico `_EDITION_LABEL_CANONICAL` +
+  `canonical_edition_phrase()` en `manga_sanctuary.py` — la frase canónica se APPENDEA a
+  la description (el label original se conserva para display; si el label ya es la frase
+  canónica, no se duplica). "Intégrale" se deja sin mapear a propósito (omnibus, fuera de
+  scope — gotcha #18); labels desconocidos quedan verbatim. Tests en
+  `tests/test_wiki_parser_fixes.py` (`test_ms_*`).
+- **Revista ATOM infiltrada como serie astro-boy (2026-06-10, gotcha #62)**: la revista de
+  prensa FR "ATOM" (`/magazine-atom-vol-N`) se coló en el planning y quedó mapeada a la
+  serie astro-boy — estandarizada como "Astro Boy | Mighty Atom Deluxe N", idéntica al título
+  de los tomos deluxe reales de Planeta ES. Un gate por título habría borrado esos 7 legítimos.
+  ✅ Fix: gate por URL (`manga-sanctuary.com/magazine-atom-`) vía `_UMBRELLA_MAGAZINE_URL_PATTERN`
+  en `is_collectible_edition` paso 0b (paso `umbrella_magazine`); removidas las alternativas
+  de título "Atom Hardcover|Mighty Atom (Magazine|Deluxe|Hardcover)". 21 items removidos del
+  corpus. REGLA: cuando el título de una revista coincide con el de una obra manga real, el
+  discriminante es la URL, no el título.
 - **Decisiones (lo que NO se hace)**: no se mergea cross-país (#46); un tomo `simple` sin
   señal coleccionable no entra; releases derivados no-manga se descartan vía
   `is_likely_manga()`.

@@ -172,6 +172,12 @@ API paralela a `mangavariant.py` / `otaku_calendar.py`:
   se descarta en `_parse_pub_date` (no se setea release_date). ✅
 - **Entries sin `link` (~10%)**: delisteadas, sin URL no se pueden dedupar → se descartan
   en `parse_feed_item`. ✅ (decisión: precisión sobre recall).
+- **Placeholder de precio `"0"` (audit 2026-06-10)**: el feed manda `prezzo: "0"` (y
+  variantes `0.00`/`0,00`/`€0`) cuando el precio es desconocido; el parser lo tomaba
+  verbatim → 238 precios corruptos en el corpus. ✅ Fix: `_normalize_price()` en
+  `socialanime.py` — cualquier valor numéricamente 0 (con o sin `€`/`EUR`, coma o
+  punto decimal) se trata como vacío; los precios reales pasan verbatim. Tests en
+  `tests/test_wiki_parser_fixes.py` (`test_sa_*`).
 - **`box_set` sin keyword en el título**: para `type=box` se inyecta `"Cofanetto / box
   set."` en la descripción para que `detect_signals` levante la señal. ✅ (no inventa
   señales: sólo garantiza que la palabra aparezca).
