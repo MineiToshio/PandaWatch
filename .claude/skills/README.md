@@ -154,26 +154,33 @@ y trunca la queue.
 
 ### `/watch-validate-rarity`
 
-**Propósito**: verificar vía búsqueda web si los **boxsets y artbooks de
-publishers grandes** que tienen `rarity="rare"` por default están
-actualmente en stock (→ `common`) o no (→ mantener `rare`). Solo procesa
-items sin `rarity_verified_at` (incremental). Liviano: agrupa por
-`edition_key` (1 búsqueda por edición, no por volumen) y cap de 60
-candidatos por corrida.
+**Propósito**: verificar vía web los items cuya `rarity="rare"` viene de
+**incertidumbre** (fallback de fuente de referencia — Mangavariant/Sumikko —
+o `retailer_exclusive` sin stock verificado), NO los que tienen evidencia
+estructural (keyword de no-reimpresión, print run). Escribe el veredicto como
+evidencia (`stock_status` + `stock_checked_at`) y **re-deriva la rareza con
+`derive_rarity_tier()`** — nunca asigna tiers a mano. Solo procesa items sin
+`rarity_verified_at` (incremental). Agrupa por `edition_key` (1 verificación
+por edición) con cap de 40 por corrida (`--limit N`).
 
 **Cómo funciona**:
-1. Identifica items con `rarity="rare"`, sin `rarity_verified_at`,
-   `product_type` en `{boxset, artbook, fanbook, manga}`, y publisher grande.
-2. Agrupa por `edition_key` → toma el representativo de mayor score.
-3. Busca en el retailer del país (amazon.fr/it/de/es/com, cdjapan.co.jp)
-   si está en stock hoy.
-4. Actualiza `rarity` a `common` si confirma stock activo; deja `rare` si
-   no encontrado o solo segunda mano.
-5. Marca `rarity_verified_at` en cada item procesado.
+1. Selecciona rares por incertidumbre (tracer que replica el orden de ramas
+   de `derive_rarity_tier`); excluye aprobados y ya verificados.
+2. Agrupa por `edition_key`, prioriza retailer_exclusive (posible promoción a
+   super_rare) y mercados occidentales.
+3. Verifica con escalera de métodos: URL del item si es retailer → tienda del
+   publisher (mejor ground truth; panini.it solo vía Chrome por queue-it) →
+   Amazon vía Chrome con selectores JS (WebFetch da 500) → WebSearch solo
+   para descubrir la ficha.
+4. Veredictos: `in_stock` → common (salvo evidencia estructural extra),
+   `out_of_stock` → rare confirmado o **super_rare** si retailer_exclusive,
+   `not_found` → rare confirmado, `inconclusive` → no toca nada (se reintenta).
+5. Marca `rarity_verified_at` (ground truth: `set_rarity --force` lo respeta)
+   y loguea a `data/diagnostics/rarity_validation_log.jsonl`.
 
 **Cuándo invocarlo**:
-- Después de scrapes grandes que trajeron boxsets/artbooks nuevos.
-- No para corridas delta diarias (10-20 items nuevos, el default `rare` está bien).
+- Después de scrapes grandes con items nuevos de fuentes de referencia.
+- No para corridas delta diarias (10-20 items nuevos, el default está bien).
 - Nunca integrar en `/watch-standardize-catalog` — separa el costo de tokens.
 
 ---
@@ -181,7 +188,7 @@ candidatos por corrida.
 ### `/watch-search-covers`
 
 **Propósito**: buscar portadas en alta resolución para items con imagen de baja
-calidad (`image_local` < `min-pixels` px) o sin imagen. Usa **Chrome exclusivamente**
+calidad (la portada `images[0]` < `min-pixels` px) o sin imagen. Usa **Chrome exclusivamente**
 (`mcp__Claude_in_Chrome__*`) para navegar **Google Imágenes** (vista `udm=2`), con **fallback
 a Bing** si Google muestra un consent wall. Escribe candidatas a `data/cover_preview.json` para
 aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
@@ -195,7 +202,7 @@ aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
 **Cómo funciona**:
 1. Verifica que Chrome esté disponible (`mcp__Claude_in_Chrome__list_connected_browsers`).
 2. Filtra `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin imagen con `--include-no-image`), saltando los que ya tienen candidatas pendientes.
-3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<image_url>` — la imagen actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
+3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<images[0].url>` — la portada actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
 4. Valida cada URL con Python: píxeles ≥ 1.5× actual, y **`fetch_better_covers._same_cover()`** — aspect ratio ±25% + aHash Hamming ≤ `MAX_HASH_DIST` (10 base; `_same_cover` relaja +4 para portadas actuales < 30k px). Solo pasa si es **la MISMA portada en mejor resolución** (otro volumen / edición / arte = hash distinto = descartada). Items sin imagen actual (`--include-no-image`) no se pueden verificar → quedan `verified: false`. Esto es lo que elimina las candidatas no relacionadas que antes se colaban (el filtro viejo de "Hamming > 3" hacía justo lo contrario: descartaba la misma portada y dejaba pasar las distintas).
 5. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json` con `confidence: "low"`, `status: "pending"`, más `match_dist`/`verified`. Flush **self-healing** después de cada item (acumulador propio + reescritura completa → resiste un save concurrente del dashboard).
 
@@ -227,8 +234,8 @@ manga_watch.py scrape
          loguean series desconocidas a unmapped_series.jsonl
 /watch-enrich-series-aliases    (si aparecieron series_keys nuevas)
        ↓ consolida nuevas series multilingües
-/watch-validate-rarity          (opcional — solo si scrape trajo boxsets/artbooks)
-       ↓ 1 búsqueda web por edición, actualiza common/rare
+/watch-validate-rarity          (opcional — si hay rares por incertidumbre nuevos)
+       ↓ 1 verificación web por edición → stock_status + re-derivación
 /watch-search-covers            (opcional — si querés mejorar portadas pequeñas)
        ↓ candidatas en cover_preview.json → aprobar en cover-preview.html
 build_web.py  (opcional)

@@ -8514,13 +8514,15 @@ def test_rarity_retailer_exclusive_out_of_stock_is_super_rare():
     assert r == "super_rare"
 
 
-def test_rarity_retailer_exclusive_in_stock_is_rare():
-    """retailer_exclusive + stock confirmado → rare (escaso por canal)."""
+def test_rarity_retailer_exclusive_in_stock_is_common():
+    """retailer_exclusive + stock VERIFICADO → common (decisión owner, handoff
+    2026-06-10: Ichi the Witch variant de Kinokuniya en stock a $11.99 'debería
+    common' — la exclusividad de canal no impide conseguirlo hoy)."""
     r = mw.derive_rarity_tier(
         ["retailer_exclusive", "lore_edition"], "", "", "Vagabond Definitive Edition 1",
         publisher="Kinokuniya USA", stock_status="in_stock",
     )
-    assert r == "rare"
+    assert r == "common"
 
 
 def test_rarity_booksprivilege_tokuten_is_rare():

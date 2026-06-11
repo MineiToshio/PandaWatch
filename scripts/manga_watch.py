@@ -2513,10 +2513,12 @@ def derive_rarity_tier(
         return "rare"
     if out_of_stock:
         return "rare"
-    if "retailer_exclusive" in sigs:
+    if "retailer_exclusive" in sigs and stock_status != "in_stock":
         # Exclusiva de retailer sin stock verificado: escasa por canal, pero
         # sin evidencia de agotamiento no llega a super_rare (caso real: Ichi
         # the Witch variant en stock a $11.99 estaba marcada super_rare).
+        # Con stock VERIFICADO ('in_stock') la exclusividad de canal no impide
+        # conseguirlo hoy → sigue la cascada (normalmente common).
         return "rare"
     if any(t in src for t in _TOKUTEN_SOURCES):
         return "rare"
