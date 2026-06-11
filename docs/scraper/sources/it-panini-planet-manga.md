@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-10.
 
 ---
 
@@ -19,7 +19,7 @@
 | **Idioma** | Italiano (IT) |
 | **`publisher`** | `Panini / Planet Manga` (editorial real, no una tienda — #44 no aplica) |
 | **Cobertura** | Catálogo de manga italiano de Planet Manga, con dos categorías de coleccionables directas |
-| **Aporte al corpus** | ~128 items (todos `country=Italia`; 127 con publisher `Panini / Planet Manga`, 1 `Panini Comics`) |
+| **Aporte al corpus** | ~142 items (re-ingest 2026-06-10: 128 → 142 con los tags `search:`; todos `country=Italia`) |
 | **Parser / módulo** | Entrada(s) en `sources.yml` (sin parser propio) |
 
 Son **tres entradas YAML del mismo sitio** (`panini.it`):
@@ -84,6 +84,14 @@ de producto que busca PandaWatch, sin tener que filtrar el catálogo general.
   `is_collectible_edition`). **Efecto secundario conocido**: las sources con tag
   `search:` quedan excluidas del sitemap mining (filtro en `manga_watch.py` ~6927);
   aceptable porque estas dos categorías se scrapean como listings HTML normales.
+- **Resultado del re-scrape con los tags `search:` (2026-06-10)**: las dos categorías
+  coleccionables aportaron 54 flushes (6 Variant + 48 Edizioni/Cofanetti) → +14 items netos
+  tras consolidar (varios ya existían vía AnimeClick). Entraron variantes Lucca Comics,
+  cofanetti (Noblesse, Billy Bat, Food Wars, Berserk Serie Nera) y Ultimate Deluxe.
+  **Limitación verificada**: el tag `search:` rescata el gate de SEÑALES pero NO
+  `is_collectible_edition` — un título bare en la categoría Variant ("Sakamoto Days 25",
+  "Spy x Family 1") sigue muriendo con reason `regular_tomo` (44/50 descartados en esa
+  corrida). Sólo entran los items con keyword de edición en el propio título. Ver §9.
 - {{pendiente: no se registró ningún otro problema específico de panini.it (mojibake,
   anti-bot, lazy-loading de imágenes) en esta revisión.}}
 
@@ -94,6 +102,12 @@ de producto que busca PandaWatch, sin tener que filtrar el catálogo general.
 - Las tres entradas dependen de la **auto-detección genérica**; si Panini cambia el
   layout Magento, hay que revisar la extracción (no hay selectores fijos que ajustar).
 - {{pendiente: encoding/mojibake IT sin confirmar (ver §2).}}
+- **Variantes con título bare siguen fuera del corpus**: el fix de `search:` tags no
+  rescata `is_collectible_edition` (decisión del audit 2026-06-10 — el keyword no es
+  decisivo), así que la mayoría de la categoría "Variant ed Esclusive" (títulos pelados
+  tipo "Sakamoto Days 25") queda descartada como `regular_tomo`. Si se quiere capturarla
+  completa haría falta un bypass tipo `variant-catalog` o que el gate considere el
+  search-context — decisión de producto pendiente del owner.
 - {{pendiente: cobertura full vs delta sin diferenciar — hoy se scrapea igual siempre
   (es una fuente simple del YAML).}}
 

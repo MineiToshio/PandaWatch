@@ -20,7 +20,7 @@
 | **País** | Francia (`Francia`) — fuente mono-país |
 | **Idioma** | Francés |
 | **Cobertura** | Calendario histórico de salidas de manga en Francia, mes a mes |
-| **Aporte al corpus** | ~922 items |
+| **Aporte al corpus** | ~1099 items (re-ingest histórico 2026-06-10: 901 → 1099 con el fix de labels bare) |
 | **Parser / módulo** | `scripts/wikis/manga_sanctuary.py` |
 
 **Editoriales que abarca** (todas las editoriales de manga francesas; entre paréntesis,
@@ -201,6 +201,16 @@ Se activa con `--bootstrap-wiki manga-sanctuary` (bypassea el loop de fuentes de
   de título "Atom Hardcover|Mighty Atom (Magazine|Deluxe|Hardcover)". 21 items removidos del
   corpus. REGLA: cuando el título de una revista coincide con el de una obra manga real, el
   discriminante es la URL, no el título.
+- **Re-ingest histórico con el fix de labels bare (2026-06-10)**: corrida full 2024-01 →
+  2026-06 (30 meses, 591 candidates ≥20). La fuente pasó de 901 a 1099 items; los nuevos
+  entran exactamente por los labels mapeados (`edition:perfect` ×14 en los últimos 6 meses,
+  `ultimate`, `prestige`, `limitée`, `unlimited double`…). ✅ Fix verificado en producción.
+- **Re-scrape sobre corpus estandarizado degrada filas existentes (gotcha #65, 2026-06-10)**:
+  el upsert del flush refrescó ~394 filas estandarizadas de esta fuente reseteando
+  `slug`/`cluster_key`/`detected_at`/`score`/`signals` → validate_corpus en rojo
+  (SLUG/CLKEY/DUPCL). Reparación: `backfill_cluster_key.py` → `generate_slugs.py
+  --only-missing` → `consolidate_sources.py` (1272 → 0 violaciones duras). Tener en cuenta
+  SIEMPRE que se re-scrapee esta fuente (o cualquiera) sobre items ya estandarizados.
 - **Decisiones (lo que NO se hace)**: no se mergea cross-país (#46); un tomo `simple` sin
   señal coleccionable no entra; releases derivados no-manga se descartan vía
   `is_likely_manga()`.
