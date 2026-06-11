@@ -1563,6 +1563,48 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "promote_hires_cover",
+        "category": "Mantenimiento",
+        "icon": "⬆️",
+        "name": "Promover portada hi-res desde la galería",
+        "tagline": "Mueve a images[0] la portada en alta resolución que ya está en images[1+].",
+        "what": (
+            "Algunos items de listadomanga tienen el thumbnail de la portada en images[0] "
+            "(<90 000 px) pero la MISMA portada en alta resolución ya está en images[1+] "
+            "(vino de otra fuente del cluster, ej. Panini, Norma, Whakoom). "
+            "Este script intercambia images[0] ↔ images[k]: la hi-res pasa a ser la portada. "
+            "La identidad se verifica con _same_cover (AND-gate multi-hash + NCC), mismo "
+            "umbral que el skill watch-search-covers. El thumbnail NO se elimina — queda en "
+            "la galería; dedup_carousel_images puede quitarlo después si lo decide."
+        ),
+        "when": (
+            "Tras una ingesta de listadomanga-collections que trajo thumbnails pequeños, "
+            "cuando el cluster ya tiene la portada real en otra fuente. "
+            "Correr primero con --dry-run. Requiere: pip install Pillow."
+        ),
+        "command": [PYTHON, "scripts/retrofit/promote_hires_cover.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🔍 Dry-run (ver qué se promovería)",
+                "desc": "Lista los ítems que se beneficiarían sin escribir nada.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "⬆️ Aplicar",
+                "desc": "Promueve las portadas hi-res encontradas en la galería.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo mostrar, no escribir",
+                  "Lista los items que cambiarían sin tocar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "wayback_recover",
         "category": "Mantenimiento",
         "icon": "🕰️",

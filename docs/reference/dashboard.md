@@ -64,3 +64,22 @@ revisión". Durabilidad: log append-only `data/approvals.jsonl` (cluster_key, ur
 approved_at/by, reason, submitted_at + snapshot) → `apply_approvals.py` re-materializa
 tras reconstruir el catálogo (match cluster_key, fallback url; idempotente).
 
+## Cover-preview (`web/cover-preview.html`) — atajos de teclado
+
+El modal de comparación de portadas (`compareEntry` en el state Alpine) tiene atajos
+**sólo cuando el modal está abierto y ningún `<input>`/`<textarea>`/`<select>` tiene
+focus** (guard `document.activeElement.tagName`):
+
+| Tecla | Acción |
+|---|---|
+| `A` | Aprobar la candidata visible (equivale a "✓ Aprobar") |
+| `R` | Rechazar la candidata visible (equivale a "✕ Rechazar") |
+| `N` | Saltar al siguiente producto con candidatas pendientes |
+| `P` | Saltar al producto anterior con candidatas pendientes |
+| `←` / `→` | Navegar entre candidatas del mismo producto |
+| `Esc` | Cerrar el modal |
+
+Un hint `A aprobar · R rechazar · N/P producto` aparece en el footer del modal (alineado
+a la derecha, muted). `jumpToNextEntry(dir)` en Alpine navega a la primera candidata
+pendiente del entry siguiente/anterior (sin wrap si no hay).
+
