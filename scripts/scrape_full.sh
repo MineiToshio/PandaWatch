@@ -464,10 +464,38 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04f3-unify-coleccion.log" 2>&1
     echo "    items: $(count_lines)"
 
+    # [4f5] re-deriva cluster_key: 4f1-4f3 mutan edition_keys y el upsert puede
+    # haber dejado claves stale → re-derivar mantiene la invariante CLKEY y
+    # devuelve las filas al tier edition: (gotcha #65). Idempotente.
+    # (4f4 = dedup_synthetic_source, corre vía el enforcer del skill standardize.)
+    echo ">>> [4f5] backfill_cluster_key"
+    "$VENV_PY" scripts/retrofit/backfill_cluster_key.py \
+        > "$LOG_DIR/04f5-backfill-cluster-key.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f6] slugs para items nuevos del scrape (--only-missing: nunca toca
+    # slugs existentes). Sin esto un item nuevo viola SLUG hasta curarlo.
+    echo ">>> [4f6] generate_slugs --only-missing"
+    "$VENV_PY" scripts/retrofit/generate_slugs.py --only-missing \
+        > "$LOG_DIR/04f6-generate-slugs.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
     "$VENV_PY" scripts/retrofit/consolidate_sources.py \
         > "$LOG_DIR/04g-consolidate-sources.log" 2>&1
     echo "    items: $(count_lines)"
+
+    # [4g2] upgrade de resolución: quita parámetros/segmentos CDN de resize de las
+    # URLs de imagen (buscalibre fit-in, cultura cdn-cgi, whakoom small/thumb/medium,
+    # Magento cache path, WP -NxM, Shopify _Nx, Rakuten ?_ex=NxN). Descarga la
+    # versión full-res y reemplaza si gana ≥10% de píxeles. Solo en scrape_full
+    # (el delta no lo necesita — los items nuevos ya traen la URL limpia del scraper).
+    echo ">>> [4g2] upgrade_image_resolution (re-fetch portadas en full-res)"
+    P4G2_START=$(date +%s)
+    _run_timed 3600 "$VENV_PY" scripts/retrofit/upgrade_image_resolution.py \
+        --workers 8 \
+        > "$LOG_DIR/04g2-upgrade-resolution.log" 2>&1
+    echo "    duración: $(($(date +%s) - P4G2_START))s — items: $(count_lines)"
 
     # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
     # fuentes hermanas → puede quedar la MISMA portada en dos resoluciones. Quita

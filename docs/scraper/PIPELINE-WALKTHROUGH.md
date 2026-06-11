@@ -270,8 +270,8 @@ Detalle de los 10 pasos por cada candidato (vale para sources y wikis):
 6. **State diff** `process_state()` — `content_hash` vs `state.json`: new/changed/seen.
 7. **Flush incremental** — escribe tras CADA fuente (resiliencia).
 8. **Image mirror** `mirror_candidate_images()` — descarga CADA imagen a `data/images/<sha256>.<ext>` y setea su `local` en `images[]` (`images[0]` = portada). `_extract_images_from_detail_soup` trae el carrusel a `images[]`. (Ya no hay campos top-level `image_url`/`image_local`; el `Candidate` runtime los lleva como input y `candidate_to_json` los vuelca en `images[0]`.)
-9. **`derive_cluster_key`** — `isbn:` > `edition:` > `fuzzy:` > `url:`.
-10. **Persist** `append_jsonl` — upsert por URL normalizada + `consolidate_by_cluster` (1 fila/producto + `sources[]`). Escritura atómica. `_CURATED_FIELDS` sticky; `approved_at` congela la fila.
+9. **`derive_cluster_key`** — tiers `lmc:` > `edition:` > `isbn:` > `fuzzy:` > `url:`. Se deriva DESPUÉS de escribir el edition_key heurístico en el row (gotcha #65): la fila fresca entra ya consistente con la invariante CLKEY.
+10. **Persist** `append_jsonl` — upsert por URL normalizada + `consolidate_by_cluster` (1 fila/producto + `sources[]`). Escritura atómica. `_CURATED_FIELDS` sticky (incluye `slug`/`detected_at`/`score`/`signals`/`signal_types` desde gotcha #65; el merge re-deriva `cluster_key` con los curados restaurados); `slug` es sticky para TODOS los items; `approved_at` congela la fila.
 
 #### 0.5 — Descubrimiento extra (opcional, no es scrape)
 - `search_discovery.py` — descubre items **nuevos** vía Gemini grounding → Tavily → DuckDuckGo HTML (queries en `data/search_queries.yml`). Corre ~1×/semana para ampliar corpus sin esperar al overnight.
@@ -297,7 +297,10 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 | 4f | `wayback_recover.py` | **opt-in** — rescata items 404 vía archive.org. |
 | 4f2 | `align_raw_to_std_coleccion.py` | Alinea items raw a la edición estandarizada de su MISMA coleccion (regla coleccion=edición). Evita el dup raw-vs-std al re-scrapear una colección ya conocida (ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1"). Corre ANTES de 4g para que el merge los fusione. |
 | 4f4 | `dedup_synthetic_source.py` | **Dedup por fuente sintética compartida (gotcha #54)**. Un `item=<kind>-<vol>-<hash>` de listadomanga identifica UN producto: si aparece en >1 fila (cross-source tienda+listadomanga, o representante base-url), las fusiona. Identidad cualificada por cole id (el hash NO es único entre colecciones). Corre vía el enforcer (paso 3c). |
+| 4f5 | `backfill_cluster_key.py` | Re-deriva `cluster_key` de TODAS las filas (4f1-4f3 mutan edition_keys → claves stale). Mantiene la invariante CLKEY (`stored == derive_cluster_key(item)`) y devuelve las filas refrescadas por el upsert al tier `edition:` (gotcha #65). Idempotente. |
+| 4f6 | `generate_slugs.py --only-missing` | Slugs para items nuevos del scrape (nunca toca slugs existentes). Sin esto un item nuevo viola SLUG hasta pasar por curación (gotcha #65). |
 | 4g | `consolidate_sources.py` | **1 fila/producto**: re-consolida por `cluster_key`, fusiona `sources[]`. |
+| 4g2 | `upgrade_image_resolution.py` | **[full only]** Re-descarga portadas en resolución completa: quita segmentos/params CDN de resize (Buscalibre `fit-in/`, Cultura `cdn-cgi/image/`, Whakoom `small→large`, Magento cache path, WP -NxM, Shopify _Nx, Rakuten `?_ex=`). Pasa Referer del item para evitar 403 anti-hotlink. Compara píxeles (`--min-gain 0.10`). Corre DESPUÉS de `consolidate_sources` (la portada canónica final ya está en su lugar) y ANTES de `dedup_carousel` (que puede necesitar la versión hi-res). |
 | 4h | `dedup_carousel_images.py` | Quita la MISMA portada repetida en baja resolución del carrusel (hash perceptual; solo `kind=gallery`). Corre acá porque 4g une imágenes de fuentes hermanas → crea el dup. |
 
 > Todos los retrofits que reescriben metadata descriptiva **saltean items `approved_at`** por defecto (guard `is_approved()`).
@@ -366,7 +369,7 @@ translate_descriptions.py --workers 4
 El scrape ya baja la portada de items nuevos (Fase 1 del espejo). Esta etapa **mejora la calidad** del corpus histórico. Orden recomendado (cada paso es idempotente; corré `--dry-run` primero):
 
 1. **`mirror_images.py`** — espejo local del histórico: baja a `data/images/` el `local` faltante de CADA entry de `images[]` (portada `images[0]` + galería). GC mark-and-sweep saca archivos huérfanos (cuenta `images[].local` + `sources[].image_local`; → `_orphans/` o `--gc-delete`).
-2. **`upgrade_image_resolution.py`** — quita parámetros de redimensionado del CDN (Magento `?width=222`, WP `-300x300.jpg`, Shopify `_540x.jpg`). Compara píxeles (`--min-gain 0.10`). Barato y gran ganancia. → luego `mirror_images.py --gc`.
+2. **`upgrade_image_resolution.py`** — quita parámetros/segmentos CDN de resize (9 patrones: Magento query params, WP -NxM, Shopify _Nx, Amazon ._SY300_., Rakuten ?_ex=, Buscalibre fit-in/, Cultura cdn-cgi/image/, Whakoom small→large, Magento cache path). Pasa Referer del item para evitar 403. Compara píxeles (`--min-gain 0.10`). **Automático en `scrape_full.sh` [4g2]**. → luego `mirror_images.py --gc`.
 3. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
 4. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
 5. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). Requiere `brew install waifu2x-ncnn-vulkan`.

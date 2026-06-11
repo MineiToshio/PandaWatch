@@ -827,8 +827,9 @@ def _apply_batch_move(item_urls: list[str], to_edition_key: str,
 #
 # 1. _PROTECTED_ITEM_FIELDS — las imágenes tienen su propio gestor
 #    (image-manager.html / endpoint /api/image-manager/save). Editarlas desde
-#    acá rompería la convención images[] (portada por posición, sync con
-#    image_url/image_local). Cualquier key de este set en el payload se ignora.
+#    acá rompería la convención images[] (portada por posición = images[0],
+#    única fuente de verdad). image_url/image_local son campos legacy ELIMINADOS
+#    del row; se dejan acá por si llega un payload viejo con esas keys (se ignora).
 _PROTECTED_ITEM_FIELDS = frozenset({
     "image_url", "image_local", "images", "images_backfilled_at",
 })
@@ -976,16 +977,9 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
                 loc = img.get("local", "")
                 if loc:
                     old_locals.add(loc)
-            if row.get("image_local"):
-                old_locals.add(row["image_local"])
+            # images[0] es la portada (única fuente de verdad). Ya no hay campos
+            # top-level image_url/image_local que sincronizar.
             row["images"] = [dict(im) for im in images]
-            if images:
-                cover = images[0]
-                row["image_url"] = cover.get("url", "")
-                row["image_local"] = cover.get("local", "")
-            else:
-                row["image_url"] = ""
-                row["image_local"] = ""
             new_lines.append(json.dumps(row, ensure_ascii=False))
         else:
             new_lines.append(raw)
@@ -1007,13 +1001,32 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
                 row = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            loc = row.get("image_local", "")
-            if loc:
-                all_referenced.add(loc)
             for img in row.get("images", []):
                 loc = img.get("local", "")
                 if loc:
                     all_referenced.add(loc)
+            # sources[] per-fuente conserva su propio image_local: contarlo evita
+            # borrar un archivo todavía referenciado por una entrada de fuente.
+            for s in (row.get("sources") or []):
+                if isinstance(s, dict) and s.get("image_local"):
+                    all_referenced.add(s["image_local"])
+        # cover_preview.json también referencia archivos del espejo (old_image /
+        # new_image / candidates[].new_image) — mismo set que el GC de
+        # mirror_images.py. Sin esto, borrar una foto de galería que además es
+        # referencia de una candidata pendiente deja el panel de review roto.
+        preview_path = ROOT / "data" / "cover_preview.json"
+        if preview_path.exists():
+            try:
+                for e in json.loads(preview_path.read_text(encoding="utf-8")):
+                    for v in (e.get("old_image"), e.get("new_image")):
+                        if v and v != "[dry-run]":
+                            all_referenced.add(v)
+                    for c in (e.get("candidates") or []):
+                        v = c.get("new_image")
+                        if v and v != "[dry-run]":
+                            all_referenced.add(v)
+            except (ValueError, OSError):
+                pass
         for orphan in removed_locals:
             if orphan not in all_referenced:
                 p = IMAGES_DIR / orphan
@@ -1615,7 +1628,11 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         else:
             self._json(400, {"error": result})
 
+    @_serialized
     def _handle_save_cover_preview(self) -> None:
+        """Persiste la cola de candidatas. Va bajo @_serialized para no pisar
+        un apply concurrente (gotcha #34), y escribe atómico (tmp + replace)
+        para no dejar JSON truncado si el proceso muere a mitad del write."""
         try:
             entries = self._read_json(max_bytes=5_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1625,7 +1642,9 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(400, "Expected JSON array")
             return
         dst = ROOT / "data" / "cover_preview.json"
-        dst.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = dst.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(dst)
         self._json(200, {"ok": True, "saved": len(entries)})
 
     @_serialized
@@ -1724,8 +1743,21 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
                         urls += list(getattr(_fbc, fn)(isbn, session) or [])
                     except Exception:
                         pass
+            serper_key = os.environ.get("SERPER_API_KEY", "")
             tavily_key = os.environ.get("TAVILY_API_KEY", "")
-            if query and tavily_key:
+            serper_hits: list[str] = []
+            if query and serper_key:
+                try:
+                    # _search_serper_for_cover devuelve dicts con campo "url"
+                    for hit in (_fbc._search_serper_for_cover(query, serper_key, session) or []):
+                        u = hit.get("url") if isinstance(hit, dict) else hit
+                        if u:
+                            serper_hits.append(u)
+                except Exception:
+                    pass
+            urls += serper_hits
+            # Tavily como fallback: solo si Serper no dio resultados o no hay key
+            if query and tavily_key and not serper_hits:
                 try:
                     urls += list(_fbc._search_tavily_for_cover(query, tavily_key, session) or [])
                 except Exception:
@@ -1738,6 +1770,7 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
                     out.append(u)
             self._json(200, {
                 "results": out,
+                "serper": bool(serper_key),
                 "tavily": bool(tavily_key),
                 "isbn_used": bool(isbn),
             })

@@ -804,6 +804,13 @@ def _build_search_query(item: dict) -> str:
     elif series:
         parts.append(series)
 
+    # Volumen: agrega el número de volumen cuando es numérico para anclar la
+    # búsqueda al tomo correcto (evita resultados de otros volúmenes de la misma
+    # serie). Se agrega después de la serie/título y antes del hint de edición.
+    vol_str = str(volume).strip() if volume else ""
+    if vol_str.isdigit():
+        parts.append(vol_str)
+
     # Publisher simplificado
     if pub_short:
         parts.append(pub_short)
@@ -1554,6 +1561,7 @@ def _process_item(
             "domain": cand.get("domain", ""),
             "query": query,
             "confidence": confidence,
+            "via": cand.get("via", "text"),
         }
 
     return None
@@ -1834,6 +1842,7 @@ def run(
     skipped = 0
     errors = 0
     flush_count = 0
+    hits_by_engine: dict[str, int] = {}  # candidatas APROBADAS por via (cdn/lens/text/…)
 
     # Acumulación de preview (schema multi-candidato). Sembramos desde el
     # cover_preview.json existente — así múltiples pasadas de búsqueda van
@@ -1870,6 +1879,9 @@ def run(
                 new_url = result["new_url"]
                 new_local = result["new_local"]
                 confidence = result.get("confidence", "high")
+                # Telemetría: contabiliza por la vía que produjo esta candidata.
+                via_key = result.get("via", "text")
+                hits_by_engine[via_key] = hits_by_engine.get(via_key, 0) + 1
 
                 # Regla de seguridad (2026-06-03): NUNCA reemplazar la portada
                 # automáticamente sin aprobación. El item conserva su portada
@@ -1952,6 +1964,11 @@ def run(
     print(f"  Errores:                             {errors}")
     if not dry_run:
         print(f"  Guardados:  {flush_count} flushes a items.jsonl")
+    total_hits = applied_high + previewed
+    if total_hits > 0 and hits_by_engine:
+        print(f"\n  Candidatas aprobadas por motor:")
+        for engine, count in sorted(hits_by_engine.items(), key=lambda x: -x[1]):
+            print(f"    {engine:<12s}  {count}")
     if previewed > 0:
         print(f"\n  ⚠  {previewed} candidatas NO aplicadas — revisalas y aprobá:")
         print(f"  Preview:    {_PREVIEW_PATH}")

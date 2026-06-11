@@ -27,6 +27,23 @@ Patrones soportados:
       ...cabinet/9312/2100014729312.jpg?_ex=200x200  →  (sin ?_ex=)
       Mejora típica: 164×200 → 988×1200 (×36 más píxeles)
 
+  • Buscalibre CDN (images.cdn{N}.buscalibre.com):
+      .../fit-in/<W>x<H>/...  →  quitar segmento fit-in/<W>x<H>
+      Mejora típica: 2×-22× más píxeles (verificado empíricamente 2026-06-11)
+
+  • Cultura CDN (cdn.cultura.com):
+      .../cdn-cgi/image/width=<N>/...  →  quitar segmento cdn-cgi/image/...
+      Mejora típica: hasta 2× (verificado empíricamente 2026-06-11)
+
+  • Whakoom CDN (i1.whakoom.com):
+      .../small/... o .../thumb/... o .../medium/...  →  .../large/...
+      Mejora típica: 3× (verificado empíricamente 2026-06-11)
+
+  • Magento cache path (bdfugue y similares):
+      /media/catalog/product/cache/<hex>/...  →  quitar segmento cache/<hex>/
+      ⚠️  ~20% devuelve imagen distinta → se valida con _same_cover antes
+      de aceptar.
+
 La comparación usa dimensiones de imagen (Pillow si está instalado, o
 tamaño de archivo como proxy) para evitar reemplazar con imágenes iguales
 o peores (algunos CDNs sirven la misma thumbnail con y sin parámetros).
@@ -105,9 +122,41 @@ _AMAZON_SIZE_RE = re.compile(r"(\._[A-Z]{2}\d*_)+", re.IGNORECASE)
 _RAKUTEN_THUMB_HOSTS = frozenset({"thumbnail.image.rakuten.co.jp"})
 _RAKUTEN_EX_RE = re.compile(r"^\d+x\d+$")
 
+# Buscalibre CDN: images.cdnN.buscalibre.com con segmento fit-in/<W>x<H>/
+# Ejemplo: https://images.cdn1.buscalibre.com/fit-in/360x360/...imagen...
+# → https://images.cdn1.buscalibre.com/...imagen...
+_BUSCALIBRE_HOSTS_RE = re.compile(r"^images\.cdn\d+\.buscalibre\.com$", re.IGNORECASE)
+_BUSCALIBRE_FIT_RE = re.compile(r"/fit-in/\d+x\d+(?:/|$)")
+
+# Cultura CDN: cdn.cultura.com con segmento cdn-cgi/image/width=N/ (Cloudflare Polish).
+# Ejemplo: https://cdn.cultura.com/cdn-cgi/image/width=300/...imagen...
+# → https://cdn.cultura.com/...imagen...
+_CULTURA_HOST = "cdn.cultura.com"
+_CULTURA_CDNCGI_RE = re.compile(r"/cdn-cgi/image/[^/]+/")
+
+# Whakoom CDN: i1.whakoom.com con segmentos small/thumb/medium → large
+# Ejemplo: https://i1.whakoom.com/small/...  → https://i1.whakoom.com/large/...
+_WHAKOOM_HOST = "i1.whakoom.com"
+_WHAKOOM_SIZE_RE = re.compile(r"/(small|thumb|medium)/", re.IGNORECASE)
+
+# Magento cache path: /media/catalog/product/cache/<hex>/...
+# Ejemplo: .../media/catalog/product/cache/abc123def456/i/m/imagen.jpg
+# → .../media/catalog/product/imagen.jpg
+# ⚠️  ~20% de CDNs Magento sirven imagen distinta sin el cache path.
+# Requiere validación same_cover antes de aceptar.
+_MAGENTO_CACHE_RE = re.compile(r"/media/catalog/product/cache/[^/]+/")
+# Marcador para que _try_upgrade sepa que este patrón requiere same_cover
+NEEDS_SAME_COVER_VALIDATION = "__needs_same_cover__"
+
 
 def derive_original_url(url: str) -> str | None:
-    """Devuelve la URL sin parámetros de redimensionado, o None si no aplica."""
+    """Devuelve la URL sin parámetros de redimensionado, o None si no aplica.
+
+    Para el patrón Magento cache path (que puede devolver otra imagen ~20% de
+    las veces), devuelve la URL limpia igual — el caller (_try_upgrade) es
+    responsable de validar con same_cover cuando el resultado viene de ese patrón.
+    Usa `needs_same_cover_validation(url)` para detectarlo.
+    """
     if not url:
         return None
 
@@ -154,7 +203,48 @@ def derive_original_url(url: str) -> str | None:
             cleaned = parsed._replace(query="").geturl()
             return cleaned if cleaned != url else None
 
+    # ── 6. Buscalibre CDN: fit-in/<W>x<H>/ segment ──
+    if _BUSCALIBRE_HOSTS_RE.match(parsed.netloc):
+        if _BUSCALIBRE_FIT_RE.search(path):
+            clean_path = _BUSCALIBRE_FIT_RE.sub("/", path)
+            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            return cleaned if cleaned != url else None
+
+    # ── 7. Cultura CDN: cdn-cgi/image/width=N/ segment (Cloudflare Polish) ──
+    if parsed.netloc == _CULTURA_HOST:
+        if _CULTURA_CDNCGI_RE.search(path):
+            clean_path = _CULTURA_CDNCGI_RE.sub("/", path)
+            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            return cleaned if cleaned != url else None
+
+    # ── 8. Whakoom CDN: small/thumb/medium → large ──
+    if parsed.netloc == _WHAKOOM_HOST:
+        if _WHAKOOM_SIZE_RE.search(path):
+            clean_path = _WHAKOOM_SIZE_RE.sub("/large/", path)
+            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            return cleaned if cleaned != url else None
+
+    # ── 9. Magento cache path: /media/catalog/product/cache/<hex>/ ──
+    # ⚠️  Este patrón requiere validación same_cover (usa needs_same_cover_validation).
+    if _MAGENTO_CACHE_RE.search(path):
+        clean_path = _MAGENTO_CACHE_RE.sub("/media/catalog/product/", path)
+        cleaned = parsed._replace(path=clean_path, query="").geturl()
+        return cleaned if cleaned != url else None
+
     return None
+
+
+def needs_same_cover_validation(url: str) -> bool:
+    """Devuelve True si la URL fue resuelta por el patrón Magento cache path.
+
+    Este patrón requiere validación same_cover porque ~20% de CDNs Magento
+    devuelven una imagen distinta al quitar el cache path (imagen distinta,
+    no solo diferente resolución).
+    """
+    if not url:
+        return False
+    parsed = urlparse(url)
+    return bool(_MAGENTO_CACHE_RE.search(parsed.path))
 
 
 # ─────────────────────────────────────────────────────────
@@ -271,20 +361,29 @@ def _try_upgrade(
     session,
     timeout: tuple[int, int],
     min_gain: float,
+    item_url: str = "",
 ) -> tuple[str, str] | None:
     """Intenta conseguir la versión de mayor resolución de `old_url`.
 
     Devuelve (new_url, new_local) si la nueva imagen es notablemente más
     grande que la actual, o None si no hay mejora o la descarga falla.
+
+    item_url: URL canónica del item (se usa como Referer para evitar 403
+    de CDNs con anti-hotlink). Si no se provee, se usa el old_url como fallback.
     """
     new_url = derive_original_url(old_url)
     if not new_url:
         return None  # URL ya era la original
 
+    # Referer: los CDNs con anti-hotlink (buscalibre, cultura, whakoom)
+    # devuelven 403 si el Referer está vacío. Usamos la URL del item como
+    # Referer; si no la tenemos, usamos la URL origen de la imagen.
+    referer = item_url or old_url
+
     # Descarga la versión sin redimensionar.
     # download_image() es idempotente: si ya tenemos ese archivo no re-descarga.
     new_local = image_store.download_image(
-        new_url, images_dir, session=session, timeout=timeout
+        new_url, images_dir, session=session, timeout=timeout, referer=referer
     )
     if not new_local:
         return None  # Error de red, anti-bot, o no es imagen válida
@@ -305,6 +404,24 @@ def _try_upgrade(
                 # con mirror_images.py --gc en el próximo run si no lo usa nadie.
                 return None
 
+        # ── Validación same_cover para Magento cache path ──
+        # ~20% de los CDNs Magento devuelven una imagen distinta al quitar el
+        # cache path (ej. bdfugue sirve la imagen de otro producto). Solo
+        # rechazamos si hay old_path local para comparar.
+        if needs_same_cover_validation(old_url):
+            try:
+                # Importación tardía: fetch_better_covers es un módulo de retrofit
+                # que tiene PIL como dependencia opcional. Si no está disponible,
+                # permitimos la imagen igualmente (la ganancia de píxeles ya es
+                # un indicador razonable; el GC + dedup_carousel limpiarán errores).
+                import fetch_better_covers as _fbc  # type: ignore  # noqa: PLC0415
+                old_bytes = old_path.read_bytes() if old_path.exists() else b""
+                new_bytes = new_path.read_bytes()
+                if old_bytes and not _fbc._same_cover(old_bytes, new_bytes):
+                    return None
+            except (ImportError, Exception):
+                pass  # Sin PIL o error: permitir; la comparación de píxeles es suficiente
+
     return new_url, new_local
 
 
@@ -312,26 +429,26 @@ def _try_upgrade(
 # Proceso principal
 # ─────────────────────────────────────────────────────────
 
-def _collect_targets(items: list[dict]) -> list[tuple[dict, str, str, str]]:
-    """Construye la lista de (item, campo, old_url, old_local) a procesar.
+def _collect_targets(items: list[dict]) -> list[tuple[dict, str, str, str, str]]:
+    """Construye la lista de (item, campo, old_url, old_local, item_url) a procesar.
 
-    campo es 'cover' o 'img:<index>' para distinguir image_url de images[i].
+    campo es 'img:<index>' para cada entry de images[]. images[0] es la portada
+    (única fuente de verdad); el resto es galería.
+    item_url es la URL canónica del item (se usa como Referer en la descarga).
     """
-    targets: list[tuple[dict, str, str, str]] = []
+    targets: list[tuple[dict, str, str, str, str]] = []
     for it in items:
         if "_raw" in it:
             continue
-        # Cover principal
-        url = it.get("image_url") or ""
-        if url and derive_original_url(url):
-            targets.append((it, "cover", url, it.get("image_local") or ""))
-        # Gallery / extra images
+        # URL canónica del item para usar como Referer
+        item_url = it.get("url") or ""
+        # images[0] = portada, images[1:] = galería/extra.
         for idx, img in enumerate(it.get("images") or []):
             if not isinstance(img, dict):
                 continue
             img_url = img.get("url") or ""
             if img_url and derive_original_url(img_url):
-                targets.append((it, f"img:{idx}", img_url, img.get("local") or ""))
+                targets.append((it, f"img:{idx}", img_url, img.get("local") or "", item_url))
     return targets
 
 
@@ -341,25 +458,16 @@ def _apply_upgrade(
     new_url: str,
     new_local: str,
 ) -> None:
-    """Actualiza in-place el dict del item con la nueva URL/local."""
-    if campo == "cover":
-        item["image_url"] = new_url
-        item["image_local"] = new_local
-        # Sincronizar también images[0] si existe y era el mismo URL
-        imgs = item.get("images") or []
-        if imgs and isinstance(imgs[0], dict):
-            imgs[0]["url"] = new_url
-            imgs[0]["local"] = new_local
-    elif campo.startswith("img:"):
+    """Actualiza in-place el dict del item con la nueva URL/local.
+
+    campo es 'img:<index>'; el índice 0 es la portada (images[0]).
+    """
+    if campo.startswith("img:"):
         idx = int(campo.split(":")[1])
         imgs = item.get("images") or []
         if idx < len(imgs) and isinstance(imgs[idx], dict):
             imgs[idx]["url"] = new_url
             imgs[idx]["local"] = new_local
-            if idx == 0:
-                if derive_original_url(item.get("image_url") or ""):
-                    item["image_url"] = new_url
-                    item["image_local"] = new_local
 
 
 def run(
@@ -383,7 +491,7 @@ def run(
     if dry_run:
         print("[DRY-RUN] No se harán cambios en disco.")
         # Muestra algunos ejemplos
-        for it, campo, old_url, _ in targets[:10]:
+        for it, campo, old_url, _, _item_url in targets[:10]:
             new_url = derive_original_url(old_url)
             print(f"  {campo:12s}  {old_url[:70]}")
             print(f"          →   {new_url[:70]}")
@@ -396,19 +504,18 @@ def run(
     session = make_session(user_agent=user_agent)
     counter: Counter = Counter()
 
-    def _process(args):
-        item, campo, old_url, old_local = args
-        result = _try_upgrade(old_url, old_local, images_dir, session, timeout, min_gain)
-        return item, campo, result
-
     # Dedup: si el mismo URL aparece en varios items, procesamos 1 vez y
     # aplicamos el resultado a todos.
     url_to_result: dict[str, tuple[str, str] | None] = {}
 
     # Construimos una lista de (item, campo, old_url, old_local) con dedup por URL.
+    # item_url se guarda para pasarlo como Referer en la descarga.
     unique_by_url: dict[str, list[tuple[dict, str, str]]] = {}
-    for item, campo, old_url, old_local in targets:
+    url_to_item_url: dict[str, str] = {}
+    for item, campo, old_url, old_local, item_url in targets:
         unique_by_url.setdefault(old_url, []).append((item, campo, old_local))
+        if old_url not in url_to_item_url:
+            url_to_item_url[old_url] = item_url
 
     unique_targets = [(old_url, entries[0][2]) for old_url, entries in unique_by_url.items()]
     print(f"URLs únicas a intentar: {len(unique_targets)}")
@@ -417,7 +524,10 @@ def run(
     _FLUSH_EVERY = 50  # flush items.jsonl cada N mejoras (no pérdida si se cancela)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_try_upgrade, old_url, old_local, images_dir, session, timeout, min_gain): old_url
+            pool.submit(
+                _try_upgrade, old_url, old_local, images_dir, session, timeout, min_gain,
+                url_to_item_url.get(old_url, ""),
+            ): old_url
             for old_url, old_local in unique_targets
         }
         for future in as_completed(futures):
