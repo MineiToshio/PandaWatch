@@ -10,9 +10,23 @@ Estrategia por prioridad (orden de aplicación):
    a. Serper      (SERPER_API_KEY en .env o --serper-key) — 2 500 queries gratis sin tarjeta
    b. Tavily      (TAVILY_API_KEY en .env o --tavily-key) — 1 000 queries/mes gratis
    Se usa el primero disponible según prioridad.
-3. Verificación por perceptual hash (aHash 8×8): si la imagen candidata tiene hamming
-   distance <= --max-hash-dist (default 12 de 64 bits), se acepta como "misma portada".
-   Adicionalmente, la candidata debe tener >= --min-gain × más píxeles que la existente.
+3. Verificación de identidad ENDURECIDA (2026-06-10, precisión > recall):
+   una candidata se acepta como "misma portada" SOLO si pasa TODAS estas capas:
+     R6 — dimensiones computables (bytes → fallback PIL; GIF animado de
+          referencia = rechazo) + aspect ratio ±25% (sin bypass).
+     R3 — gate de entropía: stddev de grises a 32×32 >= 20 en AMBAS imágenes
+          (portadas sólidas/casi-blancas no son verificables → rechazo).
+     R1 — AND de 3 familias de hash: aHash 8×8 Hamming <= --max-hash-dist
+          (default 6/64), dHash 8×8 <= 8/64, pHash (DCT 32×32 → 8×8 low-freq)
+          <= 8/64. Un solo hash NO alcanza: distintos volúmenes de la misma
+          serie colisionan en aHash con dist 0 (Berserk Deluxe 1 vs 10).
+     R2 — confirmación estructural: normalized cross-correlation en grises
+          64×64 >= 0.90.
+     R7 — denylist exacta de placeholders conocidos (_PLACEHOLDER_HASHES).
+   Cualquier capa incomputable → rechazo (default-deny). Adicionalmente, la
+   candidata debe tener >= --min-gain × más píxeles que la existente, y no debe
+   declarar metadata en conflicto (volumen/ISBN distinto) en su URL/título
+   (candidate_metadata_conflict).
 
 Items con signal variant_cover o retailer_exclusive se saltan siempre — web search
 devuelve la portada regular, no la variante.
@@ -37,7 +51,9 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
+import re
 import struct
 import time
 import uuid
@@ -53,14 +69,24 @@ _HERE = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS = _HERE / "scripts"
 if str(_SCRIPTS) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(_SCRIPTS))
-from manga_watch import backup_and_rotate  # noqa: E402
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# (no expone estos símbolos) → fallback al módulo real, como sync_cover_images.
+try:
+    from manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+except ImportError:
+    from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+import image_store  # noqa: E402
 _ITEMS_PATH = _HERE / "data" / "items.jsonl"
 _IMAGES_DIR = _HERE / "data" / "images"
 
 # ── Parámetros de calidad ─────────────────────────────────────────────────────
 DEFAULT_MIN_PIXELS = 100_000   # imágenes por debajo de este umbral son candidatas
 DEFAULT_MIN_GAIN = 1.5         # candidata debe tener >= 1.5× los píxeles actuales
-DEFAULT_MAX_HASH_DIST = 12     # distancia Hamming máxima (de 64 bits) para aceptar
+DEFAULT_MAX_HASH_DIST = 6      # aHash: distancia Hamming máxima (de 64 bits) para aceptar
+DHASH_MAX_DIST = 8             # dHash 8×8: cota fija (no configurable por CLI)
+PHASH_MAX_DIST = 8             # pHash DCT: cota fija (no configurable por CLI)
+NCC_MIN = 0.90                 # correlación cruzada normalizada mínima (64×64 grises)
+ENTROPY_MIN_STDDEV = 20.0      # stddev de grises 32×32 mínima para que sea verificable
 DEFAULT_WORKERS = 2            # requests HTTP paralelos
 _MAX_BYTES = 10 * 1024 * 1024 # máximo de bytes a descargar por imagen
 
@@ -123,8 +149,27 @@ def _get_dims_from_bytes(data: bytes) -> tuple[int, int]:
         elif data[:8] == b"\x89PNG\r\n\x1a\n":
             w, h = struct.unpack(">II", data[16:24])
             return w, h
+        elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            # Mismo parsing VP8 que _get_pixels_from_bytes — sin esta rama las
+            # candidatas WebP devolvían (0,0) y se saltaban el check de aspect
+            # ratio de _same_cover.
+            vp8 = data[data.index(b"VP8 ") + 8 :]  # type: ignore[arg-type]
+            w = (struct.unpack("<H", vp8[6:8])[0] & 0x3FFF) + 1
+            h = (struct.unpack("<H", vp8[8:10])[0] & 0x3FFF) + 1
+            return w, h
     except Exception:
         pass
+    # Fallback PIL para formatos que el parser de bytes no cubre (GIF, AVIF,
+    # WebP lossless/VP8L, PNGs raros). Sin esto, GIF/AVIF devolvían (0,0) y
+    # se SALTABAN el gate de aspect ratio de _same_cover (R6).
+    if _HAS_PIL:
+        try:
+            from PIL import Image  # noqa: PLC0415
+
+            with Image.open(io.BytesIO(data)) as im:
+                return im.width, im.height
+        except Exception:
+            pass
     return 0, 0
 
 
@@ -142,6 +187,13 @@ def _extension_from_magic(data: bytes) -> str:
     if data[4:12] in (b"ftypavif", b"ftypavis"):
         return ".avif"
     return ""
+
+
+try:
+    import PIL  # noqa: F401
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
 
 
 def _ahash(data: bytes, hash_size: int = 8) -> Optional[int]:
@@ -163,6 +215,148 @@ def _hamming(h1: int, h2: int) -> int:
     return bin(h1 ^ h2).count("1")
 
 
+def _gray_pixels(data: bytes, size: int) -> Optional[list]:
+    """Imagen → lista de píxeles en escala de grises a size×size (LANCZOS)."""
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(io.BytesIO(data)).convert("L").resize(
+            (size, size), Image.LANCZOS
+        )
+        return list(img.getdata())
+    except Exception:
+        return None
+
+
+def _dhash(data: bytes, hash_size: int = 8) -> Optional[int]:
+    """Difference hash — gradientes horizontales (hash_size^2 bits)."""
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(io.BytesIO(data)).convert("L").resize(
+            (hash_size + 1, hash_size), Image.LANCZOS
+        )
+        px = list(img.getdata())
+        bits = 0
+        bit = 0
+        for row in range(hash_size):
+            base = row * (hash_size + 1)
+            for col in range(hash_size):
+                if px[base + col] > px[base + col + 1]:
+                    bits |= 1 << bit
+                bit += 1
+        return bits
+    except Exception:
+        return None
+
+
+# Tablas de cosenos precomputadas para el DCT del pHash (32×32 → 8×8 low-freq).
+_DCT_SIZE = 32
+_DCT_KEEP = 8
+_DCT_COS = [
+    [math.cos((2 * x + 1) * u * math.pi / (2 * _DCT_SIZE)) for x in range(_DCT_SIZE)]
+    for u in range(_DCT_KEEP)
+]
+
+
+def _phash(data: bytes) -> Optional[int]:
+    """Perceptual hash por DCT: 32×32 grises → 8×8 coeficientes de baja
+    frecuencia → 64 bits (bit = coef > mediana de los AC). DCT separable en
+    Python puro — son solo 64 coeficientes, no necesita numpy."""
+    px = _gray_pixels(data, _DCT_SIZE)
+    if px is None:
+        return None
+    try:
+        # tmp[u][y] = Σ_x cos[u][x] · px[y][x]   (transformada sobre filas)
+        tmp = [[0.0] * _DCT_SIZE for _ in range(_DCT_KEEP)]
+        for u in range(_DCT_KEEP):
+            cu = _DCT_COS[u]
+            for y in range(_DCT_SIZE):
+                row_off = y * _DCT_SIZE
+                tmp[u][y] = sum(cu[x] * px[row_off + x] for x in range(_DCT_SIZE))
+        # F[u][v] = Σ_y cos[v][y] · tmp[u][y]    (transformada sobre columnas)
+        coeffs: list[float] = []
+        for u in range(_DCT_KEEP):
+            tu = tmp[u]
+            for v in range(_DCT_KEEP):
+                cv = _DCT_COS[v]
+                coeffs.append(sum(cv[y] * tu[y] for y in range(_DCT_SIZE)))
+        ac = sorted(coeffs[1:])  # excluir DC para la mediana
+        median = ac[len(ac) // 2]
+        bits = 0
+        for i, c in enumerate(coeffs):
+            if c > median:
+                bits |= 1 << i
+        return bits
+    except Exception:
+        return None
+
+
+def _gray_stddev(data: bytes, size: int = 32) -> Optional[float]:
+    """Desviación estándar de la imagen en grises a size×size."""
+    px = _gray_pixels(data, size)
+    if not px:
+        return None
+    n = len(px)
+    mean = sum(px) / n
+    return (sum((p - mean) ** 2 for p in px) / n) ** 0.5
+
+
+def _ncc(data1: bytes, data2: bytes, size: int = 64) -> Optional[float]:
+    """Normalized cross-correlation en grises size×size. None si incomputable
+    (imagen ilegible o varianza cero)."""
+    a = _gray_pixels(data1, size)
+    b = _gray_pixels(data2, size)
+    if a is None or b is None:
+        return None
+    n = len(a)
+    ma = sum(a) / n
+    mb = sum(b) / n
+    num = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    da = math.sqrt(sum((x - ma) ** 2 for x in a))
+    db = math.sqrt(sum((y - mb) ** 2 for y in b))
+    if da == 0 or db == 0:
+        return None
+    return num / (da * db)
+
+
+def _is_animated_gif(data: bytes) -> bool:
+    """True si los bytes son un GIF con más de un frame."""
+    if data[:6] not in (b"GIF87a", b"GIF89a"):
+        return False
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(io.BytesIO(data)) as im:
+            return bool(getattr(im, "is_animated", False)) or getattr(im, "n_frames", 1) > 1
+    except Exception:
+        return True  # GIF ilegible → tratarlo como no verificable
+
+
+# R7 — denylist exacta de placeholders conocidos. Se puebla en runtime cuando
+# una URL candidata matchea IMAGE_URL_BAD_PATTERNS (register_placeholder_image)
+# y puede sembrarse con hashes conocidos. Cualquier imagen cuyo aHash esté acá
+# se rechaza siempre.
+_PLACEHOLDER_HASHES: set = set()
+
+
+def register_placeholder_image(data: bytes) -> None:
+    """Registra el aHash exacto de un placeholder conocido en la denylist."""
+    h = _ahash(data)
+    if h is not None:
+        _PLACEHOLDER_HASHES.add(h)
+
+
+def _maybe_register_placeholder(url: str, data: bytes) -> bool:
+    """Si la URL matchea IMAGE_URL_BAD_PATTERNS, registra su aHash en la
+    denylist de placeholders y devuelve True (es placeholder, descartar)."""
+    low = (url or "").lower()
+    if any(p in low for p in IMAGE_URL_BAD_PATTERNS):
+        register_placeholder_image(data)
+        return True
+    return False
+
+
 def _aspect_ratio(w: int, h: int) -> float:
     return w / h if h else 1.0
 
@@ -170,40 +364,180 @@ def _aspect_ratio(w: int, h: int) -> float:
 def _same_cover(
     original_bytes: bytes,
     candidate_bytes: bytes,
-    max_hash_dist: int,
+    max_hash_dist: int = DEFAULT_MAX_HASH_DIST,
 ) -> bool:
     """
-    True si la candidata parece la misma portada que la original.
-    Verifica:
-      1. Aspect ratio dentro del 20% de tolerancia.
-      2. Perceptual hash (aHash 8×8) con distancia Hamming <= max_hash_dist.
-    Si PIL no está disponible, solo verifica el aspect ratio.
+    True si la candidata es la MISMA portada que la original (misma imagen,
+    idealmente en mejor resolución). Regla del flujo: precisión > recall —
+    cualquier capa incomputable rechaza (default-deny, owner 2026-06-10).
+
+    Capas (TODAS deben pasar):
+      R6  dimensiones computables en ambas (bytes → fallback PIL) y la
+          referencia NO es un GIF animado; aspect ratio dentro de ±25%.
+      R3  entropía: stddev de grises a 32×32 >= ENTROPY_MIN_STDDEV en ambas
+          (sólidos blanco/negro y placeholders lisos NO son verificables).
+      R7  ninguno de los aHash está en la denylist _PLACEHOLDER_HASHES.
+      R1  AND de hashes: aHash <= max_hash_dist (default 6/64) y
+          dHash <= DHASH_MAX_DIST (8/64) y pHash <= PHASH_MAX_DIST (8/64).
+          aHash solo NO alcanza: volúmenes distintos de la misma serie
+          (trade dress) colisionan con dist 0 (Berserk Deluxe 1 vs 10).
+      R2  estructura: NCC en grises 64×64 >= NCC_MIN (0.90).
+
+    El relax de +4 bits para originales < 30k px se ELIMINÓ (R4): era la vía
+    de entrada de los falsos positivos (efectivo 16/64).
     """
+    if not original_bytes or not candidate_bytes:
+        return False
+    if not _HAS_PIL:
+        # Sin PIL no hay verificación de identidad posible → default-deny.
+        return False
+
+    # R6 — GIF animado como referencia no sirve (frames ≠ portada); candidata
+    # animada tampoco es una portada (sticker sheets, banners animados).
+    if _is_animated_gif(original_bytes) or _is_animated_gif(candidate_bytes):
+        return False
+
+    # R6 — dims SIEMPRE necesarias; si no se pueden parsear (ni por bytes ni
+    # por PIL) se rechaza — nunca se saltea el gate de aspect ratio.
     ow, oh = _get_dims_from_bytes(original_bytes)
     cw, ch = _get_dims_from_bytes(candidate_bytes)
+    if ow <= 0 or oh <= 0 or cw <= 0 or ch <= 0:
+        return False
+    orig_ar = _aspect_ratio(ow, oh)
+    cand_ar = _aspect_ratio(cw, ch)
+    if abs(orig_ar - cand_ar) / orig_ar > 0.25:
+        return False
 
-    # Check aspect ratio
-    if ow > 0 and oh > 0 and cw > 0 and ch > 0:
-        orig_ar = _aspect_ratio(ow, oh)
-        cand_ar = _aspect_ratio(cw, ch)
-        diff = abs(orig_ar - cand_ar) / orig_ar
-        if diff > 0.25:  # más del 25% diferente → rechazar
-            return False
+    # R3 — gate de entropía: una imagen casi-lisa no es verificable por hash
+    # (blanco sólido vs negro sólido = aHash dist 0). Cubre placeholder vs
+    # placeholder y portadas minimalistas sin estructura.
+    s1 = _gray_stddev(original_bytes)
+    s2 = _gray_stddev(candidate_bytes)
+    if s1 is None or s2 is None or s1 < ENTROPY_MIN_STDDEV or s2 < ENTROPY_MIN_STDDEV:
+        return False
 
-    # Perceptual hash — relajar umbral para imágenes muy pequeñas.
-    # Cuando la original es < 30k px (~170×176), el escalado a 8×8 para
-    # aHash es tan lossy que la distancia sube 3-5 bits vs una imagen
-    # idéntica de mayor resolución. Relajamos +4 bits en esos casos.
+    # R1 — AND de las 3 familias de hash.
     h1 = _ahash(original_bytes)
     h2 = _ahash(candidate_bytes)
-    if h1 is not None and h2 is not None:
-        dist = _hamming(h1, h2)
-        orig_px = ow * oh if ow > 0 and oh > 0 else 0
-        effective_threshold = max_hash_dist + (4 if orig_px < 30_000 else 0)
-        return dist <= effective_threshold
+    if h1 is None or h2 is None:
+        return False
+    # R7 — denylist exacta de placeholders conocidos.
+    if h1 in _PLACEHOLDER_HASHES or h2 in _PLACEHOLDER_HASHES:
+        return False
+    if _hamming(h1, h2) > max_hash_dist:
+        return False
+    d1 = _dhash(original_bytes)
+    d2 = _dhash(candidate_bytes)
+    if d1 is None or d2 is None or _hamming(d1, d2) > DHASH_MAX_DIST:
+        return False
+    p1 = _phash(original_bytes)
+    p2 = _phash(candidate_bytes)
+    if p1 is None or p2 is None or _hamming(p1, p2) > PHASH_MAX_DIST:
+        return False
 
-    # Sin PIL: si aspect ratio OK, aceptamos
+    # R2 — confirmación estructural (correlación píxel a píxel normalizada).
+    corr = _ncc(original_bytes, candidate_bytes)
+    if corr is None or corr < NCC_MIN:
+        return False
+
     return True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# R5 — conflicto de metadata candidata vs item (volumen / ISBN declarados)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Marcadores explícitos de volumen en URL/título: vol/volume/volumen, tome/tomo,
+# nº/n°/no./nr/num, #N. Capturan 1-3 dígitos.
+_VOL_EXPLICIT_RE = re.compile(
+    r"(?:\b(?:vol(?:ume|umen)?|tome|tomo|n[°º]|n[or]\.|nr|num(?:ero)?|#)\s*\.?\s*[-_ ]?\s*0*(\d{1,3}))(?!\d)",
+    re.IGNORECASE,
+)
+# Patrones "bare" SOLO en el filename: -1-, _01_, -02. (1-2 dígitos delimitados).
+# Se usan únicamente si NO hay marcador explícito (son más ambiguos).
+_VOL_BARE_RE = re.compile(r"[-_]0*(\d{1,2})(?=[-_.])")
+# Dimensiones tipo 600x800 — los números que las componen NO son volúmenes.
+_DIMENSION_RE = re.compile(r"\d+\s*[x×]\s*\d+", re.IGNORECASE)
+# ISBN-13 (con o sin guiones/espacios internos) e ISBN-10.
+_ISBN13_RE = re.compile(r"\b(97[89](?:[- ]?\d){10})\b")
+_ISBN10_RE = re.compile(r"\b(\d(?:[- ]?\d){8}[- ]?[\dXx])\b")
+
+
+def _norm_isbn13(raw: str) -> Optional[str]:
+    """Normaliza un ISBN (10 o 13) a ISBN-13 sin separadores, VALIDANDO el
+    checksum — un número de 10/13 dígitos cualquiera (ID de producto, teléfono)
+    NO debe tratarse como ISBN (conservador: ambiguo → no conflicto)."""
+    clean = re.sub(r"[^0-9Xx]", "", str(raw or "")).upper()
+    if len(clean) == 13 and clean.isdigit() and clean.startswith(("978", "979")):
+        total = sum(int(clean[i]) * (1 if i % 2 == 0 else 3) for i in range(13))
+        return clean if total % 10 == 0 else None
+    if len(clean) == 10 and clean[:9].isdigit() and (clean[9].isdigit() or clean[9] == "X"):
+        total = sum((10 - i) * int(d) for i, d in enumerate(clean[:9]))
+        total += 10 if clean[9] == "X" else int(clean[9])
+        return _isbn10_to_13(clean) if total % 11 == 0 else None
+    return None
+
+
+def _extract_candidate_volumes(text: str) -> tuple[set, set]:
+    """Devuelve (vols_explícitos, vols_bare) declarados en el texto."""
+    text = _DIMENSION_RE.sub(" ", text)
+    explicit = {int(m) for m in _VOL_EXPLICIT_RE.findall(text) if 0 < int(m) <= 999}
+    # Bare: solo en el último segmento del path (filename), valores chicos.
+    bare: set = set()
+    filename = text.rsplit("/", 1)[-1]
+    for m in _VOL_BARE_RE.findall(filename):
+        v = int(m)
+        if 0 < v <= 60:
+            bare.add(v)
+    return explicit, bare
+
+
+def candidate_metadata_conflict(
+    item: dict, candidate_url: str, page_title: str = ""
+) -> bool:
+    """
+    True si la metadata DECLARADA por la candidata (en su URL o título de
+    página) contradice la del item:
+      - el item tiene volumen y la candidata declara claramente OTRO volumen
+        (marcador explícito vol/tome/tomo/nº/nr/#; fallback a patrones bare
+        -1- / _01_ del filename solo si no hay marcador explícito), o
+      - el item tiene ISBN y la candidata declara un ISBN distinto.
+
+    Conservador por diseño: ambiguo → False (no conflicto). El conflicto es un
+    hard-reject ADICIONAL a _same_cover (precisión > recall); pensado para que
+    el skill watch-search-covers lo llame por candidata.
+    """
+    from urllib.parse import unquote  # noqa: PLC0415
+
+    text = unquote(candidate_url or "") + " " + (page_title or "")
+
+    # ── Volumen ──
+    item_vol = str(item.get("volume", "") or "").strip()
+    if item_vol.isdigit():
+        v = int(item_vol)
+        explicit, bare = _extract_candidate_volumes(text)
+        if explicit:
+            if v not in explicit:
+                return True
+        elif bare and v not in bare:
+            return True
+
+    # ── ISBN ──
+    item_isbn = _norm_isbn13(item.get("isbn", ""))
+    if item_isbn:
+        cand_isbns: set = set()
+        for m in _ISBN13_RE.findall(text):
+            n = _norm_isbn13(m)
+            if n:
+                cand_isbns.add(n)
+        for m in _ISBN10_RE.findall(text):
+            n = _norm_isbn13(m)
+            if n:
+                cand_isbns.add(n)
+        if cand_isbns and item_isbn not in cand_isbns:
+            return True
+
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -217,10 +551,16 @@ def _fetch(url: str, session: requests.Session, timeout: tuple = (8, 20)) -> Opt
         if r.status_code != 200:
             return None
         body = bytearray()
+        # El read-timeout de requests se resetea con cada chunk recibido: un
+        # server que gotea bytes lentamente puede colgar el batch entero sin
+        # dispararlo. Tope duro de tiempo total por descarga.
+        deadline = time.monotonic() + 60
         for chunk in r.iter_content(65536):
             if chunk:
                 body.extend(chunk)
             if len(body) > _MAX_BYTES:
+                return None
+            if time.monotonic() > deadline:
                 return None
         return bytes(body)
     except requests.RequestException:
@@ -896,7 +1236,7 @@ def _validate_page_content(page_url: str, item: dict, session: requests.Session,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _get_current_pixels(item: dict, images_dir: Path) -> int:
-    fname = item.get("image_local", "")
+    fname = image_store.cover_local(item)
     if not fname:
         return 0
     path = images_dir / fname
@@ -909,7 +1249,7 @@ def _get_current_pixels(item: dict, images_dir: Path) -> int:
 
 
 def _get_current_bytes(item: dict, images_dir: Path) -> bytes:
-    fname = item.get("image_local", "")
+    fname = image_store.cover_local(item)
     if not fname:
         return b""
     path = images_dir / fname
@@ -946,6 +1286,17 @@ def _try_candidates(
             continue
         ext = _extension_from_magic(data)
         if not ext:
+            continue
+        # R7: si la URL matchea un pattern de placeholder, registrar su hash
+        # exacto en la denylist y descartar.
+        if _maybe_register_placeholder(url, data):
+            if verbose:
+                print(f"    skip {url[:60]}: placeholder (URL pattern)")
+            continue
+        # R5: la candidata declara volumen/ISBN en conflicto con el item.
+        if candidate_metadata_conflict(item, url):
+            if verbose:
+                print(f"    skip {url[:60]}: metadata en conflicto (vol/ISBN)")
             continue
         cand_px = _get_pixels_from_bytes(data)
         if cand_px <= 0:
@@ -1064,7 +1415,7 @@ def _process_item(
     # Estrategia 2: reverse image search (Google Lens via Serper /lens)
     # Preferido sobre text search — Google ya hace el matching visual,
     # las candidatas son la MISMA portada en mayor resolución.
-    image_url = item.get("image_url", "")
+    image_url = image_store.cover_url(item)
     language = item.get("language", "")
     query = ""
     if not plain_candidates and not no_search and serper_key and image_url:
@@ -1109,6 +1460,16 @@ def _process_item(
             continue
         ext = _extension_from_magic(data)
         if not ext:
+            continue
+        # R7: placeholder conocido por URL pattern → denylist + descarte.
+        if _maybe_register_placeholder(url, data):
+            if verbose:
+                print(f"    skip {url[:60]}: placeholder (URL pattern)", flush=True)
+            continue
+        # R5: la candidata declara volumen/ISBN en conflicto con el item.
+        if candidate_metadata_conflict(item, url, cand.get("page_title", "")):
+            if verbose:
+                print(f"    skip {url[:60]}: metadata en conflicto (vol/ISBN)", flush=True)
             continue
         cand_px = _get_pixels_from_bytes(data)
         if cand_px <= 0:
@@ -1201,31 +1562,36 @@ def _process_item(
 _PREVIEW_PATH = _HERE / "data" / "cover_preview.json"
 
 
+def _write_preview(entries: list[dict]) -> None:
+    """Escribe cover_preview.json de forma ATÓMICA (tmp + os.replace).
+
+    El preview se flushea después de CADA item: un crash a mitad de un
+    write_text directo dejaba el JSON truncado y se perdía toda la cola
+    de candidatas pendientes.
+    """
+    tmp = _PREVIEW_PATH.with_name(f"{_PREVIEW_PATH.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(
+        json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    tmp.replace(_PREVIEW_PATH)
+
+
 def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
-    """Reemplaza la PORTADA del item (image_url + image_local + images[0])."""
-    item["image_url"] = new_url
-    if item.get("images"):
-        if item["images"]:
-            item["images"][0]["url"] = new_url
-            item["images"][0]["local"] = new_local
-    if new_local != "[dry-run]":
-        item["image_local"] = new_local
+    """Reemplaza la PORTADA del item (images[0] = única fuente de verdad)."""
+    # En dry-run el local es un placeholder: preserva el local actual en vez
+    # de persistir "[dry-run]" como filename del espejo.
+    local = image_store.cover_local(item) if new_local == "[dry-run]" else new_local
+    image_store.set_cover(item, new_url, local)
 
 
 def _ensure_cover_slot(item: dict) -> None:
     """
-    Garantiza que images[0] refleje la portada actual antes de agregar a la
-    galería. Convención images[]: la posición 0 es siempre la portada. Si el
-    item no tiene images[] todavía, sembramos el slot 0 con la portada actual
-    para no convertir por accidente una foto de galería nueva en la portada.
+    Garantiza que `images[]` exista antes de agregar a la galería. La portada es
+    images[0] (única fuente de verdad): si el item ya tiene images[], la posición
+    0 ya es la portada y no hay nada que sembrar. Si images[] está vacío, no hay
+    portada previa que proteger (la 1ª que se agregue será la portada).
     """
-    images = item.setdefault("images", [])
-    if not images and item.get("image_url"):
-        images.append({
-            "url": item.get("image_url", ""),
-            "local": item.get("image_local", ""),
-            "kind": "gallery",
-        })
+    item.setdefault("images", [])
 
 
 def _add_gallery_image(item: dict, new_url: str, new_local: str, kind: str) -> None:
@@ -1255,8 +1621,8 @@ def _remove_gallery_image(item: dict, url: str) -> None:
 def _replace_at_target(item: dict, target_url: str, new_url: str, new_local: str) -> bool:
     """
     Reemplaza la imagen de images[] cuya url == target_url por la nueva
-    (url + local). Si el target es images[0] (la portada), sincroniza también
-    image_url/image_local. Conserva el `kind` del slot reemplazado.
+    (url + local). Si el target es images[0] es la portada (única fuente de
+    verdad). Conserva el `kind` del slot reemplazado.
     Devuelve True si encontró el target. Si no lo encuentra (la galería cambió
     desde que se armó el preview), devuelve False — el caller decide el fallback.
     """
@@ -1266,36 +1632,24 @@ def _replace_at_target(item: dict, target_url: str, new_url: str, new_local: str
             img["url"] = new_url
             if new_local and new_local != "[dry-run]":
                 img["local"] = new_local
-            if i == 0:
-                item["image_url"] = new_url
-                if new_local and new_local != "[dry-run]":
-                    item["image_local"] = new_local
             return True
     return False
 
 
 def _entry_current_images(item: dict) -> list[dict]:
     """Galería actual del item para mostrar en la página de review. images[0] es
-    la portada (is_cover). Si el item no tiene images[], sintetiza el slot 0
-    desde image_url/image_local."""
+    la portada (is_cover) — única fuente de verdad. Si el item no tiene images[],
+    no hay portada que mostrar."""
     imgs = item.get("images") or []
     out: list[dict] = []
-    if imgs:
-        for k, im in enumerate(imgs):
-            if not isinstance(im, dict):
-                continue
-            out.append({
-                "url": im.get("url", ""),
-                "local": im.get("local", ""),
-                "kind": im.get("kind", "gallery"),
-                "is_cover": k == 0,
-            })
-    elif item.get("image_url") or item.get("image_local"):
+    for k, im in enumerate(imgs):
+        if not isinstance(im, dict):
+            continue
         out.append({
-            "url": item.get("image_url", ""),
-            "local": item.get("image_local", ""),
-            "kind": "gallery",
-            "is_cover": True,
+            "url": im.get("url", ""),
+            "local": im.get("local", ""),
+            "kind": im.get("kind", "gallery"),
+            "is_cover": k == 0,
         })
     return out
 
@@ -1366,13 +1720,11 @@ def _normalize_preview_entry(entry: dict) -> dict:
 
 
 def _collect_referenced_locals(items: list[dict]) -> set:
-    """Todos los filenames locales referenciados por el corpus (image_local,
-    images[].local, sources[].image_local). Usado para borrar archivos huérfanos
-    de forma segura tras aplicar el preview."""
+    """Todos los filenames locales referenciados por el corpus (images[].local
+    —portada + galería— y sources[].image_local). Usado para borrar archivos
+    huérfanos de forma segura tras aplicar el preview."""
     referenced: set = set()
     for it in items:
-        if it.get("image_local"):
-            referenced.add(it["image_local"])
         for img in (it.get("images") or []):
             if isinstance(img, dict) and img.get("local"):
                 referenced.add(img["local"])
@@ -1383,8 +1735,8 @@ def _collect_referenced_locals(items: list[dict]) -> set:
 
 
 def _is_upscaled(item: dict, images_dir: Path) -> bool:
-    """Detecta si la imagen actual es un PNG upscaleado por waifu2x (look pastel)."""
-    local = item.get("image_local", "")
+    """Detecta si la portada actual es un PNG upscaleado por waifu2x (look pastel)."""
+    local = image_store.cover_local(item)
     if not local or not local.endswith(".png"):
         return False
     # Los upscaleados de waifu2x producen PNGs grandes (> 200k px)
@@ -1526,8 +1878,8 @@ def run(
                 # imagen en mayor resolución) EN modo --apply explícito. La baja
                 # confianza NUNCA se auto-aplica — era la fuente de las portadas
                 # equivocadas (un kit de magia para "Negima", etc.).
-                old_local = item.get("image_local", "")
-                old_url = item.get("image_url", "")
+                old_local = image_store.cover_local(item)
+                old_url = image_store.cover_url(item)
                 if confidence == "high" and not preview and not dry_run:
                     applied_high += 1
                     _apply_improvement(item, new_url, new_local)
@@ -1580,9 +1932,7 @@ def run(
                         if slug:
                             preview_by_slug[slug] = entry
                     if not dry_run:
-                        _PREVIEW_PATH.write_text(
-                            json.dumps(preview_entries, ensure_ascii=False, indent=2),
-                            encoding="utf-8")
+                        _write_preview(preview_entries)
                     if verbose:
                         tag = "alta" if confidence == "high" else "baja"
                         print(f"  → preview [{tag} confianza, NO aplicada] "
@@ -1725,9 +2075,8 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
                     # suele querer: "promové esta, pero guardame la vieja".
                     for item in targets:
                         _ensure_cover_slot(item)
-                        imgs = item.get("images") or []
-                        prev_url = imgs[0].get("url", "") if imgs else item.get("image_url", "")
-                        prev_local = imgs[0].get("local", "") if imgs else item.get("image_local", "")
+                        prev_url = image_store.cover_url(item)
+                        prev_local = image_store.cover_local(item)
                         _apply_improvement(item, new_url, new_local)
                         if prev_url and prev_url != new_url:
                             _add_gallery_image(item, prev_url, prev_local, "extra")
@@ -1792,8 +2141,7 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     ]
     n_rem = 0
     if remaining:
-        _PREVIEW_PATH.write_text(
-            json.dumps(remaining, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_preview(remaining)
         n_rem = sum(1 for e in remaining for c in e["candidates"]
                     if c.get("status", "pending") == "pending")
         print(f"  Pendientes:              {n_rem} candidatas (siguen en preview)")
@@ -1840,8 +2188,10 @@ def main() -> None:
     )
     ap.add_argument(
         "--max-hash-dist", type=int, default=DEFAULT_MAX_HASH_DIST,
-        help=f"Distancia Hamming máxima para aceptar candidata como 'misma portada' "
-             f"(default: {DEFAULT_MAX_HASH_DIST}/64)",
+        help=f"Cota Hamming del aHash para aceptar candidata como 'misma portada' "
+             f"(default: {DEFAULT_MAX_HASH_DIST}/64). dHash<=8, pHash<=8, NCC>=0.90 y "
+             f"el gate de entropía aplican SIEMPRE además de esta cota. Valores >6 "
+             f"se honran pero con warning (riesgo de falsos positivos).",
     )
     ap.add_argument(
         "--include-upscaled", action="store_true",
@@ -1887,6 +2237,11 @@ def main() -> None:
         help="Mostrar detalle de cada item procesado",
     )
     args = ap.parse_args()
+
+    if args.max_hash_dist > DEFAULT_MAX_HASH_DIST:
+        print(f"⚠️  --max-hash-dist {args.max_hash_dist} > {DEFAULT_MAX_HASH_DIST} "
+              f"(default): se honra, pero sube el riesgo de falsos positivos del "
+              f"aHash. dHash/pHash/NCC/entropía siguen aplicando igual.", flush=True)
 
     if args.apply_preview:
         apply_preview(Path(args.items), Path(args.images_dir))
