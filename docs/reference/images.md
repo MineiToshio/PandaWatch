@@ -144,6 +144,10 @@ vive en el SKILL.md; el gist:
 `aspect_ratio` 75, `ncc` 67, `dhash` 42, `phash` 21, `entropy` 8. 117 items con ≥1
 candidata válida. Los falsos positivos conocidos del audit quedaron rechazados. El flujo
 sigue siendo de aprobación manual (`cover_preview.json` nunca toca `items.jsonl`).
+**2026-06-11**: las 305 `verified=false` se purgaron de la cola (status → `rejected`,
+conservando `verify_reason`) — estaban `pending` y la UI no distingue `verified`, así que el
+owner seguía viéndolas; el validador embebido del skill (Step 2 del SKILL.md) se re-sincronizó
+con producción (aHash default 6 sin relax + llamada a `candidate_metadata_conflict()`).
 
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.

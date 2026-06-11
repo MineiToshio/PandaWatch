@@ -1,6 +1,6 @@
 ---
 name: watch-search-covers
-description: Busca portadas en alta resolución para items con imagen de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada tomo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() para quedarse SOLO con la MISMA portada en mejor resolución (no otros volúmenes ni ediciones). Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Args opcionales: --limit N, --slug SLUG, --include-no-image, --query-extra "texto".
+description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() para quedarse SOLO con la MISMA imagen en mejor resolución. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Args opcionales: --limit N, --slug SLUG, --include-no-image, --query-extra "texto".
 argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--query-extra \"texto\"]"
 ---
 
@@ -51,12 +51,16 @@ No es un parámetro configurable — si el panel de calidad lo marca como proble
 lo intenta resolver.
 
 **La regla de oro de relevancia** (lo que arregla el problema histórico de "me manda otros
-volúmenes / ediciones / cosas no relacionadas"): una candidata SOLO se acepta si
-`fetch_better_covers._same_cover(actual, candidata, MAX_HASH_DIST)` devuelve `True`, es decir
-si tiene **el mismo aspect ratio (±25%) y el mismo perceptual hash** que la portada actual del
-item. Otro volumen / otra edición / arte distinto = hash distinto = se descarta. Está bien que
-una candidata no sea pixel-idéntica (puede ser un escaneo mejor o un extra con el mismo arte),
-pero tiene que ser **visiblemente la misma portada**.
+volúmenes / ediciones / cosas no relacionadas"): una candidata SOLO se acepta si pasa DOS
+verificaciones: (1) `fetch_better_covers._same_cover(actual, candidata, MAX_HASH_DIST)` — el
+AND-gate endurecido del audit 2026-06-10: **aspect ratio ±25% ∧ aHash ≤6 ∧ dHash ≤8 ∧
+pHash ≤8 ∧ NCC ≥0.90 + gate de entropía + denylist de placeholders** (capa incomputable =
+rechazo, default-deny); y (2) `fetch_better_covers.candidate_metadata_conflict(item, url,
+page_title)` — si la URL/título de la candidata declara OTRO volumen u OTRO ISBN que el item,
+hard reject. Otro volumen / otra edición / arte distinto se descarta. Está bien que una
+candidata no sea pixel-idéntica (puede ser un escaneo mejor con el mismo arte), pero tiene
+que ser **visiblemente la misma portada**. Precisión > recall: mejor 0 candidatas que una
+no relacionada.
 
 **Regla absoluta**: NUNCA escribe ni modifica `data/items.jsonl`. Solo escribe a
 `data/cover_preview.json`. Todas las candidatas van con `confidence: "low"` y
@@ -72,10 +76,11 @@ pero tiene que ser **visiblemente la misma portada**.
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--limit N` | `20` | Máximo de items a procesar en esta sesión. Útil para no navegar cientos de páginas de golpe. |
-| `--slug SLUG` | — | Procesa solo el item con ese slug exacto. Para arreglar un item específico. |
-| `--include-no-image` | off | Por defecto se saltan items sin imagen (no hay portada actual con qué verificar `_same_cover`). Con este flag se incluyen, pero sus candidatas quedan **sin verificar** (`verified: false`) porque no hay referencia — revisalas con más cuidado. |
-| `--query-extra "texto"` | — | Texto adicional al final de cada variante de query en Bing. |
+| `--limit N` | `20` | Máximo de targets (imágenes) a procesar en esta sesión. |
+| `--slug SLUG` | — | Procesa solo el item con ese slug exacto. |
+| `--gallery-only` | off | Salta las portadas (img_idx 0) y procesa solo imágenes de galería (img_idx ≥ 1). Útil para buscar mejoras de galería sin mezclar con portadas ya encoladas. |
+| `--include-no-image` | off | Por defecto se saltan items sin imagen (no hay portada actual con qué verificar `_same_cover`). Con este flag se incluyen, pero sus candidatas quedan **sin verificar** (`verified: false`). |
+| `--query-extra "texto"` | — | Texto adicional al final de cada variante de query en Google. |
 
 ---
 
@@ -119,7 +124,8 @@ SLUG_FILTER      = None      # --slug SLUG  (o None)
 INCLUDE_NO_IMAGE = False     # --include-no-image
 QUERY_EXTRA      = ""        # --query-extra "texto"  (o "")
 
-SKIP_SIGNALS = {'variant_cover', 'retailer_exclusive'}
+SKIP_SIGNALS  = {'variant_cover', 'retailer_exclusive'}
+GALLERY_ONLY  = False     # --gallery-only
 
 # Términos de edición que NO cubre fbc._EDITION_HINT, por idioma.
 EXTRA_EDITION_HINT = {
@@ -132,20 +138,25 @@ items      = [json.loads(l) for l in open('data/items.jsonl') if l.strip()]
 images_dir = Path('data/images')
 
 preview_path = Path('data/cover_preview.json')
+# Skip key = (slug, action, target_url) — así cubrimos portada y cada foto de galería por separado
 already_in_preview = set()
 if preview_path.exists():
     try:
         for e in json.loads(preview_path.read_text(encoding='utf-8')):
-            if any(c.get('status') == 'pending' for c in e.get('candidates', [])):
-                already_in_preview.add(e.get('slug', ''))
+            for c in e.get('candidates', []):
+                if c.get('status') == 'pending':
+                    already_in_preview.add((
+                        e.get('slug', ''),
+                        c.get('action', 'replace_cover'),
+                        c.get('target', ''),
+                    ))
     except (ValueError, OSError):
         pass
 
-def get_pixels(item):
-    local = item.get('image_local', '')
-    if not local:
+def get_pixels_local(local_fname):
+    if not local_fname:
         return 0
-    p = images_dir / local
+    p = images_dir / local_fname
     if not p.exists():
         return 0
     try:
@@ -167,10 +178,12 @@ def edition_term(item):
     extra = EXTRA_EDITION_HINT.get(slug, {})
     return extra.get(lang, extra.get('default', ''))
 
-def build_variants(item):
+def build_variants(item, ref_url=None):
     """
     Lista ORDENADA de (label, query) — de la más específica a la más amplia.
     El loop del Step 3 las prueba en orden e itera hasta juntar suficientes matches.
+    ref_url: URL de la imagen de referencia para Yandex reverse (la portada =
+    images[0].url, o la foto de galería que se esté procesando).
     """
     title      = (item.get('title') or '').strip()
     title_orig = (item.get('title_original') or '').strip()
@@ -209,10 +222,9 @@ def build_variants(item):
 
     # Variante REVERSE-IMAGE (Yandex) — va PRIMERO: es el mejor motor de búsqueda por
     # foto que probamos (sin captcha, devuelve portadas del tomo correcto). Usa la imagen
-    # ACTUAL del item como consulta (rpt=imageview&url=<old_url>). Todo lo que devuelva
-    # pasa igual por _same_cover, así que no puede meter basura — solo suma recall para
-    # items cuyo scan exacto esté indexado. Solo si el item tiene image_url http usable.
-    old_url = (item.get('image_url') or '').strip()
+    # de referencia ref_url (la portada images[0].url, o la foto de galería procesada)
+    # como consulta. Solo si tiene URL http usable.
+    old_url = (ref_url or '').strip()
     if old_url.startswith('http'):
         yx = f"https://yandex.com/images/search?rpt=imageview&url={urllib.parse.quote(old_url, safe='')}"
         out.insert(0, {'label': 'yandex-reverse', 'query': f"[reverse] {series or title}",
@@ -228,15 +240,52 @@ for item in items:
     if SKIP_SIGNALS & set(item.get('signal_types', [])):
         continue
     slug = item.get('slug', '')
-    if slug and slug in already_in_preview:
-        continue
-    px = get_pixels(item)
-    if px <= 0:
-        if not INCLUDE_NO_IMAGE:
+
+    # Construir lista de imágenes a evaluar. La portada es images[0] (única fuente
+    # de verdad). Si el item no tiene images[], igual lo procesamos con un entry
+    # vacío para que la búsqueda por TEXTO corra (sin Yandex reverse, que necesita
+    # una URL de referencia) — útil para items sin portada con --include-no-image.
+    imgs = item.get('images') or []
+    if not imgs:
+        imgs = [{'url': '', 'local': '', 'kind': 'gallery'}]
+
+    for img_idx, img in enumerate(imgs):
+        local   = img.get('local', '')
+        ref_url = img.get('url', '')
+        px      = get_pixels_local(local)
+
+        if img_idx == 0:
+            # Portada: saltar si --gallery-only está activo
+            if GALLERY_ONLY:
+                continue
+            if px <= 0:
+                if not INCLUDE_NO_IMAGE:
+                    continue
+            elif px >= LOW_QUALITY_PX:
+                continue
+        else:
+            # Galería: solo procesar si existe local y es baja calidad
+            # (necesitamos _same_cover → skip si no hay archivo de referencia)
+            if px <= 0 or px >= LOW_QUALITY_PX:
+                continue
+
+        action     = 'replace_cover' if img_idx == 0 else 'replace_image'
+        target_url = '' if img_idx == 0 else ref_url
+        skip_key   = (slug, action, target_url)
+        if skip_key in already_in_preview:
             continue
-    elif px >= LOW_QUALITY_PX:
-        continue
-    targets.append({'slug': slug, 'pixels': px, 'variants': build_variants(item)})
+
+        targets.append({
+            'slug'            : slug,
+            'pixels'          : px,
+            'img_idx'         : img_idx,
+            'image_ref_local' : local,
+            'image_ref_url'   : ref_url,
+            'candidate_action': action,
+            'candidate_target': target_url,
+            'target_label'    : 'portada' if img_idx == 0 else f'galería {img_idx}',
+            'variants'        : build_variants(item, ref_url=ref_url),
+        })
 
 targets.sort(key=lambda x: (x['pixels'] > 0, x['pixels']))
 targets = targets[:LIMIT]
@@ -248,15 +297,17 @@ Path('.tmp_sc_plan.json').write_text(json.dumps(targets, ensure_ascii=False), en
 Path('.tmp_sc_acc.json').write_text('{}', encoding='utf-8')
 
 if not targets:
-    print("No hay items que necesiten búsqueda de portada. Nada que hacer.")
+    print("No hay imágenes que necesiten búsqueda. Nada que hacer.")
     raise SystemExit(0)
 
 by_slug = {it['slug']: it for it in items}
-print(f"Items a procesar: {len(targets)}")
+n_items = len(set(t['slug'] for t in targets))
+print(f"Targets a procesar: {len(targets)} imágenes en {n_items} item(s)")
 for t in targets:
-    it = by_slug.get(t['slug'], {})
+    it  = by_slug.get(t['slug'], {})
     px_str = f"{t['pixels']:,} px" if t['pixels'] > 0 else "sin imagen"
-    print(f"  • {it.get('title','')[:50]}  ({it.get('publisher','')}) — {px_str}  · {len(t['variants'])} queries")
+    lbl    = t['target_label']
+    print(f"  • {it.get('title','')[:45]}  ({it.get('publisher','')}) [{lbl}] — {px_str}  · {len(t['variants'])} queries")
 ```
 
 ---
@@ -277,12 +328,11 @@ from pathlib import Path
 sys.path.insert(0, 'scripts/retrofit')
 import fetch_better_covers as fbc
 
-# Umbral perceptual base. _same_cover ya relaja +4 bits cuando la portada actual
-# es < 30 000 px (los thumbnails de 150×150 son tan lossy al escalar a 8×8 que
-# una MISMA portada hi-res cae en ~9-12 bits; las NO relacionadas caen en 17+).
-# base 10 → efectivo 14 para thumbnails: atrapa los matches reales con margen y
-# descarta lo no relacionado. Para portadas actuales grandes (≥30k) queda en 10.
-MAX_HASH_DIST = 10
+# Umbral aHash: usar el MISMO default endurecido que producción (6/64).
+# _same_cover es un AND-gate (aHash ∧ dHash ∧ pHash ∧ NCC + entropía +
+# denylist de placeholders); el relax de +4 para originales chicas fue
+# ELIMINADO en el audit 2026-06-10 (era la vía de entrada de falsos positivos).
+MAX_HASH_DIST = fbc.DEFAULT_MAX_HASH_DIST
 
 SKIP_DOMAINS = frozenset({
     'instagram.com', 'twitter.com', 'x.com', 'facebook.com',
@@ -306,7 +356,13 @@ curr_px    = data.get('curr_px', 0)
 images_dir = Path('data/images')
 session    = requests.Session()
 session.headers.update({'User-Agent': fbc._UA})
-curr_bytes = fbc._get_current_bytes(item, images_dir) or b''
+# Usar ref_image_local si se pasó (foto de galería); si no, la portada (images[0])
+ref_local  = data.get('ref_image_local') or ''
+if ref_local and (images_dir / ref_local).exists():
+    curr_bytes = (images_dir / ref_local).read_bytes()
+else:
+    # _get_current_bytes lee el espejo local de images[0].
+    curr_bytes = fbc._get_current_bytes(item, images_dir) or b''
 
 validated = []
 for cand in candidates[:25]:    # tope de candidatas evaluadas por llamada (Google trae ~70+/query)
@@ -315,6 +371,11 @@ for cand in candidates[:25]:    # tope de candidatas evaluadas por llamada (Goog
     if not url or not url.startswith('http'):
         continue
     if any(bad in domain for bad in SKIP_DOMAINS):
+        continue
+    # R5 — conflicto de metadata declarada: la URL/título de la candidata
+    # declara OTRO volumen u OTRO ISBN que el item → hard reject (es el filtro
+    # para "mismo manga, tomo equivocado"; producción lo aplica igual).
+    if fbc.candidate_metadata_conflict(item, url, cand.get('page_title', '')):
         continue
     try:
         img_bytes = fbc._fetch(url, session)
@@ -351,6 +412,7 @@ for cand in candidates[:25]:    # tope de candidatas evaluadas por llamada (Goog
         'new_image'  : filename,
         'new_url'    : url,
         'new_pixels' : new_px,
+        'ref_pixels' : curr_px,      # px de la imagen específica que esta candidata reemplaza
         'match_dist' : match_dist,   # distancia Hamming vs portada actual (None si no había)
         'verified'   : verified,     # True = pasó _same_cover
         'page_title' : cand.get('page_title', ''),
@@ -392,10 +454,15 @@ import json
 from pathlib import Path
 
 plan = json.loads(Path('.tmp_sc_plan.json').read_text(encoding='utf-8'))
-target  = plan[i]
-slug    = target['slug']
-curr_px = target['pixels']
-variants = target['variants']
+target           = plan[i]
+slug             = target['slug']
+curr_px          = target['pixels']
+img_idx          = target.get('img_idx', 0)
+image_ref_local  = target.get('image_ref_local', '')
+candidate_action = target.get('candidate_action', 'replace_cover')
+candidate_target = target.get('candidate_target', '')
+target_label     = target.get('target_label', 'portada')
+variants         = target['variants']
 
 # item completo desde items.jsonl
 item = None
@@ -406,10 +473,10 @@ for l in open('data/items.jsonl'):
     if o.get('slug') == slug:
         item = o; break
 
-TARGET_MATCHES = 3
-item_candidates = []   # acumulador verificado de ESTE item
+TARGET_MATCHES  = 3
+item_candidates = []   # acumulador verificado de ESTE target (una imagen)
 
-print(f"\n[{i+1}/{len(plan)}] {item.get('title','')}")
+print(f"\n[{i+1}/{len(plan)}] {item.get('title','')} [{target_label}]")
 print(f"  Imagen actual: {curr_px:,} px" if curr_px > 0 else "  Sin imagen")
 ```
 
@@ -477,7 +544,8 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
 
    tmp_in = Path(f'.tmp_sc_input_{uuid.uuid4().hex[:8]}.json')
    tmp_in.write_text(json.dumps({'item': item, 'candidate_urls': candidate_urls,
-                                 'curr_px': curr_px}, ensure_ascii=False), encoding='utf-8')
+                                 'curr_px': curr_px,
+                                 'ref_image_local': image_ref_local}, ensure_ascii=False), encoding='utf-8')
    result = subprocess.run(['.venv/bin/python', 'scripts/retrofit/_sc_validate.py'],
                            capture_output=True, text=True)
    tmp_in.unlink(missing_ok=True)
@@ -522,34 +590,41 @@ import json, uuid
 from pathlib import Path
 
 if item_candidates:
+    # Tagear cada candidata con la acción correcta (replace_cover o replace_image + target url)
+    for c in item_candidates:
+        c['action'] = candidate_action
+        c['target'] = candidate_target
+
     acc_path = Path('.tmp_sc_acc.json')
     acc = json.loads(acc_path.read_text(encoding='utf-8')) if acc_path.exists() else {}
 
-    old_local = item.get('image_local', '') or ''
-    old_url   = item.get('image_url', '')   or ''
+    # current_images = la galería actual; images[0] es la portada (is_cover).
     imgs = item.get('images') or []
-    if imgs:
-        current_images = [{'url': im.get('url',''), 'local': im.get('local',''),
-                           'kind': im.get('kind','gallery'), 'is_cover': k == 0}
-                          for k, im in enumerate(imgs) if isinstance(im, dict)]
-    elif old_url or old_local:
-        current_images = [{'url': old_url, 'local': old_local, 'kind': 'gallery', 'is_cover': True}]
-    else:
-        current_images = []
+    current_images = [{'url': im.get('url',''), 'local': im.get('local',''),
+                       'kind': im.get('kind','gallery'), 'is_cover': k == 0}
+                      for k, im in enumerate(imgs) if isinstance(im, dict)]
 
-    acc[slug] = {
-        'slug'          : slug,
-        'title'         : item.get('title', ''),
-        'title_original': item.get('title_original', ''),
-        'series_display': item.get('series_display', ''),
-        'publisher'     : item.get('publisher', ''),
-        'country'       : item.get('country', ''),
-        'old_image'     : old_local,
-        'old_url'       : old_url,
-        'old_pixels'    : curr_px,
-        'current_images': current_images,
-        'candidates'    : item_candidates,
-    }
+    if slug in acc:
+        # Merge: agregar candidatas de esta imagen sin pisar las de la portada u otras galería
+        existing_urls = {c['new_url'] for c in acc[slug]['candidates']}
+        for c in item_candidates:
+            if c['new_url'] not in existing_urls:
+                acc[slug]['candidates'].append(c)
+                existing_urls.add(c['new_url'])
+    else:
+        acc[slug] = {
+            'slug'          : slug,
+            'title'         : item.get('title', ''),
+            'title_original': item.get('title_original', ''),
+            'series_display': item.get('series_display', ''),
+            'publisher'     : item.get('publisher', ''),
+            'country'       : item.get('country', ''),
+            'old_image'     : old_local,
+            'old_url'       : old_url,
+            'old_pixels'    : curr_px,
+            'current_images': current_images,
+            'candidates'    : item_candidates,
+        }
     acc_path.write_text(json.dumps(acc, ensure_ascii=False), encoding='utf-8')
 
     # Reconstruir: entradas ajenas (no de esta corrida) + todas las mías
@@ -619,8 +694,10 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
 2. **NUNCA** llamar `--apply` ni `apply_preview()` — la aprobación es del owner
 3. Todas las candidatas: `confidence: "low"`, `status: "pending"`
 4. Solo invocar cuando el usuario lo pida explícitamente
-5. Una candidata con imagen actual SOLO se acepta si pasa `_same_cover()` (misma portada).
-   Sin imagen actual (`--include-no-image`) queda `verified: false` para revisión más estricta.
+5. Una candidata con imagen actual SOLO se acepta si pasa `_same_cover()` (AND-gate: misma
+   portada) Y no tiene conflicto de metadata (`candidate_metadata_conflict()`: otro volumen /
+   otro ISBN declarado en la URL/título → hard reject). Sin imagen actual
+   (`--include-no-image`) queda `verified: false` para revisión más estricta.
 6. Máximo 10 candidatas por item; máx 3 matches dispara el corte de iteración
 7. El skill es incremental: slugs con candidatas pendientes se saltan automáticamente
 8. Borrar `scripts/retrofit/_sc_validate.py` y los `.tmp_sc_*` al finalizar (son temporales)
