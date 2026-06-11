@@ -1214,6 +1214,13 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/image-file-sizes":
             self._json(200, _image_file_sizes())
             return
+        if self.path == "/api/cover-preview-meta":
+            _cp = ROOT / "data" / "cover_preview.json"
+            if _cp.exists():
+                self._json(200, {"mtime": _cp.stat().st_mtime_ns, "exists": True})
+            else:
+                self._json(200, {"mtime": 0, "exists": False})
+            return
         if self.path == "/api/scripts":
             self._json(200, {"scripts": SCRIPTS})
             return
@@ -1632,20 +1639,47 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_save_cover_preview(self) -> None:
         """Persiste la cola de candidatas. Va bajo @_serialized para no pisar
         un apply concurrente (gotcha #34), y escribe atómico (tmp + replace)
-        para no dejar JSON truncado si el proceso muere a mitad del write."""
+        para no dejar JSON truncado si el proceso muere a mitad del write.
+
+        Guard de concurrencia optimista: si el payload incluye `expected_mtime`
+        (st_mtime_ns capturado al cargar), se compara con el mtime actual del
+        archivo. Si no coinciden → 409 sin escribir (el frontend debe recargar).
+        Clientes sin expected_mtime (legado) siguen con el comportamiento anterior
+        para no romper compatibilidad."""
         try:
-            entries = self._read_json(max_bytes=5_000_000)
+            payload = self._read_json(max_bytes=5_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
             self.send_error(400, f"Invalid body: {e}")
             return
-        if not isinstance(entries, list):
-            self.send_error(400, "Expected JSON array")
+
+        # Soporte de dos formatos: array plano (legado) o dict con entries + expected_mtime.
+        if isinstance(payload, list):
+            entries = payload
+            expected_mtime = None
+        elif isinstance(payload, dict):
+            entries = payload.get("entries")
+            expected_mtime = payload.get("expected_mtime")
+            if not isinstance(entries, list):
+                self.send_error(400, "Expected JSON array or {entries, expected_mtime}")
+                return
+        else:
+            self.send_error(400, "Expected JSON array or object")
             return
+
         dst = ROOT / "data" / "cover_preview.json"
+
+        # Guard de concurrencia optimista: rechaza saves con mtime stale.
+        if expected_mtime is not None:
+            current_mtime = dst.stat().st_mtime_ns if dst.exists() else 0
+            if current_mtime != int(expected_mtime):
+                self._json(409, {"error": "stale", "mtime": current_mtime})
+                return
+
         tmp = dst.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(dst)
-        self._json(200, {"ok": True, "saved": len(entries)})
+        new_mtime = dst.stat().st_mtime_ns
+        self._json(200, {"ok": True, "saved": len(entries), "mtime": new_mtime})
 
     @_serialized
     def _handle_apply_cover_preview(self) -> None:

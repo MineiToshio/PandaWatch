@@ -215,6 +215,13 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
 - **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
 - Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-gallery`, `--include-no-image`,
   `--retry-failed`, `--query-extra "texto"`.
+- **Guard de concurrencia (2026-06-11)**: el frontend envía `expected_mtime` en cada save; el
+  servidor rechaza con 409 si el archivo cambió desde la carga. Ya no es crítico cerrar la
+  pestaña antes de correr el skill — si la pestaña intenta guardar encima, el 409 la fuerza a
+  recargar la cola actualizada sin pisar los cambios del servidor.
+- **apply_preview con archivo faltante**: si una candidata `approved` referencia un `new_image`
+  que ya no existe en disco, `apply_preview` la omite (no toca `items.jsonl`), la conserva en el
+  preview y reporta `skipped_missing_file` en el summary.
 
 ### Eliminar fotos de la galería actual (`cover-preview.html`)
 

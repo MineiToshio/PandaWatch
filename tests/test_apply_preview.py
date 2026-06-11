@@ -103,3 +103,57 @@ def test_all_decided_removes_entry_and_preview(setup):
     assert not (images_dir / "pending_cand.jpg").exists()
     item = json.loads(items_path.read_text(encoding="utf-8").splitlines()[0])
     assert item["images"][0]["local"] == "new_cover.jpg"
+
+
+def test_approved_missing_file_skipped(tmp_path, monkeypatch):
+    """Candidata approved cuyo archivo local ya no existe → items.jsonl NO cambia,
+    la candidata sigue en el preview con status approved, summary trae
+    skipped_missing_file=1."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    _make_img(images_dir / "old_cover.jpg", (100, 150))
+    # new_cover.jpg intencionalmente AUSENTE del disco.
+
+    item = {
+        "slug": "missing-item",
+        "title": "Missing Test",
+        "images": [{"url": "http://x/old.jpg", "local": "old_cover.jpg", "kind": "gallery"}],
+    }
+    items_path = tmp_path / "items.jsonl"
+    items_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    preview = [{
+        "slug": "missing-item",
+        "title": "Missing Test",
+        "old_url": "http://x/old.jpg",
+        "old_image": "old_cover.jpg",
+        "old_pixels": 15000,
+        "current_images": [{"url": "http://x/old.jpg", "local": "old_cover.jpg",
+                            "kind": "gallery", "is_cover": True}],
+        "candidates": [
+            {"new_url": "http://x/new.jpg", "new_image": "new_cover.jpg",
+             "new_pixels": 240000, "action": "replace_cover", "target": "",
+             "kind": "gallery", "status": "approved", "confidence": "low"},
+        ],
+    }]
+    preview_path = tmp_path / "cover_preview.json"
+    preview_path.write_text(json.dumps(preview), encoding="utf-8")
+    monkeypatch.setattr(fbc, "_PREVIEW_PATH", preview_path)
+
+    summary = fbc.apply_preview(items_path, images_dir)
+
+    # items.jsonl NO debe haber cambiado (portada vieja intacta).
+    item_after = json.loads(items_path.read_text(encoding="utf-8").splitlines()[0])
+    assert item_after["images"][0]["local"] == "old_cover.jpg"
+
+    # La candidata sigue en el preview (approved, no borrada).
+    assert preview_path.exists()
+    remaining = json.loads(preview_path.read_text(encoding="utf-8"))
+    assert len(remaining) == 1
+    cands = remaining[0]["candidates"]
+    assert len(cands) == 1
+    assert cands[0]["status"] == "approved"
+    assert cands[0]["new_image"] == "new_cover.jpg"
+
+    # El summary reporta skipped_missing_file=1.
+    assert summary.get("skipped_missing_file") == 1

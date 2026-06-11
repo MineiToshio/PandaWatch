@@ -2033,9 +2033,12 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     replaced = 0
     galleried = 0
     reverted = 0
+    skipped_missing_file = 0
     # Archivos candidatos a borrar tras aplicar (se filtran por orphan-check).
     old_to_drop: set = set()   # portadas viejas reemplazadas
     new_to_drop: set = set()   # imágenes nuevas rechazadas
+    # Slugs de entries con candidatas aprobadas pero archivo faltante → conservar en preview.
+    entries_with_missing: set = set()
 
     for entry in preview:
         slug = entry.get("slug", "")
@@ -2057,6 +2060,14 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
             kind = cand.get("kind", "gallery")
             target = cand.get("target", "")
 
+            if status == "approved":
+                # Guard: si la candidata aprobada referencia un archivo local que ya no
+                # existe en disco → no aplicar. La entry se conserva en el preview como
+                # "pendiente" para que una corrida posterior pueda re-descargarla.
+                if new_local and new_local != "[dry-run]" and not (images_dir / new_local).exists():
+                    skipped_missing_file += 1
+                    entries_with_missing.add(slug)
+                    continue
             if status == "approved":
                 if action == "replace_cover":
                     for item in targets:
@@ -2154,16 +2165,32 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     print(f"  Reemplazos (portada/galería): {replaced} (imagen vieja eliminada: {cleaned_old})")
     print(f"  Agregadas a galería:          {galleried}")
     print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
+    if skipped_missing_file:
+        print(f"  Omitidas (archivo faltante):  {skipped_missing_file} (siguen en preview para re-descarga)")
 
     # Conservar SOLO las candidatas pendientes de cada entry; las decididas
     # (aplicadas/revertidas) se quitan del JSON aunque la entry siga viva.
+    # Excepción: entries con candidatas aprobadas cuyo archivo ya no existe en
+    # disco — se conservan en el preview como "pendientes" para que una
+    # corrida posterior pueda re-descargarlas (no se pierden).
     # Antes la entry con pendientes se conservaba ENTERA: la candidata aprobada
     # ya aplicada seguía mostrándose como "approved" en la UI (parecía pegada)
     # y su old_image podía apuntar a un archivo ya borrado (bug 2026-06-11).
     remaining = []
     for e in preview:
-        pend = [c for c in e["candidates"] if c.get("status", "pending") == "pending"]
-        if not pend:
+        e_slug = e.get("slug", "")
+        # Candidatas a conservar: pending + approved-con-archivo-faltante (tratadas como pending).
+        pend = [
+            c for c in e["candidates"]
+            if c.get("status", "pending") == "pending"
+            or (
+                c.get("status") == "approved"
+                and c.get("new_image", "")
+                and c.get("new_image") != "[dry-run]"
+                and not (images_dir / c["new_image"]).exists()
+            )
+        ]
+        if not pend and e_slug not in entries_with_missing:
             continue
         if len(pend) != len(e["candidates"]):
             e["candidates"] = pend
@@ -2203,6 +2230,7 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
         "reverted": reverted,
         "cleaned_old": cleaned_old,
         "cleaned_new": cleaned_new,
+        "skipped_missing_file": skipped_missing_file,
     }
 
 

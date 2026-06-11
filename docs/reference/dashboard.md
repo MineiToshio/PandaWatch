@@ -64,6 +64,17 @@ revisión". Durabilidad: log append-only `data/approvals.jsonl` (cluster_key, ur
 approved_at/by, reason, submitted_at + snapshot) → `apply_approvals.py` re-materializa
 tras reconstruir el catálogo (match cluster_key, fallback url; idempotente).
 
+## Cover-preview — guard de concurrencia optimista
+
+Al cargar la cola, el frontend pide también `GET /api/cover-preview-meta` y guarda
+`loadedMtime` (el `st_mtime_ns` del archivo). Cada POST de save incluye
+`expected_mtime: loadedMtime`; si el mtime del archivo en disco no coincide, el servidor
+responde **409 `{"error":"stale"}`** sin escribir. El frontend muestra un aviso y
+recarga la cola desde el servidor — nunca reintenta el save stale. Tras un save
+exitoso, `loadedMtime` se actualiza con el mtime devuelto en la respuesta. Clientes sin
+`expected_mtime` (scripts/legado) siguen con el comportamiento anterior para no romper
+compatibilidad.
+
 ## Cover-preview (`web/cover-preview.html`) — atajos de teclado
 
 El modal de comparación de portadas (`compareEntry` en el state Alpine) tiene atajos
