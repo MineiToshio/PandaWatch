@@ -2034,6 +2034,8 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     galleried = 0
     reverted = 0
     skipped_missing_file = 0
+    redownloaded = 0
+    _redl_session = None   # sesión lazy para re-descargas del guard self-healing
     # Archivos candidatos a borrar tras aplicar (se filtran por orphan-check).
     old_to_drop: set = set()   # portadas viejas reemplazadas
     new_to_drop: set = set()   # imágenes nuevas rechazadas
@@ -2061,13 +2063,28 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
             target = cand.get("target", "")
 
             if status == "approved":
-                # Guard: si la candidata aprobada referencia un archivo local que ya no
-                # existe en disco → no aplicar. La entry se conserva en el preview como
-                # "pendiente" para que una corrida posterior pueda re-descargarla.
+                # Guard self-healing: si la candidata aprobada referencia un archivo
+                # local que ya no existe en disco (p.ej. lo borró un apply previo y
+                # una copia stale de la UI resucitó la entry), intentar RE-DESCARGAR
+                # desde new_url antes de rendirse. Solo si la descarga falla se omite
+                # (la entry se conserva en el preview y se reporta en el summary).
                 if new_local and new_local != "[dry-run]" and not (images_dir / new_local).exists():
-                    skipped_missing_file += 1
-                    entries_with_missing.add(slug)
-                    continue
+                    refetched = ""
+                    if new_url.startswith("http"):
+                        if _redl_session is None:
+                            _redl_session = requests.Session()
+                            _redl_session.headers.update({"User-Agent": _UA})
+                        data_bytes = _fetch(new_url, _redl_session)
+                        if data_bytes:
+                            refetched = _save_image(data_bytes, images_dir) or ""
+                    if refetched:
+                        new_local = refetched
+                        cand["new_image"] = refetched
+                        redownloaded += 1
+                    else:
+                        skipped_missing_file += 1
+                        entries_with_missing.add(slug)
+                        continue
             if status == "approved":
                 if action == "replace_cover":
                     for item in targets:
@@ -2165,8 +2182,10 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     print(f"  Reemplazos (portada/galería): {replaced} (imagen vieja eliminada: {cleaned_old})")
     print(f"  Agregadas a galería:          {galleried}")
     print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
+    if redownloaded:
+        print(f"  Re-descargadas (self-heal):   {redownloaded} (archivo faltante recuperado desde new_url)")
     if skipped_missing_file:
-        print(f"  Omitidas (archivo faltante):  {skipped_missing_file} (siguen en preview para re-descarga)")
+        print(f"  Omitidas (archivo faltante):  {skipped_missing_file} (re-descarga falló; siguen en preview)")
 
     # Conservar SOLO las candidatas pendientes de cada entry; las decididas
     # (aplicadas/revertidas) se quitan del JSON aunque la entry siga viva.
@@ -2231,6 +2250,7 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
         "cleaned_old": cleaned_old,
         "cleaned_new": cleaned_new,
         "skipped_missing_file": skipped_missing_file,
+        "redownloaded": redownloaded,
     }
 
 
