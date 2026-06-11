@@ -1605,6 +1605,50 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "sync_cover_preview",
+        "category": "Mantenimiento",
+        "icon": "🔄",
+        "name": "Sincronizar cola de portadas candidatas",
+        "tagline": "Poda sugerencias obsoletas de cover_preview.json contra el catálogo actual.",
+        "what": (
+            "La cola cover_preview.json guarda una foto congelada del item al momento "
+            "de encolar. El catálogo evoluciona (upgrades, mirror, applies) y la cola "
+            "queda desincronizada: sugiere candidatas para portadas que ya están en alta "
+            "calidad, o muestra botones de borrar para fotos que ya no existen en el item. "
+            "Este script sincroniza: refresca old_url/old_image/old_pixels/current_images "
+            "de cada entry, poda candidatas pending cuya premisa ya no existe (portada "
+            "ya ≥ 90 000 px, foto target desaparecida/ok, new_url = portada actual), y "
+            "elimina entries cuyo slug ya no existe o que quedaron sin candidatas. "
+            "Las candidatas approved/rejected nunca se tocan."
+        ),
+        "when": (
+            "El panel /cover-preview.html llama GET /api/cover-preview que lo hace "
+            "automáticamente al cargar. Manual: cuando querés auditar la cola sin "
+            "abrir el panel, o para correr en --dry-run y ver qué se podaría."
+        ),
+        "command": [PYTHON, "scripts/retrofit/sync_cover_preview.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🔍 Dry-run (ver qué se podaría sin escribir)",
+                "desc": "Muestra los stats sin tocar cover_preview.json.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "🔄 Aplicar",
+                "desc": "Sincroniza y persiste la cola limpia.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo mostrar, no escribir",
+                  "Reporta los stats sin modificar cover_preview.json.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "wayback_recover",
         "category": "Mantenimiento",
         "icon": "🕰️",

@@ -222,6 +222,13 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
 - **apply_preview con archivo faltante**: si una candidata `approved` referencia un `new_image`
   que ya no existe en disco, `apply_preview` la omite (no toca `items.jsonl`), la conserva en el
   preview y reporta `skipped_missing_file` en el summary.
+- **Sincronización al cargar (2026-06-11)**: `GET /api/cover-preview` llama
+  `scripts/retrofit/sync_cover_preview.py::sync_preview()` antes de responder. Poda
+  candidatas `pending` cuya premisa ya no existe (portada ya ≥ 90 000 px, foto de galería
+  target desaparecida o ya ok, new_url igual a la portada actual) y elimina entries cuyo slug
+  ya no existe en el catálogo o que quedaron sin candidatas. Las candidatas `approved`/`rejected`
+  nunca se tocan. Si hubo cambios, persiste el JSON atómicamente antes de responder.
+  El CLI manual: `.venv/bin/python scripts/retrofit/sync_cover_preview.py [--dry-run]`.
 
 ### Eliminar fotos de la galería actual (`cover-preview.html`)
 

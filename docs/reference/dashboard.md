@@ -64,16 +64,22 @@ revisión". Durabilidad: log append-only `data/approvals.jsonl` (cluster_key, ur
 approved_at/by, reason, submitted_at + snapshot) → `apply_approvals.py` re-materializa
 tras reconstruir el catálogo (match cluster_key, fallback url; idempotente).
 
+## Cover-preview — carga con sincronización automática
+
+Al cargar la cola, el frontend llama `GET /api/cover-preview` (un solo request): el servidor
+carga `cover_preview.json`, sincroniza contra `items.jsonl` vía `sync_preview()` de
+`scripts/retrofit/sync_cover_preview.py`, persiste los cambios atómicamente si los hubo, y
+responde `{"entries": [...], "mtime": <st_mtime_ns>, "synced": {stats}}`. Si el endpoint no
+está disponible (servidor viejo), el frontend cae al fetch estático `cover_preview.json` +
+`GET /api/cover-preview-meta`. Si `synced` incluye cambios (> 0), se muestra un toast.
+
 ## Cover-preview — guard de concurrencia optimista
 
-Al cargar la cola, el frontend pide también `GET /api/cover-preview-meta` y guarda
-`loadedMtime` (el `st_mtime_ns` del archivo). Cada POST de save incluye
-`expected_mtime: loadedMtime`; si el mtime del archivo en disco no coincide, el servidor
-responde **409 `{"error":"stale"}`** sin escribir. El frontend muestra un aviso y
-recarga la cola desde el servidor — nunca reintenta el save stale. Tras un save
-exitoso, `loadedMtime` se actualiza con el mtime devuelto en la respuesta. Clientes sin
-`expected_mtime` (scripts/legado) siguen con el comportamiento anterior para no romper
-compatibilidad.
+`loadedMtime` viene en la respuesta de `GET /api/cover-preview` (el mtime post-sync).
+Cada POST de save incluye `expected_mtime: loadedMtime`; si el mtime del archivo en disco
+no coincide, el servidor responde **409 `{"error":"stale"}`** sin escribir. El frontend
+muestra un aviso y recarga la cola — nunca reintenta el save stale. Clientes sin
+`expected_mtime` (scripts/legado) siguen con el comportamiento anterior.
 
 ## Cover-preview (`web/cover-preview.html`) — atajos de teclado
 

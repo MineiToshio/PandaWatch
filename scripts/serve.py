@@ -19,6 +19,7 @@ Endpoints:
     POST /api/quality/check         → re-evalúa N items (live-update del Panel de Calidad)
     GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
     POST /api/save-cover-preview    → guarda data/cover_preview.json
+    GET  /api/cover-preview         → cola sincronizada (entries + mtime + synced stats)
     GET  /api/health                → liveness probe
     GET  /api/scripts               → JSON del script registry (panel)
     POST /api/run                   → lanza un script (panel)
@@ -106,6 +107,21 @@ except Exception:  # pragma: no cover
     consolidate_by_cluster = None  # type: ignore
     derive_cluster_key = None  # type: ignore
     backup_and_rotate = None  # type: ignore
+
+# sync_cover_preview — función importable para el endpoint GET /api/cover-preview.
+# Sigue el mismo patrón sys.path que _handle_apply_cover_preview usa para
+# fetch_better_covers: inserta scripts/retrofit/ en sys.path al importar.
+_RETRO_DIR = str(Path(__file__).resolve().parent / "retrofit")
+if _RETRO_DIR not in sys.path:
+    sys.path.insert(0, _RETRO_DIR)
+try:
+    from sync_cover_preview import sync_preview as _sync_preview  # type: ignore
+    _SYNC_OK = True
+except ImportError:
+    _SYNC_OK = False
+
+    def _sync_preview(preview, items_by_slug, images_dir):  # type: ignore[misc]
+        return preview, {}
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1237,9 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._json(200, {"mtime": 0, "exists": False})
             return
+        if self.path == "/api/cover-preview":
+            self._handle_cover_preview_get()
+            return
         if self.path == "/api/scripts":
             self._json(200, {"scripts": SCRIPTS})
             return
@@ -1634,6 +1653,46 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
         else:
             self._json(400, {"error": result})
+
+    @_serialized
+    def _handle_cover_preview_get(self) -> None:
+        """GET /api/cover-preview — devuelve la cola sincronizada.
+
+        Carga cover_preview.json, sincroniza contra items.jsonl con sync_preview(),
+        y si hubo cambios los persiste atómicamente ANTES de responder (bajo
+        @_serialized para no pisar un save concurrente).
+
+        Responde: {"entries": [...], "mtime": <st_mtime_ns post-sync>, "synced": {<stats>}}
+        El mtime es el que el frontend debe usar como expected_mtime del guard anti-race.
+        """
+        dst = ROOT / "data" / "cover_preview.json"
+        if not dst.exists():
+            self._json(200, {"entries": [], "mtime": 0, "synced": {}})
+            return
+
+        try:
+            preview: list[dict] = json.loads(dst.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as e:
+            self._json(500, {"error": f"No se pudo leer cover_preview.json: {e}"})
+            return
+
+        # Cargar items indexados por slug (igual que _load_items pero indexado).
+        items = _load_items()
+        items_by_slug: dict[str, dict] = {
+            it["slug"]: it for it in items if it.get("slug")
+        }
+
+        synced, stats = _sync_preview(preview, items_by_slug, IMAGES_DIR)
+
+        # Si hubo cambios, persistir atómicamente.
+        changed = len(synced) != len(preview) or any(v > 0 for v in stats.values())
+        if changed:
+            tmp = dst.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(dst)
+
+        mtime = dst.stat().st_mtime_ns if dst.exists() else 0
+        self._json(200, {"entries": synced, "mtime": mtime, "synced": stats})
 
     @_serialized
     def _handle_save_cover_preview(self) -> None:
