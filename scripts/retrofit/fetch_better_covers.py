@@ -2111,8 +2111,13 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
                         old_to_drop.add(old_image)
             elif status == "rejected":
                 if action in ("replace_cover", "replace_and_add"):
+                    # Revertir SOLO si la candidata rechazada es la portada
+                    # vigente (una corrida previa la aplicó). Antes se revertía
+                    # incondicional y pisaba la candidata APROBADA de la misma
+                    # entry en la misma corrida (bug 2026-06-11).
                     for item in targets:
-                        _apply_improvement(item, old_url, old_image)
+                        if image_store.cover_url(item) == new_url:
+                            _apply_improvement(item, old_url, old_image)
                         _remove_gallery_image(item, new_url)
                     reverted += 1
                 elif action in ("add_gallery", "add_extra", "replace_image",
@@ -2150,12 +2155,34 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     print(f"  Agregadas a galería:          {galleried}")
     print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
 
-    # Conservar entries con alguna candidata pendiente (entera); quitar el resto.
-    # Así las aprobadas Y rechazadas se sacan del JSON; solo quedan las pendientes.
-    remaining = [
-        e for e in preview
-        if any(c.get("status", "pending") == "pending" for c in e["candidates"])
-    ]
+    # Conservar SOLO las candidatas pendientes de cada entry; las decididas
+    # (aplicadas/revertidas) se quitan del JSON aunque la entry siga viva.
+    # Antes la entry con pendientes se conservaba ENTERA: la candidata aprobada
+    # ya aplicada seguía mostrándose como "approved" en la UI (parecía pegada)
+    # y su old_image podía apuntar a un archivo ya borrado (bug 2026-06-11).
+    remaining = []
+    for e in preview:
+        pend = [c for c in e["candidates"] if c.get("status", "pending") == "pending"]
+        if not pend:
+            continue
+        if len(pend) != len(e["candidates"]):
+            e["candidates"] = pend
+            # Alguna decidida se aplicó → refrescar el estado "actual" de la
+            # entry (portada/galería post-apply) para que la comparación de las
+            # pendientes sea contra la imagen vigente, no contra la reemplazada.
+            targets = items_by_slug.get(e.get("slug", ""), [])
+            if targets:
+                imgs = targets[0].get("images") or []
+                if imgs and isinstance(imgs[0], dict):
+                    e["old_url"] = imgs[0].get("url", "")
+                    e["old_image"] = imgs[0].get("local", "")
+                    e["old_pixels"] = _get_current_pixels(targets[0], images_dir)
+                e["current_images"] = [
+                    {"url": im.get("url", ""), "local": im.get("local", ""),
+                     "kind": im.get("kind", "gallery"), "is_cover": k == 0}
+                    for k, im in enumerate(imgs) if isinstance(im, dict)
+                ]
+        remaining.append(e)
     n_rem = 0
     if remaining:
         _write_preview(remaining)
