@@ -14,11 +14,15 @@ Lo que SE recomputa:
 Lo que NO se toca:
     Todos los demás campos. En particular respeta 'common' asignado por
     web search previo: nunca lo degrada a 'rare'.
+    Items con `rarity_verified_at` (verificados a mano por el skill
+    watch-validate-rarity) son ground truth: NUNCA se recalculan, ni con
+    --force. Usar --include-verified para override explícito.
 
 Uso:
     python scripts/retrofit/set_rarity.py                  # solo items sin rarity
-    python scripts/retrofit/set_rarity.py --force          # recalcula todos
+    python scripts/retrofit/set_rarity.py --force          # recalcula todos (excl. verificados)
     python scripts/retrofit/set_rarity.py --dry-run        # solo reporta drift
+    python scripts/retrofit/set_rarity.py --include-verified  # incluye verificados a mano
     python scripts/retrofit/set_rarity.py --input X --output Y
 """
 
@@ -54,11 +58,14 @@ def main() -> int:
     )
     p.add_argument(
         "--force", action="store_true",
-        help="Recalcula rarity en TODOS los items, incluso los que ya tienen valor.",
+        help="Recalcula rarity en TODOS los items con valor, excepto verificados a mano.",
     )
     p.add_argument("--include-approved", action="store_true",
                    help="Procesar también items aprobados (golden records). Por "
                         "defecto se saltean para no pisar metadata aprobada.")
+    p.add_argument("--include-verified", action="store_true",
+                   help="Incluir items con rarity_verified_at (verificados a mano). "
+                        "Por defecto son ground truth y NUNCA se recalculan, ni con --force.")
     args = p.parse_args()
 
     input_path = Path(args.input)
@@ -78,7 +85,14 @@ def main() -> int:
     changed = 0
     skipped = 0
     skipped_approved = 0
+    skipped_verified = 0
     for item in items:
+        # Ground truth verificado a mano (skill watch-validate-rarity): NUNCA
+        # recalcular, ni siquiera con --force. Usar --include-verified para override.
+        if item.get("rarity_verified_at") and not args.include_verified:
+            skipped_verified += 1
+            continue
+
         # Golden records: el owner aprobó esta card; no recalculamos su rarity.
         # El item permanece sin cambios en la lista (in-place rewrite).
         if is_approved(item) and not args.include_approved:
@@ -113,6 +127,7 @@ def main() -> int:
     after: Counter = Counter(i.get("rarity", "") for i in items)
 
     print(f"Items con rarity ya asignado (saltados): {skipped}")
+    print(f"Items verificados a mano (saltados): {skipped_verified}")
     if skipped_approved:
         print(f"Items aprobados (saltados; usa --include-approved para incluirlos): {skipped_approved}")
     print(f"Items {'que cambiarían' if args.dry_run else 'actualizados'}: {changed}")
@@ -127,7 +142,10 @@ def main() -> int:
         sim: Counter = Counter()
         for item in items:
             old = item.get("rarity", "")
-            if is_approved(item) and not args.include_approved:
+            # Guard: verificados a mano son ground truth incluso en simulación
+            if item.get("rarity_verified_at") and not args.include_verified:
+                sim[old] += 1
+            elif is_approved(item) and not args.include_approved:
                 sim[old] += 1
             elif old and not args.force:
                 sim[old] += 1

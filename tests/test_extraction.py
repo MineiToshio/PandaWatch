@@ -4004,7 +4004,107 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
     assert it["standardized_at"] == "2026-05-22T10:00:00+00:00"
     # Scrapeados refrescados:
     assert it["price"] == "USD 44.99"
-    assert it["detected_at"] == "2026-06-01"
+    # detected_at es la PRIMERA detección: el re-scrape NO la resetea (gotcha #65).
+    assert it["detected_at"] == "2026-05-22"
+    # cluster_key se re-deriva con los campos curados restaurados → tier edition:
+    assert it["cluster_key"] == "edition:berserk-darkhorse-deluxe|1"
+
+
+def test_append_jsonl_rescrape_does_not_degrade_standardized_rows(tmp_path):
+    """Gotcha #65: re-scrapear una fuente cuyos productos YA están
+    estandarizados no debe degradar la fila — slug, detected_at, score y
+    signal_types se preservan, y cluster_key se re-deriva al tier edition:
+    (no queda en el tier isbn:/url: del candidate crudo)."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Deluxe 1",
+        "series_key": "berserk",
+        "edition_key": "berserk-darkhorse-deluxe-us",
+        "volume": "1",
+        "slug": "berserk-deluxe-1",
+        "standardized_at": "2026-05-22T10:00:00+00:00",
+        "detected_at": "2026-05-22T09:00:00+00:00",
+        "score": 85,
+        "signals": ["deluxe hardcover"],
+        "signal_types": ["special_edition"],
+        "isbn": "9781506711980",
+    }])
+
+    # Candidate crudo del re-scrape: sin slug, cluster_key tier isbn:,
+    # score/signals recomputados del texto crudo, detected_at = hoy.
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/a",
+        "title": "Berserk Vol. 1 Deluxe Hardcover Edition",
+        "isbn": "9781506711980",
+        "cluster_key": "isbn:9781506711980",
+        "detected_at": "2026-06-10T00:00:00+00:00",
+        "score": 40,
+        "signals": [],
+        "signal_types": ["manga"],
+        "price": "USD 49.99",
+    }])
+
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    it = items[0]
+    assert it["slug"] == "berserk-deluxe-1"
+    assert it["detected_at"] == "2026-05-22T09:00:00+00:00"
+    assert it["score"] == 85
+    assert it["signal_types"] == ["special_edition"]
+    assert it["signals"] == ["deluxe hardcover"]
+    # Invariante CLKEY: stored == derive_cluster_key(item), en tier edition:
+    assert it["cluster_key"] == "edition:berserk-darkhorse-deluxe-us|1"
+    assert it["cluster_key"] == mw.derive_cluster_key(it)
+    # Lo volátil sí refresca:
+    assert it["price"] == "USD 49.99"
+
+
+def test_append_jsonl_slug_sticky_on_raw_rows(tmp_path):
+    """slug es sticky también para filas SIN standardized_at: el scraper nunca
+    trae slug y un re-scrape no debe dejar slug=None (gotcha #65)."""
+    path = tmp_path / "items.jsonl"
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/raw",
+        "title": "raw item",
+        "slug": "raw-item",
+        "detected_at": "2026-01-01",
+    }])
+    mw.append_jsonl(path, [{
+        "url": "https://example.com/raw",
+        "title": "raw item v2",
+        "detected_at": "2026-02-01",
+    }])
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0]["slug"] == "raw-item"
+    assert items[0]["title"] == "raw item v2"  # el resto sí se reemplaza
+
+
+def test_candidate_to_json_cluster_key_consistent_with_derived_edition():
+    """`candidate_to_json` deriva cluster_key DESPUÉS de escribir el
+    edition_key heurístico (Paso C): la fila fresca entra en el tier que
+    `derive_cluster_key` re-derivaría (invariante CLKEY desde el ingest,
+    gotcha #65)."""
+    c = mw.Candidate(
+        title="Berserk Deluxe Edition Vol. 3",
+        url="https://example.com/berserk-deluxe-3",
+        source="Test Source",
+        source_url="https://example.com",
+        country="US",
+        language="en",
+        publisher="Dark Horse",
+        source_class="publisher",
+        tags=[],
+        description="",
+        score=50,
+        signals=["deluxe"],
+        signal_types=["special_edition"],
+    )
+    row = mw.candidate_to_json(c)
+    assert row["cluster_key"] == mw.derive_cluster_key(row)
+    if row.get("edition_key"):
+        assert row["cluster_key"].startswith("edition:")
 
 
 def test_append_jsonl_does_not_preserve_when_no_standardized_at(tmp_path):
@@ -8733,6 +8833,300 @@ def test_rarity_firmato_progetto_not_ultra_rare():
         ["variant_cover"], "",
         "IL NUOVO MERAVIGLIOSO PROGETTO FIRMATO CAB E FEDERICA DI MEO!",
         "Oneira Variant 1",
+    )
+    assert r != "ultra_rare"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — extensiones 2026-06-10 (nuevas keywords y patrones)
+# ---------------------------------------------------------------------------
+
+# --- _PRINT_RUN_RE: nuevas formas lingüísticas ---
+
+def test_rarity_print_run_tiratura_di():
+    """IT: 'tiratura limitata di N copie' (preposición di) → super_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "tiratura limitata di 1200 copie", "Some IT Variant 1",
+    )
+    assert r == "super_rare"
+
+
+def test_rarity_print_run_stampata_in_soli():
+    """IT: 'stampata in soli N esemplari' → ultra_rare (N ≤ 500)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "stampata in soli 50 esemplari", "Rare IT Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_print_run_in_sole_copie():
+    """IT: 'in sole N copie' (sin limitat-) → super_rare (N ≤ 2500)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "disponibile in sole 1200 copie", "IT Edition 1",
+    )
+    assert r == "super_rare"
+
+
+def test_rarity_print_run_limitiert_exemplare():
+    """DE: 'limitiert auf N Exemplare' → super_rare (forma alemana, N ≤ 2500)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "limitiert auf 777 Exemplare", "DE Edition 1",
+    )
+    assert r == "super_rare"
+
+
+def test_rarity_print_run_numbered_copies():
+    """EN: 'limited to N numbered copies' (adjetivo numbered opcional) → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "limited to 200 numbered copies", "EN Numbered Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_print_run_in_soli_pezzi():
+    """IT: 'in soli N pezzi' (unidad pezzi) → ultra_rare (N ≤ 500)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "in soli 100 pezzi", "Tiny IT Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+# --- _ULTRA_RARE_KEYWORDS: nummeriert, autografato, convention exclusive, JP ---
+
+def test_rarity_nummeriert_ultra_rare():
+    """DE 'nummeriert' (numerado a mano) → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "limitiert auf 777 Exemplare und nummeriert",
+        "DE Collector Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_autografato_ultra_rare():
+    """IT 'autografato/autografata' (firmado a mano) → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "ogni copia è autografata dall'autore",
+        "IT Hand-Signed Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_autografata_sovraccoperta():
+    """IT 'sovraccoperta autografata' → ultra_rare (diferente de 'firmato')."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "con sovraccoperta autografata",
+        "IT Autografata 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_firmato_one_murata_common():
+    """Regresión: 'il capolavoro firmato One e Yusuke Murata' sigue common.
+    'firmato' en IT = autoría, no firma a mano. Guard intacto."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "IT - AnimeClick",
+        "il capolavoro firmato One e Yusuke Murata in edizione speciale",
+        "One Punch Man Special Edition 1",
+    )
+    assert r == "common"
+
+
+def test_rarity_convention_exclusive_ultra_rare():
+    """'convention exclusive' → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "convention exclusive variant cover",
+        "Convention Exclusive Edition 1",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_jp_venue_kaijo_gentei_ultra_rare():
+    """JP '会場限定' (exclusiva de venue) → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko", "",
+        "ワンピース 100 会場限定版", publisher="Shueisha",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_jp_event_gentei_ultra_rare():
+    """JP 'イベント限定' → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko", "",
+        "鬼滅の刃 イベント限定ボックス", publisher="Shueisha",
+    )
+    assert r == "ultra_rare"
+
+
+# --- _SINGLE_RUN_PATTERNS: Lucca word-boundary ---
+
+def test_rarity_lucca_variant_title_is_rare():
+    """'Variant Lucca 2015' (sin 'comics') → rare via patrón word-boundary."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "",
+        "One Piece Variant Lucca 2015",
+    )
+    assert r == "rare"
+
+
+def test_rarity_lucca_changes_is_rare():
+    """'in esclusiva per i punti vendita campfire di Lucca Changes' → rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "in esclusiva per i punti vendita campfire di Lucca Changes",
+        "JJK Variant Lucca Changes Edition 1",
+    )
+    assert r == "rare"
+
+
+# --- _SINGLE_RUN_PATTERNS: exclusivas de festival con orden libre ---
+
+def test_rarity_sold_exclusively_comicon():
+    """'sold exclusively at Napoli Comicon 2015' → rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "sold exclusively at Napoli Comicon 2015",
+        "Dragon Ball Comicon Variant 1",
+    )
+    assert r == "rare"
+
+
+def test_rarity_released_exclusively_festival():
+    """'released exclusively during the festival Comic Fes 2023' → rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "",
+        "variant cover released exclusively during the festival Comic Fes 2023",
+        "Frieren Festival Variant 1",
+    )
+    assert r == "rare"
+
+
+# --- _SINGLE_RUN_PATTERNS: furoku/appendix de revista ---
+
+def test_rarity_appendix_magazine_is_rare():
+    """'appendix of the magazine Morning Two' (furoku) → rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "Global - Mangavariant",
+        "cover variant released as an appendix of the magazine Morning Two n.4",
+        "Dungeon Meshi Appendix Variant 1",
+    )
+    assert r == "rare"
+
+
+# --- _SINGLE_RUN_PATTERNS: exclusiva de retailer en texto ---
+
+def test_rarity_exclusive_kinokuniya_bookstores():
+    """'exclusive to Kinokuniya bookstores' → rare."""
+    r = mw.derive_rarity_tier(
+        [], "",
+        "exclusive to Kinokuniya bookstores",
+        "Vagabond Kinokuniya Edition 1",
+    )
+    assert r == "rare"
+
+
+def test_rarity_exclusive_panini_online_shop():
+    """'exclusive to Panini online shop' → rare."""
+    r = mw.derive_rarity_tier(
+        [], "",
+        "exclusive to Panini online shop",
+        "One Piece Panini Online Exclusive 1",
+    )
+    assert r == "rare"
+
+
+# --- _SINGLE_RUN_PATTERNS: out-of-print multilingual ---
+
+def test_rarity_esaurito_is_rare():
+    """IT 'esaurito' (agotado) → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "prodotto esaurito, non verrà ristampato",
+        "IT Esaurito Edition 1",
+    )
+    assert r == "rare"
+
+
+def test_rarity_descatalogado_is_rare():
+    """ES 'descatalogado en tienda oficial' → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "descatalogado en tienda oficial",
+        "ES Descatalogado Edition 1",
+    )
+    assert r == "rare"
+
+
+def test_rarity_out_of_print_is_rare():
+    """EN 'out of print' → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "currently out of print",
+        "EN OOP Edition 1",
+    )
+    assert r == "rare"
+
+
+# --- _SINGLE_RUN_KEYWORDS: FR collector + ES no-reimpresión + JP store ---
+
+def test_rarity_coffret_collector_is_rare():
+    """FR 'coffret collector' (política editorial Pika 2026) → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "Manga-Sanctuary (planning)",
+        "coffret collector + fanbook",
+        "Coffret FR Collector 1", publisher="Pika Édition",
+    )
+    assert r == "rare"
+
+
+def test_rarity_edition_collector_is_rare():
+    """FR 'édition collector' → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "Manga-Sanctuary (planning)",
+        "",
+        "Naruto édition collector 15", publisher="Kazé",
+    )
+    assert r == "rare"
+
+
+def test_rarity_jp_suryo_gentei_is_rare():
+    """JP '数量限定' (quantity limited) → rare."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko", "数量限定特典付き",
+        "鬼滅の刃 数量限定ボックス", publisher="Shueisha",
+    )
+    assert r == "rare"
+
+
+# --- Regresiones: deben seguir siendo common ---
+
+def test_rarity_edicion_limitada_postal_common():
+    """'edición limitada + postal exclusiva' sin otras señales → common.
+    La frase 'edición limitada' sola es tautológica en este corpus."""
+    r = mw.derive_rarity_tier(
+        ["limited", "collector"], "ES - Norma",
+        "edición limitada + postal exclusiva de regalo",
+        "Some Manga Edición Limitada 1", publisher="Norma Editorial",
+    )
+    assert r == "common"
+
+
+def test_rarity_year_range_2007_2008_not_numerado():
+    """'2007/2008' es un rango de años, NO un numerado (regresión)."""
+    r = mw.derive_rarity_tier(
+        ["box_set"], "BR - BBM", "Editora: Panini. Status: 2007/2008.",
+        "Naruto Boxset", publisher="Panini",
+    )
+    assert r != "ultra_rare"
+
+
+def test_rarity_lamina_firmada_not_ultra_rare():
+    """'lámina firmada' = firma impresa en extra → NO ultra_rare (regresión)."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "Incluye lámina firmada por el autor.",
+        "Capitán Harlock Edición Coleccionista 3", publisher="Letrablanka",
     )
     assert r != "ultra_rare"
 

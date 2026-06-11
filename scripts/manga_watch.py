@@ -2213,16 +2213,26 @@ _ULTRA_RARE_KEYWORDS = (
     # PRINTED signature on a giveaway art print, not a hand-signed copy.
     "signed by",
     "signé", "signiert", "autografado",
+    # IT mano firmato: "autografato/autografata" = firmado A MANO (no double
+    # meaning; distinto de "firmato" que en IT significa autoría, ver nota abajo).
+    "autografato", "autografata",
+    # DE numerado a mano: "nummeriert" aparece en convención de coleccionista
+    # ("limitiert auf 777 Exemplare und nummeriert") — investigación 2026-06-10.
+    "nummeriert",
     # Events across markets — only explicitly exclusive keywords
     "event exclusive", "event only", "event-only",
     "comiket", "jump festa", "anime expo exclusive",
     "wonder festival", "wonfes",
     "nuit one piece", "noche one piece",
     "japan expo exclusive",
+    # JP: exclusivas de evento/venue (inalcanzables fuera del día del evento)
+    "会場限定", "イベント限定",
     # Lottery / gacha ultra tier
     "lottery", "ichiban kuji", "last one prize",
     "ultra limited", "ultra limitata", "ultra-limitée",
     "抽選", "くじ",
+    # Convention exclusive (cross-market)
+    "convention exclusive",
 )
 
 # Regex patterns for ultra_rare that need more context than a bare keyword.
@@ -2241,11 +2251,19 @@ _ULTRA_RARE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 # Explicit print-run regex: "limited to N copies" (multilingual).
 # Used for both ultra_rare (N <= 500) and super_rare (N <= 2500).
+# Formas cubiertas:
+#   ES/IT/FR/DE: "limitada/limitata/limitée/limitiert a/to/à/auf/di N …"
+#   IT: "tiratura limitata di N copie" (preposición di)
+#   IT: "in sole/soli N copie/esemplari/pezzi" — lead-in sin "limitat-"
+#   IT: "stampata in soli N esemplari"
+#   DE: "limitiert auf N Exemplare/exemplaren" (forma alemana)
+#   EN: "limited to N numbered copies" (adjetivo numbered opcional)
+#   Unidades nuevas: pezzi (IT), ejemplares (ES), exemplaren (DE)
 _PRINT_RUN_RE = re.compile(
-    r'(?:limited|limitata?|limitée?|limitad[oa]|limitiert)'
-    r'\s+(?:a|to|à|auf)\s+'
-    r'(\d[\d.,]*)\s*'
-    r'(?:cop[iíy]e?s?|exempla[ir]res?|esemplari|st[üu]ck|unidades|pi[èe]ces)',
+    r'(?:(?:limited|limitata?|limitée?|limitad[oa]|limitiert)\s+(?:a|to|à|auf|di)|in\s+sol[ei]|stampat[oa]\s+in\s+sol[ei])'
+    r'\s+(\d[\d.,]*)\s*'
+    r'(?:numbered\s+)?'
+    r'(?:cop[iíy]e?s?|exempla[ir]res?|exemplaren?|esemplari|pezzi|st[üu]ck|unidades|ejemplares|pi[èe]ces)',
     re.I,
 )
 
@@ -2284,6 +2302,8 @@ _SINGLE_RUN_KEYWORDS = (
     "tiratura limitata", "limitata alla prima tiratura",
     "limitata nel tempo",
     "no se reimprimirá", "no volverá a imprimirse",
+    # ES: formulaciones directas de no-reimpresión
+    "no habrá reimpresiones", "no se reimprime",
     "single print run", "one print run only",
     "limited to a single print",
     # First-print-only bonuses (el libro se reimprime, el bonus no)
@@ -2291,14 +2311,18 @@ _SINGLE_RUN_KEYWORDS = (
     "初版限定", "初回限定", "shokai gentei",
     # Event-tied editions (celebración con extras)
     "celebration edition",
-    # Lucca Comics — items sold/premiered at the festival are one-time prints
-    # but without explicit print runs we can't distinguish 50 from 5000 copies.
-    # Keep rare (not common) but don't push to ultra_rare. Items with
-    # explicit print runs still reach ultra_rare via _PRINT_RUN_RE.
-    "lucca comics", "lucca c&g",
+    # Lucca Comics — sustituido por patrón word-boundary (_SINGLE_RUN_PATTERNS)
+    # que captura variantes ("Variant Lucca 2015", "a Lucca", "Lucca Changes").
+    # Las entradas de keyword se QUITAN; el patrón es la autoridad.
     # JP: 限定版/特装版 son single-print-run por convención de mercado (no se
     # reimprimen con el extra); 受注生産 es literalmente impresión bajo pedido.
     "限定版", "特装版", "受注生産", "完全受注生産",
+    # JP: exclusivas de tienda/quantity — no se reimprimen con el extra de la tienda
+    "アニメイト限定", "とらのあな限定", "ゲーマーズ限定", "店舗限定",
+    "完全生産限定", "数量限定",
+    # FR: política editorial oficial (Pika FAQ 2026): "les éditions limitées et les
+    # éditions collectors ne sont pas réimprimées" — misma convención que 限定版 JP.
+    "édition collector", "coffret collector",
     # Explicit sold-out / agotado en editorial
     "verlagsvergriffen", "épuisé éditeur",
 )
@@ -2309,6 +2333,34 @@ _SINGLE_RUN_KEYWORDS = (
 # escasez real — eran la causa #1 de que 81% del corpus quedara en 'rare'
 # (precisión medida: 54%). La escasez real se evidencia con print run,
 # no-reimpresión explícita, lotería/evento o stock agotado verificado.
+
+# Señales de tirada única / escasez que necesitan regex (orden de palabras libre
+# o word boundary) y no pueden expresarse como keyword simple.
+_SINGLE_RUN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Lucca Comics: cualquier mención word-boundary captura variantes como
+    # "Variant Lucca 2015", "in esclusiva a Lucca", "Lucca Changes".
+    # Sin tirada explícita no distinguimos 50 de 5000 copias → rare, no ultra.
+    # Items con print run explícito siguen llegando a ultra_rare via _PRINT_RUN_RE.
+    re.compile(r'\blucca\b', re.I),
+    # Exclusivas de evento/festival con orden de palabras libre:
+    # "sold exclusively at Napoli Comicon 2015",
+    # "available exclusively at Japan Expo 2025",
+    # "released exclusively during the festival Comic Fes 2023".
+    re.compile(
+        r'exclusiv\w*[^.;:!?]{0,60}\b(?:comicon|comic[- ]?con|japan ?expo|manga barcelona|'
+        r'cartoomics|etna comics|comic ?fes|festival|fiera)\b'
+        r'|\b(?:comicon|comic[- ]?con|japan ?expo|manga barcelona)\b[^.;:!?]{0,40}exclusiv',
+        re.I,
+    ),
+    # Variantes furoku/appendix de revista JP (Mangavariant): inobtenibles
+    # fuera del mercado de segunda mano.
+    re.compile(r'appendix of the (?:omnibus )?magazine|supplement to the magazine|\bfuroku\b', re.I),
+    # Exclusiva de retailer expresada en texto (sin signal retailer_exclusive):
+    # "exclusive to Kinokuniya bookstores", "exclusive to Panini online shop".
+    re.compile(r'exclusive(?:ly)?\s+(?:to|at)\s+[^.;:!?]{0,40}(?:online\s+(?:store|shop)|bookstores?\b)', re.I),
+    # Out-of-print / agotado en editorial (multilingual).
+    re.compile(r'\bout of print\b|descatalogad[oa]|fuera de cat[áa]logo|\bvergriffen\b|épuisé|\besaurito\b|絶版', re.I),
+)
 
 _TOKUTEN_SOURCES = frozenset({
     "booksprivilege",
@@ -2412,9 +2464,11 @@ def derive_rarity_tier(
        exclusiva de evento, lotería, O print run explícito ≤ 500.
     2. super_rare: print run explícito ≤ 2500, O retailer_exclusive CON stock
        agotado verificado (stock_status='out_of_stock').
-    3. rare: escasez evidenciada sin tirada documentada — stock agotado
-       verificado, retailer_exclusive/tokuten sin verificación, o keyword de
-       no-reimpresión (_SINGLE_RUN_KEYWORDS, incl. 限定版/特装版 JP).
+    3. rare: escasez evidenciada sin tirada corta documentada — stock agotado
+       verificado, retailer_exclusive/tokuten sin verificación, keyword de
+       no-reimpresión (_SINGLE_RUN_KEYWORDS), o patrón de evento/furoku/OOP
+       (_SINGLE_RUN_PATTERNS: Lucca word-boundary, exclusivas de festival,
+       furoku/appendix de revista, exclusivas de retailer en texto, out-of-print).
     4. common: default. Sin badge en la UI; se promueve solo con evidencia
        (retrofit check_stock.py llena stock_status desde las páginas fuente).
 
@@ -2459,6 +2513,8 @@ def derive_rarity_tier(
     if any(t in src for t in _TOKUTEN_SOURCES):
         return "rare"
     if any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
+        return "rare"
+    if any(p.search(text) for p in _SINGLE_RUN_PATTERNS):
         return "rare"
 
     # --- Common: default (sin evidencia de escasez) ---
@@ -4047,6 +4103,17 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         "description_es",  # traducción al español (translate_descriptions.py)
         "approved_at",     # golden record marker (aprobado desde el dashboard)
         "approved_by",
+        # Gotcha #65: el upsert NO debe degradar filas estandarizadas. `slug`
+        # lo asigna generate_slugs.py (el scraper nunca lo trae); `detected_at`
+        # es la PRIMERA detección, no la última; `score`/`signals`/`signal_types`
+        # se computaron sobre el texto crudo ORIGINAL — la verdad
+        # post-estandarización vive en la etiqueta de edición, no en el texto
+        # del re-scrape (gotcha #61), recomputarlos pierde señales.
+        "slug",
+        "detected_at",
+        "score",
+        "signals",
+        "signal_types",
     )
     # Campos volátiles de mercado: SÍ se refrescan aunque el item esté aprobado
     # (un golden record congela la metadata descriptiva, no el precio/stock).
@@ -4068,6 +4135,11 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # pero el sticky cubre TODOS los items independientemente del flag.
         if old and old.get("description_es") and not row.get("description_es"):
             row["description_es"] = old["description_es"]
+        # slug es sticky para TODOS los items (no sólo estandarizados): lo
+        # asigna generate_slugs.py en curación y el scraper nunca lo trae.
+        # Sin esto un re-scrape deja slug=None → violación SLUG (gotcha #65).
+        if old and old.get("slug") and not row.get("slug"):
+            row["slug"] = old["slug"]
         # rarity es sticky: un re-scrape no debe pisar el valor asignado por
         # web-search (set_rarity.py / validate-rarity skill) con el 'rare'
         # default del scraper. En particular 'common' solo se asigna tras
@@ -4138,6 +4210,11 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             for field in _CURATED_FIELDS:
                 if old.get(field) not in (None, ""):
                     merged[field] = old[field]
+            # Gotcha #65: la fila cruda trae cluster_key de tier isbn:/url:.
+            # Con edition_key/volume curados ya restaurados, re-derivar acá
+            # devuelve el tier edition: y mantiene la invariante CLKEY
+            # (stored == derive_cluster_key(item)) sin reparación manual.
+            merged["cluster_key"] = derive_cluster_key(merged)
             existing[key] = merged
         else:
             existing[key] = row
@@ -6113,7 +6190,6 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     if extras_list:
         row["extras"] = extras_list
 
-    row["cluster_key"] = derive_cluster_key(row)
     # Hook: si el Candidate ya tiene series_key/edition_key (set por una pasada
     # de estandarización manual o por un scraper futuro), aplicar
     # canonical_series_key() para normalizar a la forma del aliases.yml.
@@ -6171,6 +6247,12 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     # No re-escribimos el title si ya viene seteado; el `title_standardized`
     # de la heurística queda como reference pero no overridea el title scrapeado.
     # El skill /watch-standardize-catalog es el que reescribe título al merge.
+
+    # cluster_key se deriva DESPUÉS del Paso C: con edition_key ya escrito en
+    # el row, la clave sale en tier edition: (o lmc:). Derivarla antes dejaba
+    # toda fila fresca en tier isbn:/url: → stored != derive_cluster_key(item),
+    # violación CLKEY hasta correr backfill_cluster_key (gotcha #65).
+    row["cluster_key"] = derive_cluster_key(row)
 
     # Paso D: si el series_key NO está en aliases.yml, loguearlo al unmapped
     # queue para que el skill enrich-series-aliases lo procese.
