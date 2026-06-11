@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PandaWatch — Revisión de portadas</title>
+<title>PandaWatch — Revisión de imágenes</title>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 <style>
   :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
@@ -17,7 +17,9 @@
   .stats { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
   .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
           padding: 0.6rem 1rem; font-size: 0.85rem; }
-  .actions { margin-bottom: 1.5rem; display: flex; gap: 0.8rem; flex-wrap: wrap; }
+  .actions { margin-bottom: 1.5rem; display: flex; gap: 0.8rem; flex-wrap: wrap;
+             position: sticky; top: 0; z-index: 50; background: var(--bg);
+             padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
   button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
            padding: 0.5rem 1.2rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
   button:hover { opacity: 0.9; }
@@ -49,13 +51,23 @@
   .gallery-now .gn-head { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.4rem; }
   .gallery-now .gn-head b { color: var(--text); }
   .gn-strip { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.2rem; }
-  .gn-item { min-width: 60px; width: 60px; text-align: center; }
+  .gn-item { min-width: 60px; width: 60px; text-align: center; position: relative; }
   .gn-item img { width: 60px; height: 84px; object-fit: contain; border-radius: 4px;
                  border: 1px solid var(--border); cursor: zoom-in; background: #000; }
+  /* botón de eliminar foto — aparece al pasar el mouse sobre la miniatura */
+  .gn-del { position: absolute; top: 2px; right: 2px; width: 17px; height: 17px;
+            border-radius: 50%; background: var(--red); color: #fff; border: none;
+            font-size: 0.8rem; line-height: 1; padding: 0; cursor: pointer; z-index: 2;
+            display: none; align-items: center; justify-content: center; font-weight: 700;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+  .gn-item:hover .gn-del { display: flex; }
+  .gn-del:hover { background: #ff6b6b; }
   .gn-item.cover img { border-color: var(--accent); }
   .gn-item .gn-label { font-size: 0.58rem; color: var(--muted); margin-top: 0.15rem;
                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .gn-item.cover .gn-label { color: var(--accent); font-weight: 600; }
+  .gn-item.selected img { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .gn-item.selected .gn-label { color: var(--accent); font-weight: 600; }
   /* per-candidate sub-card */
   .cand { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem;
           margin-bottom: 0.6rem; transition: border-color 0.15s; }
@@ -154,11 +166,11 @@
     <span style="font-size:0.8rem; color:var(--muted);">PandaWatch</span>
   </nav>
 
-  <h1>Revisión de portadas</h1>
+  <h1>Revisión de imágenes</h1>
   <p class="subtitle">
-    Portadas mejoradas con <b>baja confianza</b> (imagen original muy pequeña para verificar por hash).<br>
+    Portadas e imágenes de galería mejoradas con <b>baja confianza</b> (imagen original muy pequeña para verificar por hash).<br>
     Cada producto puede tener varias candidatas. Elegí la <b>acción</b> de cada una
-    (reemplazar portada, agregar a galería, agregar como extra) y aprobá o rechazá individualmente.
+    (reemplazar portada, reemplazar imagen de galería, agregar como extra) y aprobá o rechazá individualmente.
   </p>
 
   <template x-if="!loaded">
@@ -174,22 +186,49 @@
     <div>
       <div class="stats">
         <div class="stat">Productos: <b x-text="entries.length"></b></div>
-        <div class="stat">Candidatas pendientes:
-          <b x-text="pendingCount()" style="color:var(--yellow)"></b></div>
+        <div class="stat">
+          Por revisar: <b x-text="pendingCount()" style="color:var(--yellow)"></b>
+        </div>
+        <div class="stat" x-show="approvedCount() > 0">
+          Aprobadas: <b x-text="approvedCount()" style="color:var(--green)"></b>
+        </div>
         <div class="stat" x-show="decidedCount() > 0">
           Decididas: <b x-text="decidedCount()" style="color:var(--green)"></b>
         </div>
       </div>
 
       <div class="actions">
-        <button class="success" @click="applyApproved()" :disabled="approvedCount() === 0"
-                :style="approvedCount() === 0 ? 'opacity:0.45; cursor:not-allowed' : ''"
+        <button class="success" @click="applyApproved()"
+                :disabled="approvedCount() === 0 || isSaving"
+                :style="(approvedCount() === 0 || isSaving) ? 'opacity:0.45; cursor:not-allowed' : ''"
                 title="Aplica las aprobadas al catálogo y quita las decididas del listado">
           ✓ Aplicar aprobadas (<span x-text="approvedCount()"></span>)
         </button>
-        <button class="outline success" @click="bulkAction('approved')">Aprobar todas pendientes</button>
-        <button class="outline danger" @click="bulkAction('rejected')">Rechazar todas pendientes</button>
+        <button class="outline success" @click="bulkAction('approved')"
+                :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Aprobar todas pendientes</button>
+        <button class="outline danger" @click="bulkAction('rejected')"
+                :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Rechazar todas pendientes</button>
       </div>
+
+      <template x-if="pendingCount() === 0 && approvedCount() > 0">
+        <div style="background:rgba(34,197,94,0.12); border:1px solid var(--green); border-radius:8px;
+                    padding:0.75rem 1rem; margin-bottom:1rem; display:flex; align-items:center;
+                    gap:1rem; flex-wrap:wrap;">
+          <span style="font-weight:600; color:var(--green);">
+            Todo revisado —
+            <span x-text="approvedCount()"></span> aprobada<span x-show="approvedCount() !== 1">s</span> listas.
+          </span>
+          <button class="success" @click="applyApproved()" :disabled="isSaving"
+                  :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">
+            ✓ Aplicar aprobadas
+          </button>
+        </div>
+      </template>
+
+      <p style="font-size:0.72rem; color:var(--muted); margin-bottom:0.75rem;">
+        Tip: abre la comparación y usa <kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">A</kbd>/<kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">R</kbd> para decidir,
+        <kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">N</kbd>/<kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">P</kbd> para saltar de producto.
+      </p>
 
       <div class="grid">
         <template x-for="(e, ei) in entries" :key="e.slug || ei">
@@ -203,12 +242,16 @@
               <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
                     x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
               <button class="card-toggle" @click="flagIrrelevant(e)"
+                      :disabled="isSaving"
                       style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
                              padding:0.1rem 0.45rem; font-size:0.68rem;"
+                      :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                       title="Marcar como irrelevante: lo agrega a feedback.jsonl para excluirlo del scraper">Excluir</button>
               <button class="card-toggle" x-show="pendingInEntry(e) > 0"
                       @click="rejectEntryPending(e)"
+                      :disabled="isSaving"
                       style="color:var(--red);"
+                      :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : 'color:var(--red);'"
                       title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
               <button class="card-toggle" @click="toggleCollapse(e)"
                       x-text="isCollapsed(e) ? '▸' : '▾'"></button>
@@ -217,19 +260,32 @@
             <div class="card-body" x-show="!isCollapsed(e)">
               <!-- galería ACTUAL del producto (portada + galería + extras) -->
               <div class="gallery-now">
-                <div class="gn-head">
-                  <b>Galería actual</b>
-                  (<span x-text="(e.current_images || []).length"></span>)
-                  &middot; <span x-text="e.publisher"></span> &middot; <span x-text="e.country"></span>
+                <div class="gn-head" style="display:flex; align-items:center; justify-content:space-between;">
+                  <span>
+                    <b>Galería actual</b>
+                    (<span x-text="(e.current_images || []).length"></span>)
+                    &middot; <span x-text="e.publisher"></span> &middot; <span x-text="e.country"></span>
+                  </span>
+                  <span x-show="(e.current_images || []).length > 1"
+                        style="display:flex; align-items:center; gap:0.3rem;">
+                    <button class="card-toggle" @click="prevSelImg(e)"
+                            style="font-size:0.75rem; padding:0.05rem 0.35rem;" title="Imagen anterior">◀</button>
+                    <span style="font-size:0.65rem; color:var(--accent);"
+                          x-text="'ref ' + (getSelImgIdx(e) + 1) + '/' + (e.current_images || []).length"></span>
+                    <button class="card-toggle" @click="nextSelImg(e)"
+                            style="font-size:0.75rem; padding:0.05rem 0.35rem;" title="Siguiente imagen">▶</button>
+                  </span>
                 </div>
                 <div class="gn-strip">
                   <template x-for="(ci, gi) in (e.current_images || [])" :key="gi">
-                    <div class="gn-item" :class="ci.is_cover ? 'cover' : ''">
+                    <div class="gn-item" :class="gi === getSelImgIdx(e) ? 'selected' : (ci.is_cover ? 'cover' : '')">
+                      <button class="gn-del" @click.stop="deleteGalleryImage(e, gi)"
+                              :title="(gi === coverIdx(e) ? 'Eliminar portada' : 'Eliminar imagen ' + (gi+1)) + ' de la galería'">&times;</button>
                       <img :src="curSrc(ci)" alt="Actual"
-                           @click="openZoom(curSrc(ci))"
+                           @click="openZoomGallery(e, gi, curSrc(ci))"
                            @error="if(!$event.target.dataset.fb && ci.url){$event.target.dataset.fb=1; $event.target.src=ci.url}else{$event.target.style.opacity=0.3}">
                       <div class="gn-label"
-                           x-text="(gi+1) + '·' + (ci.is_cover ? 'Portada' : (ci.kind === 'extra' ? 'Extra' : 'Galería'))"></div>
+                           x-text="(gi+1) + '·' + (gi === getSelImgIdx(e) ? 'Ref' : (ci.is_cover ? 'Portada' : (ci.kind === 'extra' ? 'Extra' : 'Galería')))"></div>
                     </div>
                   </template>
                 </div>
@@ -265,14 +321,28 @@
                            @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
                       <div class="px">
                         <span x-text="formatPx(currentCand(e).new_pixels)"></span>
-                        <span class="gain" x-show="e.old_pixels"
-                              x-text="'x' + (currentCand(e).new_pixels / e.old_pixels).toFixed(1)"></span>
+                        <span class="gain" x-show="currentCand(e).ref_pixels || e.old_pixels"
+                              x-text="'x' + (currentCand(e).new_pixels / (currentCand(e).ref_pixels || e.old_pixels)).toFixed(1)"></span>
                       </div>
                     </div>
                     <div class="cand-info">
                       <span class="cand-status"
                             :class="currentCand(e).status === 'approved' ? 'ok' : currentCand(e).status === 'rejected' ? 'bad' : 'pending'"
                             x-text="currentCand(e).status === 'approved' ? 'Aprobada' : currentCand(e).status === 'rejected' ? 'Rechazada' : 'Pendiente'"></span>
+                      <template x-if="currentCand(e).action === 'replace_image'">
+                        <span style="font-size:0.65rem; color:var(--accent); display:inline-block; margin-left:0.4rem;"
+                              x-text="targetLabel(e, currentCand(e))"></span>
+                      </template>
+                      <template x-if="currentCand(e).verified === true">
+                        <span class="card-badge"
+                              style="background:var(--green);color:#000;margin-left:0.4rem;"
+                              title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
+                      </template>
+                      <template x-if="currentCand(e).verified === false">
+                        <span class="card-badge"
+                              style="background:var(--yellow);color:#000;margin-left:0.4rem;"
+                              title="No se pudo verificar contra la imagen actual — revisar con cuidado">⚠ sin verificar</span>
+                      </template>
                       <br>
                       <template x-if="currentCand(e).domain">
                         <span>Fuente: <span class="domain" x-text="currentCand(e).domain"></span><br></span>
@@ -283,14 +353,17 @@
                     </div>
                   </div>
                   <div class="cand-controls">
-                    <select x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))">
+                    <select x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))"
+                            :disabled="isSaving">
                       <template x-for="opt in candidateOptions(e)" :key="opt.value">
                         <option :value="opt.value" x-text="opt.label"></option>
                       </template>
                     </select>
                     <button :class="currentCand(e).status === 'approved' ? 'active-approve' : 'outline-approve'"
+                            :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'approved')">✓</button>
                     <button :class="currentCand(e).status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                            :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'rejected')">✕</button>
                   </div>
                 </div>
@@ -306,18 +379,22 @@
   <template x-if="compareEntry">
     <div class="modal-overlay" @click.self="compareEntry = null"
          @keydown.escape.window="compareEntry = null"
-         @keydown.arrow-left.window="compareEntry && compareEntry.candidates.length > 1 && prevCand(compareEntry)"
-         @keydown.arrow-right.window="compareEntry && compareEntry.candidates.length > 1 && nextCand(compareEntry)">
+         @keydown.arrow-left.window="compareEntry && !zoomSrc && compareEntry.candidates.length > 1 && prevCand(compareEntry)"
+         @keydown.arrow-right.window="compareEntry && !zoomSrc && compareEntry.candidates.length > 1 && nextCand(compareEntry)"
+         @keydown.a.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && setStatus(compareEntry, currentCand(compareEntry), 'approved')"
+         @keydown.r.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && setStatus(compareEntry, currentCand(compareEntry), 'rejected')"
+         @keydown.n.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && jumpToNextEntry(1)"
+         @keydown.p.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && jumpToNextEntry(-1)">
       <!-- flex column: header + nav + footer FIJOS; solo el área de imágenes scrollea -->
       <div style="background:var(--card); border:1px solid var(--border); border-radius:12px;
                   max-width:90vw; width:900px; max-height:90vh;
                   display:flex; flex-direction:column; overflow:hidden;">
         <div style="flex:0 0 auto; padding:0.8rem 1rem; border-bottom:1px solid var(--border);
                     display:flex; justify-content:space-between; align-items:center;">
-          <div>
+          <div style="display:flex; align-items:baseline; flex-wrap:wrap; gap:0 0.35rem;">
             <span style="font-weight:700; font-size:0.95rem;" x-text="compareEntry.title"></span>
-            <span style="color:var(--muted); font-size:0.75rem; margin-left:0.5rem;"
-                  x-text="compareEntry.publisher + ' · ' + compareEntry.country"></span>
+            <span style="color:var(--muted); font-size:0.78rem; margin-left:0.4rem;"
+                  x-text="'· ' + compareEntry.publisher + ' · ' + compareEntry.country"></span>
           </div>
           <button class="close" @click="compareEntry = null" style="background:none; border:none;
                   color:var(--muted); font-size:1.5rem; cursor:pointer; padding:0;">&times;</button>
@@ -338,14 +415,26 @@
         <div style="flex:1 1 auto; overflow-y:auto; min-height:0;">
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:1rem;">
             <div style="text-align:center;">
-              <img :src="'../data/images/' + compareEntry.old_image"
+              <img :src="curSrc(selectedImg(compareEntry))"
                    title="Clic para ver a tamaño original"
-                   @click="openZoom('../data/images/' + compareEntry.old_image)"
+                   @click="openZoom(curSrc(selectedImg(compareEntry)))"
                    style="max-width:100%; max-height:58vh; object-fit:contain; border-radius:6px;
                           border:2px solid var(--red); cursor:zoom-in;"
-                   @error="if(!$event.target.dataset.fb && compareEntry.old_url){$event.target.dataset.fb=1; $event.target.src=compareEntry.old_url}else{$event.target.style.opacity=0.3}">
-              <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;">
-                Anterior — <span x-text="formatPx(compareEntry.old_pixels)"></span>
+                   @error="if(!$event.target.dataset.fb){const _si=selectedImg(compareEntry);if(_si&&_si.url){$event.target.dataset.fb=1;$event.target.src=_si.url}else{$event.target.style.opacity=0.3}}else{$event.target.style.opacity=0.3}">
+              <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--red); font-weight:600;
+                          display:flex; align-items:center; justify-content:center; gap:0.4rem;">
+                <template x-if="(compareEntry.current_images || []).length > 1">
+                  <button class="nav-arrow" @click="prevSelImg(compareEntry)"
+                          style="font-size:0.75rem; padding:0.2rem 0.55rem;" title="Imagen anterior">◀</button>
+                </template>
+                <span x-text="selectedImg(compareEntry) && selectedImg(compareEntry).is_cover ? 'Portada actual' : ('Imagen ' + (getSelImgIdx(compareEntry)+1) + ' actual')"></span>
+                <template x-if="currentCand(compareEntry).ref_pixels || compareEntry.old_pixels">
+                  <span>— <span x-text="formatPx(currentCand(compareEntry).ref_pixels || compareEntry.old_pixels)"></span></span>
+                </template>
+                <template x-if="(compareEntry.current_images || []).length > 1">
+                  <button class="nav-arrow" @click="nextSelImg(compareEntry)"
+                          style="font-size:0.75rem; padding:0.2rem 0.55rem;" title="Siguiente imagen">▶</button>
+                </template>
               </div>
             </div>
             <div style="text-align:center;">
@@ -357,8 +446,8 @@
                    @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
               <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;">
                 Nueva — <span x-text="formatPx(currentCand(compareEntry).new_pixels)"></span>
-                <span class="gain" x-show="compareEntry.old_pixels"
-                      x-text="'x' + (currentCand(compareEntry).new_pixels / compareEntry.old_pixels).toFixed(1)"></span>
+                <span class="gain" x-show="currentCand(compareEntry).ref_pixels || compareEntry.old_pixels"
+                      x-text="'x' + (currentCand(compareEntry).new_pixels / (currentCand(compareEntry).ref_pixels || compareEntry.old_pixels)).toFixed(1)"></span>
               </div>
             </div>
           </div>
@@ -368,6 +457,16 @@
             <template x-if="currentCand(compareEntry).page_title">
               <span> · <span x-text="currentCand(compareEntry).page_title.substring(0, 80)"></span></span>
             </template>
+            <template x-if="currentCand(compareEntry).verified === true">
+              <span class="card-badge"
+                    style="background:var(--green);color:#000;margin-left:0.5rem;"
+                    title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
+            </template>
+            <template x-if="currentCand(compareEntry).verified === false">
+              <span class="card-badge"
+                    style="background:var(--yellow);color:#000;margin-left:0.5rem;"
+                    title="No se pudo verificar contra la imagen actual — revisar con cuidado">⚠ sin verificar</span>
+            </template>
           </div>
         </div>
 
@@ -375,15 +474,21 @@
         <div class="cand-controls" style="flex:0 0 auto; padding:0.8rem 1rem;
                     border-top:1px solid var(--border); background:var(--card);">
           <select x-model="currentCand(compareEntry)._choice"
-                  @change="applyChoice(compareEntry, currentCand(compareEntry))">
+                  @change="applyChoice(compareEntry, currentCand(compareEntry))"
+                  :disabled="isSaving">
             <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
               <option :value="opt.value" x-text="opt.label"></option>
             </template>
           </select>
           <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
+                  :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                   @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
           <button :class="currentCand(compareEntry).status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                  :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                   @click="setStatus(compareEntry, currentCand(compareEntry), 'rejected')">✕ Rechazar</button>
+          <span style="margin-left:auto; font-size:0.68rem; color:var(--muted); white-space:nowrap; align-self:center;">
+            A aprobar · R rechazar · N/P producto
+          </span>
         </div>
       </div>
     </div>
@@ -407,7 +512,7 @@
         </div>
         <div class="modal-body">
           <img class="cover-img"
-               :src="modalItem.image_local ? '../data/images/' + modalItem.image_local : modalItem.image_url"
+               :src="coverSrc(modalItem)"
                :alt="modalItem.title"
                onerror="this.style.display='none'">
 
@@ -459,8 +564,45 @@
 
   <!-- Modal de zoom: imagen a tamaño ORIGINAL con scroll -->
   <template x-if="zoomSrc">
-    <div class="zoom-overlay" @click.self="zoomSrc = null" @keydown.escape.window="zoomSrc = null">
-      <button class="zoom-close" @click="zoomSrc = null" title="Cerrar (Esc)">&times;</button>
+    <div class="zoom-overlay" @click.self="closeZoom()" @keydown.escape.window="closeZoom()"
+         @keydown.arrow-left.window="zoomCtx && zoomGalleryNav(-1)"
+         @keydown.arrow-right.window="zoomCtx && zoomGalleryNav(1)">
+      <button class="zoom-close" @click="closeZoom()" title="Cerrar (Esc)">&times;</button>
+
+      <!-- Navegación entre fotos de la galería actual (botones laterales + ← →) -->
+      <template x-if="zoomCtx && (zoomCtx.entry.current_images || []).length > 1">
+        <button class="nav-arrow" @click.stop="zoomGalleryNav(-1)" title="Imagen anterior (←)"
+                style="position:fixed;left:1rem;top:50%;transform:translateY(-50%);z-index:1102;
+                       font-size:1.6rem;padding:0.6rem 1rem;">◀</button>
+      </template>
+      <template x-if="zoomCtx && (zoomCtx.entry.current_images || []).length > 1">
+        <button class="nav-arrow" @click.stop="zoomGalleryNav(1)" title="Siguiente imagen (→)"
+                style="position:fixed;right:1rem;top:50%;transform:translateY(-50%);z-index:1102;
+                       font-size:1.6rem;padding:0.6rem 1rem;">▶</button>
+      </template>
+
+      <!-- Barra inferior — sólo al ver una foto de la galería actual -->
+      <template x-if="zoomCtx">
+        <div style="position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:1102;
+                    display:flex;align-items:center;gap:0.6rem;">
+          <span x-show="(zoomCtx.entry.current_images || []).length > 1"
+                style="font-size:0.8rem;color:#fff;background:rgba(0,0,0,0.6);padding:0.5rem 0.75rem;
+                       border-radius:8px;white-space:nowrap;"
+                x-text="(zoomCtx.imgIdx + 1) + ' / ' + (zoomCtx.entry.current_images || []).length"></span>
+          <button @click.stop="deleteFromZoom()" title="Eliminar esta foto de la galería"
+                  style="background:var(--red);color:#fff;padding:0.55rem 1.1rem;font-size:0.85rem;
+                         border-radius:8px;white-space:nowrap;">🗑 Eliminar</button>
+          <button @click="setSelImgIdx(zoomCtx.entry, zoomCtx.imgIdx); closeZoom()"
+                  :style="getSelImgIdx(zoomCtx.entry) === zoomCtx.imgIdx
+                    ? 'z-index:1102;background:var(--green);color:#000;padding:0.55rem 1.4rem;font-size:0.85rem;border-radius:8px;cursor:default;white-space:nowrap;'
+                    : 'z-index:1102;background:var(--accent);color:#fff;padding:0.55rem 1.4rem;font-size:0.85rem;border-radius:8px;white-space:nowrap;'"
+                  x-text="getSelImgIdx(zoomCtx.entry) === zoomCtx.imgIdx
+                    ? '✓ Ya es la referencia'
+                    : '📌 Usar como referencia'">
+          </button>
+        </div>
+      </template>
+
       <img :src="zoomSrc" alt="Imagen a tamaño original"
            @error="$event.target.style.opacity = 0.3">
     </div>
@@ -476,10 +618,17 @@ function previewApp() {
     modalItem: null,
     compareEntry: null,
     zoomSrc: null,
+    zoomCtx: null,
     collapsed: {},
     candIdx: {},
+    selImgIdx: {},
     itemsBySlug: {},
-    _itemsLoaded: false,
+    _itemsPromise: null,
+    isSaving: false,
+    // mtime (st_mtime_ns) del cover_preview.json al momento de la última carga.
+    // Se envía como expected_mtime en cada POST; el servidor responde 409 si el
+    // archivo cambió desde entonces (otra pestaña o proceso lo actualizó).
+    loadedMtime: 0,
     // ?return=<url> habilita el botón de volver al lugar de origen (p. ej. el
     // Panel de Calidad). Sin el param, vuelve al catálogo.
     returnUrl: '',
@@ -515,6 +664,9 @@ function previewApp() {
         page_title: c.page_title || '', domain: c.domain || '', query: c.query || '',
         confidence: c.confidence || 'low', action: c.action || 'replace_cover',
         target: c.target || '', kind: c.kind || 'gallery', status: c.status || 'pending',
+        ...(c.verified !== undefined ? { verified: c.verified } : {}),
+        ref_pixels: c.ref_pixels ?? null,
+        match_dist: c.match_dist ?? null,
       });
       if (Array.isArray(e.candidates)) {
         base.candidates = e.candidates.map(wrap);
@@ -545,28 +697,90 @@ function previewApp() {
       return '← Catálogo';
     },
 
-    // Carga (o recarga) cover_preview.json. items.jsonl (25MB) se carga LAZY
-    // solo al abrir un detalle, no acá.
+    // Carga (o recarga) la cola. Usa GET /api/cover-preview (un solo request:
+    // entries + mtime + synced stats). Fallback al fetch estático si el endpoint
+    // no está disponible (servidor viejo sin el endpoint).
     async loadEntries() {
       try {
-        const r = await fetch('../data/cover_preview.json?t=' + Date.now(), { cache: 'no-store' });
-        if (r.ok) {
-          const data = await r.json();
-          this.entries = data.map(e => this.normalizeEntry(e));
-          // Colapsar por defecto los productos ya decididos.
+        const resp = await fetch('/api/cover-preview', { cache: 'no-store' });
+        if (resp.ok) {
+          const body = await resp.json();
+          const data = Array.isArray(body.entries) ? body.entries : [];
+          this.entries = data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0);
+          this.entries.forEach((e, i) => {
+            this.collapsed[e.slug || i] = this.entryDone(e);
+          });
+          this.loadedMtime = body.mtime || 0;
+          // Toast informativo si la sincronización quitó sugerencias obsoletas.
+          if (body.synced) {
+            const pruned = (body.synced.pruned_cover_ok || 0)
+              + (body.synced.pruned_target_gone || 0)
+              + (body.synced.pruned_target_ok || 0)
+              + (body.synced.pruned_already_current || 0);
+            const dropped = (body.synced.dropped_missing_item || 0)
+              + (body.synced.dropped_empty || 0);
+            const total = pruned + dropped;
+            if (total > 0) {
+              const msg = `Cola sincronizada con el catálogo: ${total} sugerencia${total === 1 ? '' : 's'} obsoleta${total === 1 ? '' : 's'} quitada${total === 1 ? '' : 's'}.`;
+              this.showToast(msg, 'ok');
+            }
+          }
+          return;
+        }
+      } catch { /* endpoint no disponible — fallback */ }
+      // Fallback: fetch estático + /api/cover-preview-meta (servidor viejo).
+      try {
+        const [dataResp, metaResp] = await Promise.all([
+          fetch('../data/cover_preview.json?t=' + Date.now(), { cache: 'no-store' }),
+          fetch('/api/cover-preview-meta', { cache: 'no-store' }),
+        ]);
+        if (dataResp.ok) {
+          const data = await dataResp.json();
+          this.entries = data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0);
           this.entries.forEach((e, i) => {
             this.collapsed[e.slug || i] = this.entryDone(e);
           });
         } else {
           this.entries = [];
         }
+        if (metaResp.ok) {
+          const meta = await metaResp.json();
+          this.loadedMtime = meta.mtime || 0;
+        }
       } catch { this.entries = []; }
     },
 
-    // Carga items.jsonl bajo demanda (solo al abrir el modal de detalle).
+    // Carga un item puntual desde /api/item?slug=X (sin bajar items.jsonl completo).
+    // Con withCluster=true también carga las filas hermanas del cluster en itemsBySlug
+    // para que _clusterImagesFor funcione correctamente.
+    // Resultado cacheado en itemsBySlug; devuelve null si no existe.
+    async _fetchItem(slug, withCluster) {
+      if (this.itemsBySlug[slug]) return this.itemsBySlug[slug];
+      try {
+        const url = '/api/item?slug=' + encodeURIComponent(slug) + (withCluster ? '&cluster=1' : '');
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) return null;
+        const data = await r.json();
+        const item = data.item;
+        if (!item) return null;
+        this.itemsBySlug[slug] = item;
+        if (withCluster && Array.isArray(data.cluster_rows)) {
+          data.cluster_rows.forEach(row => {
+            if (row.slug) this.itemsBySlug[row.slug] = row;
+          });
+        }
+        return item;
+      } catch { return null; }
+    },
+
+    // _ensureItems conservado como fallback para compatibilidad con código
+    // existente que llame directamente a itemsBySlug después del await.
     async _ensureItems() {
-      if (this._itemsLoaded) return;
-      this._itemsLoaded = true;
+      this._itemsPromise ||= this._loadItems();
+      await this._itemsPromise;
+    },
+
+    async _loadItems() {
       try {
         const r = await fetch('../data/items.jsonl', { cache: 'no-store' });
         if (r.ok) {
@@ -590,7 +804,166 @@ function previewApp() {
         ? '../data/images/' + ci.local : ci.url;
     },
 
-    openZoom(src) { if (src) this.zoomSrc = src; },
+    openZoom(src) { if (src) { this.zoomSrc = src; this.zoomCtx = null; } },
+    openZoomGallery(e, gi, src) { if (src) { this.zoomSrc = src; this.zoomCtx = { entry: e, imgIdx: gi }; } },
+    closeZoom() { this.zoomSrc = null; this.zoomCtx = null; },
+
+    // Navega entre las fotos de la galería actual dentro del modal de zoom
+    // (botones laterales ◀ ▶ y flechas ← →). Reasigna zoomCtx para reactividad.
+    zoomGalleryNav(dir) {
+      if (!this.zoomCtx) return;
+      const e = this.zoomCtx.entry;
+      const imgs = e.current_images || [];
+      const n = imgs.length;
+      if (n <= 1) return;
+      const ni = (this.zoomCtx.imgIdx + dir + n) % n;
+      this.zoomSrc = this.curSrc(imgs[ni]);
+      this.zoomCtx = { entry: e, imgIdx: ni };
+    },
+
+    // Elimina la foto que se está viendo en el modal de zoom y reposiciona el
+    // visor: muestra la que ocupa ahora ese índice (o la última); si no queda
+    // ninguna, cierra el modal. deleteGalleryImage ya pide confirmación.
+    async deleteFromZoom() {
+      if (!this.zoomCtx) return;
+      const e = this.zoomCtx.entry;
+      const gi = this.zoomCtx.imgIdx;
+      const before = (e.current_images || []).length;
+      await this.deleteGalleryImage(e, gi);
+      const imgs = e.current_images || [];
+      if (imgs.length === before) return;   // cancelado o error: nada cambió
+      if (!imgs.length) { this.closeZoom(); return; }
+      const ni = Math.min(gi, imgs.length - 1);
+      this.zoomSrc = this.curSrc(imgs[ni]);
+      this.zoomCtx = { entry: e, imgIdx: ni };
+    },
+
+    coverIdx(e) {
+      const idx = (e.current_images || []).findIndex(ci => ci.is_cover);
+      return idx >= 0 ? idx : 0;
+    },
+    getSelImgIdx(e) { return this.selImgIdx[this.entryKey(e)] ?? this.coverIdx(e); },
+    setSelImgIdx(e, i) { this.selImgIdx[this.entryKey(e)] = i; },
+    selectedImg(e) {
+      const imgs = e.current_images || [];
+      return imgs[this.getSelImgIdx(e)] || imgs[0] || null;
+    },
+    prevSelImg(e) {
+      const n = (e.current_images || []).length;
+      if (n <= 1) return;
+      this.setSelImgIdx(e, (this.getSelImgIdx(e) - 1 + n) % n);
+    },
+    nextSelImg(e) {
+      const n = (e.current_images || []).length;
+      if (n <= 1) return;
+      this.setSelImgIdx(e, (this.getSelImgIdx(e) + 1) % n);
+    },
+
+    // Unión de images[] de todo el cluster del item (mismo criterio que el
+    // gestor de imágenes, dedup por URL/local). El endpoint image-manager/save
+    // escribe el set a TODAS las filas del cluster, así que hay que partir de la
+    // unión para no perder imágenes de filas hermanas al eliminar una.
+    _clusterImagesFor(item) {
+      const key = u => (u || '').split('?')[0].replace(/^https?:\/\//, '').toLowerCase();
+      const seen = new Set(), seenLocal = new Set(), out = [];
+      const push = im => {
+        if (!im || !im.url) return;
+        const k = key(im.url), lk = (im.local || '').toLowerCase();
+        if (seen.has(k)) return;
+        if (lk && seenLocal.has(lk)) return;
+        seen.add(k); if (lk) seenLocal.add(lk);
+        out.push({ url: im.url || '', local: im.local || '',
+                   kind: im.kind || 'gallery', description: im.description || '' });
+      };
+      for (const im of (item.images || [])) push(im);
+      const ck = item.cluster_key || '';
+      if (ck && !ck.startsWith('url:')) {
+        for (const sib of Object.values(this.itemsBySlug)) {
+          if (sib !== item && (sib.cluster_key || '') === ck) {
+            for (const im of (sib.images || [])) push(im);
+          }
+        }
+      }
+      return out;
+    },
+
+    // Elimina una foto de la galería actual del producto: la quita de images[]
+    // del item en items.jsonl (vía el endpoint del gestor, que propaga al cluster
+    // y borra el archivo si queda huérfano) y de la galería mostrada acá.
+    async deleteGalleryImage(e, gi) {
+      const ci = (e.current_images || [])[gi];
+      if (!ci) return;
+      const isCover = gi === this.coverIdx(e);
+      if (!confirm(
+        `¿Eliminar ${isCover ? 'la PORTADA' : 'la imagen ' + (gi + 1)} de la galería de ` +
+        `"${e.title || e.slug}"?\n\n` +
+        `Se quita de images[] del item en el catálogo y, si el archivo local queda ` +
+        `huérfano, se borra del espejo. No se puede deshacer.`)) return;
+      const item = await this._fetchItem(e.slug, true);
+      if (!item || !item.url) {
+        this.showToast('No se encontró el item en el catálogo (slug no mapeado)', 'err');
+        return;
+      }
+      const norm = u => (u || '').split('?')[0].replace(/^https?:\/\//, '').toLowerCase();
+      const union = this._clusterImagesFor(item);
+      const matches = im => (ci.local && im.local === ci.local) || (ci.url && norm(im.url) === norm(ci.url));
+      const next = union.filter(im => !matches(im));
+      if (next.length === union.length) {
+        this.showToast('No se encontró la imagen en el catálogo', 'err');
+        return;
+      }
+      try {
+        const resp = await fetch('/api/image-manager/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_url: item.url, images: next }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.ok === false) throw new Error(data.error || 'no se pudo eliminar');
+        // Reflejar en memoria todas las filas del cluster.
+        const ck = item.cluster_key || '';
+        const targets = (ck && !ck.startsWith('url:'))
+          ? Object.values(this.itemsBySlug).filter(it => (it.cluster_key || '') === ck)
+          : [item];
+        targets.forEach(it => { it.images = JSON.parse(JSON.stringify(next)); });
+        // Quitar de la galería mostrada y re-marcar la portada por posición (images[0]).
+        e.current_images.splice(gi, 1);
+        e.current_images.forEach((c, i) => { c.is_cover = i === 0; });
+        const ekey = this.entryKey(e);
+        const sel = this.selImgIdx[ekey];
+        if (sel != null && sel >= e.current_images.length) {
+          this.selImgIdx[ekey] = Math.max(0, e.current_images.length - 1);
+        }
+        // Persistir el cambio en cover_preview.json (current_images quedó sin la foto).
+        const saveResp = await fetch('/api/save-cover-preview', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries: this.cleanPayload(), expected_mtime: this.loadedMtime }),
+        });
+        if (saveResp.status === 409) {
+          this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
+          await this.loadEntries();
+          return;
+        }
+        if (saveResp.ok) {
+          const saveData = await saveResp.json().catch(() => ({}));
+          if (saveData.mtime) this.loadedMtime = saveData.mtime;
+        }
+        const del = data.deleted_files?.length || 0;
+        this.showToast('Imagen eliminada' + (del ? ` · ${del} archivo borrado del disco` : ''), 'ok');
+      } catch (err) {
+        this.showToast('Error: ' + err.message, 'err');
+      }
+    },
+
+    // Etiqueta corta para candidatas replace_image — muestra qué imagen reemplaza.
+    targetLabel(e, c) {
+      if (c.action !== 'replace_image' || !c.target) return '';
+      const idx = (e.current_images || []).findIndex(ci => ci.url === c.target);
+      if (idx >= 1) {
+        const kind = (e.current_images[idx].kind === 'extra') ? 'extra' : 'galería';
+        return `→ imagen ${idx + 1} (${kind})`;
+      }
+      return '→ galería';
+    },
 
     // Opciones del dropdown de acción, dinámicas según la galería actual.
     candidateOptions(e) {
@@ -618,7 +991,7 @@ function previewApp() {
     },
 
     // valor del <select> → action+target+kind del candidato.
-    applyChoice(e, c) {
+    async applyChoice(e, c) {
       const v = c._choice || 'replace_cover';
       if (v.startsWith('replace_image:')) {
         const idx = parseInt(v.split(':')[1], 10);
@@ -631,6 +1004,7 @@ function previewApp() {
         c.target = '';
         this.syncKind(c);
       }
+      await this.save((e.title || e.slug) + ' → acción: ' + v);
     },
 
     entryKey(e) { return e.slug || this.entries.indexOf(e); },
@@ -639,7 +1013,7 @@ function previewApp() {
 
     getCandIdx(e) { return this.candIdx[this.entryKey(e)] || 0; },
     setCandIdx(e, i) { this.candIdx[this.entryKey(e)] = i; },
-    currentCand(e) { return e.candidates[this.getCandIdx(e)] || e.candidates[0]; },
+    currentCand(e) { return (e.candidates && e.candidates.length) ? (e.candidates[this.getCandIdx(e)] || e.candidates[0]) : null; },
     prevCand(e) {
       const n = e.candidates.length;
       this.setCandIdx(e, (this.getCandIdx(e) - 1 + n) % n);
@@ -688,8 +1062,18 @@ function previewApp() {
         const resp = await fetch('/api/apply-cover-preview', { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
-          this.showToast(
-            `✓ Aplicadas: ${data.applied || 0} · rechazadas quitadas: ${data.rejected || 0}`, 'ok');
+          const skipped = data.skipped_missing_file || 0;
+          const applied = Math.max(0, (data.applied || 0) - skipped);
+          let msg = `✓ Aplicadas: ${applied} · rechazadas quitadas: ${data.rejected || 0}`;
+          if (data.redownloaded) msg += ` · re-descargadas: ${data.redownloaded}`;
+          this.showToast(msg, 'ok');
+          if (skipped > 0) {
+            // Nunca fallar en silencio: si una aprobada no se pudo aplicar
+            // (archivo faltante y re-descarga fallida), decirlo claro.
+            this.showToast(
+              `⚠ ${skipped} aprobada(s) NO se aplicaron: su archivo falta y la ` +
+              `re-descarga desde la fuente falló. Recházalas o busca otra candidata.`, 'err');
+          }
           await this.loadEntries();   // recargar: las decididas ya no están
         } else {
           this.showToast('Error: ' + (data.error || 'no se pudo aplicar'), 'err');
@@ -714,9 +1098,17 @@ function previewApp() {
       return px + ' px';
     },
 
+    // Portada de un item: images[0] es la única fuente de verdad.
+    coverSrc(it) {
+      if (!it) return '';
+      const imgs = Array.isArray(it.images) ? it.images : [];
+      const first = imgs.find(im => im && im.url) || { url: '', local: '' };
+      if (first.local) return '../data/images/' + first.local;
+      return first.url || '';
+    },
+
     async openDetail(slug) {
-      await this._ensureItems();
-      const item = this.itemsBySlug[slug];
+      const item = await this._fetchItem(slug, false);
       if (item) this.modalItem = item;
     },
 
@@ -725,6 +1117,11 @@ function previewApp() {
       // reutiliza candIdx, así card y modal quedan sincronizados.
       const idx = entry.candidates.indexOf(candidate);
       if (idx >= 0) this.setCandIdx(entry, idx);
+      // Para candidatas de galería: auto-navegar al "antes" correcto en el panel izquierdo.
+      if (candidate.action === 'replace_image' && candidate.target) {
+        const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === candidate.target);
+        if (imgIdx >= 1) this.setSelImgIdx(entry, imgIdx);
+      }
       this.compareEntry = entry;
     },
 
@@ -748,12 +1145,60 @@ function previewApp() {
       ].filter(([, v]) => v);
     },
 
+    // Salta al siguiente (dir=+1) o anterior (dir=-1) entry con candidatas pendientes.
+    // Usado por los atajos de teclado N/P cuando el modal de comparación está abierto.
+    jumpToNextEntry(dir) {
+      if (!this.compareEntry) return;
+      const cur = this.entries.indexOf(this.compareEntry);
+      if (cur < 0) return;
+      const n = this.entries.length;
+      for (let i = 1; i < n; i++) {
+        const idx = ((cur + dir * i) % n + n) % n;
+        const e = this.entries[idx];
+        if (this.pendingInEntry(e) > 0) {
+          this.openCompare(e, e.candidates.find(c => (c.status || 'pending') === 'pending') || e.candidates[0]);
+          return;
+        }
+      }
+    },
+
+    // Índice de la siguiente candidata pendiente tras la actual (sin wrap si no hay).
+    nextPendingCandIdx(entry) {
+      const n = entry.candidates.length;
+      const cur = this.getCandIdx(entry);
+      for (let i = 1; i < n; i++) {
+        const idx = (cur + i) % n;
+        if ((entry.candidates[idx].status || 'pending') === 'pending') return idx;
+      }
+      return -1;
+    },
+
     async setStatus(entry, cand, status) {
       cand.status = status;
       const verb = status === 'approved' ? 'aprobada' : 'rechazada';
       await this.save((entry.title || entry.slug) + ' → ' + verb);
-      // Colapsar el producto cuando todas sus candidatas están decididas.
-      if (this.entryDone(entry)) this.collapsed[this.entryKey(entry)] = true;
+
+      const inModal = this.compareEntry === entry;
+
+      if (this.entryDone(entry)) {
+        // Todas decididas: colapsar card y cerrar modal si estaba abierto.
+        this.collapsed[this.entryKey(entry)] = true;
+        if (inModal) this.compareEntry = null;
+      } else if (inModal || status === 'rejected') {
+        // Modal: avanzar siempre. Card: avanzar solo al rechazar.
+        const nextIdx = this.nextPendingCandIdx(entry);
+        if (nextIdx >= 0) {
+          this.setCandIdx(entry, nextIdx);
+          // En el modal, sincronizar la imagen de referencia si la candidata siguiente apunta a una imagen de galería.
+          if (inModal) {
+            const nc = entry.candidates[nextIdx];
+            if (nc.action === 'replace_image' && nc.target) {
+              const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === nc.target);
+              if (imgIdx >= 1) this.setSelImgIdx(entry, imgIdx);
+            }
+          }
+        }
+      }
     },
 
     async flagIrrelevant(entry) {
@@ -764,8 +1209,7 @@ function previewApp() {
         `Excluida manualmente desde revisión de portadas."\n\n` +
         `El skill /watch-review-feedback lo procesará para evitar que vuelva a aparecer.`
       )) return;
-      await this._ensureItems();
-      const item = this.itemsBySlug[entry.slug];
+      const item = await this._fetchItem(entry.slug, false);
       if (!item || !item.url) {
         this.showToast('No se encontró el item en el catálogo (slug no mapeado)', 'err');
         return;
@@ -782,11 +1226,20 @@ function previewApp() {
         });
         if (r.ok) {
           this.entries = this.entries.filter(e => e.slug !== entry.slug);
-          await fetch('/api/save-cover-preview', {
+          const saveResp = await fetch('/api/save-cover-preview', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.cleanPayload()),
+            body: JSON.stringify({ entries: this.cleanPayload(), expected_mtime: this.loadedMtime }),
           });
+          if (saveResp.status === 409) {
+            this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
+            await this.loadEntries();
+            return;
+          }
+          if (saveResp.ok) {
+            const saveData = await saveResp.json().catch(() => ({}));
+            if (saveData.mtime) this.loadedMtime = saveData.mtime;
+          }
           this.showToast(`"${entry.title || entry.slug}" → feedback.jsonl`, 'ok');
         } else {
           const data = await r.json().catch(() => ({}));
@@ -833,29 +1286,50 @@ function previewApp() {
           page_title: c.page_title, domain: c.domain, query: c.query,
           confidence: c.confidence, action: c.action, target: c.target,
           kind: c.kind, status: c.status,
+          ...(c.verified !== undefined ? { verified: c.verified } : {}),
+          ref_pixels: c.ref_pixels ?? null,
+          match_dist: c.match_dist ?? null,
         })),
       }));
     },
 
     async save(label) {
+      this.isSaving = true;
       try {
         const r = await fetch('/api/save-cover-preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.cleanPayload()),
+          body: JSON.stringify({ entries: this.cleanPayload(), expected_mtime: this.loadedMtime }),
         });
-        this.showToast(r.ok ? label : 'Error al guardar', r.ok ? 'ok' : 'err');
+        if (r.status === 409) {
+          // El archivo fue modificado por otro proceso o pestaña desde la última carga.
+          // No reintentamos: recargamos la cola desde el servidor para no pisar cambios.
+          this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
+          await this.loadEntries();
+          return;
+        }
+        if (r.ok) {
+          const data = await r.json().catch(() => ({}));
+          if (data.mtime) this.loadedMtime = data.mtime;
+          this.showToast(label, 'ok');
+        } else {
+          this.showToast('Error al guardar', 'err');
+        }
       } catch (err) {
         this.showToast('Error: ' + err.message, 'err');
+      } finally {
+        this.isSaving = false;
       }
     },
 
-    showToast(msg, cls) {
+    showToast(msg, cls, duration) {
       const t = this.$refs.toast;
+      clearTimeout(this._toastTimer);
       t.textContent = msg;
       t.className = 'toast ' + cls;
       t.style.display = 'block';
-      setTimeout(() => t.style.display = 'none', 3000);
+      const ms = duration ?? (cls === 'err' ? 6000 : 3000);
+      this._toastTimer = setTimeout(() => t.style.display = 'none', ms);
     },
   };
 }

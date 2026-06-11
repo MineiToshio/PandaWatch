@@ -20,6 +20,7 @@ Endpoints:
     GET  /api/editions/search?q=    → buscar ediciones por nombre (autocomplete)
     POST /api/save-cover-preview    → guarda data/cover_preview.json
     GET  /api/cover-preview         → cola sincronizada (entries + mtime + synced stats)
+    GET  /api/item?slug=<slug>      → fila de items.jsonl (404 si no existe; ?cluster=1 incluye cluster_rows)
     GET  /api/health                → liveness probe
     GET  /api/scripts               → JSON del script registry (panel)
     POST /api/run                   → lanza un script (panel)
@@ -1240,6 +1241,9 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/api/cover-preview":
             self._handle_cover_preview_get()
             return
+        if self.path.startswith("/api/item?"):
+            self._handle_item_get()
+            return
         if self.path == "/api/scripts":
             self._json(200, {"scripts": SCRIPTS})
             return
@@ -1693,6 +1697,36 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
 
         mtime = dst.stat().st_mtime_ns if dst.exists() else 0
         self._json(200, {"entries": synced, "mtime": mtime, "synced": stats})
+
+    def _handle_item_get(self) -> None:
+        """GET /api/item?slug=<slug>[&cluster=1]
+
+        Devuelve la fila de items.jsonl con ese slug (404 si no existe).
+        Con cluster=1, devuelve además todas las filas del mismo cluster_key
+        en {item, cluster_rows: [...]}, para que la lógica de _clusterImagesFor
+        funcione sin descargar items.jsonl completo.
+        """
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        slug = (qs.get("slug") or [""])[0].strip()
+        want_cluster = (qs.get("cluster") or [""])[0] == "1"
+        if not slug:
+            self._json(400, {"error": "Falta 'slug'"})
+            return
+        items = _load_items()
+        item = next((it for it in items if it.get("slug") == slug), None)
+        if not item:
+            self._json(404, {"error": "Item no encontrado"})
+            return
+        if not want_cluster:
+            self._json(200, {"item": item})
+            return
+        ck = item.get("cluster_key") or ""
+        if ck and not ck.startswith("url:"):
+            cluster_rows = [it for it in items if (it.get("cluster_key") or "") == ck]
+        else:
+            cluster_rows = [item]
+        self._json(200, {"item": item, "cluster_rows": cluster_rows})
 
     @_serialized
     def _handle_save_cover_preview(self) -> None:

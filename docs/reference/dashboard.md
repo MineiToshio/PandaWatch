@@ -64,6 +64,21 @@ revisión". Durabilidad: log append-only `data/approvals.jsonl` (cluster_key, ur
 approved_at/by, reason, submitted_at + snapshot) → `apply_approvals.py` re-materializa
 tras reconstruir el catálogo (match cluster_key, fallback url; idempotente).
 
+## Cover-preview — endpoint puntual por slug
+
+`GET /api/item?slug=<slug>` devuelve la fila de `items.jsonl` con ese slug (404 si no existe).
+Con `?cluster=1` incluye `cluster_rows` (todas las filas del mismo `cluster_key`) para que la lógica
+de `_clusterImagesFor` funcione sin descargar `items.jsonl` completo (~25 MB). La UI cachea las
+filas en `itemsBySlug` — las llamadas repetidas no hacen fetch.
+
+El badge de verificación en la card y en el modal ahora es **tri-estado**: verde `✓ verificada` si
+`verified === true`; amarillo `⚠ sin verificar` si `verified === false`; **sin badge** si el campo
+no existe (evita 100% de ruido amarillo con el corpus que no trae el campo).
+
+La barra `.actions` es `position: sticky; top: 0` con fondo sólido y z-index 50 — "Aplicar aprobadas"
+siempre visible. Cuando `pendingCount() === 0 && approvedCount() > 0` aparece un callout verde con
+el botón de aplicar. Los botones de acción se deshabilitan (`isSaving`) mientras hay un POST en vuelo.
+
 ## Cover-preview — carga con sincronización automática
 
 Al cargar la cola, el frontend llama `GET /api/cover-preview` (un solo request): el servidor
