@@ -2819,6 +2819,166 @@ def test_is_likely_manga_comics_blacklist_does_not_kill_real_manga():
         assert is_manga, f"Should NOT be killed by blacklist: {title!r} (reason={reason})"
 
 
+def test_franchise_exceptions_protect_real_manga():
+    """Títulos en franchise_exceptions/title_exceptions son manga reales — no deben
+    rechazarse por la regla franchise_keywords aunque contengan nombres de franquicia
+    occidental."""
+    cases = [
+        # (a) Shugo Chara! Jewel Joker — contiene "Joker" que está en blacklist
+        "Shugo Chara! Jewel Joker 4 Edición Especial",
+        # (b) Deadpool: Samurai — contiene "Deadpool" que está en blacklist
+        "Deadpool: Samurai Variant 2",
+        # Batman Ninja — contiene "Batman"
+        "Batman Ninja Vol. 1",
+        # Hungry Joker — contiene "Joker"
+        "Hungry Joker 3",
+        # Cell of Empireo — contiene "Empireo" (blacklisteado como saga Yarros)
+        "Saibou Shinkoku: Cell of Empireo Vol. 1",
+    ]
+    for title in cases:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Panini Manga")
+        assert not is_comic, (
+            f"franchise_exception debe proteger {title!r} (reason={reason})"
+        )
+
+
+def test_title_exceptions_protect_confirmed_false_positives():
+    """Falsos positivos confirmados: manga japoneses reales que matchean keywords
+    de franquicia occidental o patrones hard non-manga."""
+    # (a) Batman: El Hijo de los Sueños (Kia Asamiya) — contiene "Batman"
+    #     Ediciones Norma y ECC en español
+    batman_child = [
+        "Batman: El Hijo de los Sueños",
+        "Batman: El Hijo de los Sueños Vol. 1 Norma Editorial",
+        "Batman El Hijo de los Sueños Edición Integral ECC",
+    ]
+    for title in batman_child:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Norma Editorial")
+        assert not is_comic, (
+            f"title_exception debe proteger Batman/Kia Asamiya: {title!r} (reason={reason})"
+        )
+        is_manga, reason2 = mw.is_likely_manga(title, source_purity="mixed")
+        assert is_manga or "comic_franchise" not in reason2, (
+            f"is_likely_manga no debe rechazar por comic_franchise: {title!r} (reason={reason2})"
+        )
+
+    # (b) Assassin's Creed: Blade of Shao Jun (Minoji Kurata) — contiene "Assassin's Creed"
+    shao_jun = [
+        "Assassin's Creed: Blade of Shao Jun Vol. 1",
+        "Assassin's Creed: Blade of Shao Jun Vol. 2 Variant Edition",
+        "Assassin's Creed Blade of Shao Jun Edición Coleccionista",
+    ]
+    for title in shao_jun:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Panini Manga")
+        assert not is_comic, (
+            f"title_exception debe proteger Blade of Shao Jun: {title!r} (reason={reason})"
+        )
+        is_manga, reason2 = mw.is_likely_manga(title, source_purity="mixed")
+        assert is_manga or "comic_franchise" not in reason2, (
+            f"is_likely_manga no debe rechazar por comic_franchise: {title!r} (reason={reason2})"
+        )
+
+    # (c) Eagle: The Making of an Asian-American President (Kaiji Kawaguchi)
+    #     Matchea patrón hard \bThe\s+Making\s+of\b — debe ser exceptuado vía title_exceptions
+    #     La excepción usa la frase "Making of an Asian-American President" para ser específica
+    eagle = [
+        "Eagle: The Making of an Asian-American President Vol. 1",
+        "Eagle: The Making of an Asian-American President Omnibus Deluxe",
+        "Eagle The Making of an Asian-American President",
+    ]
+    for title in eagle:
+        is_manga, reason = mw.is_likely_manga(title, source_purity="manga_only")
+        assert is_manga, (
+            f"title_exception debe proteger Eagle/Kawaguchi de non_manga_hard: {title!r} (reason={reason})"
+        )
+        assert "non_manga_hard" not in reason, (
+            f"non_manga_hard no debe activarse para Eagle/Kawaguchi: {title!r} (reason={reason})"
+        )
+
+
+def test_title_exceptions_do_not_protect_real_western_comics():
+    """Las excepciones NO deben proteger cómics occidentales reales ni making-ofs
+    genéricos de videojuegos."""
+    # Batman: The Killing Joke — no está en title_exceptions, sigue rechazándose
+    cases_still_rejected_franchise = [
+        "Batman: The Killing Joke",
+        "Joker Vol. 1",
+        "Deadpool Classic Vol. 1",
+        "Assassin's Creed: The Official Comic",
+    ]
+    for title in cases_still_rejected_franchise:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Norma Editorial")
+        assert is_comic, (
+            f"Cómic occidental debe seguir rechazándose: {title!r} (reason={reason})"
+        )
+        assert reason.startswith("comic_franchise:"), reason
+
+    # Making-of genérico de videojuego (NO exceptuado) — sigue rechazándose
+    # (por non_manga_hard o comic_franchise dependiendo del título)
+    cases_still_rejected_hard = [
+        "Attack on Titan: The Making of the Anime Artbook",
+        "The Making of Final Fantasy XV",
+        # "The Making of The Last of Us" se rechaza por comic_franchise antes del hard check
+        "The Making of The Last of Us",
+    ]
+    for title in cases_still_rejected_hard:
+        is_manga, reason = mw.is_likely_manga(title, source_purity="manga_only")
+        assert not is_manga, (
+            f"Making-of genérico debe seguir rechazándose: {title!r} (reason={reason})"
+        )
+        assert "non_manga_hard" in reason or "comic_franchise" in reason, (
+            f"Debe rechazarse por non_manga_hard o comic_franchise: {title!r} (reason={reason})"
+        )
+
+
+def test_franchise_keywords_still_reject_western_comics():
+    """Las excepciones NO deben desactivar la regla franchise para cómics reales."""
+    # (c) Batman: The Killing Joke — no es excepción, es cómic de DC
+    cases = [
+        "Batman: The Killing Joke",
+        "Joker Vol. 1",
+        "Deadpool Classic Vol. 1",
+    ]
+    for title in cases:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Norma Editorial")
+        assert is_comic, (
+            f"Cómic occidental debe rechazarse: {title!r} (reason={reason})"
+        )
+        assert reason.startswith("comic_franchise:"), reason
+
+
+def test_standee_as_extra_not_hard_rejected():
+    """Un tomo de manga que INCLUYE un standee como extra no debe rechazarse."""
+    # (d) standee como extra → NO hard-reject
+    cases_ok = [
+        "My Dress Up Darling Bisque Doll Ediz Deluxe Con Standee In Acrilico Variant 15",
+        "Tomo 1 Edición Especial with Standee exclusivo",
+        "Coffret Deluxe avec Standee collector",
+        "Deluxe Edition mit Standee",
+        "Edicion inkl. Standee",
+        "Edicion inkl Standee",
+    ]
+    for title in cases_ok:
+        is_manga, reason = mw.is_likely_manga(title, source_purity="manga_only")
+        # El reason del standee contiene el patrón completo con lookbehinds —
+        # lo identificamos buscando "standees?" en el reason string.
+        assert "standees?" not in reason, (
+            f"standee como extra NO debe causar hard-reject: {title!r} (reason={reason})"
+        )
+
+    # (e) standee suelto como producto principal → SÍ rechazar
+    cases_reject = [
+        "Dragon Ball Super Standee",
+        "Goku Standee acrilico 30cm",
+        "Jujutsu Kaisen Standees Set",
+    ]
+    for title in cases_reject:
+        is_manga, reason = mw.is_likely_manga(title, source_purity="manga_only")
+        assert not is_manga and "non_manga_hard" in reason, (
+            f"standee suelto debe rechazarse: {title!r} (reason={reason})"
+        )
+
+
 def test_is_pure_novel_detects_bestseller_with_collector_edition():
     """Novelas bestseller con 'edición coleccionista' deben rechazarse."""
     # URL en sección literaria
@@ -3263,6 +3423,37 @@ def test_is_collectible_edition_rejects_umbrella_jp_magazines():
         ok, reason = mw.is_collectible_edition(title, "", [], "magazine")
         assert not ok, f"Should reject umbrella magazine: {title!r} (reason={reason})"
         assert reason == "umbrella_magazine", f"Wrong rejection reason for {title!r}: {reason}"
+
+
+def test_is_collectible_edition_atom_magazine_url_discriminator():
+    """Revista ATOM (Custom Publishing FR) discriminada por URL, no por título.
+
+    El título estandarizado "Astro Boy | Mighty Atom Deluxe N" es idéntico
+    tanto para la revista como para los tomos deluxe reales de Planeta (ES).
+    El discriminador fiable es la URL: los items de la revista tienen
+    manga-sanctuary.com/magazine-atom-vol-N-... en su URL.
+    """
+    # (a) Título deluxe Planeta con URL listadomanga → NO umbrella_magazine
+    title_planeta = "Astro Boy | Mighty Atom Deluxe 3"
+    url_planeta = "https://www.listadomanga.es/coleccion.php?id=2826&item=regular-3-4160db5dd79f867"
+    ok, reason = mw.is_collectible_edition(
+        title_planeta, "", ["deluxe"], "manga", url=url_planeta
+    )
+    assert ok, f"Planeta Deluxe should be kept: reason={reason}"
+    assert reason != "umbrella_magazine", f"Planeta Deluxe should NOT be umbrella: reason={reason}"
+
+    # (b) Mismo título con URL manga-sanctuary magazine-atom → umbrella_magazine
+    url_magazine = "https://www.manga-sanctuary.com/magazine-atom-vol-16-hardcover-s48800-p342169.html"
+    ok, reason = mw.is_collectible_edition(
+        title_planeta, "", ["deluxe"], "manga", url=url_magazine
+    )
+    assert not ok, f"ATOM magazine should be rejected: reason={reason}"
+    assert reason == "umbrella_magazine", f"Should be umbrella_magazine, got: {reason}"
+
+    # (c) Weekly Shonen Jump → umbrella_magazine por título (sin cambio)
+    ok, reason = mw.is_collectible_edition("Weekly Shonen Jump 52", "", [], "magazine")
+    assert not ok
+    assert reason == "umbrella_magazine"
 
 
 def test_is_collectible_edition_keeps_series_with_umbrella_substring():
@@ -3786,7 +3977,6 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
         "edition_display": "Deluxe Edition (Dark Horse)",
         "volume": "1",
         "price": "USD 39.99",
-        "image_url": "https://example.com/old.jpg",
         "standardized_at": "2026-05-22T10:00:00+00:00",
         "detected_at": "2026-05-22",
     }])
@@ -3799,7 +3989,6 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
         "edition_key": "berserk-1-darkhorse-special",
         "volume": "",  # scraper no detecta vol
         "price": "USD 44.99",  # subió
-        "image_url": "https://example.com/new.jpg",  # actualizada
         "detected_at": "2026-06-01",
     }])
 
@@ -3815,7 +4004,6 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
     assert it["standardized_at"] == "2026-05-22T10:00:00+00:00"
     # Scrapeados refrescados:
     assert it["price"] == "USD 44.99"
-    assert it["image_url"] == "https://example.com/new.jpg"
     assert it["detected_at"] == "2026-06-01"
 
 
@@ -3859,7 +4047,6 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
         "series_key": "berserk",
         "edition_key": "berserk-darkhorse-deluxe",
         "volume": "1",
-        "image_url": "https://example.com/correct.jpg",
         "price": "USD 39.99",
         "stock_type": "in_stock",
         "approved_at": "2026-06-01T10:00:00+00:00",
@@ -3874,7 +4061,6 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
         "series_key": "berserk-1",
         "edition_key": "berserk-1-special",
         "volume": "",
-        "image_url": "https://example.com/wrong.jpg",
         "price": "USD 49.99",
         "stock_type": "limited",
         "detected_at": "2026-07-01",
@@ -3886,7 +4072,6 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
     assert it["series_key"] == "berserk"
     assert it["edition_key"] == "berserk-darkhorse-deluxe"
     assert it["volume"] == "1"
-    assert it["image_url"] == "https://example.com/correct.jpg"
     assert it["approved_at"] == "2026-06-01T10:00:00+00:00"
     # Info de mercado REFRESCADA:
     assert it["price"] == "USD 49.99"
@@ -4007,28 +4192,33 @@ def test_flush_source_candidates_dry_run_writes_nothing(tmp_path):
     assert not path.exists()
 
 
-def test_append_jsonl_image_local_is_sticky(tmp_path):
-    """Un re-scrape sin image_local (--skip-image-download o fallo de red
-    puntual) NO debe borrar el espejo local ya descargado. Ver "Image
-    storage" en CLAUDE.md."""
+def test_append_jsonl_cover_local_is_sticky(tmp_path):
+    """Un re-scrape sin `local` (--skip-image-download o fallo de red puntual)
+    NO debe borrar el espejo local ya descargado en images[0]. La preservación
+    es vía el union-merge de images[] (dedup por (kind,url) conserva el entry
+    viejo). Ya no hay campos top-level image_url/image_local (decisión
+    2026-06-09). Ver "Image storage" en CLAUDE.md."""
     path = tmp_path / "items.jsonl"
     mw.append_jsonl(path, [{
         "url": "https://example.com/a",
         "title": "A",
-        "image_url": "https://cdn.example.com/a.jpg",
-        "image_local": "abc123def4567890.jpg",
+        "images": [{"url": "https://cdn.example.com/a.jpg",
+                    "local": "abc123def4567890.jpg",
+                    "kind": "gallery", "description": ""}],
         "detected_at": "2026-01-01",
     }])
-    # Re-scrape: misma URL, la row nueva NO trae image_local.
+    # Re-scrape: misma URL, la row nueva trae images[0] SIN local.
     mw.append_jsonl(path, [{
         "url": "https://example.com/a",
         "title": "A",
-        "image_url": "https://cdn.example.com/a.jpg",
+        "images": [{"url": "https://cdn.example.com/a.jpg",
+                    "local": "", "kind": "gallery", "description": ""}],
         "detected_at": "2026-02-01",
     }])
     items = [json.loads(l) for l in path.open()]
     assert len(items) == 1
-    assert items[0]["image_local"] == "abc123def4567890.jpg"
+    assert imgstore.cover_local(items[0]) == "abc123def4567890.jpg"
+    assert "image_local" not in items[0] and "image_url" not in items[0]
     assert items[0]["detected_at"] == "2026-02-01"
 
 
@@ -5264,7 +5454,7 @@ def test_sumikko_drops_loading_and_no_image_placeholders():
     from wikis import sumikko as sk
     bad_html = _sumikko_item_block(
         isbn="9784567890123",
-        title="Title placeholder",
+        title="Title placeholder 限定版",
         img_data_src="https://comic.sumikko.info/web/img/list/no_image200_299_BL.png",
     )
     cands = sk.parse_listing_page(bad_html)
@@ -5337,11 +5527,11 @@ def test_sumikko_dedupe_by_isbn_within_page():
     """Si la misma ISBN aparece duplicada en un listing (raro pero por
     las dudas), sólo se conserva la primera ocurrencia."""
     from wikis import sumikko as sk
-    block_a = _sumikko_item_block(isbn="4046602074", title="Title A")
-    block_b = _sumikko_item_block(isbn="4046602074", title="Title B (dup ISBN)")
+    block_a = _sumikko_item_block(isbn="4046602074", title="Title A 特装版")
+    block_b = _sumikko_item_block(isbn="4046602074", title="Title B 特装版 (dup ISBN)")
     cands = sk.parse_listing_page(block_a + block_b)
     assert len(cands) == 1
-    assert cands[0].title == "Title A"
+    assert cands[0].title == "Title A 特装版"
 
 
 # --- listadomanga_collections (Fase 1) -------------------------------------
@@ -6742,6 +6932,23 @@ def test_lmc_layout_b_unknown_marker_is_skipped_not_attached_to_wrong_item():
     assert len(c.extras) == 0
 
 
+def test_lmc_layout_b_edicion_especial_in_text_targets_especial():
+    """Gotcha #59: un extra de Layout B cuyo texto dice "Edición Especial/Limitada"
+    es una EDICIÓN ESPECIAL (artbook/limitada), NO un cofre de tomo regular — aunque
+    el nombre de la serie venga envuelto en 2 líneas y el volumen caiga en la línea 2
+    (lo que antes disparaba el fallback Grimorio → regular). Caso real: Promised
+    Neverland nº13 "Edición Especial con Escape - Libro de ilustraciones"."""
+    from wikis import listadomanga_collections as lmc
+    td = BeautifulSoup(
+        '<td width="150"><img src="art13.jpg"/>The Promised<br/>Neverland nº13<br/>'
+        'Edición Especial con<br/>Escape - Libro de<br/>ilustraciones de 64 páginas<br/>'
+        '4 Septiembre 2020</td>', "html.parser").find("td")
+    cell = lmc._parse_layout_b_cell(td)
+    assert cell is not None
+    assert cell["target_edition_kind"] == "especial"   # NO "regular"
+    assert cell["target_volume"] == "13"
+
+
 def test_lmc_layout_b_cofre_tomos_targets_regular():
     """Gotcha #53: cofre de 1ª edición común — línea 1 'Serie nºN', línea 2
     'Cofre para tomos X a Y' (sin marker de edición especial) → target REGULAR vol N.
@@ -6828,7 +7035,6 @@ def test_lmc_append_jsonl_union_merges_images_and_extras(tmp_path):
     row_v1 = {
         "url": "https://example.com/x",
         "title": "Test",
-        "image_url": "https://example.com/cover.jpg",
         "images": [
             {"url": "https://example.com/cover.jpg", "kind": "gallery", "local": "", "description": ""},
             {"url": "https://example.com/extra1.jpg", "kind": "extra", "local": "", "description": "Postal"},
@@ -6844,7 +7050,6 @@ def test_lmc_append_jsonl_union_merges_images_and_extras(tmp_path):
     row_v2 = {
         "url": "https://example.com/x",
         "title": "Test",
-        "image_url": "https://example.com/cover.jpg",
         "images": [
             {"url": "https://example.com/cover.jpg", "kind": "gallery", "local": "", "description": ""},
         ],
@@ -7494,14 +7699,12 @@ def test_backfill_images_skips_synthetic_urls():
             "title": "Death Note Black Edition 1",
             "url": "https://www.listadomanga.es/coleccion.php?id=5959&item=especial-1",
             "source": "ES - ListadoManga (colecciones)",
-            "image_url": "https://example.com/c.jpg",
             "images": [{"url": "https://example.com/c.jpg", "kind": "gallery", "description": ""}],
         }) + "\n")
         f.write(json.dumps({
             "title": "BBM Genshiken Variant",
             "url": "https://blogbbm.com/manga/genshiken/?bbm-entry=vol-1-genshiken01b",
             "source": "BR - Biblioteca Brasileira de Mangás",
-            "image_url": "https://example.com/g.jpg",
             "images": [{"url": "https://example.com/g.jpg", "kind": "gallery", "description": ""}],
         }) + "\n")
         # ListadoManga calendar item: URL apunta al catálogo entero
@@ -7511,7 +7714,6 @@ def test_backfill_images_skips_synthetic_urls():
             "title": "Death Note Black Edition 1",
             "url": "https://www.listadomanga.es/coleccion.php?id=1234",
             "source": "ListadoManga (calendario)",
-            "image_url": "https://example.com/dn.jpg",
             "images": [{"url": "https://example.com/dn.jpg", "kind": "gallery", "description": ""}],
         }) + "\n")
         # Whakoom /ediciones/ — índice de todos los tomos, mismo caso.
@@ -7519,7 +7721,6 @@ def test_backfill_images_skips_synthetic_urls():
             "title": "Berserk Deluxe (Whakoom edition index)",
             "url": "https://whakoom.com/ediciones/12345/berserk-deluxe",
             "source": "Whakoom",
-            "image_url": "https://example.com/wh.jpg",
             "images": [{"url": "https://example.com/wh.jpg", "kind": "gallery", "description": ""}],
         }) + "\n")
         # 1 item con URL normal (single-image, sí candidato).
@@ -7527,7 +7728,6 @@ def test_backfill_images_skips_synthetic_urls():
             "title": "Berserk Deluxe 1",
             "url": "https://shop.example.com/p/berserk-deluxe-1",
             "source": "Generic Shop",
-            "image_url": "https://example.com/b.jpg",
             "images": [{"url": "https://example.com/b.jpg", "kind": "gallery", "description": ""}],
         }) + "\n")
         tmppath = f.name
@@ -7546,16 +7746,14 @@ def test_backfill_images_skips_synthetic_urls():
 
 def test_mirror_images_gc_treats_gallery_local_as_referenced():
     """El GC del retrofit `mirror_images.py` arma el set de archivos
-    referenciados desde `image_local` (cover) Y `images[i].local`
-    (gallery). Si solo mirara cover, los archivos de gallery caerían
-    como orphans y los mandaría a cuarentena.
+    referenciados desde CADA `images[i].local` (portada `images[0]` + galería)
+    + `sources[i].image_local` (per-fuente). Si solo mirara la portada, los
+    archivos de galería/fuente caerían como orphans y a cuarentena.
 
     Test directo del set de referenciadas (sin tocar disco)."""
     items = [
         {
             "url": "https://example.com/p/1",
-            "image_url": "https://example.com/c1.jpg",
-            "image_local": "aaaa.jpg",
             "images": [
                 {"url": "https://example.com/c1.jpg", "kind": "gallery", "local": "aaaa.jpg"},
                 {"url": "https://example.com/g1a.jpg", "kind": "gallery", "local": "bbbb.jpg"},
@@ -7564,8 +7762,6 @@ def test_mirror_images_gc_treats_gallery_local_as_referenced():
         },
         {
             "url": "https://example.com/p/2",
-            "image_url": "https://example.com/c2.jpg",
-            "image_local": "dddd.jpg",
             "images": [
                 {"url": "https://example.com/c2.jpg", "kind": "gallery", "local": "dddd.jpg"},
             ],
@@ -7576,11 +7772,12 @@ def test_mirror_images_gc_treats_gallery_local_as_referenced():
     for it in items:
         if "_raw" in it:
             continue
-        if it.get("image_local"):
-            referenced.add(it["image_local"])
         for im in (it.get("images") or []):
             if isinstance(im, dict) and im.get("local"):
                 referenced.add(im["local"])
+        for s in (it.get("sources") or []):
+            if isinstance(s, dict) and s.get("image_local"):
+                referenced.add(s["image_local"])
     assert referenced == {"aaaa.jpg", "bbbb.jpg", "cccc.jpg", "dddd.jpg"}
 
 
@@ -8119,7 +8316,13 @@ def test_yenpress_skips_regular_manga_without_keywords():
 
 
 # ---------------------------------------------------------------------------
-# derive_rarity_tier — tests
+# derive_rarity_tier — tests (modelo default-common, 2026-06-10)
+#
+# Rediseño: el default pasó de 'rare' a 'common'. Cada tier superior exige
+# evidencia (print run, lotería/evento, firma a mano, no-reimpresión explícita
+# o stock agotado verificado). El signal `limited` y `variant_cover` dejaron
+# de forzar rare: en un tracker de ediciones especiales describen al item
+# típico (81% del corpus quedaba en rare con 54% de precisión medida).
 # ---------------------------------------------------------------------------
 
 def test_rarity_ultra_rare_numbered_copy():
@@ -8136,24 +8339,52 @@ def test_rarity_ultra_rare_numerado_multilingual():
 
 
 def test_rarity_ultra_rare_signed():
-    """Ediciones firmadas → ultra_rare en cualquier idioma."""
+    """Ediciones firmadas a mano → ultra_rare en cualquier idioma."""
     assert mw.derive_rarity_tier([], "", "", "Dragon Ball firmado por Toriyama") == "ultra_rare"
     assert mw.derive_rarity_tier([], "", "", "Naruto signé par l'auteur") == "ultra_rare"
     assert mw.derive_rarity_tier([], "", "", "Berserk signiert") == "ultra_rare"
 
 
-def test_rarity_lucca_without_print_run_is_rare():
-    """Lucca Comics mention without explicit print run → rare (not ultra_rare).
-    Lucca is a massive festival — 'sold at Lucca' ≠ ultra_rare without numbers."""
+def test_rarity_printed_signature_on_lamina_not_ultra_rare():
+    """'lámina firmada' = firma IMPRESA en un extra → NO ultra_rare.
+    Caso real: Capitán Harlock Letrablanka, 170 copias EN STOCK a PVP."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "In esclusiva a Lucca Comics, su Panini.it",
-        "One Piece Red Limited Collector", publisher="Panini Comics"
+        ["collector"], "", "Incluye lámina firmada por el autor.",
+        "Capitán Harlock Edición Coleccionista 3", publisher="Letrablanka"
     )
     assert r != "ultra_rare"
 
 
+def test_rarity_printed_signature_on_postal_not_ultra_rare():
+    """'postal de regalo firmada' = firma impresa → NO ultra_rare."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover", "bonus"], "",
+        "Edición con portada alternativa + postal de regalo firmada por la autora.",
+        "Mushoku Tensei Portada Alternativa 19",
+    )
+    assert r != "ultra_rare"
+
+
+def test_rarity_hand_signed_copy_still_ultra_rare():
+    """Ejemplar firmado (sin sustantivo de extra impreso) → ultra_rare."""
+    r = mw.derive_rarity_tier(
+        [], "", "Cada ejemplar está firmado por la autora en persona.",
+        "Magus of the Library Edición Especial",
+    )
+    assert r == "ultra_rare"
+
+
+def test_rarity_lucca_without_print_run_is_rare():
+    """Lucca Comics sin print run explícito → rare (evento, no ultra)."""
+    r = mw.derive_rarity_tier(
+        ["variant_cover"], "", "In esclusiva a Lucca Comics, su Panini.it",
+        "One Piece Red Limited Collector", publisher="Panini Comics"
+    )
+    assert r == "rare"
+
+
 def test_rarity_lucca_with_print_run_is_ultra_rare():
-    """Lucca Comics + explicit print run ≤ 500 → ultra_rare via _PRINT_RUN_RE."""
+    """Lucca Comics + print run ≤ 500 → ultra_rare via _PRINT_RUN_RE."""
     r = mw.derive_rarity_tier(
         ["variant_cover"], "",
         "Limited to 100 copies. Sold exclusively at Lucca Comics & Games 2022.",
@@ -8162,40 +8393,72 @@ def test_rarity_lucca_with_print_run_is_ultra_rare():
     assert r == "ultra_rare"
 
 
-def test_rarity_lucca_blocks_common():
-    """Lucca mention blocks common even for catalog publishers."""
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — retailer_exclusive: rare sin stock, super_rare agotado
+# ---------------------------------------------------------------------------
+
+def test_rarity_retailer_exclusive_without_stock_is_rare():
+    """retailer_exclusive SIN verificación de stock → rare (no super_rare).
+    Caso real: Ichi the Witch variant de Kinokuniya estaba marcada super_rare
+    mientras seguía EN STOCK a $11.99 (precio de lista)."""
+    r = mw.derive_rarity_tier(["retailer_exclusive"], "", "", "Kinokuniya Variant Cover")
+    assert r == "rare"
+
+
+def test_rarity_retailer_exclusive_out_of_stock_is_super_rare():
+    """retailer_exclusive + stock agotado verificado → super_rare."""
     r = mw.derive_rarity_tier(
-        ["deluxe"], "", "presentato a Lucca Comics",
-        "Berserk Deluxe 1", publisher="Dark Horse Comics"
+        ["retailer_exclusive"], "", "", "Kinokuniya Variant Cover",
+        stock_status="out_of_stock",
+    )
+    assert r == "super_rare"
+
+
+def test_rarity_retailer_exclusive_in_stock_is_rare():
+    """retailer_exclusive + stock confirmado → rare (escaso por canal)."""
+    r = mw.derive_rarity_tier(
+        ["retailer_exclusive", "lore_edition"], "", "", "Vagabond Definitive Edition 1",
+        publisher="Kinokuniya USA", stock_status="in_stock",
     )
     assert r == "rare"
 
 
-def test_rarity_retailer_exclusive_plus_lore_is_super_rare():
-    """retailer_exclusive + lore_edition → super_rare (not ultra_rare — retailer
-    variants with special naming are scarce but not numbered/signed/event-only)."""
-    r = mw.derive_rarity_tier(
-        ["retailer_exclusive", "lore_edition"], "", "", "Demon Slayer Celebration 23"
-    )
-    assert r == "super_rare"
-
-
-def test_rarity_super_rare_retailer_exclusive_only():
-    """retailer_exclusive solo → super_rare."""
-    r = mw.derive_rarity_tier(["retailer_exclusive"], "", "", "Kinokuniya Variant Cover")
-    assert r == "super_rare"
-
-
-def test_rarity_super_rare_booksprivilege_source():
-    """Fuente BooksPrivilege (tokuten) → super_rare independientemente de signals."""
+def test_rarity_booksprivilege_tokuten_is_rare():
+    """Fuente BooksPrivilege (tokuten) → rare (sin verificación no llega a super)."""
     r = mw.derive_rarity_tier(
         ["bonus"], "JP - BooksPrivilege (store bonuses)", "", "Kimetsu no Yaiba 23"
     )
-    assert r == "super_rare"
+    assert r == "rare"
 
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — stock_status (evidencia del retrofit check_stock.py)
+# ---------------------------------------------------------------------------
+
+def test_rarity_out_of_stock_is_rare():
+    """Stock agotado verificado, sin tirada documentada → rare."""
+    r = mw.derive_rarity_tier(
+        ["collector"], "", "", "Bestiarius Collector 1",
+        publisher="Kazé", stock_status="out_of_stock",
+    )
+    assert r == "rare"
+
+
+def test_rarity_in_stock_is_common():
+    """Stock confirmado sin otra evidencia → common."""
+    r = mw.derive_rarity_tier(
+        ["collector", "limited"], "", "", "I Am a Hero Edición Coleccionista 1",
+        publisher="Norma Editorial", stock_status="in_stock",
+    )
+    assert r == "common"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — common es el default (sin evidencia de escasez)
+# ---------------------------------------------------------------------------
 
 def test_rarity_common_dark_horse_deluxe():
-    """Dark Horse + deluxe sin limited → common (catálogo permanente, reprints confirmados)."""
+    """Línea deluxe de catálogo → common."""
     r = mw.derive_rarity_tier(
         ["deluxe", "hardcover"], "", "", "Berserk Deluxe 1",
         publisher="Dark Horse Comics"
@@ -8204,62 +8467,51 @@ def test_rarity_common_dark_horse_deluxe():
 
 
 def test_rarity_common_viz_boxset():
-    """Viz + box_set sin limited → common (restocks confirmados)."""
     r = mw.derive_rarity_tier(
-        ["box_set"], "", "", "One Piece Box Set 1",
-        publisher="VIZ Media"
+        ["box_set"], "", "", "One Piece Box Set 1", publisher="VIZ Media"
     )
     assert r == "common"
 
 
-def test_rarity_common_yen_press_collector():
-    """Yen Press + collector sin limited → common (catálogo ongoing)."""
+def test_rarity_common_unknown_publisher_default():
+    """Publisher desconocido SIN evidencia de escasez → common (nuevo default).
+    Antes era rare: 81% del corpus terminaba ahí sin discriminar nada."""
     r = mw.derive_rarity_tier(
-        ["collector", "hardcover"], "", "", "Fruits Basket Collector's Edition 1",
-        publisher="Yen Press"
+        ["collector", "hardcover"], "", "", "Some Collector Edition 1",
+        publisher="Editorial Desconocida"
     )
     assert r == "common"
 
 
-def test_rarity_common_norma_coleccionista():
-    """Norma Editorial sin limited → common (sin límite declarado, retail estándar)."""
+def test_rarity_limited_signal_no_longer_blocks_common():
+    """El signal `limited` (tautológico en este corpus) ya no fuerza rare."""
     r = mw.derive_rarity_tier(
-        ["collector", "hardcover"], "", "", "Old Boy Collector 1",
-        publisher="Norma Editorial"
+        ["deluxe", "limited"], "", "", "Saint Seiya Edición Limitada 11",
+        publisher="Planeta Cómic"
     )
     assert r == "common"
 
 
-def test_rarity_common_distrito_manga():
-    """Distrito Manga sin limited → common."""
-    r = mw.derive_rarity_tier(
-        ["collector"], "", "", "Old Boy Edición Coleccionista 2",
-        publisher="Distrito Manga"
-    )
-    assert r == "common"
-
-
-def test_rarity_common_blocked_by_limited_signal():
-    """Publisher conocido + señal 'limited' → rare, no common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "limited"], "", "", "Dark Horse Event Limited Edition",
-        publisher="Dark Horse Comics"
-    )
-    assert r == "rare"
-
-
-def test_rarity_common_blocked_by_variant_cover():
-    """Publisher conocido + variant_cover → rare (variant covers son mínimo rare)."""
+def test_rarity_variant_cover_no_longer_blocks_common():
+    """variant_cover solo (sin canal/tirada/stock) → common."""
     r = mw.derive_rarity_tier(
         ["variant_cover"], "", "", "Berserk Variant Cover",
         publisher="Dark Horse Comics"
     )
-    assert r == "rare"
+    assert r == "common"
+
+
+def test_rarity_reference_source_is_common_without_evidence():
+    """Fuente de referencia sin evidencia de escasez → common (sin badge)."""
+    r = mw.derive_rarity_tier(
+        ["deluxe", "hardcover"], "Global - Mangavariant", "",
+        "Berserk Deluxe 1", publisher="Dark Horse Comics"
+    )
+    assert r == "common"
 
 
 def test_rarity_common_not_blocked_by_bonus():
-    """Publisher conocido + bonus → common (bonus = color pages, postcards,
-    standard format features — not scarcity markers)."""
+    """bonus = extras estándar de formato, no escasez → common."""
     r = mw.derive_rarity_tier(
         ["bonus", "collector", "hardcover"], "", "", "Attack on Titan Collector 1",
         publisher="Norma Editorial"
@@ -8267,266 +8519,132 @@ def test_rarity_common_not_blocked_by_bonus():
     assert r == "common"
 
 
-def test_rarity_rare_default_unknown_publisher():
-    """Publisher desconocido sin señales de escasez → rare (default conservador)."""
+def test_rarity_norma_with_bonus_common():
     r = mw.derive_rarity_tier(
-        ["collector", "hardcover"], "", "", "Some Collector Edition 1",
-        publisher="Editorial Desconocida"
-    )
-    assert r == "rare"
-
-
-def test_rarity_rare_variant_cover_always_at_least_rare():
-    """variant_cover con publisher desconocido → rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "", "Portada Variante Especial 5",
-        publisher=""
-    )
-    assert r == "rare"
-
-
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Mejora 1: guard fuentes de referencia
-# ---------------------------------------------------------------------------
-
-def test_rarity_reference_source_blocks_common():
-    """Publisher conocido PERO fuente de referencia sin precio → rare, no common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "Global - Mangavariant", "",
-        "Berserk Deluxe 1",
-        publisher="Dark Horse Comics"
-    )
-    assert r == "rare"
-
-
-def test_rarity_reference_source_sumikko_stays_rare():
-    """Sumikko es fuente de referencia → rare aunque publisher matchee."""
-    r = mw.derive_rarity_tier(
-        ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
-        "Kimetsu no Yaiba Limited 23",
-        publisher="Shueisha"
-    )
-    assert r == "rare"
-
-
-def test_rarity_retailer_source_allows_common():
-    """Publisher conocido + fuente de retailer (no referencia) → common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "US - Amazon", "",
-        "Berserk Deluxe 1",
-        publisher="Dark Horse Comics"
+        ["collector", "hardcover", "bonus", "premium_format", "deluxe", "lore_edition"],
+        "ListadoManga (colecciones)", "", "Attack on Titan Edición Coleccionista 1",
+        publisher="Norma Editorial"
     )
     assert r == "common"
 
 
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Mejora 2: publisher × edition pattern
-# ---------------------------------------------------------------------------
+def test_rarity_planeta_boxset_common():
+    r = mw.derive_rarity_tier(
+        ["hardcover", "omnibus", "box_set", "deluxe"], "", "",
+        "Adolf Boxset", publisher="Planeta Cómic"
+    )
+    assert r == "common"
+
 
 def test_rarity_glenat_prestige_common():
-    """Glénat Prestige = catálogo ongoing → common."""
     r = mw.derive_rarity_tier(
         ["deluxe"], "Manga-Sanctuary (planning)", "",
-        "Berserk Prestige 3",
-        publisher="glénat manga"
+        "Berserk Prestige 3", publisher="glénat manga"
     )
     assert r == "common"
-
-
-def test_rarity_glenat_collector_per_volume_rare():
-    """Glénat 'Collector' por volumen NO matchea el pattern → rare."""
-    r = mw.derive_rarity_tier(
-        ["collector"], "Manga-Sanctuary (planning)", "",
-        "One Piece Collector 100",
-        publisher="glénat manga"
-    )
-    assert r == "rare"
-
-
-def test_rarity_kioon_coffret_decouverte_common():
-    """Ki-oon coffret découverte T1-3 = estacional → common."""
-    r = mw.derive_rarity_tier(
-        ["box_set"], "FR - Ki-oon", "",
-        "Jujutsu Kaisen Coffret T1-3",
-        publisher="Ki-oon"
-    )
-    assert r == "common"
-
-
-def test_rarity_kioon_collector_per_volume_rare():
-    """Ki-oon Collector por volumen = tirada única → rare."""
-    r = mw.derive_rarity_tier(
-        ["collector"], "FR - Ki-oon", "",
-        "Frieren Collector 13",
-        publisher="Ki-oon"
-    )
-    assert r == "rare"
-
-
-def test_rarity_pika_masterpiece_common():
-    """Pika Masterpiece = línea catálogo permanente → common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "FR - Pika", "",
-        "Rokudenashi Blues Pika Masterpiece 5",
-        publisher="Pika Edition"
-    )
-    assert r == "common"
-
-
-def test_rarity_carlsen_massiv_common():
-    """Carlsen Massiv = omnibus ongoing → common."""
-    r = mw.derive_rarity_tier(
-        ["omnibus"], "DE - Manga-Passion Sonderausgaben", "",
-        "Dragon Ball Massiv 10",
-        publisher="Carlsen Manga!"
-    )
-    assert r == "common"
-
-
-def test_rarity_carlsen_sammelschuber_common():
-    """Carlsen Sammelschuber = slipcase arc boxes → common."""
-    r = mw.derive_rarity_tier(
-        ["box_set"], "DE - Manga-Passion Sonderausgaben", "",
-        "One Piece Sammelschuber 5",
-        publisher="Carlsen Manga!"
-    )
-    assert r == "common"
-
-
-def test_rarity_panini_master_edition_common():
-    """Panini Master Edition = catálogo ongoing trimestral → common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "IT - Panini Planet Manga", "",
-        "Berserk Master Edition 1",
-        publisher="Panini Comics"
-    )
-    assert r == "common"
-
-
-def test_rarity_kana_deluxe_common():
-    """Kana Deluxe (Vinland Saga, etc.) = ongoing → common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "FR - Kana", "",
-        "Vinland Saga Deluxe 5",
-        publisher="kana"
-    )
-    assert r == "common"
-
-
-def test_rarity_meian_perfect_edition_common():
-    """Meian Perfect Edition = volúmenes individuales ongoing → common."""
-    r = mw.derive_rarity_tier(
-        ["deluxe"], "FR - Meian", "",
-        "Baki Perfect Edition 8",
-        publisher="meian"
-    )
-    assert r == "common"
-
-
-def test_rarity_star_comics_not_common():
-    """Star Comics NO está en catálogo permanente → rare por default."""
-    r = mw.derive_rarity_tier(
-        ["collector"], "IT - Star Comics", "",
-        "Frieren Limited Edition 12",
-        publisher="Star Comics"
-    )
-    assert r == "rare"
-
-
-def test_rarity_panini_variant_stays_rare():
-    """Panini + variant_cover → rare (signal de escasez bloquea common)."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "IT - Panini Planet Manga", "",
-        "Kagurabachi Variant 1",
-        publisher="Panini Comics"
-    )
-    assert r == "rare"
 
 
 # ---------------------------------------------------------------------------
-# derive_rarity_tier — Mejora 3: single-run keywords bloquean common
+# derive_rarity_tier — JP 限定版/特装版 = single-run por convención de mercado
 # ---------------------------------------------------------------------------
 
-def test_rarity_single_run_tiratura_limitata_blocks_common():
-    """'tiratura limitata' en descripción bloquea common aunque publisher matchee."""
+def test_rarity_jp_genteiban_is_rare():
+    """限定版 en el título (JP) → rare: por convención no se reimprime."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
+        "鬼滅の刃 23 限定版", publisher="Shueisha"
+    )
+    assert r == "rare"
+
+
+def test_rarity_jp_tokusoban_is_rare():
+    """特装版 → rare."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
+        "フリーレン 15 特装版", publisher="Shogakukan"
+    )
+    assert r == "rare"
+
+
+def test_rarity_jp_juchu_seisan_is_rare():
+    """受注生産 (impresión bajo pedido) → rare."""
+    r = mw.derive_rarity_tier(
+        ["limited"], "", "完全受注生産のBOXセット",
+        "ベルセルク 愛蔵版BOX", publisher="Hakusensha"
+    )
+    assert r == "rare"
+
+
+def test_rarity_english_limited_title_from_sumikko_is_common():
+    """Título EN con 'Limited' sin marcador JP ni evidencia → common."""
+    r = mw.derive_rarity_tier(
+        ["special_edition"], "JP - Sumikko (限定版・特装版)", "",
+        "Kimetsu no Yaiba Limited 23", publisher="Shueisha"
+    )
+    assert r == "common"
+
+
+# ---------------------------------------------------------------------------
+# derive_rarity_tier — no-reimpresión explícita mantiene rare
+# ---------------------------------------------------------------------------
+
+def test_rarity_single_run_tiratura_limitata_is_rare():
     r = mw.derive_rarity_tier(
         ["collector", "hardcover"], "IT - Panini Planet Manga",
         "Edizione in tiratura limitata con poster esclusivo",
-        "Berserk Master Edition Special",
-        publisher="Panini Comics"
+        "Berserk Master Edition Special", publisher="Panini Comics"
     )
     assert r == "rare"
 
 
-def test_rarity_single_run_tirage_unique_blocks_common():
-    """'tirage unique' bloquea common para Glénat Prestige."""
+def test_rarity_single_run_tirage_unique_is_rare():
     r = mw.derive_rarity_tier(
         ["deluxe"], "Manga-Sanctuary (planning)",
         "Ce volume prestige est un tirage unique",
-        "Berserk Prestige 6 Collector",
-        publisher="glénat manga"
+        "Berserk Prestige 6 Collector", publisher="glénat manga"
     )
     assert r == "rare"
 
 
-def test_rarity_single_run_primera_tirada_blocks_common():
-    """'primera tirada' bloquea common para Norma."""
+def test_rarity_single_run_primera_tirada_is_rare():
     r = mw.derive_rarity_tier(
         ["collector", "hardcover"], "ES - Norma",
         "Incluye extras solo en la primera tirada",
-        "Death Note Collector 1",
-        publisher="Norma Editorial"
+        "Death Note Collector 1", publisher="Norma Editorial"
     )
     assert r == "rare"
 
-
-def test_rarity_single_run_celebration_blocks_common():
-    """'celebration edition' bloquea common."""
-    r = mw.derive_rarity_tier(
-        ["special_edition"], "IT - Star Comics", "",
-        "One Piece Celebration Edition 100",
-        publisher="Star Comics"
-    )
-    assert r == "rare"
-
-
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Mejora 4: celebration/anniversary permanecen rare
-# ---------------------------------------------------------------------------
 
 def test_rarity_celebration_edition_rare():
-    """Celebration Edition = tirada única event-tied → rare."""
     r = mw.derive_rarity_tier(
         ["lore_edition", "special_edition"], "IT - AnimeClick (edizioni speciali)", "",
-        "My Hero Academia Celebration Edition 42",
-        publisher="Star Comics"
+        "My Hero Academia Celebration Edition 42", publisher="Star Comics"
     )
     assert r == "rare"
 
 
-def test_rarity_anniversary_with_extras_rare():
-    """Anniversary edition con extras en descripción → rare."""
+def test_rarity_anniversary_alone_is_common():
+    """'aniversario' solo ya NO es evidencia de escasez (ediciones aniversario
+    de catálogo siguen en stock años después)."""
     r = mw.derive_rarity_tier(
         ["lore_edition"], "ES - Norma",
         "Edición 30 aniversario con poster y artbook exclusivo",
-        "Slam Dunk 30th Anniversary",
-        publisher="Norma Editorial"
+        "Slam Dunk 30th Anniversary", publisher="Norma Editorial"
     )
-    assert r == "rare"
+    assert r == "common"
 
 
-def test_rarity_no_false_positive_celebration_in_series():
-    """'Celebration' como parte del nombre de serie, no del formato → no bloquea."""
+def test_rarity_generic_limited_edition_phrase_is_common():
+    """La frase genérica 'limited edition' (tautológica en el corpus) → common."""
     r = mw.derive_rarity_tier(
-        ["deluxe", "hardcover"], "US - Amazon", "",
-        "Berserk Deluxe 1",
-        publisher="Dark Horse Comics"
+        ["collector"], "IT - Star Comics", "",
+        "Frieren Limited Edition 12", publisher="Star Comics"
     )
     assert r == "common"
 
 
 # ---------------------------------------------------------------------------
-# derive_rarity_tier — Fix 1: /NNN no longer matches year ranges
+# derive_rarity_tier — print runs explícitos
 # ---------------------------------------------------------------------------
 
 def test_rarity_year_range_not_ultra_rare():
@@ -8538,113 +8656,21 @@ def test_rarity_year_range_not_ultra_rare():
     assert r != "ultra_rare"
 
 
-def test_rarity_numbered_copy_still_works():
-    """Genuine numbered copy '42/500' still → ultra_rare."""
-    r = mw.derive_rarity_tier([], "", "", "Berserk Beherit Limited 1 (42/500)")
-    assert r == "ultra_rare"
-
-
 def test_rarity_numbered_copy_with_space():
-    """Numbered copy '120 / 1000' with spaces → ultra_rare."""
     r = mw.derive_rarity_tier([], "", "", "JJK 30 (120 / 1000)")
     assert r == "ultra_rare"
 
 
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Fix 2: Italian firmato/a double meaning
-# ---------------------------------------------------------------------------
-
-def test_rarity_firmato_attribution_not_ultra_rare():
-    """Italian 'firmato' meaning 'by' (authored) → NOT ultra_rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "IT - AnimeClick (edizioni speciali)",
-        "lo shonen isekai firmato da Yohei Yasumura, arriva in Italia!",
-        "The Dungeon of Black Company Variant",
-    )
-    assert r != "ultra_rare"
-
-
-def test_rarity_firmato_progetto_not_ultra_rare():
-    """'PROGETTO FIRMATO CAB' (project by) → NOT ultra_rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "",
-        "IL NUOVO MERAVIGLIOSO PROGETTO FIRMATO CAB E FEDERICA DI MEO!",
-        "Oneira Variant 1",
-    )
-    assert r != "ultra_rare"
-
-
-def test_rarity_firmato_capolavoro_not_ultra_rare():
-    """'il capolavoro firmato One e Yusuke Murata' → NOT ultra_rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "",
-        "Una Instant Variant del numero 33 di One-Punch Man, il capolavoro firmato One e Yusuke Murata!",
-        "One-Punch Man Variant 33",
-    )
-    assert r != "ultra_rare"
-
-
-def test_rarity_variant_firmata_is_ultra_rare():
-    """'VARIANT EDITION firmata dal grandissimo X, limitata a 100 copie' → ultra_rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover"], "",
-        "VARIANT EDITION firmata dal grandissimo Jacopo Camagni, super limitata a 100 copie",
-        "Colorless Variant 1",
-    )
-    assert r == "ultra_rare"
-
-
-def test_rarity_spanish_firmada_still_ultra_rare():
-    """Spanish 'firmada' still works — no double-meaning problem."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover", "bonus"], "",
-        "Edición con portada alternativa + postal de regalo firmada por la autora.",
-        "Mushoku Tensei Portada Alternativa 19",
-    )
-    assert r == "ultra_rare"
-
-
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Fix 3: retailer_exclusive + lore_edition → super_rare
-# ---------------------------------------------------------------------------
-
-def test_rarity_kinokuniya_exclusive_lore_is_super_rare():
-    """Kinokuniya exclusive with lore_edition → super_rare, not ultra_rare."""
-    r = mw.derive_rarity_tier(
-        ["premium_format", "retailer_exclusive", "lore_edition"],
-        "US - Kinokuniya Exclusives", "", "Vagabond Definitive Edition 1",
-        publisher="Kinokuniya USA"
-    )
-    assert r == "super_rare"
-
-
-def test_rarity_manga_dreams_exclusive_lore_is_super_rare():
-    """Manga Dreams retailer exclusive with lore_edition → super_rare."""
-    r = mw.derive_rarity_tier(
-        ["variant_cover", "retailer_exclusive", "lore_edition"],
-        "IT - Manga Dreams", "", "Blue Box Canal BD Variant Edition",
-        publisher="Manga Dreams"
-    )
-    assert r == "super_rare"
-
-
-# ---------------------------------------------------------------------------
-# derive_rarity_tier — Fix 4: explicit print-run detection
-# ---------------------------------------------------------------------------
-
 def test_rarity_print_run_216_ultra_rare():
-    """'Limited to 216 copies' → ultra_rare (≤ 500)."""
     r = mw.derive_rarity_tier(
         ["limited", "deluxe"], "",
         "Limited to 216 copies. Volume 1 limited edition sold at Leipzig Book Fair.",
-        "Berserk Eclipse Leipzig Limited 1",
-        publisher="Panini Manga GER"
+        "Berserk Eclipse Leipzig Limited 1", publisher="Panini Manga GER"
     )
     assert r == "ultra_rare"
 
 
 def test_rarity_print_run_500_ultra_rare():
-    """'Limited to 500 copies' → ultra_rare (boundary)."""
     r = mw.derive_rarity_tier(
         ["variant_cover"], "",
         "Limited to 500 copies. Volume 8 variant cover available only through a lottery.",
@@ -8654,92 +8680,80 @@ def test_rarity_print_run_500_ultra_rare():
 
 
 def test_rarity_print_run_1000_super_rare():
-    """'limited to 1000 copies' → super_rare (501-2500 range)."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "Limited to 1000 copies.",
-        "Some Variant 5",
+        ["variant_cover"], "", "Limited to 1000 copies.", "Some Variant 5",
     )
     assert r == "super_rare"
 
 
 def test_rarity_print_run_2500_super_rare():
-    """'limited to 2500 copies' → super_rare (boundary)."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "Limited to 2500 copies.",
-        "Some Variant 10",
+        ["variant_cover"], "", "Limited to 2500 copies.", "Some Variant 10",
     )
     assert r == "super_rare"
 
 
-def test_rarity_print_run_5000_not_affected():
-    """'limited to 5000 copies' → no tier boost (> 2500)."""
+def test_rarity_print_run_5000_is_rare():
+    """Tirada explícita >2500: documentadamente única pero no corta → rare."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "Limited to 5000 copies.",
-        "Popular Variant 1",
+        ["variant_cover"], "", "Limited to 5000 copies.", "Popular Variant 1",
     )
     assert r == "rare"
 
 
 def test_rarity_print_run_italian():
-    """'limitata a 100 copie' → ultra_rare."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "super limitata a 100 copie",
-        "Colorless Variant 1",
+        ["variant_cover"], "", "super limitata a 100 copie", "Colorless Variant 1",
     )
     assert r == "ultra_rare"
 
 
 def test_rarity_print_run_french():
-    """'limitée à 300 exemplaires' → ultra_rare."""
     r = mw.derive_rarity_tier(
-        ["variant_cover"], "", "Édition limitée à 300 exemplaires",
-        "Some FR Variant 1",
+        ["variant_cover"], "", "Édition limitée à 300 exemplaires", "Some FR Variant 1",
     )
     assert r == "ultra_rare"
 
 
 # ---------------------------------------------------------------------------
-# derive_rarity_tier — Fix 5: Planeta box sets are common catalog
+# derive_rarity_tier — Italian firmato/a double meaning (sin cambios)
 # ---------------------------------------------------------------------------
 
-def test_rarity_planeta_boxset_common():
-    """Planeta Cómic box sets are standard catalog → common."""
+def test_rarity_firmato_attribution_not_ultra_rare():
     r = mw.derive_rarity_tier(
-        ["hardcover", "omnibus", "box_set", "deluxe"], "", "",
-        "Adolf Boxset",
-        publisher="Planeta Cómic"
+        ["variant_cover"], "IT - AnimeClick (edizioni speciali)",
+        "lo shonen isekai firmato da Yohei Yasumura, arriva in Italia!",
+        "The Dungeon of Black Company Variant",
     )
-    assert r == "common"
+    assert r != "ultra_rare"
 
 
-def test_rarity_milkyway_grimorio_common():
-    """Milky Way Ediciones premium lines → common."""
+def test_rarity_firmato_progetto_not_ultra_rare():
     r = mw.derive_rarity_tier(
-        ["hardcover", "premium_format", "deluxe", "lore_edition"], "", "",
-        "Witch Hat Atelier Edición Grimorio 1",
-        publisher="Milky Way Ediciones"
+        ["variant_cover"], "",
+        "IL NUOVO MERAVIGLIOSO PROGETTO FIRMATO CAB E FEDERICA DI MEO!",
+        "Oneira Variant 1",
     )
-    assert r == "common"
+    assert r != "ultra_rare"
 
 
-def test_rarity_ivrea_common():
-    """Editorial Ivrea (ES/AR) → common."""
+def test_rarity_firmato_capolavoro_not_ultra_rare():
     r = mw.derive_rarity_tier(
-        ["collector", "hardcover"], "", "",
-        "Fullmetal Alchemist Kanzenban 1",
-        publisher="Editorial Ivrea"
+        ["variant_cover"], "",
+        "Una Instant Variant del numero 33 di One-Punch Man, il capolavoro firmato One e Yusuke Murata!",
+        "One-Punch Man Variant 33",
     )
-    assert r == "common"
+    assert r != "ultra_rare"
 
 
-def test_rarity_norma_with_bonus_common():
-    """Norma + bonus (color pages) → common (bonus is not a scarcity signal)."""
+def test_rarity_variant_firmata_is_ultra_rare():
+    """firmata + limitata a 100 copie → ultra_rare (vía print run)."""
     r = mw.derive_rarity_tier(
-        ["collector", "hardcover", "bonus", "premium_format", "deluxe", "lore_edition"],
-        "ListadoManga (colecciones)", "", "Attack on Titan Edición Coleccionista 1",
-        publisher="Norma Editorial"
+        ["variant_cover"], "",
+        "VARIANT EDITION firmata dal grandissimo Jacopo Camagni, super limitata a 100 copie",
+        "Colorless Variant 1",
     )
-    assert r == "common"
+    assert r == "ultra_rare"
 
 
 # --- Tests for improved standardization heuristics ---
@@ -9047,33 +9061,16 @@ def test_viz_iter_year_months_clamps_to_2013():
 from scripts.retrofit import sync_cover_images as _sci
 
 
-def test_sync_cover_prepends_cover_when_images0_is_different():
-    # Bug reportado: card muestra la portada PRH, carrusel muestra otra foto.
-    it = {
-        "image_url": "https://images.penguinrandomhouse.com/cover/9781506720999",
-        "image_local": "abc.jpg",
-        "images": [{"url": "https://dh.com/cdn/shop/files/GENERIC.png", "local": "", "kind": "gallery"}],
-    }
-    assert _sci._rebuild(it) is True
-    assert it["images"][0]["url"] == it["image_url"]
-    assert it["images"][0]["local"] == "abc.jpg"
-    # La foto genérica se conserva como 2da imagen → vuelve la navegación.
-    assert len(it["images"]) == 2
-
-
 def test_sync_cover_dedupes_exact_duplicates():
     # Panini: images = [cover, cover, cover] → [cover].
     u = "https://www.panini.it/media/catalog/product/m/b/mberd001isbn_0.jpg"
-    it = {"image_url": u, "image_local": "c.jpg",
-          "images": [{"url": u, "local": "c.jpg", "kind": "gallery"}] * 3}
+    it = {"images": [{"url": u, "local": "c.jpg", "kind": "gallery"}] * 3}
     assert _sci._rebuild(it) is True
     assert len(it["images"]) == 1
 
 
 def test_sync_cover_collapses_http_https_duplicate():
     it = {
-        "image_url": "https://funside.it/cdn/shop/files/cover_x.jpg",
-        "image_local": "c.jpg",
         "images": [
             {"url": "https://funside.it/cdn/shop/files/cover_x.jpg", "local": "c.jpg", "kind": "gallery"},
             {"url": "http://funside.it/cdn/shop/files/cover_x.jpg?v=1", "local": "", "kind": "gallery"},
@@ -9086,8 +9083,7 @@ def test_sync_cover_collapses_http_https_duplicate():
 def test_sync_cover_drops_star_comics_related_thumbnails():
     # Star Comics: la galería son SIEMPRE otros tomos/series en /thumbnail/.
     cover = "https://www.starcomics.com/files/immagini/fumetti-cover/kagurabachi-1-variant"
-    it = {"image_url": cover, "image_local": "c.jpg",
-          "images": [
+    it = {"images": [
               {"url": cover, "local": "c.jpg", "kind": "gallery"},
               {"url": "https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/kagurabachi-8", "local": "", "kind": "gallery", "description": "KAGURABACHI n. 8"},
               {"url": "https://www.starcomics.com/files/immagini/fumetti-cover/thumbnail/hellboy-9", "local": "", "kind": "gallery", "description": "HELLBOY n. 9"},
@@ -9099,8 +9095,7 @@ def test_sync_cover_drops_star_comics_related_thumbnails():
 
 def test_sync_cover_drops_manga_sanctuary_related_thumbnails():
     cover = "https://img.sanctuary.fr/objet/300/392760.jpg"
-    it = {"image_url": cover, "image_local": "c.jpg",
-          "images": [
+    it = {"images": [
               {"url": cover, "local": "c.jpg", "kind": "gallery"},
               {"url": "https://img.sanctuary.fr/objet/150/441765.jpg", "local": "", "kind": "gallery", "description": "Whale Star #1"},
           ]}
@@ -9109,37 +9104,32 @@ def test_sync_cover_drops_manga_sanctuary_related_thumbnails():
 
 
 def test_sync_cover_clears_placeholder_cover():
-    # visuel_defaut / banner promo: sin reemplazo real → portada vacía (📚).
+    # visuel_defaut / banner promo en images[0]: sin reemplazo real → galería
+    # vacía (el dashboard cae al placeholder 📚).
     it = {
-        "image_url": "https://www.manga-sanctuary.com/v10_good/public/img/visuel_defaut.png",
-        "image_local": "ph.png",
         "images": [{"url": "https://www.manga-sanctuary.com/v10_good/public/img/visuel_defaut.png", "local": "ph.png", "kind": "gallery"}],
     }
     assert _sci._fix_bad_cover(it) is True
-    assert it["image_url"] == ""
-    assert it["image_local"] == ""
     assert it["images"] == []
 
 
 def test_sync_cover_promotes_real_cover_over_bad_one():
-    # Si la portada es basura pero hay una imagen real en images[], se promueve.
+    # Si la portada (images[0]) es basura pero hay una imagen real más adelante
+    # en images[], se promueve a images[0].
     it = {
-        "image_url": "https://x.com/img/lista%20de%20mangas%20panini.jpg",
-        "image_local": "banner.jpg",
         "images": [
             {"url": "https://x.com/img/lista%20de%20mangas%20panini.jpg", "local": "banner.jpg", "kind": "gallery"},
             {"url": "https://cdn.real.com/cover-real.jpg", "local": "real.jpg", "kind": "gallery"},
         ],
     }
     assert _sci._fix_bad_cover(it) is True
-    assert it["image_url"] == "https://cdn.real.com/cover-real.jpg"
-    assert it["image_local"] == "real.jpg"
+    assert imgstore.cover_url(it) == "https://cdn.real.com/cover-real.jpg"
+    assert imgstore.cover_local(it) == "real.jpg"
 
 
 def test_sync_cover_noop_when_already_synced():
     u = "https://cdn.real.com/cover.jpg"
-    it = {"image_url": u, "image_local": "c.jpg",
-          "images": [{"url": u, "local": "c.jpg", "kind": "gallery"}]}
+    it = {"images": [{"url": u, "local": "c.jpg", "kind": "gallery"}]}
     assert _sci._fix_bad_cover(it) is False
     assert _sci._rebuild(it) is False
 
@@ -9153,33 +9143,28 @@ from scripts import build_web as _bw
 
 
 def _pick_by_completeness(a, b):
-    score = lambda x: (100 if x.get("isbn") else 0) + (10 if x.get("image_url") else 0) + (5 if x.get("price") else 0)
+    score = lambda x: (100 if x.get("isbn") else 0) + (10 if x.get("images") else 0) + (5 if x.get("price") else 0)
     return a if score(a) >= score(b) else b
 
 
 def test_build_web_merge_cover_first_in_carousel():
     # PRH (con ISBN → canónico) + Dark Horse (sin ISBN). El carrusel debe
     # empezar por la portada PRH (la que muestra la card), no por la foto DHD,
-    # aunque DHD esté primero en orden de archivo.
+    # aunque DHD esté primero en orden de archivo. Portada = images[0].
     dh = {"url": "https://dh/x", "cluster_key": "edition:x|1",
-          "image_url": "https://dh.com/photo.png", "image_local": "dh.png",
           "images": [{"url": "https://dh.com/photo.png", "local": "dh.png", "kind": "gallery"}]}
     prh = {"url": "https://prh/x", "cluster_key": "edition:x|1", "isbn": "9781506715537",
-           "image_url": "https://prh.com/cover.jpg", "image_local": "prh.jpg",
            "images": [{"url": "https://prh.com/cover.jpg", "local": "prh.jpg", "kind": "gallery"}]}
     merged = _bw._merged_canonical([dh, prh], _pick_by_completeness)
-    assert merged["image_url"] == "https://prh.com/cover.jpg"      # canónica = PRH
-    assert merged["images"][0]["url"] == merged["image_url"]        # carrusel[0] == card
-    assert len(merged["images"]) == 2                              # union mantiene la foto DHD
+    assert merged["images"][0]["url"] == "https://prh.com/cover.jpg"  # canónica = PRH, carrusel[0] == card
+    assert len(merged["images"]) == 2                                # union mantiene la foto DHD
     assert merged["images"][1]["url"] == "https://dh.com/photo.png"
 
 
 def test_build_web_merge_dedupes_by_url_stem():
     a = {"url": "https://a", "cluster_key": "edition:y|1", "isbn": "9",
-         "image_url": "https://cdn/c.jpg", "image_local": "c.jpg",
          "images": [{"url": "https://cdn/c.jpg", "local": "c.jpg", "kind": "gallery"}]}
     b = {"url": "https://b", "cluster_key": "edition:y|1",
-         "image_url": "http://cdn/c.jpg?v=2", "image_local": "",
          "images": [{"url": "http://cdn/c.jpg?v=2", "local": "", "kind": "gallery"}]}
     merged = _bw._merged_canonical([a, b], _pick_by_completeness)
     # http/https + query distintos pero MISMA imagen → 1 sola en el carrusel.
@@ -9201,14 +9186,12 @@ def test_merge_cluster_single_gets_self_source():
 
 def test_merge_cluster_unions_sources_cover_first():
     prh = {"url": "https://prh", "source": "PRH", "isbn": "9", "cluster_key": "edition:x|1",
-           "image_url": "https://prh/cover.jpg", "image_local": "p.jpg",
            "images": [{"url": "https://prh/cover.jpg", "local": "p.jpg", "kind": "gallery"}]}
     dh = {"url": "https://dh", "source": "DH", "cluster_key": "edition:x|1",
-          "image_url": "https://dh/photo.png", "image_local": "d.png",
           "images": [{"url": "https://dh/photo.png", "local": "d.png", "kind": "gallery"}]}
     m = mw.merge_cluster([dh, prh])               # DH primero a propósito
-    assert m["image_url"] == "https://prh/cover.jpg"     # PRH canónica (tiene ISBN)
-    assert m["images"][0]["url"] == m["image_url"]       # carrusel[0] == card
+    # Portada = images[0]; PRH canónica (tiene ISBN) → su images[0] va primero.
+    assert m["images"][0]["url"] == "https://prh/cover.jpg"   # carrusel[0] == card
     assert len(m["images"]) == 2
     assert {s["name"] for s in m["sources"]} == {"PRH", "DH"}
 
@@ -9230,9 +9213,9 @@ def test_append_jsonl_dedups_by_product_not_url(tmp_path):
     # UNA sola fila con 2 sources, no dos filas.
     items = tmp_path / "items.jsonl"
     prh = {"url": "https://prh/op1", "source": "PRH", "isbn": "9781", "title": "OP 1",
-           "cluster_key": "edition:op|1", "image_url": "https://prh/op1.jpg", "price": "$10"}
+           "cluster_key": "edition:op|1", "price": "$10"}
     dh = {"url": "https://dh/op1", "source": "DH", "title": "OP 1",
-          "cluster_key": "edition:op|1", "image_url": "https://dh/op1.png", "price": "$12"}
+          "cluster_key": "edition:op|1", "price": "$12"}
     mw.append_jsonl(items, [prh])
     mw.append_jsonl(items, [dh])
     rows = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -9245,9 +9228,9 @@ def test_append_jsonl_rescrape_one_source_keeps_siblings(tmp_path):
     # Re-scrapear SOLO una fuente no debe borrar las fuentes hermanas del array.
     items = tmp_path / "items.jsonl"
     prh = {"url": "https://prh/op1", "source": "PRH", "isbn": "9781", "title": "OP 1",
-           "cluster_key": "edition:op|1", "image_url": "https://prh/op1.jpg", "price": "$10"}
+           "cluster_key": "edition:op|1", "price": "$10"}
     dh = {"url": "https://dh/op1", "source": "DH", "title": "OP 1",
-          "cluster_key": "edition:op|1", "image_url": "https://dh/op1.png", "price": "$12"}
+          "cluster_key": "edition:op|1", "price": "$12"}
     mw.append_jsonl(items, [prh, dh])
     # Re-scrape solo PRH, con precio nuevo.
     prh2 = dict(prh, price="$9")
@@ -9264,11 +9247,11 @@ def test_standardize_dedup_merges_sources_not_drops():
     # ambas fuentes (no borrar una y perder su source) — modelo 1-fila/producto.
     a = {"url": "https://src-a/op1", "source": "Src A", "series_key": "one-piece",
          "edition_key": "one-piece-norma-special", "volume": "1",
-         "image_url": "https://a/op1.jpg", "sources": [
+         "sources": [
              {"name": "Src A", "url": "https://src-a/op1", "price": "$10"}]}
     b = {"url": "https://src-b/op1", "source": "Src B", "series_key": "one-piece",
          "edition_key": "one-piece-norma-special", "volume": "1",
-         "image_url": "https://b/op1.png", "sources": [
+         "sources": [
              {"name": "Src B", "url": "https://src-b/op1", "price": "$12"}]}
     # recomputar cluster_key (como hace el skill tras estandarizar) + consolidar
     for it in (a, b):
@@ -9320,11 +9303,11 @@ def test_serve_move_consolidates_into_existing_volume(tmp_path):
     # 'mover' debe fusionar si el destino ya tiene ese tomo (mismo cluster_key).
     rows = [
         {"url": "https://x", "source": "X", "volume": "1", "edition_key": "wrong-ed",
-         "cluster_key": "edition:wrong-ed|1", "image_url": "x.jpg",
+         "cluster_key": "edition:wrong-ed|1",
          "sources": [{"name": "X", "url": "https://x"}]},
         {"url": "https://y", "source": "Y", "volume": "1", "edition_key": "right-ed",
          "edition_display": "Right", "series_key": "s", "series_display": "S",
-         "cluster_key": "edition:right-ed|1", "image_url": "y.jpg", "isbn": "9",
+         "cluster_key": "edition:right-ed|1", "isbn": "9",
          "sources": [{"name": "Y", "url": "https://y"}]},
     ]
     items.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
@@ -9345,11 +9328,11 @@ def test_serve_item_update_product_field_propagates_row_field_does_not(tmp_path)
     rows = [
         {"url": "https://a", "source": "A", "author": "viejo", "publisher": "P",
          "slug": "slug-a", "cluster_key": "edition:ed|1", "title": "T",
-         "image_url": "a.jpg", "tags": ["x"], "score": 10,
+         "images": [{"url": "a.jpg", "local": "", "kind": "gallery"}], "tags": ["x"], "score": 10,
          "sources": [{"name": "A", "url": "https://a"}]},
         {"url": "https://b", "source": "B", "author": "viejo", "publisher": "P",
          "slug": "slug-b", "cluster_key": "edition:ed|1", "title": "T",
-         "image_url": "b.jpg",
+         "images": [{"url": "b.jpg", "local": "", "kind": "gallery"}],
          "sources": [{"name": "B", "url": "https://b"}]},
     ]
     items.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
@@ -9375,8 +9358,8 @@ def test_serve_item_update_product_field_propagates_row_field_does_not(tmp_path)
     # Campo ROW-LOCAL (slug) → SOLO la fila abierta, la hermana intacta.
     assert out["https://a"]["slug"] == "slug-a-fixed"
     assert out["https://b"]["slug"] == "slug-b"
-    # Campo de imagen protegido → ninguna fila cambió.
-    assert out["https://a"]["image_url"] == "a.jpg"
+    # Campo de imagen protegido (images) → ninguna fila cambió.
+    assert out["https://a"]["images"][0]["url"] == "a.jpg"
     # Se logueó el cambio para auditoría.
     log = [json.loads(l) for l in edits.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert len(log) == 1 and log[0]["rows_updated"] == 2
@@ -9392,19 +9375,22 @@ def test_compute_junk_local_flags_tiny_zero_and_shared(tmp_path):
     (imgs / "empty.jpg").write_bytes(b"")                                # 0B
     (imgs / "ad.png").write_bytes(b"\x89PNG" + b"\x00" * 50000)          # 50KB
     (imgs / "realcover.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 50000)
+    def _it(local, series, title):
+        return {"images": [{"url": f"https://x/{local}", "local": local, "kind": "gallery"}],
+                "series_display": series, "title": title}
     items = [
-        {"image_local": "pixel.gif", "series_display": "A", "title": "A"},
-        {"image_local": "empty.jpg", "series_display": "B", "title": "B"},
+        _it("pixel.gif", "A", "A"),
+        _it("empty.jpg", "B", "B"),
         # ad.png compartido por 4 OBRAS distintas → basura
-        {"image_local": "ad.png", "series_display": "W One", "title": "W One"},
-        {"image_local": "ad.png", "series_display": "X Two", "title": "X Two"},
-        {"image_local": "ad.png", "series_display": "Y Three", "title": "Y Three"},
-        {"image_local": "ad.png", "series_display": "Z Four", "title": "Z Four"},
+        _it("ad.png", "W One", "W One"),
+        _it("ad.png", "X Two", "X Two"),
+        _it("ad.png", "Y Three", "Y Three"),
+        _it("ad.png", "Z Four", "Z Four"),
         # realcover compartido por 4 filas de la MISMA obra (volúmenes) → NO basura
-        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 1"},
-        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 2"},
-        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 3"},
-        {"image_local": "realcover.jpg", "series_display": "Secret Saint", "title": "Secret Saint 4"},
+        _it("realcover.jpg", "Secret Saint", "Secret Saint 1"),
+        _it("realcover.jpg", "Secret Saint", "Secret Saint 2"),
+        _it("realcover.jpg", "Secret Saint", "Secret Saint 3"),
+        _it("realcover.jpg", "Secret Saint", "Secret Saint 4"),
     ]
     junk = _sci._compute_junk_local(items, imgs)
     assert "pixel.gif" in junk          # tiny
@@ -9416,10 +9402,10 @@ def test_compute_junk_local_flags_tiny_zero_and_shared(tmp_path):
 def test_fix_bad_cover_clears_junk_local_cover():
     _sci._JUNK_LOCAL = {"placeholder.png"}
     try:
-        it = {"image_url": "https://x/placeholder.png", "image_local": "placeholder.png", "images": [
+        it = {"images": [
             {"url": "https://x/placeholder.png", "local": "placeholder.png", "kind": "gallery"}]}
         assert _sci._fix_bad_cover(it) is True
-        assert it["image_url"] == "" and it["image_local"] == "" and it["images"] == []
+        assert it["images"] == []
     finally:
         _sci._JUNK_LOCAL = set()
 
@@ -9427,12 +9413,12 @@ def test_fix_bad_cover_clears_junk_local_cover():
 def test_fix_bad_cover_promotes_over_junk_local():
     _sci._JUNK_LOCAL = {"ad.png"}
     try:
-        it = {"image_url": "https://x/ad.jpg", "image_local": "ad.png", "images": [
+        it = {"images": [
             {"url": "https://x/ad.jpg", "local": "ad.png", "kind": "gallery"},
             {"url": "https://x/real-cover.jpg", "local": "real.jpg", "kind": "gallery"}]}
         assert _sci._fix_bad_cover(it) is True
-        assert it["image_url"] == "https://x/real-cover.jpg"
-        assert it["image_local"] == "real.jpg"
+        assert imgstore.cover_url(it) == "https://x/real-cover.jpg"
+        assert imgstore.cover_local(it) == "real.jpg"
     finally:
         _sci._JUNK_LOCAL = set()
 
@@ -9492,3 +9478,195 @@ def test_fsp_ek_pub_slug_handles_multitoken_series_and_publisher():
         "edition_key": "yowamushi-pedal-unknown-special"}) is None
     # edition_key que no arranca con series_key → None
     assert _fsp.ek_pub_slug({"series_key": "x", "edition_key": "otra-cosa-special"}) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_volume — gotcha #60: números antes de calificadores de edición
+# ---------------------------------------------------------------------------
+
+
+def test_extract_volume_before_edition_qualifier():
+    """Números antes de 'Edición Especial', 'Variant', etc. se extraen (gotcha #60)."""
+    cases = [
+        ("The Promised Neverland 13 Edición Especial", "13"),
+        ("Twilight Outfocus Long Take 1 Edición Limitada", "1"),
+        ("A Miyoshi le gusta Hosaka 2 Edición Especial", "2"),
+        ("Berserk 21 Variant", "21"),
+        ("Dragon Ball Super 15 Edición Especial", "15"),
+        ("The Seven Deadly Sins 41 Edición Especial", "41"),
+    ]
+    for title, expected in cases:
+        got = mw._extract_volume(title)
+        assert got == expected, f"_extract_volume({title!r}) = {got!r}, expected {expected!r}"
+
+
+def test_extract_volume_existing_cases_unchanged():
+    """Los casos existentes siguen funcionando con el nuevo patrón."""
+    assert mw._extract_volume("One Piece 100") == "100"
+    assert mw._extract_volume("Berserk Deluxe 1") == "1"
+    assert mw._extract_volume("Dragon Ball vol. 10") == "10"
+    assert mw._extract_volume("Naruto nº5") == "5"
+    assert mw._extract_volume("") == ""
+
+
+def test_extract_volume_no_false_positive_year():
+    """Un año no se extrae como volumen aunque vaya antes de 'Special'."""
+    # "1985 Special" — 1985 es año, no volumen de 1-3 dígitos (patrón cap ≤ 3 dígitos)
+    assert mw._extract_volume("Captain Tsubasa 1985 Special") == ""
+
+
+# ---------------------------------------------------------------------------
+# Ordenamiento de edición: volumen + kind-rank (gotcha #60)
+# ---------------------------------------------------------------------------
+
+
+def _make_item(title: str, volume: str, cluster_key: str = "", signal_types=None):
+    return {
+        "title": title,
+        "volume": volume,
+        "cluster_key": cluster_key,
+        "edition_key": "",
+        "signal_types": signal_types or [],
+    }
+
+
+def _sort_edition(items):
+    """Ordena como lo hace la función JS _volumeNumber + _kindRank, en Python."""
+    KIND_RANK = {
+        "regular": 0,
+        "variant": 1, "alternativa": 1,
+        "special": 2, "especial": 2, "limited": 2, "limitada": 2,
+        "deluxe": 3, "kanzenban": 3,
+        "artbook": 4, "fanbook": 4,
+        "box": 5, "boxset": 5,
+    }
+
+    def vol_num(v):
+        if not v:
+            return float("inf")
+        import re
+        m = re.search(r"(\d+(?:\.\d+)?)", str(v))
+        return float(m.group(1)) if m else float("inf")
+
+    def kind_rank(item):
+        ck = item.get("cluster_key", "")
+        if ck.startswith("lmc:"):
+            parts = ck.split(":")
+            if len(parts) >= 3 and parts[2] in KIND_RANK:
+                return KIND_RANK[parts[2]]
+        sigs = item.get("signal_types", [])
+        if "variant_cover" in sigs:
+            return 1
+        if any(s in sigs for s in ("special_edition", "limited", "collector")):
+            return 2
+        if any(s in sigs for s in ("artbook", "fanbook")):
+            return 4
+        if any(s in sigs for s in ("box_set", "bundle")):
+            return 5
+        return 10
+
+    return sorted(items, key=lambda x: (vol_num(x["volume"]), kind_rank(x)))
+
+
+def test_edition_sort_ascending_volume():
+    """Tomos se ordenan por volumen ascendente."""
+    items = [
+        _make_item("Neverland 20", "20", "lmc:2857:regular:20"),
+        _make_item("Neverland 10", "10", "lmc:2857:regular:10"),
+        _make_item("Neverland 13 Edición Especial", "13", "lmc:2857:special:13"),
+    ]
+    sorted_items = _sort_edition(items)
+    assert [i["volume"] for i in sorted_items] == ["10", "13", "20"]
+
+
+def test_edition_sort_kind_tiebreak_same_volume():
+    """Mismo volumen: regular < variant < special (desempate por kind)."""
+    items = [
+        _make_item("Berserk 42 Variant", "42", "lmc:2688:variant:42"),
+        _make_item("Berserk 42 Edición Especial", "42", "lmc:2688:special:42"),
+        _make_item("Berserk 42", "42", "lmc:2688:regular:42"),
+    ]
+    sorted_items = _sort_edition(items)
+    kinds = [i["cluster_key"].split(":")[2] for i in sorted_items]
+    assert kinds == ["regular", "variant", "special"]
+
+
+def test_edition_sort_no_volume_goes_last():
+    """Items sin volumen van al final."""
+    items = [
+        _make_item("Artbook", "", "lmc:999:regular:0"),
+        _make_item("Vol 1", "1", "lmc:999:regular:1"),
+        _make_item("Vol 3", "3", "lmc:999:regular:3"),
+    ]
+    sorted_items = _sort_edition(items)
+    assert sorted_items[0]["volume"] == "1"
+    assert sorted_items[1]["volume"] == "3"
+    assert sorted_items[2]["volume"] == ""
+
+
+def test_edition_sort_promised_neverland_case():
+    """Caso real: Promised Neverland 10, 13 Especial, 20 → orden 10, 13, 20."""
+    items = [
+        _make_item("The Promised Neverland 20", "20", "lmc:2857:regular:20"),
+        _make_item("The Promised Neverland 13 Edición Especial", "13", "lmc:2857:special:13"),
+        _make_item("The Promised Neverland 10", "10", "lmc:2857:regular:10"),
+    ]
+    sorted_items = _sort_edition(items)
+    assert [i["volume"] for i in sorted_items] == ["10", "13", "20"]
+
+
+# --- should_reject (filter_collectible) -------------------------------------
+
+from scripts.retrofit import filter_collectible as _fc
+
+
+def test_should_reject_keeps_standardized_item_with_regular_tomo():
+    """Item estandarizado que el gate etiqueta regular_tomo → se conserva.
+
+    Post-estandarización el texto del título no porta frases raw ("Limited
+    Edition", "Collector"); la señal real ya fue derivada y validada por el
+    skill. Rechazar aquí borraría ediciones Ultimate/Limited curadas por el owner.
+    """
+    item = {"title": "Yawara! Ultimate 18", "standardized_at": "2026-06-01T00:00:00"}
+    # is_coll=False, reason="regular_tomo", item estandarizado → NO rechazar
+    assert _fc.should_reject(item, is_coll=False, reason="regular_tomo") is False
+
+
+def test_should_reject_rejects_non_standardized_regular_tomo():
+    """Item NO estandarizado con regular_tomo → debe ser rechazado normalmente."""
+    item = {"title": "Naruto 1"}  # sin standardized_at
+    assert _fc.should_reject(item, is_coll=False, reason="regular_tomo") is True
+
+
+def test_should_reject_rejects_standardized_item_with_umbrella_magazine():
+    """Item estandarizado cuyo gate devuelve umbrella_magazine → rechazar siempre.
+
+    El gate umbrella_magazine es duro: aplica independientemente de si el item
+    está estandarizado o no (discrimina revistas-paraguas por URL/título).
+    """
+    item = {
+        "title": "Astro Boy | Mighty Atom Deluxe 3",
+        "url": "https://www.manga-sanctuary.com/magazine-atom-vol-3-s12345.html",
+        "standardized_at": "2026-06-01T00:00:00",
+    }
+    assert _fc.should_reject(item, is_coll=False, reason="umbrella_magazine") is True
+
+
+def test_should_reject_keeps_item_approved_by_gate():
+    """Si is_coll=True el item siempre se conserva, sea o no estandarizado."""
+    item = {"title": "One Piece Collector Edition 1", "standardized_at": "2026-06-01T00:00:00"}
+    assert _fc.should_reject(item, is_coll=True, reason="signal:collector") is False
+
+    item_no_std = {"title": "One Piece Collector Edition 1"}
+    assert _fc.should_reject(item_no_std, is_coll=True, reason="signal:collector") is False
+
+
+def test_should_reject_title_junk_always_rejected():
+    """Gates duros de título (junk/too_short) siempre rechazan, con o sin standardized_at."""
+    for reason in ("title_too_short", "title_junk_discount", "title_junk_generic", "no_title"):
+        item_std = {"title": "x", "standardized_at": "2026-06-01T00:00:00"}
+        assert _fc.should_reject(item_std, is_coll=False, reason=reason) is True, \
+            f"Hard gate {reason!r} debería rechazar siempre (estandarizado)"
+        item_raw = {"title": "x"}
+        assert _fc.should_reject(item_raw, is_coll=False, reason=reason) is True, \
+            f"Hard gate {reason!r} debería rechazar siempre (sin estandarizar)"

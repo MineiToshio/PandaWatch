@@ -53,6 +53,8 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 KEYWORD_RULES: list[dict[str, Any]] = [
@@ -316,17 +318,18 @@ class Candidate:
     status: str = "unknown"
     content_hash: str = ""
     price: str = ""
+    # image_url / image_local son campos RUNTIME del Candidate (input del
+    # scraper + output del mirror). NO se persisten como campos top-level del
+    # row: candidate_to_json los convierte en images[0]. image_local es el
+    # filename del espejo en data/images/, vacío hasta que mirror_candidate_images
+    # lo descarga. Ver "Image storage" en CLAUDE.md / docs/reference/images.md.
     image_url: str = ""
-    # image_local: filename del espejo local en data/images/ (Image storage
-    # Fase 1). Vacío hasta que mirror_candidate_images lo descarga. image_url
-    # queda como provenance + fallback. Ver "Image storage" en CLAUDE.md.
     image_local: str = ""
     # images: carrusel de imágenes asociadas al item. Cada elemento es
     # {url, local, kind, description} donde kind ∈ {gallery, extra}.
-    # images[0] es la portada (por posición, no por kind) y mantiene
-    # sincronía con image_url / image_local. Cuando hay
-    # más de un elemento el dashboard renderiza un carrusel; si está vacío,
-    # el frontend cae al image_url/image_local single.
+    # images[0] es la portada (por posición, no por kind) y es la ÚNICA fuente
+    # de verdad de la portada en el row persistido (decisión 2026-06-09). Cuando
+    # hay más de un elemento el dashboard renderiza un carrusel.
     images: list[dict[str, str]] = field(default_factory=list)
     # extras: descripciones de items extra vinculados a este tomo
     # (Fase 2 — Layout B parser). Cada elemento es {description,
@@ -2050,6 +2053,15 @@ def fetch_metadata_from_detail(
         if not result.get(field) and label_pairs.get(field):
             result[field] = label_pairs[field]
 
+    # Excepción a la prioridad del JSON-LD: una releaseDate con componente
+    # HORARIO ("2022/05/27 10:00:00") es el inicio de venta EN LA TIENDA, no
+    # el 発売日 del libro (caso real: store.kadokawa.co.jp, 27/05 vs 31/05).
+    # Si la ficha técnica (label-pairs) trae fecha, esa gana.
+    if (result.get("release_date")
+            and re.search(r"\d{1,2}:\d{2}", result["release_date"])
+            and label_pairs.get("release_date")):
+        result["release_date"] = label_pairs["release_date"]
+
     # === Author (si Schema.org no lo trajo) ===
     if not result["author"]:
         author = _extract_json_ld_author(soup)
@@ -2197,8 +2209,9 @@ _ULTRA_RARE_KEYWORDS = (
     "numbered edition", "numéroté", "numérotée",
     "numerado", "numerada", "numerato", "numerata",
     # Signed — ES/FR/DE/PT (no double-meaning issue in these languages)
+    # "firmado/firmada" moved to _has_hand_signed(): "lámina firmada" means a
+    # PRINTED signature on a giveaway art print, not a hand-signed copy.
     "signed by",
-    "firmado", "firmada",       # ES: always means signed
     "signé", "signiert", "autografado",
     # Events across markets — only explicitly exclusive keywords
     "event exclusive", "event only", "event-only",
@@ -2236,10 +2249,35 @@ _PRINT_RUN_RE = re.compile(
     re.I,
 )
 
-# Keywords que indican tirada única explícita. NO suben a ultra_rare — solo
-# BLOQUEAN la promoción a common. Un item con "tirage unique" de Norma Editorial
-# se queda en rare (no common) aunque Norma sea publisher de catálogo.
-# Investigación 2026-05-30: 98%+ de confianza de que estos indican no-reimpresión.
+# Contexto inmediato que indica firma IMPRESA (en una lámina/postal de regalo),
+# no un ejemplar firmado a mano. Caso real: Capitán Harlock Letrablanka —
+# "lámina firmada" (firma impresa) lo subía a ultra_rare con 170 copias en stock.
+_PRINTED_SIGNATURE_NOUNS_RE = re.compile(
+    r'(?:l[áa]minas?|postal(?:es)?|prints?|ilustraci[óo]n(?:es)?|tarjetas?|'
+    r'p[óo]ster(?:es|s)?|estampas?)\b[^.;,!?]{0,24}$'
+)
+
+
+def _has_hand_signed(text: str) -> bool:
+    """True si el texto indica un ejemplar firmado A MANO.
+
+    "firmado/firmada" precedido (en la misma cláusula) por lámina/postal/
+    print/etc. es una firma IMPRESA en un extra de regalo — no evidencia de
+    ultra_rare. Caso real: "lámina firmada" de Letrablanka con 170 copias en
+    stock; "postal de regalo firmada por la autora".
+    """
+    for m in re.finditer(r'\bfirmad[oa]s?\b', text):
+        prefix = text[max(0, m.start() - 40):m.start()].strip()
+        if _PRINTED_SIGNATURE_NOUNS_RE.search(prefix):
+            continue
+        return True
+    return False
+
+
+# Keywords que indican tirada única explícita / no-reimpresión. Son la
+# EVIDENCIA que mantiene un item en 'rare' bajo el modelo default-common
+# (2026-06-10). Investigación 2026-05-30: 98%+ de confianza de que estos
+# indican no-reimpresión.
 _SINGLE_RUN_KEYWORDS = (
     # Explícito "tirada única" / "no reimpresión" (multilingual)
     "tirage unique", "tirada única", "tiratura unica", "edizione unica",
@@ -2251,28 +2289,26 @@ _SINGLE_RUN_KEYWORDS = (
     # First-print-only bonuses (el libro se reimprime, el bonus no)
     "prima tiratura", "primera tirada", "première tirage",
     "初版限定", "初回限定", "shokai gentei",
-    # Event-tied editions (aniversario/celebración con extras)
+    # Event-tied editions (celebración con extras)
     "celebration edition",
     # Lucca Comics — items sold/premiered at the festival are one-time prints
     # but without explicit print runs we can't distinguish 50 from 5000 copies.
-    # Block common (not catalog) but don't push to ultra_rare. Items with
+    # Keep rare (not common) but don't push to ultra_rare. Items with
     # explicit print runs still reach ultra_rare via _PRINT_RUN_RE.
     "lucca comics", "lucca c&g",
-    # Anniversary / milestone editions — tirada event-tied, no catálogo permanente
-    "anniversary edition", "édition anniversaire", "edizione anniversario",
-    "edición aniversario", "aniversario",
-    # "Limited/Limitada/Limitée/Limitata" en título/descripción — tirada limitada
-    # explícita que bloquea common incluso para publishers de catálogo.
-    # Nota: "limited edition" sola tiene ~75% PPV pero combinada con publisher
-    # de catálogo, su presencia indica una sub-línea limitada dentro de un catálogo
-    # que normalmente reimprime (ej. Norma "Edición Especial Limitada" vs Norma
-    # "Edición Coleccionista" ongoing).
-    "edición especial limitada", "edicion especial limitada",
-    "édition limitée", "edizione limitata",
-    "limited edition", "limitierte ausgabe", "edição limitada",
+    # JP: 限定版/特装版 son single-print-run por convención de mercado (no se
+    # reimprimen con el extra); 受注生産 es literalmente impresión bajo pedido.
+    "限定版", "特装版", "受注生産", "完全受注生産",
     # Explicit sold-out / agotado en editorial
     "verlagsvergriffen", "épuisé éditeur",
 )
+# NOTA (2026-06-10): la familia genérica "limited edition / édition limitée /
+# edizione limitata / edición limitada" y "anniversary/aniversario" se QUITÓ
+# de esta lista: en un tracker de ediciones especiales esas frases describen
+# a la mitad del corpus (3 367 items con signal `limited`) y no discriminan
+# escasez real — eran la causa #1 de que 81% del corpus quedara en 'rare'
+# (precisión medida: 54%). La escasez real se evidencia con print run,
+# no-reimpresión explícita, lotería/evento o stock agotado verificado.
 
 _TOKUTEN_SOURCES = frozenset({
     "booksprivilege",
@@ -2363,17 +2399,27 @@ def derive_rarity_tier(
     description: str,
     title: str,
     publisher: str = "",
+    stock_status: str = "",
 ) -> str:
-    """Clasifica un item en uno de 4 tiers de rareza.
+    """Clasifica un item en uno de 4 tiers de rareza — modelo default-common.
 
-    Tiers (orden de evaluación):
-    1. ultra_rare: edición numerada/firmada, exclusiva de evento, lotería,
-       O print run explícito ≤ 500.
-    2. super_rare: retailer_exclusive (solo o + lore_edition); tokuten JP;
-       O print run explícito ≤ 2500.
-    3. common: publisher × edition pattern de catálogo permanente, SIN señales
-       de escasez, SIN keywords de tirada única, Y NO solo de fuente de referencia.
-    4. rare: default conservador para todo lo demás.
+    Rediseño 2026-06-10: el default pasó de 'rare' a 'common'. El modelo viejo
+    ("rare salvo que pruebes lo contrario") dejó al 81% del corpus en rare con
+    54% de precisión medida contra la web. Ahora cada tier por encima de common
+    exige EVIDENCIA:
+
+    1. ultra_rare: numerado, firmado a mano (no firma impresa en lámina),
+       exclusiva de evento, lotería, O print run explícito ≤ 500.
+    2. super_rare: print run explícito ≤ 2500, O retailer_exclusive CON stock
+       agotado verificado (stock_status='out_of_stock').
+    3. rare: escasez evidenciada sin tirada documentada — stock agotado
+       verificado, retailer_exclusive/tokuten sin verificación, o keyword de
+       no-reimpresión (_SINGLE_RUN_KEYWORDS, incl. 限定版/特装版 JP).
+    4. common: default. Sin badge en la UI; se promueve solo con evidencia
+       (retrofit check_stock.py llena stock_status desde las páginas fuente).
+
+    `stock_status`: '' (desconocido) | 'in_stock' | 'out_of_stock' — lo llena
+    el retrofit check_stock.py con timestamp en stock_checked_at.
 
     Returns: 'ultra_rare' | 'super_rare' | 'rare' | 'common'
     """
@@ -2381,39 +2427,44 @@ def derive_rarity_tier(
     text = f"{title} {description}".lower()
     src = (source or "").lower()
     print_run = _extract_print_run(text)
+    out_of_stock = stock_status == "out_of_stock"
 
-    # --- Tier 4: Ultra Rare ---
+    # --- Ultra Rare: tirada ínfima documentada o canal de evento/lotería ---
     if any(kw in text for kw in _ULTRA_RARE_KEYWORDS):
+        return "ultra_rare"
+    if _has_hand_signed(text):
         return "ultra_rare"
     if any(pat.search(text) for pat in _ULTRA_RARE_PATTERNS):
         return "ultra_rare"
     if print_run is not None and print_run <= 500:
         return "ultra_rare"
 
-    # --- Tier 3: Super Rare ---
-    if "retailer_exclusive" in sigs:
-        return "super_rare"
-    if any(t in src for t in _TOKUTEN_SOURCES):
-        return "super_rare"
+    # --- Super Rare: tirada corta documentada o exclusiva agotada ---
     if print_run is not None and print_run <= 2500:
         return "super_rare"
+    if "retailer_exclusive" in sigs and out_of_stock:
+        return "super_rare"
 
-    # --- Tier 1: Common (catálogo permanente) ---
-    # "bonus" excluded: color pages, postcards, first-print extras are standard
-    # features of kanzenban/collector formats, not scarcity markers. Genuinely
-    # scarce bonuses (tokuten, retailer-exclusive) are caught by super_rare
-    # checks above (retailer_exclusive signal, BooksPrivilege source, etc.).
-    _SCARCITY_SIGS = frozenset({
-        "limited", "retailer_exclusive", "variant_cover",
-    })
-    if not (sigs & _SCARCITY_SIGS):
-        if _matches_common_catalog(publisher or "", title or ""):
-            if not any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
-                if not _is_reference_only_source(source or ""):
-                    return "common"
+    # --- Rare: escasez evidenciada sin tirada corta documentada ---
+    if print_run is not None:
+        # Tirada explícita >2500: documentadamente única, pero no corta.
+        return "rare"
+    if out_of_stock:
+        return "rare"
+    if "retailer_exclusive" in sigs:
+        # Exclusiva de retailer sin stock verificado: escasa por canal, pero
+        # sin evidencia de agotamiento no llega a super_rare (caso real: Ichi
+        # the Witch variant en stock a $11.99 estaba marcada super_rare).
+        return "rare"
+    if any(t in src for t in _TOKUTEN_SOURCES):
+        return "rare"
+    if any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
+        return "rare"
 
-    # --- Tier 2: Rare (default conservador) ---
-    return "rare"
+    # --- Common: default (sin evidencia de escasez) ---
+    # El signal `limited` y `variant_cover` ya NO fuerzan rare: en este corpus
+    # (tracker de ediciones especiales) describen al item típico, no escasez.
+    return "common"
 
 
 def derive_stock_type(signal_types: list[str], title: str, description: str) -> str:
@@ -2546,7 +2597,16 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bfine\s+art\s+print\b", re.IGNORECASE),
     re.compile(r"\bart\s+print\b(?!\s+(?:edition|collection))", re.IGNORECASE),
     re.compile(r"\bbookends?\b", re.IGNORECASE),
-    re.compile(r"\bstandees?\b", re.IGNORECASE),
+    # standee COMO PRODUCTO PRINCIPAL → rechazar.
+    # NO rechazar cuando es un extra incluido con el manga, precedido por
+    # "con ", "with ", "avec ", "mit ", "inkl ", "inkl. ", "+ ". En esos
+    # casos el standee es bonus, no el artículo principal vendido.
+    # Ejemplo OK: "My Dress Up Darling Deluxe Con Standee In Acrilico".
+    # Lookbehinds fijos en serie (Python exige anchura fija por lookbehind).
+    re.compile(
+        r"(?<!con )(?<!with )(?<!avec )(?<!mit )(?<!inkl )(?<!inkl. )(?<!\+ )\bstandees?\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bcomic\s+cover\s+(?:art\s+)?print\b", re.IGNORECASE),
     re.compile(r"\bpaperweight\b", re.IGNORECASE),
     re.compile(r"\b(?:enamel\s+)?pin\s+set\b", re.IGNORECASE),
@@ -2742,17 +2802,22 @@ _NON_MANGA_TAG_PREFIXES = (
 _COMICS_BLACKLIST: dict[str, Any] | None = None  # lazy load
 _COMICS_PUBLISHERS: frozenset[str] = frozenset()
 _COMICS_FRANCHISE_PATTERN: re.Pattern[str] | None = None
+_COMICS_TITLE_EXCEPTION_PATTERN: re.Pattern[str] | None = None
 _COMICS_FORMAT_PATTERN: re.Pattern[str] | None = None
 
 
 def _load_comics_blacklist() -> dict[str, Any]:
     """Lee data/comics_blacklist.yml; resultado se cachea en globals."""
-    global _COMICS_BLACKLIST, _COMICS_PUBLISHERS, _COMICS_FRANCHISE_PATTERN, _COMICS_FORMAT_PATTERN
+    global _COMICS_BLACKLIST, _COMICS_PUBLISHERS
+    global _COMICS_FRANCHISE_PATTERN, _COMICS_TITLE_EXCEPTION_PATTERN, _COMICS_FORMAT_PATTERN
     if _COMICS_BLACKLIST is not None:
         return _COMICS_BLACKLIST
     path = Path("data/comics_blacklist.yml")
     if not path.exists():
-        _COMICS_BLACKLIST = {"publishers": [], "franchise_keywords": [], "format_keywords": []}
+        _COMICS_BLACKLIST = {
+            "publishers": [], "franchise_keywords": [],
+            "title_exceptions": [], "format_keywords": [],
+        }
         return _COMICS_BLACKLIST
     try:
         with path.open(encoding="utf-8") as fh:
@@ -2762,6 +2827,9 @@ def _load_comics_blacklist() -> dict[str, Any]:
     _COMICS_BLACKLIST = {
         "publishers": data.get("publishers") or [],
         "franchise_keywords": data.get("franchise_keywords") or [],
+        # Soporte retrocompatible: acepta tanto "title_exceptions" (nuevo nombre)
+        # como "franchise_exceptions" (nombre legacy, por si hubiera YAMLs viejos).
+        "title_exceptions": data.get("title_exceptions") or data.get("franchise_exceptions") or [],
         "format_keywords": data.get("format_keywords") or [],
     }
     _COMICS_PUBLISHERS = frozenset(p.strip() for p in _COMICS_BLACKLIST["publishers"] if p)
@@ -2773,6 +2841,16 @@ def _load_comics_blacklist() -> dict[str, Any]:
         # boundaries siguen funcionando porque los espacios ya separan.
         _COMICS_FRANCHISE_PATTERN = re.compile(
             r"(?<![\w])(?:" + "|".join(fr_kw) + r")(?![\w])",
+            re.IGNORECASE,
+        )
+    exc_kw = [re.escape(k) for k in _COMICS_BLACKLIST["title_exceptions"] if k]
+    if exc_kw:
+        # Substring case-insensitive — las excepciones son frases específicas
+        # (p.ej. "Deadpool: Samurai", "Eagle: The Making of") que no pueden
+        # matchear falsamente. Neutralizan tanto franchise_keywords como
+        # patrones hard non-manga.
+        _COMICS_TITLE_EXCEPTION_PATTERN = re.compile(
+            r"(?:" + "|".join(exc_kw) + r")",
             re.IGNORECASE,
         )
     fmt_kw = [re.escape(k) for k in _COMICS_BLACKLIST["format_keywords"] if k]
@@ -2804,8 +2882,14 @@ def is_comic_not_manga(title: str, publisher: str) -> tuple[bool, str]:
     if publisher and publisher.strip() in _COMICS_PUBLISHERS:
         return True, f"comic_publisher:{publisher.strip()}"
     if title and _COMICS_FRANCHISE_PATTERN and _COMICS_FRANCHISE_PATTERN.search(title):
-        m = _COMICS_FRANCHISE_PATTERN.search(title)
-        return True, f"comic_franchise:{m.group(0)}"
+        # Antes de rechazar, verificar si el título está en title_exceptions:
+        # títulos que contienen una keyword de franquicia occidental pero son
+        # manga reales (crossovers, adaptaciones japonesas oficiales, etc.).
+        if _COMICS_TITLE_EXCEPTION_PATTERN and _COMICS_TITLE_EXCEPTION_PATTERN.search(title):
+            pass  # excepción activa → no rechazar por franchise
+        else:
+            m = _COMICS_FRANCHISE_PATTERN.search(title)
+            return True, f"comic_franchise:{m.group(0)}"
     if title and _COMICS_FORMAT_PATTERN and _COMICS_FORMAT_PATTERN.search(title):
         m = _COMICS_FORMAT_PATTERN.search(title)
         return True, f"comic_format:{m.group(0)}"
@@ -2959,9 +3043,16 @@ def is_likely_manga(
         blob_extra = title
 
     # 0) Non-manga HARD: discriminante absoluto.
-    for pat in _NON_MANGA_HARD:
-        if pat.search(blob):
-            return False, f"non_manga_hard:{pat.pattern[:40]}"
+    # Antes de evaluar los patrones hard, verificar title_exceptions: títulos
+    # que son manga reales y podrían matchear un patrón hard (ej. "Eagle: The
+    # Making of an Asian-American President" matchea \bThe\s+Making\s+of\b).
+    _load_comics_blacklist()
+    if title and _COMICS_TITLE_EXCEPTION_PATTERN and _COMICS_TITLE_EXCEPTION_PATTERN.search(title):
+        pass  # título exceptuado → saltar todos los patrones hard
+    else:
+        for pat in _NON_MANGA_HARD:
+            if pat.search(blob):
+                return False, f"non_manga_hard:{pat.pattern[:40]}"
 
     # 1) Strong manga hints
     for pat in _STRONG_MANGA_PATTERNS:
@@ -3128,13 +3219,34 @@ _MANGA_VOLUME_SHAPE = re.compile(
 # que también pueden aparecer como palabra en series (Kiss → Kamisama Kiss;
 # Margaret, Morning, LaLa) NO se incluyen — preferimos perder pocos
 # umbrella-magazines a rechazar mangas reales.
+# 2026-06-10: también revistas de PRENSA occidentales sobre cultura manga.
+# Caso real: "ATOM" (Custom Publishing France, 33 nºs) entró como 14 items
+# mapeados a la serie astro-boy. IMPORTANTE: las alternativas de título
+# "Atom Hardcover" / "Mighty Atom Magazine|Deluxe|Hardcover" se REMOVIERON
+# de este patrón porque colisionan con las ediciones deluxe REALES de Astro
+# Boy de Planeta (ES, slugs astro-boy-planeta-deluxe-es-1..7) — tras la
+# estandarización también quedan como "Astro Boy | Mighty Atom Deluxe N".
+# La revista ATOM se discrimina por URL (ver _UMBRELLA_MAGAZINE_URL_PATTERN).
+# "Atom" suelto sigue sin incluirse (colisiona con Atom: The Beginning).
 _UMBRELLA_JP_MAGAZINE_PATTERN = re.compile(
     r"\b(?:Weekly\s+|Monthly\s+)?(?:Sh[ōo]nen|Young|Big|Bessatsu)\s+"
     r"(?:Jump|Magazine|Sunday|Comic|Spirits|Original|Superior)\b"
     r"|\b(?:Comic\s+Beam|Comic\s+Zenon|Comic\s+Bunch|Comic\s+Birz|"
     r"Megami\s+Magazine|Newtype|Animage)\b"
+    r"|\b(?:Animeland|Otaku\s+USA|Coyote\s+Mag)\b"
     r"|週刊少年(?:ジャンプ|マガジン|サンデー|チャンピオン)"
     r"|月刊(?:少年|ヤング|アフタヌーン|モーニング)",
+    re.IGNORECASE,
+)
+
+# Revistas-paraguas detectadas por URL (no por título, para evitar colisiones
+# con series legítimas que comparten parte del nombre).
+# Caso: revista "ATOM" de Custom Publishing FR — todos los items tienen URL
+# en manga-sanctuary.com con path "/magazine-atom-vol-N-...". No se puede
+# discriminar por título porque "Mighty Atom Deluxe N" es también el título
+# estandarizado de los tomos deluxe reales de Planeta (ES).
+_UMBRELLA_MAGAZINE_URL_PATTERN = re.compile(
+    r"manga-sanctuary\.com/magazine-atom-",
     re.IGNORECASE,
 )
 
@@ -3180,6 +3292,15 @@ _VOLUME_EXTRACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Volumen entre paréntesis (común en JP: "タイトル（15）", "Title (10)")
     # Acepta paréntesis half-width y full-width.
     re.compile(r"[（(]\s*(\d{1,4})\s*[）)]"),
+    # Número seguido de calificador de edición (gotcha #60): "Title 13 Edición Especial",
+    # "Berserk 21 Variant", "Title 1 Edición Limitada". El calificador hace inequívoco
+    # que el número es un volumen, no parte del título. Más específico que el trailing.
+    re.compile(
+        r"\s(\d{1,3})\s+(?:Edici[oó]n\s+(?:Especial|Limitada|Coleccionista|Deluxe)|"
+        r"Variant\b|Limited\b|Special\b|Artbook\b|Fanbook\b|Deluxe\b|Kanzenban\b|"
+        r"Omnibus\b|Integral\b)",
+        re.IGNORECASE,
+    ),
     # Trailing bare number: "Berserk Deluxe 1", "One Piece 98".
     # Última prioridad. Guards: no captura años (1900-2099), ni ISBNs (>4 dígitos).
     # Requiere espacio antes del número para no capturar sufijos pegados ("abc123").
@@ -3307,6 +3428,26 @@ def _variant_tier(signal_types: list[str] | None) -> str:
     return ""
 
 
+def isbn13(raw: str) -> str:
+    """Normaliza un ISBN a ISBN-13 de dígitos puros. "" si no es un ISBN.
+
+    Sin esto, el MISMO libro con ISBN-10 en una fuente e ISBN-13 (o con
+    guiones) en otra cae en clusters distintos: la auditoría 2026-06-10
+    encontró 88 grupos de duplicados escondidos así.
+    """
+    digits = re.sub(r"[^0-9Xx]", "", raw or "")
+    if len(digits) == 13 and digits.isdigit():
+        return digits
+    if len(digits) == 10:
+        core = "978" + digits[:9]
+        if not core.isdigit():
+            return ""
+        check = (10 - sum(int(d) * (3 if i % 2 else 1)
+                          for i, d in enumerate(core)) % 10) % 10
+        return core + str(check)
+    return ""
+
+
 def derive_cluster_key(item: dict[str, Any]) -> str:
     """Devuelve la clave de agrupación para deduplicar items entre fuentes.
 
@@ -3376,9 +3517,12 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
         return f"edition:{edition_key}|{volume}"
 
     # Tier 2: ISBN — para items sin edition_key (pre-standardize o legacy).
+    # Normalizado a ISBN-13 puro: ISBN-10 vs ISBN-13 (o guiones) del mismo
+    # libro deben caer en el mismo cluster.
     isbn = (item.get("isbn") or "").strip()
     if isbn:
-        return f"isbn:{isbn}"
+        norm = isbn13(isbn)
+        return f"isbn:{norm or isbn}"
 
     title = item.get("title") or ""
     language = (item.get("language") or "").strip().lower()
@@ -3451,7 +3595,12 @@ def is_collectible_edition(
         return False, "title_junk_generic"
 
     # 0b) Revista-paraguas → fuera.
+    #   - Por título: antologías JP + revistas occidentales inequívocas.
+    #   - Por URL: casos donde el título colisiona con series reales (p.ej.
+    #     revista ATOM de Custom Publishing FR vs. tomos Planeta deluxe ES).
     if _UMBRELLA_JP_MAGAZINE_PATTERN.search(title):
+        return False, "umbrella_magazine"
+    if url and _UMBRELLA_MAGAZINE_URL_PATTERN.search(url):
         return False, "umbrella_magazine"
 
     # Union: signal_types pasados (de title+desc del candidate) ∪ los recomputados
@@ -3713,12 +3862,23 @@ def _img_stem(url: str) -> str:
     return re.sub(r"^https?://", "", (url or "").split("?", 1)[0]).lower()
 
 
+# Portada del row = primer images[] con url (images[0]). Es la ÚNICA fuente de
+# verdad de la portada (se eliminaron los campos top-level image_url/image_local,
+# decisión 2026-06-09). Versión canónica del accesor: image_store.cover_image;
+# acá se inlinea para evitar fragilidad de import en el módulo core.
+def _row_cover(it: dict[str, Any]) -> dict[str, Any] | None:
+    for im in (it.get("images") or []):
+        if im and im.get("url"):
+            return im
+    return None
+
+
 def _cluster_completeness(it: dict[str, Any]) -> int:
     return (
         (1 if it.get("approved_at") else 0) * 10000
         + (1 if it.get("standardized_at") else 0) * 1000
         + (100 if it.get("isbn") else 0)
-        + (10 if it.get("image_url") else 0)
+        + (10 if _row_cover(it) else 0)
         + (5 if it.get("price") else 0)
     )
 
@@ -3730,8 +3890,8 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
     - Campos faltantes en la canónica se rellenan desde cualquier miembro.
     - `sources[]` = union de las fuentes (usa el `sources[]` guardado de cada
       miembro si lo trae, si no `source_entry(member)`), dedup por URL.
-    - `images[]` = union con la PORTADA canónica (image_url) SIEMPRE primera
-      (carrusel[0] == card), dedup por URL stem.
+    - `images[]` = union con la PORTADA canónica (`canonical.images[0]`) SIEMPRE
+      primera (carrusel[0] == card), dedup por URL stem.
     - `extras[]` = union dedup por (description, release_date).
     """
     if len(group) == 1:
@@ -3742,7 +3902,7 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
 
     canonical = max(group, key=_cluster_completeness)
     merged = dict(canonical)
-    for f in ("image_url", "image_local", "author", "price", "release_date",
+    for f in ("author", "price", "release_date",
               "description", "isbn", "publisher"):
         if not merged.get(f):
             for it in group:
@@ -3769,12 +3929,7 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
         seen_i.add(k)
         imgs.append(im)
 
-    cover = merged.get("image_url", "")
-    if cover:
-        own = next((im for im in (canonical.get("images") or [])
-                    if _img_stem(im.get("url", "")) == _img_stem(cover)), None)
-        _push_img(own or {"url": cover, "local": merged.get("image_local", ""),
-                          "kind": "gallery", "description": ""})
+    _push_img(_row_cover(canonical))
     for it in group:
         for im in (it.get("images") or []):
             _push_img(im)
@@ -3903,11 +4058,10 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             continue
         key = normalize_url_for_dedup(url)
         old = existing.get(key)
-        # image_local es sticky: un re-scrape que no descargó la portada
-        # (--skip-image-download o fallo de red puntual) no debe borrar el
-        # espejo local que ya teníamos. Ver "Image storage" en CLAUDE.md.
-        if old and old.get("image_local") and not row.get("image_local"):
-            row["image_local"] = old["image_local"]
+        # El espejo local de la portada es sticky vía el union-merge de images[]
+        # de más abajo: dedup por (kind, url) preservando primero el entry viejo,
+        # así un re-scrape que no descargó (--skip-image-download o fallo de red)
+        # conserva el `local` que ya teníamos en images[0]. Ver "Image storage".
         # description_es es sticky: un re-scrape no debe borrar las
         # traducciones escritas por translate_descriptions.py. Las traducciones
         # también están en _CURATED_FIELDS (para items con standardized_at),
@@ -4092,6 +4246,25 @@ class RobotsCache:
 
 def make_session(user_agent: str) -> requests.Session:
     session = requests.Session()
+    # Retry automático ante fallos TRANSITORIOS (reset TCP, DNS hiccup,
+    # 429/5xx). Sin esto, un blip de red descarta la fuente/colección entera
+    # del run. Solo GET/HEAD (idempotentes); respeta Retry-After del server.
+    # raise_on_status=False → tras agotar retries devuelve la respuesta y
+    # raise_for_status() del caller decide, igual que antes.
+    retry = Retry(
+        total=3,
+        connect=2,
+        read=2,
+        backoff_factor=1.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD"}),
+        raise_on_status=False,
+    )
+    # pool_* > default (10): con --workers 8 y muchas fuentes en el mismo
+    # host, el pool default descarta conexiones ("connection pool is full").
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=32, pool_maxsize=32)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
     session.headers.update(
         {
             "User-Agent": user_agent,
@@ -5403,7 +5576,6 @@ def process_state(
             "first_seen_at": previous.get("first_seen_at") if previous else now,
             "last_seen_at": now,
             "price": candidate.price,
-            "image_url": candidate.image_url,
             "release_date": candidate.release_date,
             "product_type": candidate.product_type,
             "author": candidate.author,
@@ -5459,7 +5631,10 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "kamite": "kamite",
     "mangaline": "mangaline",
     "manga line": "mangaline",
-    "manga dreams": "mangadreams",
+    # "manga dreams" REMOVIDO (2026-06-10): es una TIENDA multi-editorial, no
+    # editorial — el mapeo horneó `-mangadreams-` en 49 edition_keys y partió
+    # ediciones (berserk-mangadreams-deluxe-it vs berserk-panini-deluxe-it).
+    # Misma regla que Rakuten/Sanyodo (gotcha #44, ver nota abajo).
     "funside": "funside",
     "milky way": "milkyway",
     "milkyway": "milkyway",
@@ -5902,19 +6077,20 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "description": candidate.description,
         "content_hash": candidate.content_hash,
         "price": candidate.price,
-        "image_url": candidate.image_url,
-        "image_local": candidate.image_local,
         "release_date": candidate.release_date,
         "product_type": candidate.product_type,
         "author": candidate.author,
         "stock_type": candidate.stock_type,
         "isbn": candidate.isbn,
     }
-    # images[] aditivo (Fase 2 listadomanga-collections): carrusel. Normalizamos
-    # garantizando que el primer elemento sea kind=cover y sincronice con
-    # image_url/image_local. Si el Candidate no trajo images[], lo derivamos
-    # del image_url/image_local — backwards-compatible para el resto del
-    # pipeline.
+    # images[] es la ÚNICA fuente de verdad de la portada (decisión 2026-06-09):
+    # `images[0]` es la portada; no hay campos top-level image_url/image_local.
+    # El Candidate runtime sí trae image_url/image_local (input del scraper +
+    # output del mirror); acá los convertimos en `images[0]` si el scraper no
+    # pobló images[] directamente (la mayoría de fuentes simples sólo setean
+    # candidate.image_url). Si el scraper ya trajo images[] (listadomanga-
+    # collections), garantizamos que image_url/image_local del Candidate estén
+    # reflejados en images[0] (el mirror los sincroniza, pero por las dudas).
     images_list = list(getattr(candidate, "images", []) or [])
     if not images_list and candidate.image_url:
         images_list = [{
@@ -5923,14 +6099,13 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
             "kind": "gallery",
             "description": "",
         }]
-    elif images_list:
-        # Sincronizar image_url/image_local con el primer elemento.
-        # images[0] es siempre la portada por convención de posición.
+    elif images_list and candidate.image_url:
         first = images_list[0]
-        if first.get("url") and not row["image_url"]:
-            row["image_url"] = first["url"]
-        if first.get("local") and not row["image_local"]:
-            row["image_local"] = first["local"]
+        if not first.get("url"):
+            first["url"] = candidate.image_url
+        if not first.get("local") and candidate.image_local \
+                and first.get("url") == candidate.image_url:
+            first["local"] = candidate.image_local
     if images_list:
         row["images"] = images_list
 
@@ -6019,6 +6194,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
             description=row.get("description") or "",
             title=row.get("title") or "",
             publisher=row.get("publisher") or "",
+            stock_status=row.get("stock_status") or "",
         )
 
     return row
@@ -7393,7 +7569,6 @@ def run(args: argparse.Namespace) -> int:
                 key = candidate_key(c)
                 if key in state:
                     state[key]["author"] = c.author
-                    state[key]["image_url"] = c.image_url
                     state[key]["isbn"] = c.isbn
                     state[key]["content_hash"] = c.content_hash
                 _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → {', '.join(updates)}")
@@ -7406,6 +7581,7 @@ def run(args: argparse.Namespace) -> int:
                     _, metadata = _fetch_one_detail(c)
                 except Exception as exc:
                     _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → ERROR: {exc}")
+                    errors.append(f"fetch-details {c.source}: {c.url} → {exc}")
                     metadata = {}
                 _apply_metadata(idx, c, metadata)
                 if args.sleep_seconds > 0 and idx < len(eligible):
@@ -7420,6 +7596,7 @@ def run(args: argparse.Namespace) -> int:
                         _, metadata = fut.result()
                     except Exception as exc:
                         _safe_print(f"  [{idx}/{len(eligible)}] {c.source[:30]:30s} → ERROR: {exc}")
+                        errors.append(f"fetch-details {c.source}: {c.url} → {exc}")
                         metadata = {}
                     _apply_metadata(idx, c, metadata)
 

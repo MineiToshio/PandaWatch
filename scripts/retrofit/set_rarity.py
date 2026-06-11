@@ -2,9 +2,11 @@
 """set_rarity.py — aplica el campo `rarity` a todos los items de items.jsonl.
 
 Usa `derive_rarity_tier()` de manga_watch.py para clasificar cada item.
-La función cubre los casos determinísticos (retailer_exclusive, BooksPrivilege,
-keywords de edición numerada/firmada/evento). El resto queda en 'rare' como
-default conservador — web search posterior puede elevarlo a 'common'.
+Modelo default-common (2026-06-10): cada tier por encima de common exige
+evidencia (print run, lotería/evento, firma a mano, no-reimpresión explícita
+o stock agotado verificado vía `stock_status`, que llena el retrofit
+check_stock.py). El default para "sin evidencia" es 'common' — el modelo
+viejo dejaba 81% del corpus en 'rare' con 54% de precisión medida.
 
 Lo que SE recomputa:
     rarity  (solo si --force o el item no tiene rarity ya asignado)
@@ -100,6 +102,7 @@ def main() -> int:
             description=item.get("description") or "",
             title=item.get("title") or "",
             publisher=item.get("publisher") or "",
+            stock_status=item.get("stock_status") or "",
         )
 
         if new != old:
@@ -135,6 +138,7 @@ def main() -> int:
                     description=item.get("description") or "",
                     title=item.get("title") or "",
                     publisher=item.get("publisher") or "",
+                    stock_status=item.get("stock_status") or "",
                 )] += 1
         print("Distribución simulada (dry-run):")
         for r, n in sorted(sim.items()):
