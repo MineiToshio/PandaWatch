@@ -77,6 +77,31 @@ DATE_HEADER_PATTERN = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+# La planning page expone el tipo de edición como label "bare" ("Perfect",
+# "Ultimate", "Prestige", "limitée", "Collector"…) pero detect_signals()
+# sólo matchea bigramas ("perfect edition", "édition limitée"…), así que
+# ~100+ ediciones especiales FR quedaban con score 0. Mapeamos el label a
+# la frase canónica que SÍ levanta señal y la APPENDEMOS a la descripción
+# (sin reemplazar el label original, para no degradar el texto de display).
+# "Intégrale" se deja sin mapear a propósito: es omnibus/recopilatorio,
+# fuera de scope (gotcha #18). Labels desconocidos quedan verbatim.
+_EDITION_LABEL_CANONICAL: dict[str, str] = {
+    "perfect": "perfect edition",
+    "ultimate": "ultimate edition",
+    "prestige": "édition prestige",
+    "limitée": "édition limitée",
+    "limitee": "édition limitée",
+    "unlimited double": "limited edition",
+    "deluxe": "deluxe",
+    "collector": "collector edition",
+}
+
+
+def canonical_edition_phrase(label: str) -> str:
+    """Frase canónica (con señal para detect_signals) para un label de
+    edición bare de la planning page. "" si no hay mapeo."""
+    return _EDITION_LABEL_CANONICAL.get((label or "").strip().lower(), "")
+
 
 def _virtual_source() -> Source:
     return Source(
@@ -173,8 +198,13 @@ def _parse_post(post: Any, current_date: str, source: Source) -> Candidate | Non
         image_url = ""
 
     # Description: combinamos publisher + edition + type para que detect_signals
-    # tenga contexto sobre si es coleccionista o regular.
-    description_parts = [publisher, edition_text, type_label, title]
+    # tenga contexto sobre si es coleccionista o regular. El label de edición
+    # llega "bare" (p.ej. "Prestige") → appendeamos además la frase canónica
+    # que detect_signals reconoce (manteniendo el label original para display).
+    edition_signal = canonical_edition_phrase(edition_text)
+    if edition_signal and edition_signal.lower() == edition_text.strip().lower():
+        edition_signal = ""  # el label ya ES la frase canónica; no duplicar
+    description_parts = [publisher, edition_text, edition_signal, type_label, title]
     description = clean_text(" · ".join(p for p in description_parts if p))
 
     cand = candidate_from_source(

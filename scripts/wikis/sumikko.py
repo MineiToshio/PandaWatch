@@ -189,6 +189,41 @@ def _parse_jp_date(raw: str) -> str:
     return f"{year:04d}-{mm:02d}-{dd:02d}"
 
 
+# Spans entre corchetes de título de obra: 『…』 y 「…」. Lo que está ADENTRO
+# es parte del nombre de la obra (p.ej. サツジンゲーム『配神限定』) — un 限定
+# ahí NO indica edición limitada.
+_BRACKET_SPAN_RE = re.compile(r"『[^』]*』|「[^」]*」")
+
+# Marcadores de edición especial que deben aparecer FUERA de los corchetes
+# para que el item sea emitido (gate anti falso-positivo, ver
+# _has_edition_marker_outside_brackets).
+_EDITION_MARKER_RE = re.compile(
+    r"特装版|限定版|完全版|愛蔵版|豪華版|同梱|付き|付録|BOX|ＢＯＸ|セット|画集|特典",
+    re.IGNORECASE,
+)
+
+# Caracteres "de contenido": alfanuméricos ASCII + kana + kanji (CJK).
+_CONTENT_CHAR_RE = re.compile(r"[0-9A-Za-z぀-ヿ㐀-鿿豈-﫿]")
+
+
+def _strip_bracketed_spans(title: str) -> str:
+    """Quita los spans 『…』/「…」 (títulos de obra citados) del título."""
+    return _BRACKET_SPAN_RE.sub(" ", title or "")
+
+
+def _has_edition_marker_outside_brackets(title: str) -> bool:
+    """True si el título tiene un marcador de edición FUERA de 『』/「」.
+
+    El parser inyecta boilerplate "限定版・特装版 / limited edition…" en la
+    description de TODOS los items, así que sin este gate cualquier título
+    cuyo único 限定 está DENTRO de corchetes (parte del nombre de la obra)
+    se vuelve falso positivo. Auditado 2026-06-10 sobre los 2671 items
+    sumikko existentes: el gate sólo excluye los 2 falsos positivos
+    confirmados (サツジンゲーム『配神限定』) — cero riesgo de falso negativo.
+    """
+    return bool(_EDITION_MARKER_RE.search(_strip_bracketed_spans(title)))
+
+
 def _extract_volume(title: str) -> str:
     """Extrae volumen del título JP. Devuelve '' si no detecta."""
     if not title:
@@ -239,6 +274,19 @@ def _item_block_to_candidate(
         return None
     title = clean_text(name_el.get_text(" ", strip=True))
     if not title:
+        return None
+
+    # Gate anti falso-positivo: como más abajo inyectamos boilerplate
+    # "限定版・特装版 / limited edition…" en la description de TODOS los
+    # items, sólo emitimos los que tienen un marcador de edición REAL en
+    # el título FUERA de los corchetes 『』「」 (dentro de los corchetes,
+    # 限定 es parte del nombre de la obra). Sin marcador → skip total.
+    if not _has_edition_marker_outside_brackets(title):
+        return None
+
+    # Junk: títulos con menos de 3 caracteres alfanuméricos/CJK
+    # (artefactos de parsing tipo ">>>>>>&").
+    if len(_CONTENT_CHAR_RE.findall(title)) < 3:
         return None
 
     # Sabs: 2 bloques. sab[0] = [date, author]; sab[1] = [imprint, publisher].

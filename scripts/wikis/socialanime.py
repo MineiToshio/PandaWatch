@@ -170,6 +170,23 @@ def _isbn_from_amazon_url(url: str) -> str:
     return asin if _ISBN10_RE.match(asin) else ""
 
 
+def _normalize_price(raw: str) -> str:
+    """Normaliza el `prezzo` del feed. El feed manda "0" (también "0.00",
+    "0,00", "€0", "0 €"…) como placeholder de "precio desconocido" — esos
+    valores se tratan como vacío para no corromper el corpus con precios 0.
+    Cualquier otro valor se devuelve tal cual (verbatim)."""
+    p = (raw or "").strip()
+    if not p:
+        return ""
+    numeric = p.replace("€", "").replace("EUR", "").replace(",", ".").strip()
+    try:
+        if float(numeric) == 0.0:
+            return ""
+    except ValueError:
+        pass
+    return p
+
+
 # Mes EN → número (PublicationDate viene en "DD MMM YYYY" inglés).
 _MONTHS = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
@@ -215,7 +232,7 @@ def parse_feed_item(item: dict, type_label: str) -> Candidate | None:
         return None
 
     image_url = (item.get("img") or "").strip()
-    price = (item.get("prezzo") or "").strip()
+    price = _normalize_price(item.get("prezzo") or "")
     publisher = clean_text(item.get("editore") or "")
     author = clean_text(item.get("autore") or "")
     trama = clean_text(item.get("trama") or "")

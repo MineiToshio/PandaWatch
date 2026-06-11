@@ -900,6 +900,22 @@ def _parse_layout_b_cell(td: Any) -> dict[str, str] | None:
             target_edition_kind = kind
             break
 
+    # Si CUALQUIER línea (más allá de la 1) trae "Edición Especial" / "Limitada",
+    # el item es una EDICIÓN ESPECIAL (artbook/limitada listada en la sección de
+    # regalos), NO un cofre de tomo regular → kind especial (se fusiona con el
+    # especial del mismo vol). Caso real Promised Neverland nº13: "Edición Especial
+    # con Escape - Libro de ilustraciones" — el nombre de serie envuelto en 2 líneas
+    # ("The Promised" / "Neverland nº13") hacía que el fallback Grimorio de abajo lo
+    # tomara como regular (gotcha #59). Va ANTES del fallback Grimorio.
+    if not target_edition_kind:
+        _rest = " ".join(lines[1:])
+        if re.search(r"\bEdici[oó]n\s+(?:Especial|Limitada)\b", _rest, re.IGNORECASE):
+            target_edition_kind = "especial"
+            if not target_volume:
+                _vm = VOLUME_PATTERN.search(_rest)
+                if _vm:
+                    target_volume = _vm.group(1)
+
     # Caso Grimorio / page-wide premium: línea 2 es `<Sub-line> nº<N>`
     # (sin marker reconocido pero con nº). El target es "regular" y el
     # volumen viene de la línea 2.
@@ -1148,6 +1164,13 @@ UNKNOWN_H2_LOG: list[tuple[int, str]] = []
 # Cada entry: (coleccion_id, collection_title, reason). Se vuelca al final
 # del bootstrap (módulo-level para que el caller lo inspeccione).
 ZERO_YIELD_LOG: list[tuple[int, str, str]] = []
+
+# Registro de colecciones perdidas por ERROR DE RED (timeout, reset, 5xx tras
+# agotar retries de la sesión). Antes esto se tragaba en silencio y era
+# indistinguible de "colección vacía" — la colección quedaba fuera del run sin
+# rastro. Cada entry: (coleccion_id, error). Se vuelca al final del bootstrap;
+# los ids sirven para re-correr con --coleccion-ids-file.
+NETWORK_ERROR_LOG: list[tuple[int, str]] = []
 
 
 def parse_collection_page(
@@ -1437,6 +1460,11 @@ def parse_collection_page(
             cand.edition_display = collection_title
             cand.image_url = parsed["image_url"]
             cand.release_date = parsed.get("release_date", "")
+            # Propagar volumen al candidato para que candidate_to_json lo preserve
+            # aunque _extract_volume no lo detecte en el título normalizado (gotcha #60).
+            # El volumen LMC viene del alt "nº13" en _parse_item_table; sin esto queda "".
+            if parsed.get("volume"):
+                cand.volume = parsed["volume"]
             # Price viene como "10,00 €" o "35,00 €" — normalizamos a "€ 10.00".
             if parsed.get("price"):
                 price_match = re.search(r"(\d+[.,]\d{2})", parsed["price"])
@@ -1666,7 +1694,12 @@ def fetch_collection(
         if not response.encoding:
             response.encoding = response.apparent_encoding
         text = response.text
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        # Error de red ≠ colección vacía: dejarlo visible y registrado para
+        # poder re-correr esos ids (antes se trataba igual que una página
+        # inexistente y la colección se perdía en silencio).
+        print(f"  [WARN] coleccion {coleccion_id}: error de red ({exc.__class__.__name__}: {exc}); omitida")
+        NETWORK_ERROR_LOG.append((coleccion_id, f"{exc.__class__.__name__}: {exc}"))
         return []
     # Páginas inexistentes devuelven HTML mínimo o redirect a lista.
     if len(text) < 2000:
@@ -1942,6 +1975,26 @@ def bootstrap(
                 for cid, title, reason in ZERO_YIELD_LOG:
                     f.write(f"{cid}\t{reason}\t{title}\n")
             print(f"  Log completo: {log_path}")
+        except OSError:
+            pass
+
+    # Dump de colecciones perdidas por error de red. El archivo contiene un
+    # id por línea → re-procesable directo con --coleccion-ids-file.
+    if NETWORK_ERROR_LOG:
+        print(f"\n[NETWORK-ERROR] {len(NETWORK_ERROR_LOG)} colecciones omitidas "
+              f"por error de red (NO están en el corpus de este run):")
+        for cid, err in NETWORK_ERROR_LOG[:30]:
+            print(f"  id={cid:<5} {err}")
+        if len(NETWORK_ERROR_LOG) > 30:
+            print(f"  … y {len(NETWORK_ERROR_LOG) - 30} más.")
+        try:
+            log_path = Path("logs") / "listadomanga_network_errors.txt"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("w", encoding="utf-8") as f:
+                for cid, _err in NETWORK_ERROR_LOG:
+                    f.write(f"{cid}\n")
+            print(f"  Ids re-procesables: {log_path} "
+                  f"(usar con --coleccion-ids-file)")
         except OSError:
             pass
 

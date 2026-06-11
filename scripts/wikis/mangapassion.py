@@ -204,15 +204,18 @@ def parse_volume(item: dict, type_label: str = "sonderausgabe") -> Candidate | N
         else ""
     )
 
-    # Fecha de lanzamiento
+    # Fecha de lanzamiento. La API a veces manda day=null con year/month
+    # válidos (fecha aún no anunciada al día) — en ese caso conservamos
+    # el año-mes en vez de descartar la fecha entera.
     year = item.get("year")
     month = item.get("month")
     day = item.get("day")
-    release_date = (
-        f"{year:04d}-{month:02d}-{day:02d}"
-        if year and month and day
-        else ""
-    )
+    if year and month and day:
+        release_date = f"{year:04d}-{month:02d}-{day:02d}"
+    elif year and month:
+        release_date = f"{year:04d}-{month:02d}"
+    else:
+        release_date = ""
 
     # ISBN (preferir ISBN-13 limpio)
     isbn13 = (item.get("isbn13") or "").replace("-", "").strip()

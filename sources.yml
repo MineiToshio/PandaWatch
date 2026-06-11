@@ -1141,7 +1141,11 @@ sources:
     kind: "html"
     url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/variant-ed-esclusive.html"
     enabled: true
-    tags: ["manga", "variant", "exclusive", "official"]
+    # search:-tag = contexto de señal para el gate (manga_watch.py inyecta el
+    # keyword en detect_signals): la categoría lista títulos "bare" sin señal
+    # ("Sakamoto Days 25") que sin contexto puntúan 0 y se descartan. La
+    # categoría entera YA es variant/esclusiva, así que el contexto es legítimo.
+    tags: ["manga", "variant", "exclusive", "official", "search:variant esclusiva"]
 
   - name: "IT - Panini Edizioni da Collezione e Cofanetti"
     country: "Italia"
@@ -1151,7 +1155,10 @@ sources:
     kind: "html"
     url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/edizioni-da-collezione-e-cofanetti.html"
     enabled: true
-    tags: ["manga", "collector", "boxset", "official"]
+    # search:-tag = contexto de señal para el gate (igual que Variant ed
+    # Esclusive arriba): la categoría entera son edizioni da collezione y
+    # cofanetti, los títulos bare puntúan 0 sin este contexto.
+    tags: ["manga", "collector", "boxset", "official", "search:edizione da collezione cofanetto"]
 
   - name: "IT - Star Comics Manga"
     country: "Italia"
@@ -1907,7 +1914,11 @@ sources:
   - name: "IT - Manga Dreams"
     country: "Italia"
     language: "Italiano"
-    publisher: "Manga Dreams"
+    # Tienda multi-editorial: publisher VACÍO (regla gotcha #44). Con
+    # "Manga Dreams" horneado, 49 edition_keys quedaron con la tienda como
+    # editorial y partieron ediciones (berserk-mangadreams-deluxe-it vs
+    # berserk-panini-deluxe-it). Auditoría 2026-06-10.
+    publisher: ""
     source_class: "retailer"
     kind: "html"
     url: "https://mangadreams.it/collections/all"
@@ -1926,7 +1937,8 @@ sources:
   - name: "IT - Manga Dreams (variants europeas)"
     country: "Italia"
     language: "Italiano"
-    publisher: "Manga Dreams"
+    # Tienda multi-editorial: publisher vacío (ver entrada principal).
+    publisher: ""
     source_class: "retailer"
     kind: "html"
     url: "https://mangadreams.it/collections/edizioni-europee-manga-variant-limited"

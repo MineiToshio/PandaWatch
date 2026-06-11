@@ -203,6 +203,31 @@ franchise_keywords:
   - "Largo Winch"
   - "Blueberry"
   - "Boule et Bill"
+  # Ilustradores de pin-up/fantasy SIN obra manga — sus artbooks pasaban el
+  # STRONG hint "artbook" (caso real 2026-06-10: artbook de Hajime Sorayama
+  # bajo la serie "Venom" en listadomanga). Nombres propios inequívocos.
+  - "Sorayama"
+  - "Luis Royo"
+  - "Boris Vallejo"
+  - "Frank Frazetta"
+
+# Excepciones de título: títulos que contienen una keyword de franchise_keywords
+# O un patrón hard non-manga, pero SON manga reales (crossovers japoneses, obras
+# de Jump, adaptaciones oficiales, etc.). Si el título contiene cualquiera de
+# estas frases (case-insensitive, substring), se neutralizan tanto las reglas
+# franchise_keywords como los patrones hard non-manga. Las reglas publisher y
+# format_keywords siguen activas.
+title_exceptions:
+  - "Jewel Joker"           # Shugo Chara! Jewel Joker — shojo de Peach-Pit (contiene "Joker")
+  - "Hungry Joker"          # manga de Jump de Yūki Tabata (contiene "Joker")
+  - "Deadpool: Samurai"     # manga oficial de Deadpool publicado en Jump+ (contiene "Deadpool")
+  - "El Hijo de los Sueños" # Batman: Child of Dreams, de Kia Asamiya (Norma/ECC) — contiene "Batman"
+  - "Blade of Shao Jun"     # Assassin's Creed: Blade of Shao Jun, manga de Minoji Kurata — contiene "Assassin's Creed"
+  - "Making of an Asian-American President"  # Eagle: The Making of an Asian-American President, manga de Kaiji Kawaguchi — matchea patrón hard "The Making of"; se usa la frase completa para no sobreproteger otros making-ofs
+  - "Deadpool Samurai"  # variante sin dos puntos del mismo título
+  - "Batman Ninja"      # adaptación manga de Batman (contiene "Batman")
+  - "Ninja Batman"      # orden JP del mismo título
+  - "Cell of Empireo"   # Saibou Shinkoku: Cell of Empireo — manga (contiene "Empireo")
 
 # Formato exclusivo de cómic occidental. Match word-boundary (case-insensitive).
 # Cuidado: "novela ligera"/"light novel" SÍ son manga-related, no los incluir aquí.

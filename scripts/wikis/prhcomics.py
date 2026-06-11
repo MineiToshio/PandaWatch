@@ -53,6 +53,7 @@ API pública (misma firma que los demás wiki parsers)::
 
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -127,14 +128,6 @@ _COLLECTIBLE_TITLE_KWS: frozenset[str] = frozenset({
     "special edition",
 })
 
-# Meses en inglés → número
-_MONTH_MAP: dict[str, int] = {
-    "january": 1, "february": 2, "march": 3, "april": 4,
-    "may": 5, "june": 6, "july": 7, "august": 8,
-    "september": 9, "october": 10, "november": 11, "december": 12,
-}
-
-
 def _is_collectible(title: str, fmt: str) -> bool:
     """True si el item parece una edición especial por formato o título."""
     # El formato "Hardcover(Manga RTL - HC)" tiene el tipo antes del paréntesis
@@ -157,25 +150,31 @@ def _format_signal_hints(fmt: str) -> list[str]:
 
 
 def _parse_release_date(raw: str) -> str:
-    """'On sale May 19, 2026' → '2026-05-19'. Vacío si no parseable."""
-    # Quitar prefijo "On sale " o "On Sale "
-    cleaned = raw.strip()
+    """'On sale May 19, 2026' → '2026-05-19'. Vacío si no parseable.
+
+    La página renderiza el mes ABREVIADO y con tabs/newlines embebidos
+    ("On sale \t\t\t\tNov 22, 2022") — colapsamos whitespace primero y
+    probamos tanto '%b %d, %Y' (abreviado) como '%B %d, %Y' (completo).
+    """
+    # Colapsar tabs/newlines/espacios múltiples a un espacio simple.
+    cleaned = re.sub(r"\s+", " ", raw or "").strip()
     for prefix in ("On sale ", "On Sale ", "on sale "):
         if cleaned.startswith(prefix):
-            cleaned = cleaned[len(prefix):]
+            cleaned = cleaned[len(prefix):].strip()
             break
-    try:
-        dt = datetime.strptime(cleaned.strip(), "%B %d, %Y")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        pass
-    # Intento alternativo: parseo manual de "May 2026" sin día
-    parts = cleaned.strip().split()
-    if len(parts) == 2:
-        month_name, year_str = parts
-        mn = _MONTH_MAP.get(month_name.lower())
-        if mn and year_str.isdigit():
-            return f"{year_str}-{mn:02d}-01"
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            dt = datetime.strptime(cleaned, fmt)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    # Intento alternativo: "May 2026" / "Nov 2026" sin día → día 01.
+    for fmt in ("%b %Y", "%B %Y"):
+        try:
+            dt = datetime.strptime(cleaned, fmt)
+            return dt.strftime("%Y-%m-01")
+        except ValueError:
+            pass
     return ""
 
 

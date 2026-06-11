@@ -26,16 +26,60 @@ from collections import Counter
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+_ROOT = _SCRIPTS.parent  # manga-watch/
+# Asegurar que tanto la raíz como scripts/ están en el path, con scripts/
+# primero para que `import manga_watch` resuelva scripts/manga_watch.py (el
+# módulo real) en lugar del wrapper de raíz manga_watch.py.
+for _p in (str(_SCRIPTS), str(_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from manga_watch import (  # type: ignore
-    is_collectible_edition,
-    derive_product_type,
-    detect_signals,
-    backup_and_rotate,
-    is_approved,
-)
+# Importar explícitamente desde scripts.manga_watch para evitar que pytest
+# (que ya tiene la raíz en sys.path) resuelva el wrapper manga_watch.py raíz.
+try:
+    from scripts.manga_watch import (  # type: ignore  # cuando se importa como paquete
+        is_collectible_edition,
+        derive_product_type,
+        detect_signals,
+        backup_and_rotate,
+        is_approved,
+    )
+except ImportError:
+    from manga_watch import (  # type: ignore  # cuando se ejecuta directamente
+        is_collectible_edition,
+        derive_product_type,
+        detect_signals,
+        backup_and_rotate,
+        is_approved,
+    )
+
+
+def should_reject(item: dict, is_coll: bool, reason: str) -> bool:
+    """Decide si un item debe ser rechazado, respetando el estado de estandarización.
+
+    Post-estandarización, el texto del título ya no porta las frases raw que
+    detect_signals necesita ("Limited Edition", "Collector", etc.); las señales
+    reales ya fueron derivadas y validadas por el skill. Por eso, para items con
+    `standardized_at` truthy, sólo aplicamos los gates duros de is_collectible_edition
+    (junk de título y umbrella_magazine). Si el gate devuelve regular_tomo sobre un
+    item estandarizado, lo conservamos: la verdad vive en la etiqueta de edición
+    ya derivada, no en el texto crudo.
+    """
+    if is_coll:
+        return False  # el gate lo aprobó → conservar siempre
+
+    # Gates duros que aplican independientemente del estado de estandarización.
+    HARD_REASONS = {"title_too_short", "title_junk_discount", "title_junk_generic",
+                    "umbrella_magazine", "no_title"}
+    if reason in HARD_REASONS:
+        return True  # rechazar siempre, estandarizado o no
+
+    # regular_tomo sobre un item estandarizado: la señal real ya fue validada
+    # por el skill; conservar.
+    if reason == "regular_tomo" and item.get("standardized_at"):
+        return False
+
+    return True  # cualquier otro reason sobre item no estandarizado → rechazar
 
 
 def main() -> int:
@@ -59,6 +103,7 @@ def main() -> int:
     kept_lines: list[str] = []
     rejected_lines: list[str] = []
     skipped_approved = 0
+    kept_standardized = 0
     reason_counter: Counter[str] = Counter()
     sample_rejected: list[tuple[str, str, str]] = []
     sample_kept: list[tuple[str, str, str]] = []
@@ -92,10 +137,15 @@ def main() -> int:
             tags=tags, isbn=item.get("isbn", "") or "",
             url=item.get("url", "") or "",
         )
-        if is_coll:
+
+        reject = should_reject(item, is_coll, reason)
+
+        if not reject:
             kept_lines.append(line)
             # bucket = parte antes del primer ':'
             bucket = reason.split(":", 1)[0]
+            if reason == "regular_tomo" and item.get("standardized_at"):
+                kept_standardized += 1
             if len(sample_kept) < 8:
                 sample_kept.append((reason, title[:90], item.get("source", "")))
         else:
@@ -111,6 +161,8 @@ def main() -> int:
     print(f"[INFO] {len(rejected_lines)} tomos regulares (rejected)  {len(rejected_lines)*100//max(total,1)}%")
     if skipped_approved:
         print(f"[INFO] {skipped_approved} aprobados saltados (kept; usa --include-approved para incluirlos)")
+    if kept_standardized:
+        print(f"[INFO] {kept_standardized} kept_standardized: regular_tomo ignorado porque el item ya tiene standardized_at")
     print(f"\nMotivos de descarte:")
     for bucket, n in reason_counter.most_common():
         print(f"  {bucket:25s}  {n}")
