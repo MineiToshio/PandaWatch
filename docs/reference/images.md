@@ -118,13 +118,16 @@ vive en el SKILL.md; el gist:
 2. Filtra `items.jsonl`: imagen < **90 000 px** (mismo umbral que el panel de calidad,
    `scripts/audit/data_quality.py`; no configurable), saltando targets ya encolados en
    `cover_preview.json`.
-3. **Motores, en orden** (verificado en vivo 2026-06-06, ver memoria
-   `feedback_google_images_chrome`): primero **Yandex reverse-image**
-   (`rpt=imageview&url=<old_url>` — la mejor búsqueda-por-foto gratis), después queries de
-   texto con contexto en **Google Imágenes `udm=2`**. Las URLs full-res se extraen con regex
-   sobre `innerHTML` (los `img.src` de `udm=2` son thumbnails base64; el patrón viejo
-   `"ou":"..."` da vacío). Google Lens y Bing visual NO sirven (franquicia-level matching /
-   bloqueado). Fallback a Bing texto si Google muestra consent wall.
+3. **Motores, en orden** (verificado en vivo 2026-06-11): para items en **Español**:
+   primero **whakoom** (`site:whakoom.com <serie> <vol>` vía Google `udm=2` — produjo el
+   100% de los matches ES en la corrida 2026-06-11, 8/8; yandex-reverse 0 porque los
+   thumbnails de listadomanga no están indexados por Yandex), después **Yandex reverse-image**
+   (`rpt=imageview&url=<old_url>` — mejor búsqueda-por-foto gratis), después queries de
+   texto con contexto en **Google Imágenes `udm=2`**. Para otros idiomas: Yandex reverse
+   va primero. Las URLs full-res se extraen con regex sobre `innerHTML` (los `img.src` de
+   `udm=2` son thumbnails base64; el patrón viejo `"ou":"..."` da vacío). Google Lens y
+   Bing visual NO sirven (franquicia-level matching / bloqueado). Fallback a Bing texto si
+   Google muestra consent wall.
 4. **Validación de identidad (la regla de oro)**: una candidata SOLO se acepta si
    `fetch_better_covers._same_cover(actual, candidata, MAX_HASH_DIST)` da `True`.
    Umbral endurecido (2026-06-10): **AND de aHash ≤ 6 ∧ dHash ≤ 8 ∧ pHash(DCT) ≤ 8**
@@ -149,19 +152,47 @@ conservando `verify_reason`) — estaban `pending` y la UI no distingue `verifie
 owner seguía viéndolas; el validador embebido del skill (Step 2 del SKILL.md) se re-sincronizó
 con producción (aHash default 6 sin relax + llamada a `candidate_metadata_conflict()`).
 
+**Mejoras 2026-06-11**:
+- **Upgrade de URL antes de validar** (`sc_validate.py`): antes de intentar el fetch de cada
+  candidata, `upgrade_url_variants(url)` prueba variantes hi-res derivadas de la URL original.
+  Patrones verificados: whakoom `/small/` → `/large/` (3× px); buscalibre quita
+  `fit-in/<W>x<H>/` (2-22× px); cultura quita `cdn-cgi/image/width=<N>/`; bdfugue (Magento)
+  quita `cache/<hash>/`; WordPress genérico quita sufijo `-<W>x<H>` del nombre de archivo.
+  `_same_cover` valida cada descarga, así que una reescritura incorrecta no contamina.
+  `new_url` en el resultado refleja la variante que se usó efectivamente.
+- **Default solo-portadas**: por defecto el skill solo procesa `img_idx == 0` (portadas). Las
+  fotos de galería interior son irrecuperables en su mayoría (no existe copia externa); en la
+  corrida real 12/25 targets eran galería con 0 matches. Usar `--include-gallery` para procesar
+  ambas, o `--gallery-only` para exclusivamente galería.
+- **Variante whakoom para Español** (va PRIMERO): en `build_variants`, items con
+  `language == 'Español'` reciben una variante de texto `site:whakoom.com <serie> <vol>`
+  (Google udm=2) insertada al inicio de la lista — antes de yandex-reverse. Motivo:
+  whakoom produjo el 100% de los matches ES (8/8) y yandex-reverse 0 (thumbnails de
+  listadomanga no indexados por Yandex). Su CDN (i1.whakoom.com/small/) tiene upgrade
+  automático a /large/ en sc_validate.py.
+- **Memoria de intentos** (`data/cover_search_attempts.jsonl`): una línea JSON por intento
+  con `{slug, action, target, attempted_at (ISO), matches (int)}`. Targets cuyo último intento
+  tuvo `matches == 0` hace menos de 30 días se omiten automáticamente. Flag `--retry-failed`
+  para ignorar la exclusión. El archivo es local (`.gitignore`).
+
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
-- El validador es permanente: `scripts/retrofit/sc_validate.py`, testeado en
-  `tests/test_sc_validate.py`. El skill **NUNCA regenera código de validación inline**
-  (la copia embebida que había en Step 2 del SKILL.md drifteó de producción — umbral laxo,
-  sin `candidate_metadata_conflict` — y fue la causa de los falsos positivos pre-2026-06-11).
+- Dos scripts son **permanentes** (nunca borrar ni reimplementar inline):
+  - `scripts/retrofit/sc_validate.py` (tests: `tests/test_sc_validate.py`) — validación de
+    identidad de imagen; la copia embebida que había drifteó de producción y causó falsos
+    positivos pre-2026-06-11.
+  - `scripts/retrofit/sc_flush.py` (tests: `tests/test_sc_flush.py`) — flush self-healing al
+    `cover_preview.json`; el código inline que lo reemplazó reconstruyó dicts a mano y perdió
+    el campo `new_image` en 8 candidatas (2026-06-11). El script rechaza con exit 1 cualquier
+    candidata sin `new_image` o `new_url` — guarda estructural contra esa regresión.
+  Las candidatas se pasan EXACTAMENTE como las devolvió `sc_validate.py`, sin modificar nada.
 - `cover-preview.html` muestra un badge **✓ verificada** (verde) cuando la candidata pasó
   `_same_cover` contra la imagen actual, o **⚠ sin verificar** (ámbar) cuando no fue posible
   verificar (p.ej. items sin imagen con `--include-no-image`). El badge aparece tanto en la
   card compacta como en el modal de comparación.
 - **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
-- Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-no-image`,
-  `--query-extra "texto"`.
+- Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-gallery`, `--include-no-image`,
+  `--retry-failed`, `--query-extra "texto"`.
 
 ### Eliminar fotos de la galería actual (`cover-preview.html`)
 

@@ -1,7 +1,7 @@
 ---
 name: watch-search-covers
-description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() para quedarse SOLO con la MISMA imagen en mejor resolución. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Args opcionales: --limit N, --slug SLUG, --include-no-image, --query-extra "texto".
-argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--query-extra \"texto\"]"
+description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() para quedarse SOLO con la MISMA imagen en mejor resolución. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto".
+argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-gallery] [--gallery-only] [--retry-failed] [--query-extra \"texto\"]"
 ---
 
 # search-covers — Búsqueda de portadas hi-res con Chrome
@@ -79,8 +79,15 @@ no relacionada.
 | `--limit N` | `20` | Máximo de targets (imágenes) a procesar en esta sesión. |
 | `--slug SLUG` | — | Procesa solo el item con ese slug exacto. |
 | `--gallery-only` | off | Salta las portadas (img_idx 0) y procesa solo imágenes de galería (img_idx ≥ 1). Útil para buscar mejoras de galería sin mezclar con portadas ya encoladas. |
+| `--include-gallery` | off | Procesa tanto portadas como imágenes de galería (img_idx 0 y ≥ 1). Sin este flag ni `--gallery-only`, solo se procesan portadas. |
 | `--include-no-image` | off | Por defecto se saltan items sin imagen (no hay portada actual con qué verificar `_same_cover`). Con este flag se incluyen, pero sus candidatas quedan **sin verificar** (`verified: false`). |
+| `--retry-failed` | off | Por defecto se omiten targets cuyo último intento (en `data/cover_search_attempts.jsonl`) tuvo 0 matches y fue hace menos de 30 días. Con este flag se procesan igual. |
 | `--query-extra "texto"` | — | Texto adicional al final de cada variante de query en Google. |
+
+> **Por defecto solo se procesan portadas** (`img_idx == 0`). Las fotos de galería interior
+> (extras/bonus) son irrecuperables en la mayoría de casos — no existe copia externa de esa
+> foto específica. En una corrida real, 12 de 25 targets eran fotos de galería con 0 matches.
+> Usar `--include-gallery` para procesar ambas, o `--gallery-only` para exclusivamente galería.
 
 ---
 
@@ -124,8 +131,10 @@ SLUG_FILTER      = None      # --slug SLUG  (o None)
 INCLUDE_NO_IMAGE = False     # --include-no-image
 QUERY_EXTRA      = ""        # --query-extra "texto"  (o "")
 
-SKIP_SIGNALS  = {'variant_cover', 'retailer_exclusive'}
-GALLERY_ONLY  = False     # --gallery-only
+SKIP_SIGNALS    = {'variant_cover', 'retailer_exclusive'}
+GALLERY_ONLY    = False     # --gallery-only
+INCLUDE_GALLERY = False     # --include-gallery (procesa portadas Y galería)
+RETRY_FAILED    = False     # --retry-failed (ignorar la exclusión de 30 días)
 
 # Términos de edición que NO cubre fbc._EDITION_HINT, por idioma.
 EXTRA_EDITION_HINT = {
@@ -152,6 +161,38 @@ if preview_path.exists():
                     ))
     except (ValueError, OSError):
         pass
+
+# Memoria de intentos: excluir targets con 0 matches en los últimos 30 días.
+# Razón: sin esto cada corrida re-quema presupuesto en los mismos targets imposibles
+# (ediciones especiales no indexadas en ningún motor). --retry-failed lo ignora.
+import datetime
+attempts_path = Path('data/cover_search_attempts.jsonl')
+recently_failed = set()   # skip_key = (slug, action, target)
+if not RETRY_FAILED and attempts_path.exists():
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+    last_attempt: dict = {}   # skip_key → dict más reciente
+    try:
+        for line in attempts_path.read_text(encoding='utf-8').splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            a = json.loads(line)
+            key = (a.get('slug',''), a.get('action',''), a.get('target',''))
+            prev = last_attempt.get(key)
+            if prev is None or a.get('attempted_at','') > prev.get('attempted_at',''):
+                last_attempt[key] = a
+    except (ValueError, OSError):
+        pass
+    for key, a in last_attempt.items():
+        if a.get('matches', 1) == 0:
+            try:
+                ts = datetime.datetime.fromisoformat(a['attempted_at'].replace('Z', '+00:00'))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=datetime.timezone.utc)
+                if ts >= cutoff:
+                    recently_failed.add(key)
+            except (KeyError, ValueError):
+                pass
 
 def get_pixels_local(local_fname):
     if not local_fname:
@@ -220,15 +261,34 @@ def build_variants(item, ref_url=None):
             out.append({'label': label, 'query': q, 'kind': 'text',
                         'url': f"https://www.google.com/search?q={urllib.parse.quote(q)}&udm=2"})
 
-    # Variante REVERSE-IMAGE (Yandex) — va PRIMERO: es el mejor motor de búsqueda por
-    # foto que probamos (sin captcha, devuelve portadas del tomo correcto). Usa la imagen
-    # de referencia ref_url (la portada images[0].url, o la foto de galería procesada)
-    # como consulta. Solo si tiene URL http usable.
+    # Variante WHAKOOM (texto, Google udm=2) — va PRIMERO para ítems en Español.
+    # Evidencia: en la corrida real 2026-06-11, whakoom produjo el 100% de los matches ES
+    # (8/8); yandex-reverse 0 (los thumbnails de listadomanga no están indexados por Yandex).
+    # Su CDN (i1.whakoom.com/small/) tiene upgrade automático a /large/ en sc_validate.py.
+    if lang == 'Español':
+        wk_q = ' '.join(p for p in [series or title, volume] if p).strip()
+        if wk_q:
+            wk_query = f"site:whakoom.com {wk_q}"
+            wk_url   = f"https://www.google.com/search?q={urllib.parse.quote(wk_query)}&udm=2"
+            out.insert(0, {'label': 'whakoom', 'query': wk_query,
+                           'kind': 'text', 'url': wk_url})
+
+    # Variante REVERSE-IMAGE (Yandex) — segundo para ES, primero para otros idiomas.
+    # El mejor motor de búsqueda por foto gratuito (sin captcha, devuelve portadas del
+    # tomo correcto). Usa la imagen de referencia ref_url como consulta.
+    # Solo si tiene URL http usable. Va detrás de whakoom para ES porque los thumbnails
+    # de listadomanga no están indexados por Yandex (0 matches verificados 2026-06-11).
+    # EXCEPCIÓN: si la referencia ES un thumbnail de listadomanga, la variante se OMITE
+    # por completo — Yandex no tiene esas imágenes en su índice y devuelve resultados
+    # genéricos no relacionados (0/14 intentos en 3 lotes reales, 2026-06-11).
     old_url = (ref_url or '').strip()
-    if old_url.startswith('http'):
+    if old_url.startswith('http') and 'static.listadomanga.com' not in old_url:
         yx = f"https://yandex.com/images/search?rpt=imageview&url={urllib.parse.quote(old_url, safe='')}"
-        out.insert(0, {'label': 'yandex-reverse', 'query': f"[reverse] {series or title}",
-                       'kind': 'reverse', 'url': yx})
+        # Para ES: insertar después de whakoom (pos 1); para otros idiomas: al inicio (pos 0)
+        yandex_pos = 1 if (lang == 'Español' and out and out[0].get('label') == 'whakoom') else 0
+        out.insert(yandex_pos, {'label': 'yandex-reverse', 'query': f"[reverse] {series or title}",
+                                'kind': 'reverse', 'url': yx})
+
     return out
 
 targets = []
@@ -264,6 +324,12 @@ for item in items:
             elif px >= LOW_QUALITY_PX:
                 continue
         else:
+            # Galería: por defecto se salta (las fotos de galería interior son
+            # irrecuperables en su mayoría — no existe copia externa). Solo entra
+            # con --gallery-only o --include-gallery. Verificado: en la corrida
+            # real 2026-06-11, 12/25 targets eran galería con 0 matches posibles.
+            if not GALLERY_ONLY and not INCLUDE_GALLERY:
+                continue
             # Galería: solo procesar si existe local y es baja calidad
             # (necesitamos _same_cover → skip si no hay archivo de referencia)
             if px <= 0 or px >= LOW_QUALITY_PX:
@@ -273,6 +339,8 @@ for item in items:
         target_url = '' if img_idx == 0 else ref_url
         skip_key   = (slug, action, target_url)
         if skip_key in already_in_preview:
+            continue
+        if skip_key in recently_failed:
             continue
 
         targets.append({
@@ -382,8 +450,22 @@ print(f"  Imagen actual: {curr_px:,} px" if curr_px > 0 else "  Sin imagen")
 Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >= TARGET_MATCHES`:
 
 1. **Navegar + extraer en un solo `browser_batch`** (navigate a `variant['url']` +
-   javascript_tool). Imprimí `variant['label']` y `variant['query']` antes. **La extracción
-   depende de `variant['kind']`:**
+   javascript_tool). Imprimí `variant['label']` y `variant['query']` antes.
+
+   > **Nota MCP**: dentro de `browser_batch`, los items van con el nombre CORTO de la
+   > tool (`"name": "navigate"`, `"name": "javascript_tool"`), NUNCA el nombre MCP
+   > completo (`mcp__Claude_in_Chrome__...` → "unknown tool"). Y el item de
+   > `javascript_tool` DEBE llevar `"input": {"action": "javascript_exec", "tabId": ...,
+   > "text": ...}` — sin el campo `action` el MCP rechaza con "javascript_exec is the
+   > only supported action".
+
+   > **Nota de escaping en regex JS**: al escribir el regex via MCP, los backslashes se
+   > escapan UNA vez (no doble). El regex correcto es `/https?:\/\/[^"\s]+?\.(?:jpg|jpeg|png|webp)/gi`
+   > con `\s` literal (un backslash). Si se escribe `\\s` (doble), el MCP lo convierte en
+   > `\s` correcto, pero si se parte desde markdown con `\\\\s`, el double-escape se propaga
+   > y rompe el patrón. Usar SIEMPRE el literal de un solo backslash en el string JS.
+
+   **La extracción depende de `variant['kind']`:**
 
    **Si `variant['kind'] == 'reverse'` (Yandex, búsqueda por foto)** — es la primera variante
    de cada item, usa la imagen actual como consulta:
@@ -391,9 +473,10 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    ```javascript
    // Yandex reverse image: las URLs de resultados están en el HTML crudo. Mismo regex,
    // excluyendo dominios de Yandex/Google. Corta antes de "?" → sin bloqueo del MCP.
+   // Regex: un backslash antes de s (\s) — NO doble.
    const t = document.body ? document.body.innerText : '';
    const html = document.documentElement.innerHTML;
-   const ext = [...new Set((html.match(/https?:\/\/[^"\\\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
+   const ext = [...new Set((html.match(/https?:\/\/[^"\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
      .filter(u => !/yandex|yastatic|google|gstatic/.test(u)))];
    JSON.stringify({captcha: /captcha|robot|not a robot/i.test(t), urls: ext.slice(0, 20)})
    ```
@@ -407,8 +490,9 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    // Google Imágenes (udm=2): las URLs full-res NO están en img.src (son base64) sino en el
    // HTML crudo. Regex de URLs de imagen externas (no google/gstatic). El patrón corta antes
    // de cualquier "?" → sin query strings → no dispara el bloqueo del MCP.
+   // Regex: un backslash antes de s (\s) — NO doble.
    const html = document.documentElement.innerHTML;
-   const ext = [...new Set((html.match(/https?:\/\/[^"\\\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
+   const ext = [...new Set((html.match(/https?:\/\/[^"\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
      .filter(u => !u.includes('google') && !u.includes('gstatic')))];
    JSON.stringify(ext.slice(0, 25))
    ```
@@ -471,80 +555,54 @@ item_candidates = item_candidates[:10]
 print(f"  → {len(item_candidates)} candidatas finales para {slug}")
 ```
 
-### 3d. Si no hubo matches, no inventar
+### 3d. Registrar el intento en `data/cover_search_attempts.jsonl`
 
-Si `item_candidates` quedó vacío, **no se escribe nada** para ese item (es correcto: preferimos
-0 candidatas a candidatas no relacionadas). Continuar con el siguiente item.
-
-### 3e. Flush self-healing a cover_preview.json (después de cada item)
-
-El flush mantiene un **acumulador propio** (`.tmp_sc_acc.json`) con TODOS los productos de esta
-corrida, y reescribe `cover_preview.json = (entradas ajenas) + (mis entradas)` en cada item. Si
-un save concurrente del dashboard pisa una entrada mía, se re-asienta en el siguiente flush.
+Al terminar cada target (con o sin matches), **siempre** apendear una línea al archivo de intentos:
 
 ```python
-import json, uuid
+import json, datetime
+from pathlib import Path
+
+attempts_path = Path('data/cover_search_attempts.jsonl')
+attempt_entry = {
+    'slug'        : slug,
+    'action'      : candidate_action,
+    'target'      : candidate_target,
+    'attempted_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00'),
+    'matches'     : len(item_candidates),
+}
+with attempts_path.open('a', encoding='utf-8') as f:
+    f.write(json.dumps(attempt_entry, ensure_ascii=False) + '\n')
+```
+
+### 3e. Si no hubo matches, no inventar
+
+Si `item_candidates` quedó vacío, **no se escribe nada** para ese item en `cover_preview.json`
+(es correcto: preferimos 0 candidatas a candidatas no relacionadas). Continuar con el siguiente item.
+
+### 3f. Flush self-healing a cover_preview.json (después de cada item)
+
+El flush es un script PERMANENTE (`scripts/retrofit/sc_flush.py`) — nunca reescribir esta
+lógica inline. Una corrida anterior reconstruyó los dicts a mano y perdió el campo `new_image`,
+rompiendo la cola completa; el script ahora lo rechaza con exit 1 antes de escribir nada.
+Las candidatas se pasan EXACTAMENTE como las devolvió `sc_validate.py`, sin modificarlas.
+
+```python
+import json, subprocess, uuid
 from pathlib import Path
 
 if item_candidates:
-    # Tagear cada candidata con la acción correcta (replace_cover o replace_image + target url)
-    for c in item_candidates:
-        c['action'] = candidate_action
-        c['target'] = candidate_target
-
-    acc_path = Path('.tmp_sc_acc.json')
-    acc = json.loads(acc_path.read_text(encoding='utf-8')) if acc_path.exists() else {}
-
-    # current_images = la galería actual; images[0] es la portada (is_cover).
-    imgs = item.get('images') or []
-    current_images = [{'url': im.get('url',''), 'local': im.get('local',''),
-                       'kind': im.get('kind','gallery'), 'is_cover': k == 0}
-                      for k, im in enumerate(imgs) if isinstance(im, dict)]
-
-    if slug in acc:
-        # Merge: agregar candidatas de esta imagen sin pisar las de la portada u otras galería
-        existing_urls = {c['new_url'] for c in acc[slug]['candidates']}
-        for c in item_candidates:
-            if c['new_url'] not in existing_urls:
-                acc[slug]['candidates'].append(c)
-                existing_urls.add(c['new_url'])
-    else:
-        acc[slug] = {
-            'slug'          : slug,
-            'title'         : item.get('title', ''),
-            'title_original': item.get('title_original', ''),
-            'series_display': item.get('series_display', ''),
-            'publisher'     : item.get('publisher', ''),
-            'country'       : item.get('country', ''),
-            'old_image'     : old_local,
-            'old_url'       : old_url,
-            'old_pixels'    : curr_px,
-            'current_images': current_images,
-            'candidates'    : item_candidates,
-        }
-    acc_path.write_text(json.dumps(acc, ensure_ascii=False), encoding='utf-8')
-
-    # Reconstruir: entradas ajenas (no de esta corrida) + todas las mías
-    preview_path = Path('data/cover_preview.json')
-    external = []
-    if preview_path.exists():
-        try:
-            for e in json.loads(preview_path.read_text(encoding='utf-8')):
-                if e.get('slug') not in acc:
-                    external.append(e)
-        except (ValueError, OSError):
-            pass
-    merged = external + list(acc.values())
-
-    tmp_out = preview_path.with_suffix(f'.{uuid.uuid4().hex[:8]}.tmp')
-    try:
-        tmp_out.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding='utf-8')
-        tmp_out.replace(preview_path)
-        total = sum(len(e.get('candidates', [])) for e in merged)
-        print(f"  ✓ Guardado — {len(merged)} productos ({len(acc)} de esta corrida), {total} candidatas")
-    except OSError as e:
-        tmp_out.unlink(missing_ok=True)
-        print(f"  ERROR al guardar: {e}")
+    tmp_fl = Path(f'.tmp_sc_flush_{uuid.uuid4().hex[:8]}.json')
+    tmp_fl.write_text(json.dumps({
+        'slug': slug, 'item': item, 'candidates': item_candidates,
+        'candidate_action': candidate_action, 'candidate_target': candidate_target,
+        'old_local': image_ref_local, 'old_url': target.get('image_ref_url',''),
+        'curr_px': curr_px,
+    }, ensure_ascii=False), encoding='utf-8')
+    r = subprocess.run(['.venv/bin/python', 'scripts/retrofit/sc_flush.py', str(tmp_fl)],
+                       capture_output=True, text=True)
+    tmp_fl.unlink(missing_ok=True)
+    print(r.stdout.strip() or r.stderr[:200])
 ```
 
 ---
@@ -561,6 +619,8 @@ from pathlib import Path
 for p in ['.tmp_sc_plan.json', '.tmp_sc_acc.json']:
     Path(p).unlink(missing_ok=True)
 for f in Path('.').glob('.tmp_sc_input_*.json'):
+    f.unlink(missing_ok=True)
+for f in Path('.').glob('.tmp_sc_flush_*.json'):
     f.unlink(missing_ok=True)
 
 preview_path = Path('data/cover_preview.json')
@@ -596,4 +656,4 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
    (`--include-no-image`) queda `verified: false` para revisión más estricta.
 6. Máximo 10 candidatas por item; máx 3 matches dispara el corte de iteración
 7. El skill es incremental: slugs con candidatas pendientes se saltan automáticamente
-8. Borrar los `.tmp_sc_*` al finalizar (son temporales). `scripts/retrofit/sc_validate.py` es PERMANENTE — nunca borrarlo ni regenerarlo inline.
+8. Borrar los `.tmp_sc_*` al finalizar (son temporales). `scripts/retrofit/sc_validate.py` y `scripts/retrofit/sc_flush.py` son PERMANENTES — nunca borrarlos ni regenerar su lógica inline. `sc_flush.py` rechaza con exit 1 cualquier candidata sin `new_image` o `new_url` (guarda anti-drift).

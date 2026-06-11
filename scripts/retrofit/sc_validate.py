@@ -12,11 +12,41 @@ Uso: sc_validate.py [input.json]
                "curr_px": int, "ref_image_local": str}
   stdout:     {"validated": [candidata...]}
 """
-import sys, json, requests
+import re, sys, json, requests
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_better_covers as fbc
+
+# ── Upgrade de URL a hi-res ────────────────────────────────────────────────────
+# Patrones verificados empíricamente 2026-06-11. Orden: más específico primero.
+# _same_cover valida cada descarga, así que una reescritura incorrecta no
+# contamina (si la variante upgraded devuelve otra imagen, _same_cover la rechaza).
+_URL_UPGRADES = [
+    # whakoom: /small/ o /thumb/ o /medium/ → /large/
+    (re.compile(r"(//i1\.whakoom\.com/)(?:small|thumb|medium)/"), r"\1large/"),
+    # buscalibre: quitar segmento fit-in/<W>x<H>/  (2-22× px)
+    (re.compile(r"(//images\.cdn\d*\.buscalibre\.com/)fit-in/\d+x\d+/"), r"\1"),
+    # cultura: quitar cdn-cgi/image/width=<N>/  (hasta 2×)
+    (re.compile(r"(//cdn\.cultura\.com/)cdn-cgi/image/width=\d+/"), r"\1"),
+    # bdfugue (Magento): quitar cache/<hash8+>/  (2-5× px)
+    (re.compile(r"(/media/catalog/product/)cache/[0-9a-f]{8,}/"), r"\1"),
+    # WordPress genérico: quitar sufijo -<W>x<H> antes de la extensión
+    (re.compile(r"-\d{2,4}x\d{2,4}(\.(?:jpe?g|png|webp))$"), r"\1"),
+]
+
+
+def upgrade_url_variants(url: str) -> list[str]:
+    """Variantes de la URL en orden de preferencia: la hi-res derivada primero,
+    la original como fallback. Patrones verificados 2026-06-11; _same_cover
+    valida cada descarga, así que una reescritura incorrecta no contamina."""
+    out = [url]
+    for rx, repl in _URL_UPGRADES:
+        up = rx.sub(repl, url)
+        if up != url:
+            out.insert(0, up)
+            break
+    return out
 
 # Umbral aHash: el MISMO default endurecido que producción (6/64).
 # _same_cover es un AND-gate (aHash ∧ dHash ∧ pHash ∧ NCC + entropía +
@@ -54,22 +84,34 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
 
     validated = []
     for cand in candidates[:MAX_CANDIDATES_PER_CALL]:
-        url    = (cand.get('url') or '').strip()
-        domain = cand.get('domain') or (url.split('/')[2] if url.startswith('http') else '')
-        if not url or not url.startswith('http'):
+        orig_url = (cand.get('url') or '').strip()
+        domain   = cand.get('domain') or (orig_url.split('/')[2] if orig_url.startswith('http') else '')
+        if not orig_url or not orig_url.startswith('http'):
             continue
         if any(bad in domain for bad in SKIP_DOMAINS):
             continue
         # R5 — conflicto de metadata declarada: la URL/título de la candidata
         # declara OTRO volumen u OTRO ISBN que el item → hard reject (filtro
         # para "mismo manga, tomo equivocado"; mismo criterio que producción).
-        if fbc.candidate_metadata_conflict(item, url, cand.get('page_title', '')):
+        # Se evalúa sobre la URL ORIGINAL una sola vez, antes del loop de variantes.
+        if fbc.candidate_metadata_conflict(item, orig_url, cand.get('page_title', '')):
             continue
-        try:
-            img_bytes = fbc._fetch(url, session)
-        except Exception:
-            img_bytes = None
-        if not img_bytes or len(img_bytes) < 5_000:
+
+        # Intentar variantes de URL en orden (hi-res primero, original como fallback).
+        # La primera que devuelva imagen válida (≥5 000 bytes) gana; si falla, sigue.
+        img_bytes = None
+        used_url  = orig_url
+        for variant_url in upgrade_url_variants(orig_url):
+            try:
+                b = fbc._fetch(variant_url, session)
+            except Exception:
+                b = None
+            if b and len(b) >= 5_000:
+                img_bytes = b
+                used_url  = variant_url
+                break
+
+        if not img_bytes:
             continue
         new_px = fbc._get_pixels_from_bytes(img_bytes)
         if new_px < 10_000:
@@ -97,7 +139,7 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
             continue
         validated.append({
             'new_image'  : filename,
-            'new_url'    : url,
+            'new_url'    : used_url,
             'new_pixels' : new_px,
             'ref_pixels' : curr_px,
             'match_dist' : match_dist,
