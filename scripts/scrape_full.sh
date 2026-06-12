@@ -70,6 +70,29 @@ if [ ! -x "$VENV_PY" ]; then
     exit 1
 fi
 
+# ── Lock global: dos corridas simultáneas (delta o full) corromperían
+# items.jsonl (escrituras concurrentes del flush). mkdir es atómico; el lock
+# se considera stale si el PID que lo creó ya no existe.
+LOCK_DIR="data/.scrape.lock"
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo $$ > "$LOCK_DIR/pid"
+        trap 'rm -rf "$LOCK_DIR"' EXIT
+        return 0
+    fi
+    local old_pid
+    old_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "❌ Ya hay un scrape corriendo (PID $old_pid, lock $LOCK_DIR). Abortando."
+        exit 1
+    fi
+    echo "⚠️  Lock stale (PID $old_pid ya no existe) — lo tomo."
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" && echo $$ > "$LOCK_DIR/pid"
+    trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+acquire_lock
+
 TIMESTAMP=$(date '+%Y-%m-%d-%H%M%S')
 LOG_DIR="logs/scrape-full-${TIMESTAMP}"
 mkdir -p "$LOG_DIR"
@@ -373,6 +396,17 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         > "$LOG_DIR/02p-viz.log" 2>&1
     echo "    duración: $(($(date +%s) - P2P_START))s — items: $(count_lines)"
 
+    # sevenseas (US — catálogo COMPLETO de deluxe/box sets/collector vía API WP).
+    echo ">>> [2x] sevenseas (US — catálogo completo de especiales)"
+    P2X_START=$(date +%s)
+    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki sevenseas \
+        --wiki-from 2000-01 \
+        --sleep-seconds 0.3 \
+        --min-score 20 \
+        > "$LOG_DIR/02x-sevenseas.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2X_START))s — items: $(count_lines)"
+
     # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
         echo ">>> [2q] whakoom spider (OPT-IN, riesgo Cloudflare)"
@@ -439,13 +473,6 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
     fi
 
-    # [4f1] regla dura país=edición: sufija el país al edition_key para que dos
-    # mercados nunca compartan edición/cluster. Idempotente.
-    echo ">>> [4f1] fix_edition_country (país = edición)"
-    "$VENV_PY" scripts/retrofit/fix_edition_country.py \
-        > "$LOG_DIR/04f1-edition-country.log" 2>&1
-    echo "    items: $(count_lines)"
-
     # [4f2] alinea items raw a la edición estandarizada de su MISMA coleccion
     # (regla coleccion=edición). Re-scrapear una coleccion ya estandarizada deja
     # el item raw nuevo con edition_key/cluster_key distinto del viejo → no
@@ -456,34 +483,18 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04f2-align-raw-std.log" 2>&1
     echo "    items: $(count_lines)"
 
-    # [4f3] una /coleccion = UNA página de edición: unifica el edition_key de
-    # todos los tomos de la coleccion (regular+especial+cofres+variantes) al de
-    # su edición base; el cluster (tier-0 lmc) sigue distinguiendo variantes.
-    echo ">>> [4f3] unify_coleccion_edition (coleccion = una edición)"
-    "$VENV_PY" scripts/retrofit/unify_coleccion_edition.py \
-        > "$LOG_DIR/04f3-unify-coleccion.log" 2>&1
-    echo "    items: $(count_lines)"
-
-    # [4f5] re-deriva cluster_key: 4f1-4f3 mutan edition_keys y el upsert puede
-    # haber dejado claves stale → re-derivar mantiene la invariante CLKEY y
-    # devuelve las filas al tier edition: (gotcha #65). Idempotente.
-    # (4f4 = dedup_synthetic_source, corre vía el enforcer del skill standardize.)
-    echo ">>> [4f5] backfill_cluster_key"
-    "$VENV_PY" scripts/retrofit/backfill_cluster_key.py \
-        > "$LOG_DIR/04f5-backfill-cluster-key.log" 2>&1
-    echo "    items: $(count_lines)"
-
-    # [4f6] slugs para items nuevos del scrape (--only-missing: nunca toca
-    # slugs existentes). Sin esto un item nuevo viola SLUG hasta curarlo.
-    echo ">>> [4f6] generate_slugs --only-missing"
-    "$VENV_PY" scripts/retrofit/generate_slugs.py --only-missing \
-        > "$LOG_DIR/04f6-generate-slugs.log" 2>&1
-    echo "    items: $(count_lines)"
-
-    echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
-    "$VENV_PY" scripts/retrofit/consolidate_sources.py \
-        > "$LOG_DIR/04g-consolidate-sources.log" 2>&1
-    echo "    items: $(count_lines)"
+    # [4f3] ENFORCER de reglas listadomanga (--fast: sin dedup de carrusel, que
+    # corre aparte en [4h]). Reemplaza a los pasos sueltos fix_edition_country /
+    # unify_coleccion / backfill_cluster_key / slugs / consolidate: el re-scrape
+    # del calendario sobre colecciones YA estandarizadas deja duplicados
+    # raw-vs-std (DUPSYN/DUPVOL/TITLE) que solo la cadena completa del enforcer
+    # repara (verificado 2026-06-12: delta real dejaba 53 violaciones duras sin
+    # esto; con el enforcer → 0). Idempotente.
+    echo ">>> [4f3] enforce_listadomanga_rules --fast (cadena completa de agrupación)"
+    P4F3_START=$(date +%s)
+    "$VENV_PY" scripts/retrofit/enforce_listadomanga_rules.py --fast \
+        > "$LOG_DIR/04f3-enforce-lmc.log" 2>&1
+    echo "    duración: $(($(date +%s) - P4F3_START))s — items: $(count_lines)"
 
     # [4g2] upgrade de resolución: quita parámetros/segmentos CDN de resize de las
     # URLs de imagen (buscalibre fit-in, cultura cdn-cgi, whakoom small/thumb/medium,
@@ -530,6 +541,16 @@ echo
 echo ">>> [5] validate_corpus (invariantes estructurales — gotcha #54)"
 "$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log" || \
     echo " ⚠ validate_corpus reportó violaciones DURAS — revisar $LOG_DIR/05-validate-corpus.log"
+
+# ============================================================
+# PHASE 6: Salud de fuentes de ESTE run (observabilidad)
+# ============================================================
+echo
+echo ">>> [6] source_health (fuentes con errores / 0 candidatos en este run)"
+"$VENV_PY" scripts/audit/source_health.py --last-n 1 --output md \
+    --output-file "$LOG_DIR/06-source-health.md" 2>/dev/null \
+    && grep -E "^## |^\| " "$LOG_DIR/06-source-health.md" | head -40 \
+    || echo " ⚠ source_health falló (no bloquea)"
 
 # ============================================================
 # FINAL SUMMARY
