@@ -441,6 +441,9 @@ y el Step 8 de slugs — ambos quedan cubiertos acá). Idempotente.
 
 ## Step 8 — Generate slugs
 
+> Nota: el enforcer del Step 6b ya corre `generate_slugs.py` internamente —
+> este paso es idempotente y sirve solo como red de seguridad si saltaste 6b.
+
 ```bash
 .venv/bin/python scripts/retrofit/generate_slugs.py --only-missing --verbose
 ```

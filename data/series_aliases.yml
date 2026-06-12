@@ -931,10 +931,9 @@ atema-kyara-no-kuse-shite-supada-ouji:
   aliases: []
 ateya-no-tsubaki:
   display: 当て屋の椿
-  aliases: []
-ateyano-tsubaki:
-  display: Ateyano Tsubaki
-  aliases: []
+  aliases:
+  - ateyano-tsubaki
+  - Ateyano Tsubaki
 athanasia-plotzlich-prinzessin:
   display: Athanasia – Plötzlich Prinzessin
   aliases: []
@@ -2014,12 +2013,11 @@ chiisakobe:
   aliases:
   - Chiisakobee
   - ちいさこべえ
-chika-no-ko:
-  display: Chika no Ko
-  aliases: []
 chikanoko:
   display: ちかのこ
-  aliases: []
+  aliases:
+  - chika-no-ko
+  - Chika no Ko
 chikuwa-senki:
   display: Chikuwa Senki
   aliases: []
@@ -4617,10 +4615,9 @@ hate-my-mia:
   aliases: []
 hate-no-hoshi-tsushin:
   display: 果ての星通信
-  aliases: []
-hate-no-hoshi-tsuushin:
-  display: Hate no Hoshi Tsuushin
-  aliases: []
+  aliases:
+  - hate-no-hoshi-tsuushin
+  - Hate no Hoshi Tsuushin
 hatenkou-yuugi:
   display: Hatenkou Yuugi
   aliases: []
@@ -4929,7 +4926,9 @@ hitorijime-my-hero:
   aliases: []
 hokago-wa-kissaten-de:
   display: 放課後は喫茶店で
-  aliases: []
+  aliases:
+  - houkago-wa-kissaten-de
+  - Houkago wa Kissaten de
 hokenshitsu-no-bokura:
   display: Hokenshitsu no Bokura
   aliases: []
@@ -5059,18 +5058,14 @@ hot-gimmick:
 hotel-inhumans:
   display: Hotel Inhumans
   aliases: []
-houkago-wa-kissaten-de:
-  display: Houkago wa Kissaten de
-  aliases: []
 houkai-sekai-no-mahoutsue:
   display: Houkai Sekai no Mahoutsue Shokunin
   aliases: []
 houseki-sho-richard-shi-no-nazo-kantei:
   display: The Case Files of Jeweler Richard
-  aliases: []
-housekishou-richard-shi-no-nazo-kantei:
-  display: Housekishou Richard-shi no Nazo Kantei
-  aliases: []
+  aliases:
+  - housekishou-richard-shi-no-nazo-kantei
+  - Housekishou Richard-shi no Nazo Kantei
 houshou-marine:
   display: Houshou Marine
   aliases:
@@ -5141,12 +5136,11 @@ hyakuemu:
 hyakuman-no-inochi-no-ue-ni:
   display: Hyakuman no Inochi no Ue ni Ore wa Tatte Iru
   aliases: []
-hyakusho-kizoku:
-  display: Hyakusho Kizoku
-  aliases: []
 hyakushou-kizoku:
   display: 百姓貴族
-  aliases: []
+  aliases:
+  - hyakusho-kizoku
+  - Hyakusho Kizoku
 hyper-dash-yonkuro:
   display: Hyper Dash! Yonkuro
   aliases: []
@@ -5644,9 +5638,8 @@ itoshi-no-muco:
   - Lovely Muuuuuuuco!
   - itoshi-no-muco
   - いとしのムーコ
-itoshi-no-muuco:
-  display: Itoshi no Muuco
-  aliases: []
+  - itoshi-no-muuco
+  - Itoshi no Muuco
 itoshi-no-nekoge:
   display: いとしの猫っ毛
   aliases: []
@@ -6793,9 +6786,6 @@ kowloon-generic-romance:
 kronos-karory-10th-anniversary:
   display: KRONOS karory 10th ANNIVERSARY
   aliases: []
-kubo-ibuki:
-  display: 空母いぶき (Kubo Ibuki)
-  aliases: []
 kudami-mino-neko:
   display: Kudami Mino no Neko
   aliases: []
@@ -6809,15 +6799,13 @@ kuma-kuma-kuma-bear:
   display: Kuma Kuma Kuma Bear
   aliases:
   - the bears bear a bare kuma
-kumicho-musume-to-sewagakari:
-  display: Kumicho Musume to Sewagakari
-  aliases: []
-kumichomusume-to-sewagakari:
-  display: Kumichomusume to Sewagakari
-  aliases: []
 kumichou-musume-to-sewagakari:
   display: The Yakuza's Guide to Babysitting
-  aliases: []
+  aliases:
+  - kumicho-musume-to-sewagakari
+  - Kumicho Musume to Sewagakari
+  - kumichomusume-to-sewagakari
+  - Kumichomusume to Sewagakari
 kunizaki-izumo-no-jijou:
   display: Kunizaki Izumo no Jijou
   aliases: []
@@ -6881,7 +6869,9 @@ kuu-ka-kuwareru-ka:
   aliases: []
 kuubo-ibuki:
   display: 空母いぶき
-  aliases: []
+  aliases:
+  - kubo-ibuki
+  - 空母いぶき (Kubo Ibuki)
 kuubo-ibuki-great-game:
   display: Kuubo Ibuki GREAT GAME
   aliases: []
@@ -6920,15 +6910,14 @@ kyoukai-no-rinne:
   - 境界のRINNE
 kyujitsu-gentei-kanojo:
   display: 休日限定彼女
-  aliases: []
+  aliases:
+  - kyuujitsu-gentei-kanojo
+  - Kyuujitsu Gentei Kanojo
 kyuki-no-adabana:
   display: Kyuki no Adabana
   aliases: []
 kyurun-kawaii-chibi-chara:
   display: Kyurun to Kawaii Chibi Chara ga Kakeru Hon
-  aliases: []
-kyuujitsu-gentei-kanojo:
-  display: Kyuujitsu Gentei Kanojo
   aliases: []
 kyuuketsu-doutei-chichi-wo-suu:
   display: 吸血童貞、乳を吸う。
@@ -9760,9 +9749,6 @@ prince-alchimiste:
 prince-of-ghost:
   display: PRINCE OF GHOST
   aliases: []
-prince-of-tennis:
-  display: テニスの王子様
-  aliases: []
 princess-jellyfish:
   display: Princess Jellyfish
   aliases:
@@ -11905,10 +11891,9 @@ takane-no-sub-wa-inkya-dom-ni-shitsuke-raretakunai-noni:
   aliases: []
 takedake-dake:
   display: Takedake Dake
-  aliases: []
-takedakedake:
-  display: Takedakedake - Takeda-kei Gentei
-  aliases: []
+  aliases:
+  - takedakedake
+  - Takedakedake - Takeda-kei Gentei
 takehiko-inoue:
   display: Takehiko Inoue
   aliases: []
@@ -12467,6 +12452,8 @@ the-prince-of-tennis:
   - tennis no ouji-sama
   - tennis no oujisama
   - the prince of tennis
+  - prince-of-tennis
+  - テニスの王子様
 the-promised-neverland:
   display: The Promised Neverland
   aliases:
@@ -12866,10 +12853,9 @@ toshi-kaihatsu-skill-de-rakuraku-isekai-machi-zukuri:
   aliases: []
 toshi-no-sa-kon:
   display: 年の差婚
-  aliases: []
-toshi-no-sakon:
-  display: Toshi no Sakon
-  aliases: []
+  aliases:
+  - toshi-no-sakon
+  - Toshi no Sakon
 toshishita-joushi-wa-homeraretai:
   display: 年下上司は褒められたい
   aliases: []
@@ -13921,9 +13907,8 @@ yuragi-sou-no-yuuna-san:
   - Yuragi-sou no Yuuna-san
   - yuna-yuragi
   - ゆらぎ荘の幽奈さん
-yuragisou-no-yuuna-san:
-  display: Yuragisou no Yuuna-san
-  aliases: []
+  - yuragisou-no-yuuna-san
+  - Yuragisou no Yuuna-san
 yureka:
   display: Yureka
   aliases:

@@ -191,7 +191,7 @@ PROPUESTAS DE MEJORA (N total):
 
 [2] [K: wrong_image] Portada equivocada en "Berserk Deluxe 12"
     Motivo: la portada (images[0]) apunta a la del vol.11 (Norma CDN).
-    Fix: backfill_metadata.py --only image_url --url "<url>"
+    Fix: backfill_metadata.py --only image_url --limit N (no existe flag --url; para un item puntual usar image_store.set_cover() manual)
     (o corrección manual de images[0] en items.jsonl vía image_store.set_cover)
 
 [3] [M: wrong_classification] series_key "berserk-41" → debería ser "berserk"
@@ -428,7 +428,7 @@ Cambios aplicados:
 feedback.jsonl: truncado (0 items pendientes)
 ```
 
-Luego actualizar la sección "Last updated" de `CLAUDE.md` con un párrafo resumiendo qué cambió, siguiendo la política de documentación.
+Luego actualizá la fecha de la línea `Last updated:` de `CLAUDE.md` (sin agregar prosa — CLAUDE.md ya no lleva changelog) y el doc de referencia que corresponda en `docs/reference/` según la política de documentación.
 
 ---
 

@@ -132,7 +132,7 @@ for it in items:
 # Dedup por (series_key, edition_key, volume)
 def comp(it):
     # La portada es images[0] (única fuente de verdad); ya no hay image_url top-level.
-    return (100 if it.get('isbn') else 0) + (10 if it.get('images') else 0) + (5 if it.get('price') else 0)
+    return (100 if it.get('isbn') else 0) + (10 if it.get('images') else 0)
 seen = {}
 for it in items:
     sk = it.get('series_key',''); ek = it.get('edition_key',''); v = it.get('volume','')

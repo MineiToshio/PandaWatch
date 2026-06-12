@@ -4,15 +4,34 @@
     {
       "name": "web-next",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "web-next"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "web-next"
+      ],
       "port": 3001,
       "autoPort": false
     },
     {
       "name": "manga-watch-web",
       "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["scripts/serve.py", "--port", "8000"],
+      "runtimeArgs": [
+        "scripts/serve.py",
+        "--port",
+        "8000"
+      ],
       "port": 8000
+    },
+    {
+      "name": "manga-watch-web-preview",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "scripts/serve.py",
+        "--port",
+        "8801"
+      ],
+      "port": 8801
     }
   ]
 }

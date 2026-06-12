@@ -13,7 +13,7 @@ Bajo el modelo default-common (2026-06-10), un item es `rare` por una de dos ví
    refuta que no se reimprime → **esta skill NO los demota** (disponibilidad
    momentánea ≠ probabilidad estructural; ver docstring de set_rarity.py).
 2. **Incertidumbre** — fallback de fuente de referencia (solo Mangavariant/
-   Sumikko/BooksPrivilege lo catalogan) o `retailer_exclusive` sin stock
+   Sumikko/BooksPrivilege —esta última deshabilitada, solo datos históricos— lo catalogan) o `retailer_exclusive` sin stock
    verificado. **Este es el universo de la skill**: la web puede resolver la
    incertidumbre en cualquiera de los dos sentidos.
 
