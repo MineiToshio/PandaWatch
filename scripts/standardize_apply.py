@@ -43,6 +43,7 @@ from manga_watch import (  # noqa: E402
     consolidate_by_cluster,
     derive_cluster_key,
     rebuild_edition_key_prefix,
+    sanitize_key_ascii,
 )
 from series_aliases import (  # noqa: E402
     _build_aggressive_lookup,
@@ -88,13 +89,13 @@ def cmd_tier1(base: Path, force_all: bool) -> int:
             continue
         if not it.get("title_original"):
             it["title_original"] = it.get("title", "")
-        it["series_key"] = md.get("proposed_series_key", "")
+        it["series_key"] = sanitize_key_ascii(md.get("proposed_series_key", ""))
         it["series_display"] = md.get("proposed_series_display", "")
-        it["edition_key"] = md.get("proposed_edition_key", "")
+        it["edition_key"] = sanitize_key_ascii(md.get("proposed_edition_key", ""))
         it["edition_display"] = md.get("proposed_edition_display", "")
         it["volume"] = md.get("proposed_volume", "")
-        if md.get("proposed_title"):
-            it["title"] = md["proposed_title"]
+        # title intacto: es el nombre OFICIAL scrapeado, nunca se renombra
+        # ni traduce (política de títulos 2026-06-12).
         it["standardized_at"] = now_iso
         applied += 1
     _write_items(items)
@@ -161,6 +162,9 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             continue
         prop = proposals.get(it.get("url", ""), {})
         sk = (r.get("series_key", "") or "").strip() or prop.get("proposed_series_key", "")
+        # Claves acuñadas por el LLM: forzar ASCII kebab (gotcha #81). Si la
+        # sanitización la vacía (clave íntegramente CJK), queda pending.
+        sk = sanitize_key_ascii(sk)
         if not sk:
             left_pending += 1
             final.append(it)
@@ -174,6 +178,7 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             it["volume"] = it.get("volume", "") or (r.get("volume", "") or "").strip()
         else:
             ek = (r.get("edition_key", "") or "").strip() or prop.get("proposed_edition_key", "")
+            ek = sanitize_key_ascii(ek)
             if not ek:
                 left_pending += 1
                 final.append(it)
@@ -183,14 +188,15 @@ def cmd_merge(base: Path, force_all: bool) -> int:
                                      or prop.get("proposed_edition_display", ""))
             it["volume"] = ((r.get("volume", "") or "").strip()
                             or prop.get("proposed_volume", ""))
-        new_title = ((r.get("title_standardized", "") or "").strip()
-                     or prop.get("proposed_title", "")).strip()
-        if new_title:
-            if not it.get("title_original"):
-                it["title_original"] = it.get("title", "")
-            it["title"] = new_title
+        # title intacto: es el nombre OFICIAL scrapeado, nunca se renombra ni
+        # traduce (política de títulos 2026-06-12). Cualquier
+        # `title_standardized` que devuelva el LLM se IGNORA.
+        if not it.get("title_original"):
+            it["title_original"] = it.get("title", "")
         new_sk, new_sd = canonical_series_key(it["title"], it["series_key"],
                                               it["series_display"])
+        # La canónica del YAML también puede traer no-ASCII (gotcha #81).
+        new_sk = sanitize_key_ascii(new_sk) or new_sk
         if new_sk != it["series_key"]:
             old_sk = it["series_key"]
             it["series_key"] = new_sk

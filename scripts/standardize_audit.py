@@ -113,7 +113,8 @@ def main() -> int:
             projected["proposed_edition_key"] = md.get("edition_key", "")
             projected["proposed_edition_display"] = md.get("edition_display", "")
             projected["proposed_volume"] = md.get("volume", "")
-            projected["proposed_title"] = md.get("title_standardized", "")
+            # NO se propone título: el title oficial scrapeado nunca se
+            # renombra ni traduce (política de títulos 2026-06-12).
         # Keys existentes en el corpus para esta serie (reuso > acuñar).
         sk_for_lookup = md.get("series_key", "") or it.get("series_key", "")
         if sk_for_lookup:

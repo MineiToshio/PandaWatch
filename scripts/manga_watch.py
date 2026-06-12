@@ -53,6 +53,12 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+
+# Algunos sitios (egmont-shop.de) responden con >100 headers HTTP (decenas de
+# Set-Cookie) y el default de http.client aborta con "got more than 100
+# headers". Subir el límite es inocuo y desbloquea esas fuentes.
+import http.client
+http.client._MAXHEADERS = 200
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -273,6 +279,108 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "ビジュアルファンブック", "score": 40, "type": "artbook"},
     {"phrase": "ファンブック", "score": 35, "type": "fanbook"},
     {"phrase": "設定資料集", "score": 40, "type": "artbook"},
+
+    # -------------------------
+    # Alemán (fuentes directas DE 2026-06-12: altraverse, Egmont, TOKYOPOP,
+    # Carlsen — antes Alemania entraba solo vía wiki Manga-Passion)
+    # -------------------------
+    {"phrase": "limitierte auflage", "score": 45, "type": "limited"},
+    {"phrase": "streng limitiert", "score": 45, "type": "limited"},
+    {"phrase": "limitiert", "score": 32, "type": "limited"},
+    {"phrase": "sammelschuber", "score": 45, "type": "box_set"},
+    {"phrase": "sammelbox", "score": 40, "type": "box_set"},
+    {"phrase": "schuber", "score": 35, "type": "box_set"},
+    {"phrase": "mit box", "score": 35, "type": "box_set"},
+    {"phrase": "luxusausgabe", "score": 45, "type": "premium_format"},
+    {"phrase": "luxury edition", "score": 40, "type": "premium_format"},
+    {"phrase": "jubiläumsedition", "score": 40, "type": "collector"},
+    {"phrase": "jubilaeumsedition", "score": 40, "type": "collector"},
+    {"phrase": "erstauflage", "score": 20, "type": "bonus"},
+
+    # -------------------------
+    # Polaco (fuentes PL 2026-06-12: Mangarden/JPF, Mangastore)
+    # -------------------------
+    {"phrase": "edycja specjalna", "score": 40, "type": "special_edition"},
+    {"phrase": "edycja limitowana", "score": 45, "type": "limited"},
+    {"phrase": "wydanie limitowane", "score": 45, "type": "limited"},
+    {"phrase": "edycja kolekcjonerska", "score": 45, "type": "collector"},
+    {"phrase": "oprawa twarda", "score": 35, "type": "hardcover"},
+    {"phrase": "twarda oprawa", "score": 35, "type": "hardcover"},
+    {"phrase": "twarda okładka", "score": 35, "type": "hardcover"},
+    {"phrase": "twarda okladka", "score": 35, "type": "hardcover"},
+    {"phrase": "barwione brzegi", "score": 25, "type": "finish"},
+
+    # -------------------------
+    # Turco (fuente TR 2026-06-12: Gerekli Şeyler)
+    # -------------------------
+    {"phrase": "varyant kapak", "score": 40, "type": "variant_cover"},
+    {"phrase": "varyant", "score": 30, "type": "variant_cover"},
+    {"phrase": "özel edisyon", "score": 40, "type": "special_edition"},
+    {"phrase": "kuşe kağıt", "score": 25, "type": "premium_format"},
+
+    # -------------------------
+    # Checo (fuente CZ 2026-06-12: Crew)
+    # -------------------------
+    {"phrase": "limitovaná edice", "score": 45, "type": "limited"},
+    {"phrase": "limitovana edice", "score": 45, "type": "limited"},
+    {"phrase": "limitovaná verze", "score": 45, "type": "limited"},
+    {"phrase": "limitovana verze", "score": 45, "type": "limited"},
+    {"phrase": "sběratelský box", "score": 45, "type": "box_set"},
+    {"phrase": "sberatelsky box", "score": 45, "type": "box_set"},
+
+    # -------------------------
+    # Vietnamita (fuentes VN 2026-06-12: Kim Đồng, IPM)
+    # -------------------------
+    {"phrase": "bản đặc biệt", "score": 45, "type": "special_edition"},
+    {"phrase": "ban dac biet", "score": 45, "type": "special_edition"},
+    {"phrase": "bản giới hạn", "score": 45, "type": "limited"},
+    {"phrase": "ban gioi han", "score": 45, "type": "limited"},
+    {"phrase": "bản sưu tầm", "score": 45, "type": "collector"},
+    {"phrase": "ban suu tam", "score": 45, "type": "collector"},
+    {"phrase": "có box", "score": 35, "type": "box_set"},
+
+    # -------------------------
+    # Tailandés (fuente TH 2026-06-12: yaakz/Siam Inter)
+    # -------------------------
+    {"phrase": "ชุดพิเศษ", "score": 40, "type": "special_edition"},
+    {"phrase": "ฉบับพิเศษ", "score": 40, "type": "special_edition"},
+
+    # -------------------------
+    # Coreano (fuente KR 2026-06-12: Aladin — 한정판 son LEs de fábrica
+    # con ISBN propio, no tomo+regalo de tienda)
+    # -------------------------
+    {"phrase": "한정판", "score": 50, "type": "limited"},
+    {"phrase": "초회한정", "score": 50, "type": "limited"},
+    {"phrase": "특별판", "score": 40, "type": "special_edition"},
+    {"phrase": "특장판", "score": 45, "type": "special_edition"},
+    {"phrase": "박스 세트", "score": 40, "type": "box_set"},
+    {"phrase": "박스판", "score": 40, "type": "box_set"},
+    {"phrase": "아트웍스", "score": 40, "type": "artbook"},
+    {"phrase": "아트북", "score": 35, "type": "artbook"},
+    {"phrase": "화집", "score": 40, "type": "artbook"},
+    {"phrase": "포토카드", "score": 25, "type": "bonus"},
+    {"phrase": "아크릴", "score": 25, "type": "bonus"},
+
+    # -------------------------
+    # Chino (fuentes TW/HK 2026-06-12: Tong Li, Kadokawa TW, SPP, Jade
+    # Dynasty HK). OJO: el chino TRADICIONAL usa 裝 (no 装 como el JP) —
+    # ambas variantes donde aplica. 首刷限定版 = "primera tirada limitada
+    # con extras", LA señal taiwanesa típica.
+    # -------------------------
+    {"phrase": "首刷限定版", "score": 50, "type": "limited"},
+    {"phrase": "首刷附錄版", "score": 45, "type": "bonus"},
+    {"phrase": "畫展限定版", "score": 50, "type": "limited"},
+    {"phrase": "限定版", "score": 50, "type": "limited"},     # ya cubre JP; repetido es inocuo
+    {"phrase": "特裝版", "score": 50, "type": "special_edition"},  # tradicional (TW/HK)
+    {"phrase": "典藏版", "score": 45, "type": "premium_format"},
+    {"phrase": "珍藏版", "score": 45, "type": "premium_format"},
+    {"phrase": "愛藏版", "score": 45, "type": "premium_format"},   # ≈ aizōban
+    {"phrase": "盒裝套書", "score": 45, "type": "box_set"},
+    {"phrase": "盒裝", "score": 40, "type": "box_set"},
+    {"phrase": "完全版", "score": 35, "type": "premium_format"},
+    {"phrase": "復刻版", "score": 35, "type": "premium_format"},
+    {"phrase": "官網限定", "score": 45, "type": "retailer_exclusive"},
+    {"phrase": "畫集", "score": 40, "type": "artbook"},            # tradicional de 画集
 ]
 
 
@@ -397,6 +505,12 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     # al de Panini ES. También cubre "Adicionar à Lista" genérico de Magento BR.
     re.compile(r"^Lista\s+de\s+desejos\s+", re.IGNORECASE),
     re.compile(r"^Adicionar\s+(?:à|a)\s+lista(?:\s+de\s+desejos)?\s+", re.IGNORECASE),
+    # Aladin KR — el card de búsqueda empieza con "N. 크게보기 [국내도서]"
+    # (posición + botón "ver grande" + tag "libro nacional"). El número va
+    # anclado a 크게보기 para no comer números legítimos de inicio de título.
+    re.compile(r"^\d{1,3}\.\s*크게보기\s*"),
+    re.compile(r"^크게보기\s*"),
+    re.compile(r"^\[국내도서\]\s*"),
 )
 
 # Prefijos de botón "leer más" que el scraper captura cuando el selector toma
@@ -978,9 +1092,107 @@ RELEASE_HINT_WORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Normalización de release_date a ISO (gotcha #80). Mes textual en 4 idiomas
+# (las grafías que comparten ES/IT — marzo, agosto — apuntan al mismo número).
+_MONTH_NAMES: dict[str, int] = {
+    # EN (con abreviaturas de 3-4 letras)
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
+    "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    # ES
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+    # FR (con y sin acento)
+    "janvier": 1, "fevrier": 2, "février": 2, "mars": 3, "avril": 4, "mai": 5,
+    "juin": 6, "juillet": 7, "aout": 8, "août": 8, "septembre": 9,
+    "octobre": 10, "novembre": 11, "decembre": 12, "décembre": 12,
+    # IT
+    "gennaio": 1, "febbraio": 2, "aprile": 4, "maggio": 5, "giugno": 6,
+    "luglio": 7, "settembre": 9, "ottobre": 10, "dicembre": 12,
+}
+
+_DATE_ISO_FULL_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$")
+_DATE_ISO_PARTIAL_RE = re.compile(r"^(\d{4})(?:-(\d{1,2}))?$")
+# YYYY/MM/DD con hora opcional ("2023/09/27 10:00:00", JSON-LD de tiendas JP)
+_DATE_YMD_RE = re.compile(r"^(\d{4})[/.](\d{1,2})[/.](\d{1,2})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$")
+# DD/MM/YYYY (también con . o - como separador) — día primero (fuentes EU)
+_DATE_DMY_RE = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$")
+_DATE_JP_RE = re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*日)?")
+# "15 de junio de 2026" / "2 juillet 2025" / "1er ottobre 2026" / "02 Jul 2025"
+_DATE_TEXT_DMY_RE = re.compile(
+    r"\b(\d{1,2})(?:er|°|º)?\s+(?:de\s+)?([a-zA-Zà-ÿÀ-Ÿ]+)\.?\s+(?:de\s+)?(\d{4})\b"
+)
+# "June 15, 2026" / "Jun 15 2026"
+_DATE_TEXT_MDY_RE = re.compile(r"\b([a-zA-Z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b")
+
+
+def _safe_iso_date(year: int, month: int, day: int) -> str:
+    """ISO YYYY-MM-DD si (year, month, day) es una fecha real; "" si no."""
+    if not 1900 <= year <= 2100:
+        return ""
+    try:
+        return dt.date(year, month, day).isoformat()
+    except ValueError:
+        return ""
+
+
+def normalize_release_date(raw: str) -> str:
+    """Normaliza una fecha de lanzamiento a ISO: YYYY-MM-DD, YYYY-MM o YYYY.
+
+    La granularidad parcial es legítima y se respeta (nunca se inventa día ni
+    mes). Si el formato no se reconoce o la fecha es inválida, devuelve el
+    valor SIN tocar (nunca destruye información). Gotcha #80.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    m = _DATE_ISO_FULL_RE.match(value)
+    if m:
+        # Ya es ISO (quizás con cola de hora "T10:00:00"); re-validar y recortar.
+        return _safe_iso_date(int(m.group(1)), int(m.group(2)), int(m.group(3))) or value
+    m = _DATE_ISO_PARTIAL_RE.match(value)
+    if m:
+        year, month = int(m.group(1)), m.group(2)
+        if not 1900 <= year <= 2100 or month is None:
+            return value
+        return f"{year:04d}-{int(month):02d}" if 1 <= int(month) <= 12 else value
+    m = _DATE_YMD_RE.match(value)
+    if m:
+        return _safe_iso_date(int(m.group(1)), int(m.group(2)), int(m.group(3))) or value
+    m = _DATE_DMY_RE.match(value)
+    if m:
+        day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if month > 12 and day <= 12:  # inequívocamente mes-primero (fuente US)
+            day, month = month, day
+        return _safe_iso_date(year, month, day) or value
+    m = _DATE_JP_RE.search(value)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if m.group(3):
+            return _safe_iso_date(year, month, int(m.group(3))) or value
+        if 1900 <= year <= 2100 and 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+        return value
+    for pattern, day_idx, month_idx in ((_DATE_TEXT_DMY_RE, 1, 2), (_DATE_TEXT_MDY_RE, 2, 1)):
+        m = pattern.search(value)
+        if m:
+            month_num = _MONTH_NAMES.get(m.group(month_idx).lower().rstrip("."))
+            if month_num:
+                iso = _safe_iso_date(int(m.group(3)), month_num, int(m.group(day_idx)))
+                if iso:
+                    return iso
+    return value
+
 
 def extract_release_date(text: str) -> str:
-    """Best-effort extracción de fecha de lanzamiento. Devuelve "" si no encuentra."""
+    """Best-effort extracción de fecha de lanzamiento, normalizada a ISO.
+
+    Devuelve "" si no encuentra. El match crudo (DD/MM/YYYY, 年月日, mes
+    textual…) pasa por normalize_release_date() para que al corpus solo
+    entren fechas ISO (gotcha #80).
+    """
     if not text:
         return ""
     # Si hay palabras-clave de fecha de venta, buscar fecha cerca; si no, primera fecha encontrada.
@@ -993,13 +1205,13 @@ def extract_release_date(text: str) -> str:
     for pattern in RELEASE_DATE_PATTERNS:
         match = pattern.search(haystack)
         if match:
-            return match.group(1).strip()
+            return normalize_release_date(match.group(1).strip())
     # Si no encontramos cerca del hint, intentar buscar en todo el texto.
     if hint:
         for pattern in RELEASE_DATE_PATTERNS:
             match = pattern.search(text)
             if match:
-                return match.group(1).strip()
+                return normalize_release_date(match.group(1).strip())
     return ""
 
 
@@ -1016,10 +1228,16 @@ IMAGE_URL_BAD_PATTERNS = (
     "kodansha--placeholder",                # Kodansha USA
     "panini-placeholder",                   # Panini MX
     "productno_selection",                  # Panini IT cuando no hay foto
-    "no_image", "no-image", "noimage", "no_photo",
+    "no_image", "no-image", "noimage", "no_photo", "no_cover", "no-cover",
     "coming_soon", "coming-soon", "comingsoon",
     "image_not_available", "image-not-available",
     "default_book", "default-book",
+    # Placeholders detectados 2026-06-12 (sweep de covers repetidas, gotcha #90)
+    "/img/ph/",                             # Crew CZ (ph = placeholder; komiks.png)
+    "19book_150cover",                      # Aladin KR (default sin portada)
+    "img-non-disponibile",                  # Shopify IT (Manga Dreams)
+    "transparent-pixel",                    # Amazon 1x1
+    "otakucalendar.png",                    # logo del sitio servido como cover
     "logo-glenat",                          # Glénat (logo se cuela como imagen)
     # Assets de tema / íconos de UI servidos como <img> (no son portadas).
     # Sanyodo (WP theme): icn_close.svg, "menu open"/"menu close", etc.
@@ -1078,7 +1296,11 @@ def _img_to_url(img: Any, source_url: str) -> str:
     primero, sin este skip devolveríamos el placeholder data-URI — que no es
     descargable y rompe el espejo local de portadas.
     """
-    for attr in ("src", "data-src", "data-original", "data-lazy-src", "srcset", "data-srcset"):
+    # data-src/data-original ANTES que src: cuando coexisten, data-* es la
+    # imagen real y src el placeholder de lazy-load (el punto entero del
+    # patrón). Caso Crew CZ: src=/img/ph/komiks.png + data-src=cover real
+    # (gotcha #90; el orden src-first dejó 4 boxes checos con placeholder).
+    for attr in ("data-src", "data-original", "data-lazy-src", "src", "srcset", "data-srcset"):
         val = img.get(attr)
         if not val:
             continue
@@ -1112,10 +1334,28 @@ def _img_to_url(img: Any, source_url: str) -> str:
         val = val.strip()
         if val.lower().startswith("data:"):
             continue
+        # Placeholders de lazy-load que NO son data-URIs: archivos loader/
+        # blank/spinner reales (Mangarden: /gfx/pol/loader.gif con la portada
+        # en data-src). Sin este skip devolvíamos el loader como portada y
+        # nunca llegábamos a data-src (167 items PL sin foto, 2026-06-12).
+        if _LAZY_PLACEHOLDER_RE.search(val):
+            continue
         url = canonicalize_url(source_url, val)
         if url and url != source_url:
             return url
     return ""
+
+
+# Nombres de archivo EXACTOS de placeholder de lazy-load (se saltean en
+# _img_to_url para caer al data-src real). Sin wildcard tras el nombre:
+# "lazy.jpg"/"grey-edition.jpg" pueden ser imágenes reales — solo el nombre
+# pelado (con sufijo numérico opcional tipo loader2.gif / blank_1x1.png).
+_LAZY_PLACEHOLDER_RE = re.compile(
+    r"(?:^|/)(?:loader|loading|blank|placeholder|spacer|spinner|"
+    r"transparent|pixel|dummy|no[-_]?image|noimage|default)"
+    r"(?:[-_]?\d+(?:x\d+)?)?\.(?:gif|png|svg|jpe?g|webp)\b",
+    re.IGNORECASE,
+)
 
 
 def _score_image(url: str, alt: str) -> int:
@@ -2122,6 +2362,11 @@ def fetch_metadata_from_detail(
             and label_pairs.get("release_date")):
         result["release_date"] = label_pairs["release_date"]
 
+    # Al corpus solo entran fechas ISO (gotcha #80). Va DESPUÉS de la
+    # excepción de arriba, que necesita ver el componente horario crudo.
+    if result.get("release_date"):
+        result["release_date"] = normalize_release_date(result["release_date"])
+
     # === Author (si Schema.org no lo trajo) ===
     if not result["author"]:
         author = _extract_json_ld_author(soup)
@@ -2594,7 +2839,7 @@ def derive_stock_type(signal_types: list[str], title: str, description: str) -> 
 # acepta sin importar lo demás.
 _STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bmanga\b", re.IGNORECASE),
-    re.compile(r"\b(?:vol(?:ume|umen|\.)?|tome|tomo|band)\s*\.?\s*\d", re.IGNORECASE),
+    re.compile(r"\b(?:vol(?:ume|umen|\.)?|tome|tomo|tom|band)\s*\.?\s*\d", re.IGNORECASE),
     re.compile(r"\b(?:kanzenban|kanzeban|bunko|aizoban|tankōbon|tankobon|wideban|ultimate edition)\b", re.IGNORECASE),
     re.compile(r"\b(?:art\s*book|artbook|fan\s*book|fanbook|data\s*book|guide\s*book|illustrations? book|character book)\b", re.IGNORECASE),
     re.compile(r"\b(?:doujinshi|d[oō]jinshi|d[oō]jin)\b", re.IGNORECASE),
@@ -2661,6 +2906,15 @@ _BLOG_URL_PATTERNS = re.compile(
     , re.IGNORECASE,
 )
 
+# URLs de productos NO-manga por sección del sitio. El título no alcanza:
+# "Castlevania: The Complete Series, Limited Edition" (Blu-ray de VIZ) no
+# dice DVD/Blu-ray, pero su URL vive bajo /anime/. Descarte temprano en
+# is_likely_manga(), mismo mecanismo que _BLOG_URL_PATTERNS.
+_NON_MANGA_URL_PATTERNS = re.compile(
+    r"viz\.com/anime/"                # Blu-ray/DVD/steelbook de anime VIZ
+    , re.IGNORECASE,
+)
+
 
 # NON-MANGA tier HARD: productos que SIEMPRE son productos completos, jamás
 # extras dentro de una edición especial de manga. Match aquí → descarte
@@ -2668,7 +2922,6 @@ _BLOG_URL_PATTERNS = re.compile(
 # casos como "<título japonés> Blu-ray BOX 下巻" donde "巻" matchearía como
 # strong-manga pero el ítem real es Blu-ray).
 _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b(?:DVD|blu-?ray)(?:\s*(?:BOX|SET|EDITION|DISC)|\b)", re.IGNORECASE),
     re.compile(r"\bvinyl\s*figure\b", re.IGNORECASE),
     re.compile(r"\bPVC\s*(?:figure|statue|painted)\b", re.IGNORECASE),
     re.compile(r"\bpainted\s+statue\b", re.IGNORECASE),
@@ -2687,21 +2940,9 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bfine\s+art\s+print\b", re.IGNORECASE),
     re.compile(r"\bart\s+print\b(?!\s+(?:edition|collection))", re.IGNORECASE),
     re.compile(r"\bbookends?\b", re.IGNORECASE),
-    # standee COMO PRODUCTO PRINCIPAL → rechazar.
-    # NO rechazar cuando es un extra incluido con el manga, precedido por
-    # "con ", "with ", "avec ", "mit ", "inkl ", "inkl. ", "+ ". En esos
-    # casos el standee es bonus, no el artículo principal vendido.
-    # Ejemplo OK: "My Dress Up Darling Deluxe Con Standee In Acrilico".
-    # Lookbehinds fijos en serie (Python exige anchura fija por lookbehind).
-    re.compile(
-        r"(?<!con )(?<!with )(?<!avec )(?<!mit )(?<!inkl )(?<!inkl. )(?<!\+ )\bstandees?\b",
-        re.IGNORECASE,
-    ),
     re.compile(r"\bcomic\s+cover\s+(?:art\s+)?print\b", re.IGNORECASE),
     re.compile(r"\bpaperweight\b", re.IGNORECASE),
     re.compile(r"\b(?:enamel\s+)?pin\s+set\b", re.IGNORECASE),
-    # Bundles de cómics (no manga) — Dark Horse pack de variantes Alien/Conan/etc.
-    re.compile(r"\b(?:Exclusive\s+)?Variant\s+Bundle\b", re.IGNORECASE),
     # Trading cards / cromos / coleccionables Panini (no manga, deporte/marca).
     re.compile(r"\bTrading\s+Cards?\b", re.IGNORECASE),
     re.compile(r"\b(?:Caja|Cajita)\s+Con\s+\d+\s+Sobres?\b", re.IGNORECASE),
@@ -2755,15 +2996,14 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:DC|Marvel)\s+Edici[óo]n\s+Facs[íi]mil\b", re.IGNORECASE),
     # JP: enciclopedias 図鑑 (Gakken animal/insect guides), revistas (X月号),
     # idol boxes (プレミアムBOX), bonus prefix sin contenido manga.
-    re.compile(r"図鑑"),
+    # 図鑑未掲載 = "no publicado en el zukan" (describe el BONUS de una edición
+    # especial, ej. キン肉マン data files) → no matchear (gotcha #92).
+    re.compile(r"図鑑(?!未掲載)"),
     re.compile(r"\d+月号"),                  # "7月号" = revista mensual
-    re.compile(r"プレミアムBOX"),
+    # 限定版プレミアムBOX = edición limitada premium de un MANGA; el target son
+    # idol/goods boxes sin marcador de edición de libro (gotcha #92).
+    re.compile(r"(?<!限定版)プレミアムBOX"),
     re.compile(r"学研の図鑑"),
-    re.compile(r"ブルーレイ|DVD\s*BOX"),
-    # フィギュア (figure) sola es producto, NO matchear cuando viene seguida de
-    # 付/同梱/付録 (with/included) — eso indica "manga con figura como extra"
-    # (típico de ediciones especiales tipo "Ai Yori Aoshi 14 フィギュア付初回限定版").
-    re.compile(r"フィギュア(?!付|同梱|付録)"),
     # --- Blog posts / news / listados editoriales -------------------------
     # Listadomanga blog histórico es ~100% noticias. Estos patrones también
     # capturan ruido similar de RSS feeds y resultados de search engines.
@@ -2837,6 +3077,62 @@ _NON_MANGA_HARD: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bCyberpunk\s+\d+:\s+Tarot\s+Deck\s+(?:&|and)\s+Guidebook\b", re.IGNORECASE),
 )
 
+# NON-MANGA tier HARD-UNLESS-BONUS (gotcha #92): productos completos (DVD,
+# figura, standee, bundle) que en los TÍTULOS OFICIALES de ediciones
+# especiales aparecen como BONUS incluido — desde la política de títulos
+# 2026-06-12 el title es el nombre oficial scrapeado, así que vuelve a nombrar
+# el extra ("夏目友人帳 フィギュアストラップ付き特装版", "テラフォーマーズ(21)特装版 DVD
+# LIMITED EDITION", "Ediz. variant. Con acrylic standee"). Si el título trae
+# un marcador de inclusión (付き/同梱/特装版/con/with/avec…) el match NO
+# descarta; sin marcador, descarte HARD normal.
+_NON_MANGA_HARD_UNLESS_BONUS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:DVD|blu-?ray)(?:\s*(?:BOX|SET|EDITION|DISC)|\b)", re.IGNORECASE),
+    re.compile(r"ブルーレイ|DVD\s*BOX"),
+    # フィギュア sola es producto; el lookahead corto cubre "フィギュア付" directo,
+    # el rescue por marcador cubre "フィギュアストラップ付き" (sustantivo entremedio).
+    re.compile(r"フィギュア(?!付|同梱|付録)"),
+    # standee / Variant Bundle como producto principal (Dark Horse Direct);
+    # como bonus en ediciones italianas ("Con acrylic standee", "Variant
+    # Bundle con Storia Extra") se rescatan por el marcador.
+    re.compile(r"\bstandees?\b", re.IGNORECASE),
+    re.compile(r"\b(?:Exclusive\s+)?Variant\s+Bundle\b", re.IGNORECASE),
+)
+
+# Marcadores de "bonus incluido" — POSICIONALES respecto del match (gotcha
+# #92): el marcador debe estar pegado al producto-bonus, no en cualquier parte
+# del título ("神の庭付き楠木邸 Blu-ray BOX" tiene 付き como parte del NOMBRE de
+# la obra y sigue siendo un Blu-ray de anime → rechazar).
+#   - 特装版/同梱版 en cualquier parte: término de edición de LIBRO (no rescata
+#     limited de anime, que usan 限定版 a secas).
+#   - 付/同梱 hasta 12 chars DESPUÉS del match ("(Blu-ray)付限定版",
+#     "フィギュアストラップ付き", "DVD＋パクティオカード同梱").
+#   - con/with/avec/mit/inkl/incluye/+ hasta 16 chars ANTES ("Con acrylic
+#     standee") o 6 DESPUÉS ("Variant Bundle con Storia Extra").
+#   - "+"/"＋" en cualquier parte ANTES del match: dos obras unidas en un
+#     bundle de manga ("Yomi No Tsugai Variant + FMA Variant Bundle 1").
+_BOOK_EDITION_MARK_RE = re.compile(r"特装版|同梱版")
+_BONUS_AFTER_RE = re.compile(r"付|同梱")
+_BONUS_ROMANCE_RE = re.compile(
+    r"\b(?:con|with|avec|mit|inkl\.?|incluye[n]?|include[sd]?)\b|\bw/|[+＋]",
+    re.IGNORECASE,
+)
+
+
+def _bonus_context_near(blob: str, m: re.Match) -> bool:
+    """True si el match de _NON_MANGA_HARD_UNLESS_BONUS está marcado como
+    bonus incluido de una edición (ver gotcha #92)."""
+    if _BOOK_EDITION_MARK_RE.search(blob):
+        return True
+    if _BONUS_AFTER_RE.search(blob[m.end():m.end() + 12]):
+        return True
+    if _BONUS_ROMANCE_RE.search(blob[max(0, m.start() - 16):m.start()]):
+        return True
+    if _BONUS_ROMANCE_RE.search(blob[m.end():m.end() + 6]):
+        return True
+    if "+" in blob[:m.start()] or "＋" in blob[:m.start()]:
+        return True
+    return False
+
 # NON-MANGA tier SOFT: pueden aparecer como extras en packs de manga. Por eso
 # solo aplica si NO se rescató antes via strong-manga o pack-extras.
 _NON_MANGA_SOFT: tuple[re.Pattern[str], ...] = (
@@ -2854,7 +3150,13 @@ _NON_MANGA_SOFT: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:soundtrack|OST original)\b", re.IGNORECASE),
     re.compile(r"\b(?:mug|taza)\b", re.IGNORECASE),
     re.compile(r"\b(?:backpack|mochila)\b", re.IGNORECASE),
-    re.compile(r"\bT-?shirt\b|\bcamiseta\b|\bplayera\b", re.IGNORECASE),
+    # T-shirt como producto; "con/with/avec/mit/+ T-shirt" es BONUS de una
+    # edición (ej. "Sakamoto Days Variant con T-shirt 3", gotcha #92).
+    # Lookbehinds fijos en serie (Python exige anchura fija por lookbehind).
+    re.compile(
+        r"(?<!con )(?<!with )(?<!avec )(?<!mit )(?<!\+ )(?:\bT-?shirt\b)|\bcamiseta\b|\bplayera\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bsticker\s+pack\b", re.IGNORECASE),
     # "Figure" como sustantivo principal (al final del título, con o sin paréntesis).
     re.compile(r"\bFigure\b\s*(?:\([^)]*\))?\s*$", re.IGNORECASE),
@@ -3017,10 +3319,19 @@ _NOVEL_INDICATOR_PATTERNS = re.compile(
 )
 
 # Whitelist override: si el title/desc menciona estos, NO es novela pura.
+# danmei/manhua/manhwa/donghua: las novels asiáticas (Seven Seas danmei
+# deluxe: Mo Dao Zu Shi, Dinghai Fusheng Records…) son "light novels con
+# bonus" — EN scope según CLAUDE.md. Un artbook tampoco es novela pura.
 _NOVEL_BYPASS_PATTERNS = re.compile(
     r"\bmanga\b"
     r"|\blight\s+novel\b|\bnovela\s+ligera\b|\bnovela\s+gr[áa]fica\b"
     r"|\branobe\b|\bラノベ|\bライトノベル"
+    r"|\bdanmei\b|\bmanhua\b|\bmanhwa\b|\bdonghua\b"
+    r"|\bart\s*book\b"
+    # "(Novel)" como paréntesis en el título = marcador de línea editorial
+    # asiática (Seven Seas danmei/LN). Los bestsellers occidentales que este
+    # filtro caza no se titulan "X (Novel)".
+    r"|\(novel\)"
     r"|\bcomic\b|\bcómic\b|\bfumetto\b",
     re.IGNORECASE,
 )
@@ -3123,6 +3434,12 @@ def is_likely_manga(
         m = _BLOG_URL_PATTERNS.search(url)
         return False, f"blog_url:{m.group(0)[:40]}"
 
+    # 0a-quinquies) URLs de secciones no-manga del sitio (anime/video).
+    # El título de un Blu-ray de VIZ no menciona DVD/Blu-ray; la URL sí.
+    if url and _NON_MANGA_URL_PATTERNS.search(url):
+        m = _NON_MANGA_URL_PATTERNS.search(url)
+        return False, f"non_manga_url:{m.group(0)[:40]}"
+
     blob = title
     if description:
         # Mirar también en descripción para 'incluye manga' etc. pero NO
@@ -3142,6 +3459,14 @@ def is_likely_manga(
     else:
         for pat in _NON_MANGA_HARD:
             if pat.search(blob):
+                return False, f"non_manga_hard:{pat.pattern[:40]}"
+        # HARD-UNLESS-BONUS (gotcha #92): el producto-completo (DVD/figura/
+        # standee/bundle) NO descarta si el título oficial lo marca como
+        # bonus incluido de una edición (付き/同梱/特装版/con/with/… pegado
+        # al match — ver _bonus_context_near).
+        for pat in _NON_MANGA_HARD_UNLESS_BONUS:
+            m = pat.search(blob)
+            if m and not _bonus_context_near(blob, m):
                 return False, f"non_manga_hard:{pat.pattern[:40]}"
 
     # 1) Strong manga hints
@@ -3267,7 +3592,9 @@ _GENERIC_X_EDITION_PATTERN = re.compile(
     r"Latest|New|Old|Same|Other|Another|Each|Every|Any|All|Some|Whole|"
     r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
     r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final|"
-    r"Omnibus"
+    # "3-in-1 Edition" / "2-in-1 Edition" (VIZ/Shojo Beat) capturan "in-1"
+    # como lore-word; son omnibus rústica = tomo grueso (gotcha #18).
+    r"Omnibus|in-1"
     # Genéricos ES/IT/FR (mismas categorías que la lista inglesa de arriba:
     # new / ordinales / standard / regular / original / digital / idioma).
     r"|Nueva|Nuova|Nouvelle|Primera|Prima|Première|Premiere"
@@ -3288,7 +3615,7 @@ _GENERIC_X_EDITION_PATTERN = re.compile(
 #   - número japonés con marcador de volumen (12巻)
 #   - rangos tipo "1-12", "Vol 1 a 5"
 _MANGA_VOLUME_SHAPE = re.compile(
-    r"\b(?:vol|tome|tomo|band|volume|volumen)\s*\.?\s*\d{1,3}\b"  # vol N (1-3 dígitos)
+    r"\b(?:vol|tome|tomo|tom|band|volume|volumen)\s*\.?\s*\d{1,3}\b"  # vol N (1-3 dígitos; tom = polaco)
     r"|\b[Nn][º°o\.]\s*\d{1,3}\b"                                  # n°N
     r"|#\d{1,3}\b"                                                 # #N
     r"|\s\d{1,3}\s*(?:\([^)]+\))?\s*$"                             # número al final
@@ -3369,6 +3696,12 @@ _BLOG_URL_PATTERN = re.compile(
 # aunque vengan de fuentes distintas.
 # ---------------------------------------------------------------------------
 
+# Dígitos full-width JP → ASCII (gotcha #82). `\d` en regex unicode de Python
+# MATCHEA ０-９ (U+FF10-FF19), así que los patterns de volumen capturan el
+# dígito crudo ("特装版 ７" → volume "７") y contamina cluster_key. FUENTE
+# ÚNICA de esta tabla — generate_slugs.py la importa de acá, no la dupliques.
+FULLWIDTH_DIGITS_TABLE = str.maketrans("０１２３４５６７８９", "0123456789")
+
 # Patrones para extraer número de volumen del título, ordenados de más
 # específico a menos. El primero que matchee gana.
 _VOLUME_EXTRACT_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -3436,6 +3769,9 @@ def _extract_volume(title: str) -> str:
     """Devuelve el volumen como string (e.g. "100") o "" si no detecta."""
     if not title:
         return ""
+    # Full-width → ASCII ANTES de matchear: \d captura ０-９ igual, pero el
+    # volumen devuelto debe ser ASCII puro (gotcha #82).
+    title = title.translate(FULLWIDTH_DIGITS_TABLE)
     for pat in _VOLUME_EXTRACT_PATTERNS:
         m = pat.search(title)
         if m:
@@ -3455,7 +3791,11 @@ def _normalize_series_name(title: str, volume: str) -> str:
     """
     if not title:
         return ""
-    text = _BRACKETED_RE.sub(" ", title)
+    # Full-width → ASCII primero: el volumen que llega ya es ASCII
+    # (_extract_volume normaliza), así que sin esto el strip del número de
+    # volumen no matchearía el "７" del título original (gotcha #82).
+    text = title.translate(FULLWIDTH_DIGITS_TABLE)
+    text = _BRACKETED_RE.sub(" ", text)
     text = _SERIES_STRIP_RE.sub(" ", text)
     # Quitar el MARCADOR de volumen + número juntos (nº1, n°1, #5, 巻3, 第3巻).
     # Sin esto, al quitar solo el dígito más abajo quedaba el marcador suelto
@@ -3594,7 +3934,7 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
             return f"lmc:{_cole.group(1)}:{kind}:{_it.group(2)}"
         kind = (item.get("lm_kind") or "regular").strip() or "regular"
         kind = _LMC_KIND_CANON.get(kind, kind)
-        vol = (item.get("volume") or "").strip()
+        vol = (item.get("volume") or "").strip().translate(FULLWIDTH_DIGITS_TABLE)
         return f"lmc:{_cole.group(1)}:{kind}:{vol}"
 
     # Tier 1: edition_key (set by skill /watch-standardize-catalog o por el
@@ -3603,7 +3943,9 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     # Volume los distingue (tomo 1 vs tomo 2 de la misma edición).
     edition_key = (item.get("edition_key") or "").strip()
     if edition_key:
-        volume = (item.get("volume") or "").strip()
+        # translate: el campo volume puede venir de parsers de fuente o del
+        # LLM del standardize, no solo de _extract_volume (gotcha #82).
+        volume = (item.get("volume") or "").strip().translate(FULLWIDTH_DIGITS_TABLE)
         return f"edition:{edition_key}|{volume}"
 
     # Tier 2: ISBN — para items sin edition_key (pre-standardize o legacy).
@@ -4210,14 +4552,26 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         old_images = list((old or {}).get("images") or [])
         new_images = list(row.get("images") or [])
         if old_images or new_images:
-            seen_keys: set[tuple[str, str]] = set()
+            # Dedup por (kind, url) preservando el ORDEN del viejo, pero
+            # RELLENANDO campos vacíos del entry conservado con los del
+            # duplicado (en ambas direcciones). Sin esto, el flush
+            # incremental de un wiki escribía la fila SIN `local` y el
+            # upsert final post-mirror (CON `local`) se descartaba como
+            # duplicado → ~1700 items con la imagen en disco pero la fila
+            # sin referencia (bug 2026-06-12, gotcha #87).
+            kept_by_key: dict[tuple[str, str], dict[str, Any]] = {}
             merged_images: list[dict[str, Any]] = []
             for im in old_images + new_images:
                 k = (im.get("kind", ""), _img_stem(im.get("url", "")))
-                if k in seen_keys:
+                kept = kept_by_key.get(k)
+                if kept is not None:
+                    for f in ("local", "description"):
+                        if not kept.get(f) and im.get(f):
+                            kept[f] = im[f]
                     continue
-                seen_keys.add(k)
-                merged_images.append(im)
+                entry = dict(im)
+                kept_by_key[k] = entry
+                merged_images.append(entry)
             row["images"] = merged_images
         # extras[]: misma lógica de union-merge dedup por (description, release_date).
         old_extras = list((old or {}).get("extras") or [])
@@ -4502,9 +4856,18 @@ def find_next_page_url(
             if next_url != current_url and next_url not in visited:
                 # Verificar que el N+1 aparezca explícitamente en algún anchor de la página.
                 # Esto evita generar URLs que no existen.
+                # Evidencia aceptada: (a) href con page=N+1 (paginación clásica),
+                # o (b) href javascript de paginación con el número N+1 como
+                # argumento — `Javascript:Page_Set('2')` (Aladin/ASP.NET),
+                # `fn_paging(2)`, etc. El sitio acepta ?page=N igual aunque
+                # sus links usen JS (verificado Aladin 2026-06-12).
+                js_next = re.compile(
+                    rf"^javascript:[\w.]*pag\w*[_.]?\w*\(['\"]?{current_page + 1}['\"]?\)",
+                    re.IGNORECASE,
+                )
                 for anchor in soup.find_all("a", href=True):
                     href = anchor.get("href", "")
-                    if f"{page_param}={current_page + 1}" in href:
+                    if f"{page_param}={current_page + 1}" in href or js_next.match(href.strip()):
                         return next_url
     return None
 
@@ -4860,7 +5223,7 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             if schema.get("description") and len(schema["description"]) > len(candidate.description):
                 candidate.description = schema["description"][:2500]
             candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
-            candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
+            candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
             candidate.author = schema.get("author") or extract_author(candidate.description, card)
             candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{candidate.url}", card)
             candidates.append(candidate)
@@ -5152,7 +5515,7 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
         candidate.description = schema["description"][:2500]
 
     candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
-    candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
+    candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
     candidate.author = schema.get("author") or extract_author(candidate.description, card)
     candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{url}", card)
     return candidate
@@ -5472,7 +5835,7 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
                 candidate.image_url = extract_image_url(rss_soup, source.url)
             except Exception:
                 pass
-        candidate.release_date = extract_release_date(summary) or published_at
+        candidate.release_date = extract_release_date(summary) or normalize_release_date(published_at)
         candidate.author = extract_author(summary)
         candidate.isbn = extract_isbn(f"{summary}\n{link}")
         candidates.append(candidate)
@@ -6028,6 +6391,16 @@ _COUNTRY_SLUG_MAP: dict[str, str] = {
     "perú": "pe", "peru": "pe",
     "chile": "cl",
     "corea": "kr", "korea": "kr",
+    # Países agregados con la expansión 2026-06-12 (sin esto el fallback
+    # horneaba códigos de 4 letras NO idempotentes: core/polo/cheq/turq/hong
+    # se re-apendeaban en cada enforcer — gotcha #91).
+    "corea del sur": "kr", "south korea": "kr",
+    "polonia": "pl", "poland": "pl",
+    "chequia": "cz", "czechia": "cz", "república checa": "cz", "republica checa": "cz",
+    "turquía": "tr", "turquia": "tr", "turkey": "tr",
+    "hong kong": "hk",
+    "china": "cn",
+    "indonesia": "id",
     "españa / latam": "eslatam", "latam": "latam",
 }
 
@@ -6073,15 +6446,51 @@ def format_especial_title(title: str) -> str:
     return t
 
 
+# Homoglifos cirílicos/griegos → ASCII (gotcha #81). NFKD NO los descompone:
+# una "о" cirílica U+043E sobrevive la normalización y el regex la descarta
+# como punctuation → "Taihо to Stamp" quedaba "taih-to-stamp". Sólo
+# confusables visuales inequívocos de letras latinas minúsculas (la tabla se
+# aplica después de lower(), que ya baja О→о, Ο→ο).
+_HOMOGLYPH_TO_ASCII = str.maketrans({
+    # Cirílico
+    "а": "a", "е": "e", "ё": "e", "о": "o", "р": "p", "с": "c",
+    "у": "y", "х": "x", "і": "i", "ї": "i", "ј": "j", "ѕ": "s",
+    "һ": "h", "ԁ": "d", "ԛ": "q", "ԝ": "w",
+    # Griego
+    "ο": "o", "α": "a", "ι": "i", "κ": "k", "ν": "v",
+})
+
+
 def _slugify_kebab(s: str) -> str:
-    """Slugifica a kebab-case: lowercase, sin diacríticos, sin punctuation."""
+    """Slugifica a kebab-case: lowercase, sin diacríticos, sin punctuation.
+
+    Unicode (gotcha #81): homoglifos cirílicos/griegos se mapean a ASCII
+    ANTES de NFKD (que no los descompone); CJK y cualquier otro no-ASCII
+    restante se descarta de forma controlada vía el regex (actúa como
+    separador y strip("-") limpia los bordes): "Maku ga Oriru to Bokura wa
+    番" → "maku-ga-oriru-to-bokura-wa".
+    """
     if not s:
         return ""
     import unicodedata as _ud
-    s = _ud.normalize("NFKD", s.lower())
+    s = s.lower().translate(_HOMOGLYPH_TO_ASCII)
+    s = _ud.normalize("NFKD", s)
     s = "".join(c for c in s if not _ud.combining(c))
     s = re.sub(r"[^a-z0-9]+", "-", s)
     return s.strip("-")
+
+
+def sanitize_key_ascii(key: str) -> str:
+    """Fuerza una clave de agrupación (series_key/edition_key) a ASCII kebab.
+
+    Idempotente sobre claves ya limpias. Es la frontera para claves que NO
+    salen de `_slugify_kebab`: canónicas de series_aliases.yml (las acuña el
+    LLM del enrich skill) y claves propuestas por el LLM del standardize
+    (gotcha #81: "taihо-to-stamp" con о cirílica, "maku-ga-oriru-to-bokura-
+    wa-番" con CJK crudo). Si la sanitización vacía la clave devuelve ""
+    (el caller decide el fallback).
+    """
+    return _slugify_kebab(key or "")
 
 
 # --- Edition slug refinement: language/title-aware ---
@@ -6301,8 +6710,9 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     `_variant_tier`) que ya manejan vol/tome/巻, mojibake, etc.
 
     Devuelve `{series_key, series_display, edition_key, edition_display,
-    volume, title_standardized}` con strings vacíos cuando no se puede
-    derivar (better empty than wrong).
+    volume}` con strings vacíos cuando no se puede derivar (better empty
+    than wrong). NO genera ni propone títulos: el `title` es el nombre
+    OFICIAL scrapeado y nunca se reescribe (política de títulos 2026-06-12).
     """
     title = candidate.title or ""
     if not title:
@@ -6351,7 +6761,9 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     resolved_sk, resolved_sd = _csk(title, series_key, series_display)
     series_resolved = (resolved_sk != series_key)
     if series_resolved:
-        series_key = resolved_sk
+        # Las canónicas del YAML las acuña el LLM del enrich skill —
+        # sanitizar a ASCII por si traen homoglifos/CJK (gotcha #81).
+        series_key = sanitize_key_ascii(resolved_sk) or series_key
         series_display = resolved_sd
 
     # 4) Edition slug from signal_types — language/title-aware refinement
@@ -6382,16 +6794,7 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
         f"{edition_name} ({publisher_display})" if publisher_display else edition_name
     )
 
-    # 5) title_standardized. Edición especial → "{serie} {vol} Edición Especial"
-    # (el volumen ANTES del calificador, gotcha #52). Otras ediciones mantienen
-    # "{serie} {edición} {vol}".
-    if edition_slug == "special":
-        parts = [series_display.strip(), volume, "Edición Especial"]
-    else:
-        parts = [series_display.strip(), edition_name if edition_slug != "regular" else "", volume]
-    title_standardized = " ".join(p for p in parts if p).strip()
-
-    # 6) Confidence tier for /watch-standardize-catalog routing
+    # 5) Confidence tier for /watch-standardize-catalog routing
     #   Tier 1: series resolved in aliases + known publisher + unambiguous edition
     #   Tier 2: series resolved but edition ambiguous OR publisher unknown
     #   Tier 3: series NOT resolved (unknown series, CJK-only, etc.)
@@ -6411,7 +6814,6 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
         "edition_key": edition_key,
         "edition_display": edition_display,
         "volume": volume,
-        "title_standardized": title_standardized,
         "confidence_tier": confidence_tier,
     }
 
@@ -6499,7 +6901,6 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     ek = getattr(candidate, "edition_key", "") or ""
     ed = getattr(candidate, "edition_display", "") or ""
     vol = getattr(candidate, "volume", "") or ""
-    title_std = ""
 
     if not (sk and ek):
         derived = derive_series_metadata(candidate)
@@ -6509,7 +6910,6 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
             ek = ek or derived.get("edition_key", "")
             ed = ed or derived.get("edition_display", "")
             vol = vol or derived.get("volume", "")
-            title_std = derived.get("title_standardized", "")
 
     # Paso B: pasar el series_key/display por el aliases.yml resolver. Esto
     # consolida traducciones multilingües (Demon Slayer = Kimetsu no Yaiba =
@@ -6519,6 +6919,11 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         if ek.startswith(sk + "-") and new_sk != sk:
             ek = new_sk + ek[len(sk):]
         sk, sd = new_sk, new_sd
+
+    # Frontera única del campo volume: puede venir del parser de la fuente
+    # (candidate.volume) o del heurístico — dígitos full-width JP se
+    # normalizan acá, ANTES de escribir el row (gotcha #82).
+    vol = (vol or "").translate(FULLWIDTH_DIGITS_TABLE)
 
     # Paso C: escribir al row final
     if sk:
@@ -6531,9 +6936,11 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         row["edition_display"] = ed
     if vol:
         row["volume"] = vol
-    # No re-escribimos el title si ya viene seteado; el `title_standardized`
-    # de la heurística queda como reference pero no overridea el title scrapeado.
-    # El skill /watch-standardize-catalog es el que reescribe título al merge.
+    # El `title` NUNCA se reescribe: es el nombre OFICIAL con que la fuente
+    # publica el producto (política de títulos 2026-06-12). Ni la heurística,
+    # ni el skill /watch-standardize-catalog, ni los retrofits lo renombran a
+    # la serie canónica ni lo traducen — la serie canónica vive en
+    # series_key/series_display y la búsqueda resuelve aliases.
 
     # cluster_key se deriva DESPUÉS del Paso C: con edition_key ya escrito en
     # el row, la clave sale en tier edition: (o lmc:). Derivarla antes dejaba
@@ -7263,6 +7670,18 @@ def _run_wiki_bootstrap(
         from wikis.viz_artbooks import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "sevenseas":
         from wikis.sevenseas import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "kodansha-us":
+        from wikis.kodansha_us import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "jd-intl":
+        from wikis.storefront_json import bootstrap_jd_intl as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "spp-tw":
+        from wikis.storefront_json import bootstrap_spp as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "kimdong":
+        from wikis.storefront_json import bootstrap_kimdong as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "ipm":
+        from wikis.storefront_json import bootstrap_ipm as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "yaakz":
+        from wikis.storefront_json import bootstrap_yaakz as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -7292,6 +7711,11 @@ def _run_wiki_bootstrap(
     # el detail (media?parent + HTML del libro). Sin enrich la fuente pierde
     # su valor de dedup (ISBN).
     if args.bootstrap_wiki == "sevenseas":
+        extra_kwargs["fetch_details"] = True
+
+    # kodansha-us: el API solo da series; los volúmenes (ISBN/fecha/portada)
+    # se extraen de las páginas individuales. Siempre fetch_details=True.
+    if args.bootstrap_wiki == "kodansha-us":
         extra_kwargs["fetch_details"] = True
 
     # Evitar argumento duplicado: si extra_kwargs ya setea fetch_details
@@ -7546,12 +7970,17 @@ def run(args: argparse.Namespace) -> int:
         only_tags=parse_csv_arg(getattr(args, "only_tags", "")),
     )
 
-    only_source = (args.only_source or "").strip()
-    if only_source:
-        matched = [s for s in sources_all if s.name == only_source]
-        if not matched:
+    # --only-source es repetible (action=append). Histórico: era single-valued
+    # y el flag repetido pisaba en silencio los anteriores (bug 2026-06-12:
+    # una ingesta de 10 fuentes solo corrió la última).
+    only_sources = [s.strip() for s in (args.only_source or []) if s and s.strip()]
+    if only_sources:
+        wanted = set(only_sources)
+        matched = [s for s in sources_all if s.name in wanted]
+        missing = wanted - {s.name for s in matched}
+        if missing:
             available = ", ".join(s.name for s in sources_all)
-            print(f"[ERROR] --only-source '{only_source}' no coincide con ninguna fuente.")
+            print(f"[ERROR] --only-source no coincide: {', '.join(sorted(missing))}")
             print(f"        Fuentes disponibles: {available}")
             return 2
         sources = matched
@@ -8100,8 +8529,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--only-source",
-        default="",
-        help="Procesa solo la fuente con este nombre exacto (útil para debug).",
+        action="append",
+        default=None,
+        help="Procesa solo la(s) fuente(s) con este nombre exacto (repetible: "
+             "--only-source A --only-source B). Útil para debug e ingestas "
+             "dirigidas.",
     )
     parser.add_argument(
         "--max-age-days",
@@ -8156,7 +8588,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz", "sevenseas"],
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz", "sevenseas", "kodansha-us", "jd-intl", "spp-tw", "kimdong", "ipm", "yaakz"],
         help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), booksprivilege (agregador JP de 店舗特典/extras de tienda: por cada release lista los bonus de cada retailer japonés — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN, etc. — que no aparecen en el catálogo regular), sumikko (catálogo curado JP de 限定版/特装版 — ~3178 ediciones limitadas y especiales con ISBN, complementario a booksprivilege que es store-bonus; sumikko se enfoca en la edición en sí: acrylic stand付き, 小冊子付き, 缶バッジ付き, BOX, etc.), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(

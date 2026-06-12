@@ -407,6 +407,29 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         > "$LOG_DIR/02x-sevenseas.log" 2>&1
     echo "    duración: $(($(date +%s) - P2X_START))s — items: $(count_lines)"
 
+    # kodansha-us (US — catálogo COMPLETO de deluxe/omnibus/collector vía API).
+    echo ">>> [2y] kodansha-us (US — catálogo completo de especiales)"
+    P2Y_START=$(date +%s)
+    _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki kodansha-us \
+        --wiki-from 2000-01 \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02y-kodansha-us.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2Y_START))s — items: $(count_lines)"
+
+    # storefronts API (HK/TW/VN/TH — catálogos completos; storefront_json.py).
+    echo ">>> [2z] storefronts API (jd-intl HK · spp-tw · kimdong/ipm VN · yaakz TH)"
+    P2Z_START=$(date +%s)
+    for SF in jd-intl spp-tw kimdong ipm yaakz; do
+        _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
+            --bootstrap-wiki "$SF" \
+            --sleep-seconds 0.3 \
+            --min-score 20 \
+            > "$LOG_DIR/02z-$SF.log" 2>&1
+    done
+    echo "    duración: $(($(date +%s) - P2Z_START))s — items: $(count_lines)"
+
     # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
         echo ">>> [2q] whakoom spider (OPT-IN, riesgo Cloudflare)"

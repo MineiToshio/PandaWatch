@@ -382,6 +382,31 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         > "$LOG_DIR/02p-sevenseas.log" 2>&1
     echo "    duración: $(($(date +%s) - P2P_START))s — items: $(count_lines)"
 
+    # 2r. kodansha-us (US — deluxe/omnibus/collector vía API kodansha.us).
+    # Modo delta: solo volúmenes con datePublished >= LISTADO_CAL_FROM.
+    echo ">>> [2r] kodansha-us (US — deluxe + omnibus + collector, últimos 3 meses)"
+    P2R_START=$(date +%s)
+    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+        --bootstrap-wiki kodansha-us \
+        --wiki-from "$LISTADO_CAL_FROM" \
+        --sleep-seconds 0.5 \
+        --min-score 20 \
+        > "$LOG_DIR/02r-kodansha-us.log" 2>&1
+    echo "    duración: $(($(date +%s) - P2R_START))s — items: $(count_lines)"
+
+    # 2s. storefronts API (HK/TW/VN/TH — catálogos completos, son chicos y
+    # el upsert es idempotente; storefront_json.py, 2026-06-12).
+    echo ">>> [2s] storefronts API (jd-intl HK · spp-tw · kimdong/ipm VN · yaakz TH)"
+    P2S_START=$(date +%s)
+    for SF in jd-intl spp-tw kimdong ipm yaakz; do
+        _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
+            --bootstrap-wiki "$SF" \
+            --sleep-seconds 0.3 \
+            --min-score 20 \
+            > "$LOG_DIR/02s-$SF.log" 2>&1
+    done
+    echo "    duración: $(($(date +%s) - P2S_START))s — items: $(count_lines)"
+
     # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
         echo ">>> [2q] whakoom spider (OPT-IN, riesgo Cloudflare)"

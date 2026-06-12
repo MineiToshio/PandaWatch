@@ -216,11 +216,22 @@ def download_image(
         return already
 
     getter = session.get if session is not None else requests.get
-    headers = {"Referer": referer} if referer else None
+    # URLs/referers con no-ASCII (slugs thai de yaakz, chinos de jd-intl)
+    # rompen http.client con UnicodeEncodeError latin-1 — requote a
+    # percent-encoding. El referer además se omite si sigue siendo no-ASCII.
+    image_url = requests.utils.requote_uri(image_url)
+    headers = None
+    if referer:
+        safe_ref = requests.utils.requote_uri(referer)
+        try:
+            safe_ref.encode("latin-1")
+            headers = {"Referer": safe_ref}
+        except UnicodeEncodeError:
+            headers = None
 
     try:
         resp = getter(image_url, timeout=timeout, stream=True, headers=headers)
-    except requests.RequestException:
+    except (requests.RequestException, UnicodeError):
         return ""
 
     try:
