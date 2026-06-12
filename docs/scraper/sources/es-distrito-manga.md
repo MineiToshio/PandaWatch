@@ -1,5 +1,8 @@
 # Fuente: Distrito Manga (España)
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `ES - Distrito Manga`: Deshabilitada pese al fix de selectores 2026-06-12: 0 items netos en todo el histórico (Distrito/PRH ES no tiene línea coleccionista; sus integrales se gatean por gotcha #18) y ListadoManga cubre todas las ediciones ES. Re-habilitar si lanzan línea coleccionista.
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-12.

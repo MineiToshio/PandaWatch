@@ -72,6 +72,7 @@ pipeline.
 
 ## 9. Pendientes / limitaciones conocidas
 
+- **Fechas DD/MM/YYYY crudas en `release_date`** — la ficha técnica del sitio entrega la fecha día-primero y los extractores la guardaban sin normalizar; desde 2026-06-12 `normalize_release_date()` la convierte a ISO en la ingestión y el corpus legacy se reparó con `normalize_release_dates.py` (gotcha #80). ✅
 - **"FR - Glénat (search)" está DESHABILITADA** (`enabled: false`): el endpoint
   `?keys={query}` devuelve la **home**, no resultados — la búsqueda del sitio es **JS-only**.
   Se usa la canónica `/manga/nouveautes/` en su lugar. (También existe

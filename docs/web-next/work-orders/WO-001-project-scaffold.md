@@ -2,7 +2,7 @@
 
 **Phase:** 0  
 **Effort:** S  
-**Status:** Pending  
+**Status:** Done (scaffold implementado; ver web-next/)  
 **Related:** [BP-001](../blueprints/BP-001-architecture.md)  
 **Prerequisites:** None
 

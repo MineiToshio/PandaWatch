@@ -86,10 +86,15 @@ Clicking an ItemCard navigates to `/item/[slug]`.
 
 ### FR-4: Back navigation
 
-A `← Catálogo` link at the top-left of the page. It navigates to `/` preserving
-the referring URL's search params if the user arrived from the catalog
-(implemented via `<Link href={referrer || "/"}>` where referrer is passed as a
-query param `?from=...` by the edition card click handler).
+A `← Catálogo` link at the top-left of the page.
+
+> ⚠️ **Actualizado 2026-06-12:** el mecanismo `?from=` se ELIMINÓ (des-estatizaba
+> las páginas de detalle, escondía los links internos de los crawlers por el
+> `Disallow: /*?` y permitía inyectar hrefs externos). Ahora `BackLink` es un
+> client component: si hubo navegación interna previa usa `history.back()`
+> (restaura filtros/página/scroll del catálogo); en deep links cae al fallback
+> estático (`/`), usando la última URL de catálogo guardada por
+> `NavigationTracker` en sessionStorage si existe. Ver FRD-008 §Implementación.
 
 ### FR-5: Multi-source note
 

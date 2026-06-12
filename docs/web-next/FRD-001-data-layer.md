@@ -76,7 +76,7 @@ Items are grouped by `cluster_key`. The result type is `Cluster`:
 type Cluster = {
   clusterKey: string          // raw cluster_key from JSONL
   slug: string                // URL-safe, unique (from slug field)
-  canonical: Item             // highest-score item in the cluster
+  canonical: Item             // most complete item in the cluster (completeness: ISBN > image)
   items: Item[]               // all items in the cluster (all sources)
   editionKey?: string         // from canonical.edition_key
   editionDisplay?: string     // from canonical.edition_display
@@ -105,8 +105,9 @@ same `edition_key` into a single representative entry for the catalog home page.
 - Preserves the sort order of the input array (a cluster's position is determined by
   where the first cluster with its `edition_key` appeared).
 - For each edition group: `volumeCount` = number of clusters in the group;
-  `canonical` = the cluster with the highest `canonical.score`; `signalTypes`,
-  `countries`, `publishers`, `languages` are the union across all clusters.
+  `canonical` = the most complete cluster's canonical (`completeness()`: ISBN > image),
+  promoted together with its `slug` **and `volume`** (cover and volume stay coherent);
+  `signalTypes`, `countries`, `publishers`, `languages` are the union across all clusters.
 - Standalone clusters (no `edition_key`) are passed through unchanged.
 
 Called in `app/page.tsx` **after** `filterClusters()` and `sortClusters()`, so:
@@ -142,8 +143,14 @@ all active filters and returns matching clusters. Filters:
 | `product_type` | string[] | ANY match across cluster items |
 | `source_class` | string[] | ANY match across cluster items |
 | `signal_types` | string[] | ALL selected signals must be present in cluster.signalTypes |
-| `min_score` | number | `canonical.score >= min_score` |
-| `only_limited` | boolean | At least one of `limited`, `special_edition`, `collector`, `lore_edition`, `variant_cover` in signalTypes |
+| `rarity` | string[] | ANY match on `canonical.rarity` |
+| `only_limited` | boolean | At least one of `limited`, `special_edition`, `collector`, `lore_edition`, `variant_cover` (+ artbook/kanzenban/deluxe/box_set/retailer_exclusive) in signalTypes |
+
+(`min_score` se eliminó junto con el score — precios/score fuera del pipeline, 2026-06-11.)
+
+`parseFilterParams()` sanea searchParams hostiles: params escalares repetidos
+(`?q=a&q=b` llega como array) toman el primer valor, `page` no entero/negativo cae a 1,
+`sort` desconocido cae a `date_desc`. Antes un `q` repetido crasheaba la home con 500.
 
 ### FR-7: Sorting
 
@@ -151,12 +158,15 @@ all active filters and returns matching clusters. Filters:
 
 | Sort key | Logic |
 |---|---|
-| `score_desc` (default) | `canonical.score` descending |
-| `score_asc` | `canonical.score` ascending |
-| `date_desc` | `canonical.release_date` descending (items without date go last) |
+| `date_desc` (default) | `canonical.release_date` descending (items without date go last) |
 | `date_asc` | `canonical.release_date` ascending |
 | `title_asc` | `canonical.title` alphabetical |
 | `title_desc` | `canonical.title` reverse alphabetical |
+
+(`score_desc`/`score_asc` se eliminaron junto con el score.) Las fechas se comparan vía
+`sortableDate()` (lib/format.ts), que normaliza el formato legacy `DD/MM/YYYY` a ISO —
+sin eso un item `31/10/2023` ordenaba como el más reciente del catálogo. Los formatos
+parciales reales del corpus (`YYYY`, `YYYY-MM`) ordenan bien como string.
 
 ### FR-8: Pagination
 
@@ -172,15 +182,14 @@ type Facets = {
   countries: { value: string; count: number }[]
   languages: { value: string; count: number }[]
   publishers: { value: string; count: number }[]
-  productTypes: { value: string; count: number }[]
-  sourceClasses: { value: string; count: number }[]
   signalTypes: { value: string; count: number }[]
-  scoreRange: { min: number; max: number }
 }
 ```
 
 Facets are computed from the **unfiltered** full corpus so counts don't change as
-filters are applied (stable facets UX pattern).
+filters are applied (stable facets UX pattern). `productTypes`/`sourceClasses`/`scoreRange`
+se eliminaron (sin UI que los consuma). La home recorta los facets a lo que la UI muestra
+(top 12 publishers, top 8 languages) ANTES de serializarlos al client component.
 
 ---
 
@@ -188,10 +197,17 @@ filters are applied (stable facets UX pattern).
 
 - **Performance:** `loadClusters()` must complete in < 200ms for a corpus of 10k items.
   JSONL parsing of 10k lines takes ~20ms; cluster grouping ~30ms. Total well under budget.
+- **Caching:** el cache de módulo se invalida por **mtime** del JSONL (vale también en dev:
+  sin esto cada request re-parseaba el corpus). Junto al cache se construyen índices
+  `Map` (`bySlug`, `byEdition`, series `byKey`) — los lookups por página dejan de ser
+  scans O(n) durante `generateStaticParams` (~19k páginas).
 - **Type safety:** All functions are fully typed. No `any`. `Item` type mirrors the
   `items.jsonl` schema documented in `CLAUDE.md`.
-- **Error handling:** A corrupted JSONL line skips silently. A missing `items.jsonl`
-  throws a descriptive error (`"data/items.jsonl not found — run scraper first"`).
+- **Error handling:** corrupted JSONL lines and rows without `cluster_key` are skipped
+  **with a `console.warn` count** (never silently). A missing `items.jsonl` throws a
+  descriptive error. Duplicate slugs (pipeline invariant violation, FRD-006 FR-2) warn
+  and keep the first cluster instead of silently shadowing. `ITEMS_PATH` env var
+  overrides the default `../data/items.jsonl` location.
 
 ---
 

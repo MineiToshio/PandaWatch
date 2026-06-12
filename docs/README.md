@@ -2,6 +2,10 @@
 
 Índice de toda la documentación del proyecto. Cuatro componentes, cuatro carpetas.
 
+> **Proceso de implementación con IA** (vías A/B/C, verificación, eficiencia de
+> tokens, skills de proceso): [`process/AI-WORKFLOW.md`](process/AI-WORKFLOW.md).
+> Los specs de épicas generados por `/feature-spec` viven en `docs/specs/`.
+
 ---
 
 ## Componentes

@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-12 (fix search URL + selectores, añadidos keywords VIZBIG/3-in-1/complete edition).
 
 ---
 
@@ -78,11 +78,18 @@ VIZ se ingiere por **dos caminos** distintos de la misma editorial (ver §5):
 **B. Búsqueda de ediciones especiales — search-template** (`sources.yml`):
 
 - Entrada `US - VIZ Media (search)` con `search_template:
-  "https://www.viz.com/search?search={query}"` y `keywords: [deluxe, limited edition,
-  hardcover, boxset, omnibus, collector, exclusive]`.
-- `_expand_search_template()` (manga_watch.py ~3539) expande la entrada en N entradas
-  virtuales, una por keyword, cada una con la URL de búsqueda ya formateada. Recorre las
-  páginas de resultados como una fuente HTML normal.
+  "https://www.viz.com/search?search={query}&category=Manga"` (fix 2026-06-12:
+  añadido `&category=Manga` — sin este param devuelve "series list" en vez de
+  productos) y `keywords: [box set, VIZBIG, omnibus, deluxe, collector, hardcover,
+  definitive, 3-in-1, complete edition]`.
+- Selectores YAML (2026-06-12): `item_selector: "article.g-3"`,
+  `title_selector/link_selector: "a.color-off-black.hover-red"`. Cada query
+  devuelve hasta 32 artículos de producto.
+- `purity: manga_only` — la búsqueda opera sobre la sección Manga del sitio.
+- `_expand_search_template()` (manga_watch.py) expande la entrada en N entradas
+  virtuales, una por keyword, cada una con la URL de búsqueda ya formateada.
+- **Antes del fix (hasta 2026-06-12)**: devolvía 0 candidatos porque la URL sin
+  `category=Manga` muestra una vista de "series" sin elementos de producto.
 
 ---
 

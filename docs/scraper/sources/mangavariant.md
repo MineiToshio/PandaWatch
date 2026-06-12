@@ -4,7 +4,7 @@
 > de datos global comunitaria de variantes/ediciones especiales. Léela ANTES de
 > tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-12 (challenge sgcaptcha resuelto en el bootstrap).
 
 ---
 
@@ -53,8 +53,10 @@ y las notas. Es fuente de **descubrimiento**, no de compra (ver §8).
 
 ## 2. Descripción técnica de la fuente
 
-- **Stack del sitio**: WordPress + Yoast SEO. Sin Cloudflare ni JS-rendering: el
-  parser usa `requests` normal sobre HTML estático.
+- **Stack del sitio**: WordPress + Yoast SEO, hosteado en SiteGround. Desde
+  ~2026-06 TODO el sitio (sitemaps incluidos) está detrás de un **challenge JS
+  sgcaptcha** (ver sección 2026-06-12 abajo): el módulo lo resuelve UNA vez con
+  Playwright y después sigue con `requests` normal sobre HTML estático.
 - **Estructura de URLs**: `/variant/<manga-slug>/<variant-slug>/`. Los 3
   `variant-sitemap*.xml` (de `sitemap_index.xml`) listan las ~2700 URLs. El
   filtro de discovery sólo acepta URLs con dos segmentos bajo `/variant/`
@@ -212,13 +214,19 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
   agregar.
 - **Imágenes**: dependen de `og:image` / mini-galería; algunas variantes pueden
   traer portadas de baja resolución (mismo flujo de baja calidad que el resto).
+- **Incremental del DELTA (fila YAML) vs sgcaptcha**: la fila `Global - Mangavariant`
+  va por el fetch genérico y recibe el challenge → puede traer 0 items hasta
+  adaptarla (ver sección 2026-06-12). El bulk del FULL ya está adaptado.
+- **Playwright ahora es requisito del bulk**: sin `playwright` + Chromium instalados
+  el bootstrap degrada con WARN e importa 0 (el challenge no se puede resolver).
 
 ---
 
 ## 10. Runbook / comandos útiles
 
 ```bash
-# Bulk completo (sitemap, ~2700 — el que corre scrape_full paso 2e):
+# Bulk completo (sitemap, ~2700 — el que corre scrape_full paso 2e).
+# Requiere Playwright instalado (resuelve el challenge sgcaptcha una vez):
 .venv/bin/python scripts/manga_watch.py --bootstrap-wiki mangavariant \
     --sleep-seconds 0.3 --min-score 20
 
@@ -247,3 +255,48 @@ PY
 **Antes de cerrar cualquier cambio en Mangavariant**: validar
 (`validate_corpus`, 0 duras) → tests (`pytest tests/test_extraction.py`) → build.
 Si tocaste algo meaningful, actualiza esta ficha.
+
+## 2026-06-12 — sgcaptcha (SiteGround): challenge JS en TODO el sitio — ✅ resuelto en el bootstrap
+
+El sitio entero (incluyendo `sitemap.xml`) devuelve **202** con un meta-refresh a
+`/.well-known/sgcaptcha/` ante requests/UA de bot — challenge JS de SiteGround
+(apareció ~2026-06; antes el sitio era requests-friendly). **Playwright SÍ lo pasa**
+(headless Chromium, ~4-8 s la primera página; la cookie del challenge se reutiliza) —
+verificado primero con `scripts/retrofit/recover_lost_jp_titles.py`.
+
+**Solución implementada en `wikis/mangavariant.py`** (mismo día): resolver el
+challenge **UNA vez** con Playwright y exportar las cookies del contexto **+ el
+User-Agent real del browser** (la cookie va atada al UA) a la `requests.Session` —
+el fetch concurrente con `ThreadPoolExecutor` queda intacto. Detalles:
+
+- `_looks_like_challenge(resp)`: detecta 202 **o** el marker
+  `/.well-known/sgcaptcha/` en el body (cubre el caso 200 + meta-refresh). Test:
+  `test_mangavariant_detects_sgcaptcha_challenge`.
+- `_solve_challenge_into_session(session)`: lanza Chromium headless, espera a que
+  `page.title()` deje de ser "Loading…"/captcha (loop 15×2 s), exporta cookies + UA.
+  Si Playwright no está instalado: WARN y degrada (el run importará 0, no crashea).
+- `_resolve_challenge(session, seen_generation)`: re-solve bajo lock con contador de
+  generación — si la cookie expira a mitad del run, UN worker re-resuelve y los demás
+  reusan; el snapshot de generación se toma ANTES del request para no re-resolver de más.
+- Tanto `fetch_variant_urls` (sitemaps) como `_fetch_one` (detail pages) detectan el
+  challenge y hacen un retry tras el solve.
+- **Gotcha #12 no aplica**: Playwright se lanza y se cierra COMPLETO dentro del thread
+  que lo invoca (one-shot autocontenido); el worker dedicado de manga_watch.py es para
+  fetches Playwright repetidos, no para esto.
+- Verificado en vivo (2026-06-12): 1 solve (5 cookies) → 2679 URLs de sitemap →
+  12/12 detail pages parseadas con requests concurrente, sin re-solve.
+
+⚠️ La fila YAML `Global - Mangavariant` (incremental del DELTA, home `/variant/`)
+sigue yendo por el fetch genérico de manga_watch.py y **también recibe el challenge**
+— el incremental diario puede traer 0 hasta adaptarlo (`kind: js` la haría pasar por
+el worker Playwright, gotcha #12, pero paga el challenge por página). Pendiente.
+
+Además: hay items viejos en el corpus con la URL de mangavariant TRUNCADA (~80 chars,
+bug de sesiones LLM tempranas, ej. `…/vol-10-spec`) — esas fichas dan 404 y no van a
+re-mergear con el item del sitemap (URL distinta); el dedup por cluster_key los cubre
+si la serie/edición coincide.
+
+Además: hay items viejos en el corpus con la URL de mangavariant TRUNCADA (~80 chars,
+bug de sesiones LLM tempranas, ej. `…/vol-10-spec`) — esas fichas dan 404 y no van a
+re-mergear con el item del sitemap (URL distinta); el dedup por cluster_key los cubre
+si la serie/edición coincide.

@@ -91,6 +91,7 @@ vía el **extractor genérico** del YAML. **No tiene parser propio.**
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
+- **Fechas DD/MM/YYYY crudas en `release_date`** — la ficha técnica del sitio entrega la fecha día-primero y los extractores la guardaban sin normalizar; desde 2026-06-12 `normalize_release_date()` la convierte a ISO en la ingestión y el corpus legacy se reparó con `normalize_release_dates.py` (gotcha #80). ✅
 - **#7**: `source_purity` se propaga a las hijas search-template vía
   `_expand_search_template()`. ✅
 - **#31**: multi-imagen — Star Comics sirve "otros volúmenes" en un subdirectorio

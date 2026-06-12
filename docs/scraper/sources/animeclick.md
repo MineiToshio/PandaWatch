@@ -271,3 +271,13 @@ PY
 **Antes de cerrar cualquier cambio en AnimeClick**: validar (`validate_corpus`, 0
 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo
 meaningful, actualiza esta ficha.
+
+## 2026-06-12 — títulos oficiales IT con bonus/bundle (gotcha #92)
+
+Con la política de títulos, los títulos oficiales italianos nombran el bonus o el
+bundle: "Ediz. variant. Con acrylic standee", "Variant Bundle con Storia
+Extra-Piccante", "Sakamoto Days Variant con T-shirt 3", "Yomi No Tsugai Variant +
+FMA Variant Bundle 1". Los patterns de standee/Variant Bundle/T-shirt los mataban.
+Fix genérico (gotcha #92): marcador "con/with/+" en ventana corta alrededor del match
+rescata; "Io Sakisaka Variant Bundle" (sin marcador) va por `title_exceptions` de
+`data/comics_blacklist.yml`.

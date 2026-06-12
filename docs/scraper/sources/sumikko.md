@@ -207,3 +207,14 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-06-12 — títulos oficiales re-exponen keywords de bonus (gotcha #92)
+
+Con la política de títulos (title = nombre oficial JP), los items de Sumikko vuelven a
+nombrar el bonus de la edición en el título ("夏目友人帳 ニャンコ先生フィギュアストラップ付き特装版",
+"テラフォーマーズ(21)特装版 DVD LIMITED EDITION", "限定版プレミアムBOX", "図鑑未掲載!…").
+Los patterns HARD de figura/DVD/プレミアムBOX/図鑑 los mataban como merchandise. Fix
+genérico en `is_likely_manga`: tier `_NON_MANGA_HARD_UNLESS_BONUS` + marcador de
+inclusión POSICIONAL (付/同梱 pegado al match, 特装版 en cualquier parte — NO 限定版 a
+secas). Tests: `test_is_likely_manga_bonus_context_*`. Verificado: 0 rechazos del
+corpus Sumikko tras el fix.

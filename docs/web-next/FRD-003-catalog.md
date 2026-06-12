@@ -84,9 +84,15 @@ Each card shows:
 - **Edition label** — `canonical.edition_display`
 - **Volume count badge** — "3 tomos" if more than 1 volume
 - **Country flag** emoji + publisher name
-- **Signal type chips** — up to 2 (`signalTypes.slice(0, 2)`), single row
-  (`flex-wrap: nowrap` + `overflow: hidden`); remaining count rendered as
-  "+N". Single-row clip is intentional to preserve uniform card height.
+- **Edition type chip** (2026-06-12) — `EditionTypeChip`, tipo de edición
+  derivado del slug del `edition_key` (label ES: "Edición especial",
+  "Kanzenban", "Box Set"…; omitido para `regular`). Desde la política de
+  títulos el title oficial ya no lleva el tipo inyectado — este chip lo
+  comunica. Señales equivalentes se dedupean (no "Box Set Box Set").
+- **Signal type chips** — hasta 2 chips totales en la fila: con chip de
+  edición entra 1 signal, sin él entran 2; single row (`flex-wrap: nowrap` +
+  `overflow: hidden`); remaining count rendered as "+N". Single-row clip is
+  intentional to preserve uniform card height.
 - **Hover state** — slight lift (`-translate-y-1`) + shadow elevation change
 
 **Removed:** Score badge was removed from EditionCard 2026-05-30. El score se
@@ -116,7 +122,7 @@ All filters update the URL via `router.replace()`. The page Server Component rea
 
 | Filter | Type | UI Control |
 |---|---|---|
-| Search | text | Input with 🔍 icon, debounce 600ms + Enter fires immediately |
+| Search | text | Input with 🔍 icon, debounce 600ms + Enter fires immediately. Matchea `title` + `title_original` + `series_display` + **aliases de la serie** (`data/series_aliases.json` vía `aliasSearchIndex()`, política de títulos 2026-06-12: el título oficial no se renombra; "kimetsu no yaiba" y "guardianes de la noche" devuelven lo mismo) |
 | Country | multi-select | Checkbox list with country flag emoji + count |
 | Language | multi-select | Checkbox list with count |
 | Publisher | multi-select | Checkbox list with count (collapsed to top 8 + "ver más") |
@@ -128,6 +134,26 @@ All filters update the URL via `router.replace()`. The page Server Component rea
 
 > **Removido (2026-06-01):** el filtro "Min score" (range slider) se eliminó
 > junto con el score de la UI.
+
+> ⚠️ **Actualizado 2026-06-12 (revisión integral):**
+> - Los filtros de **Product type** y **Source class** no tienen UI (los facets
+>   `productTypes`/`sourceClasses` se eliminaron de `buildFacets`); los params
+>   siguen funcionando por URL.
+> - **País** muestra la lista completa (~14, antes top 10 — dejaba países sin
+>   checkbox). **Editorial** top 12 e **Idioma** top 8, recortados en el SERVER
+>   antes de serializar al client component (los ~400 publishers completos
+>   viajaban en el payload RSC).
+> - "Limpiar todo" **conserva `sort`** (el orden no es un filtro) y cancela el
+>   debounce de búsqueda pendiente (antes un commit en vuelo re-aplicaba la
+>   búsqueda recién borrada).
+> - Los mutadores de URL leen `window.location.search` (URL viva), no el
+>   snapshot del hook — dos interacciones en la misma ventana de debounce ya no
+>   se pisan.
+> - El SearchBar del header, en páginas de detalle, navega a `/?q=…` (la página
+>   de detalle es estática e ignora searchParams; antes la búsqueda no hacía nada).
+> - `parseFilterParams` sanea params hostiles (`?q=a&q=b`, `?page=abc`, sort
+>   desconocido) — ver FRD-001 FR-6.
+> - Drawer móvil: Escape cierra, scroll del body bloqueado, foco al abrir.
 
 **Active filter summary:** When any filter is active, a "Limpiar filtros" link
 appears below the title. Each active filter shows as a dismissible tag.
@@ -161,7 +187,11 @@ Sort options (select dropdown):
 
 > **Removido (2026-06-01):** las opciones "Mejor/Menor puntuación (score)" se
 > eliminaron. El canónico de cada cluster ahora se elige por completitud
-> (ISBN > imagen > precio) en vez de por score.
+> (ISBN > imagen) en vez de por score.
+>
+> **Actualizado 2026-06-12:** el orden por fecha usa `sortableDate()` — los
+> `DD/MM/YYYY` legacy se normalizan a ISO antes de comparar (un item de 2023
+> ordenaba como el más reciente del catálogo).
 
 ### FR-5: Pagination
 
@@ -169,6 +199,11 @@ Sort options (select dropdown):
 - URL param: `?page=N`
 - Visible page window: current ± 2, always first/last, ellipsis when gap > 1
 - "Showing X–Y of Z ediciones" counter
+- **`router.push()`** (no `replace`, 2026-06-12): cada página es entrada de
+  historial — "atrás" desde la pág. 5 vuelve a la 4, no sale del sitio. Los
+  filtros y el tipeo debounced siguen usando `replace` (correcto ahí).
+- `?page` fuera de rango se clampa; no numérico cae a 1 (antes: grid vacío
+  con "pág. NaN").
 
 ### FR-6: Filter state in URL
 

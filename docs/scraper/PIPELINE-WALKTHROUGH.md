@@ -47,7 +47,7 @@ enriquecimiento mecánico; **ámbar** = decisión humana; **turquesa** = publica
 
 ```mermaid
 flowchart LR
-    WEB["🌍 ~67 fuentes + 14 wikis<br/>13 países · 6 idiomas"]:::src
+    WEB["🌍 ~63 fuentes + 26 wikis<br/>20 países · 14 idiomas"]:::src
     SCRAPE["⚙️ SCRAPE<br/>full / delta<br/>(fetch · filtra · puntúa)"]:::auto
     RAW["📄 items.jsonl<br/>CRUDO"]:::raw
     CURATE["🧠 CURACIÓN IA<br/>standardize · aliases · feedback<br/>(serie · edición · volumen)"]:::ai
@@ -118,7 +118,7 @@ scrape → standardize → enrich-aliases → imágenes → rarity → translate
 ```mermaid
 flowchart TD
     subgraph E0["ETAPA 0 · ADQUISICIÓN (automática)"]
-        SCRAPE["scrape_full.sh / scrape_delta.sh<br/>~67 fuentes + 14 wikis"]
+        SCRAPE["scrape_full.sh / scrape_delta.sh<br/>~63 fuentes + 26 wikis"]
         DISC["search_discovery.py + expand_*<br/>(descubrimiento extra, opcional)"]
     end
     SCRAPE --> RAW
@@ -258,10 +258,10 @@ La **diferencia central** full vs delta:
 
 | | listadomanga | wikis extra |
 |---|---|---|
-| DELTA | `calendar`, `--wiki-from` últimos 3 meses | 13 wikis recientes (manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm, sumikko, mangapassion, animeclick, prhcomics, kinokuniya, yenpress, shueisha, viz) |
-| FULL | `lista` ~3432, `--min-score 30` | **+ mangavariant sitemap ~2700** + cada wiki con `--wiki-from 2000/2013/2015` (histórico) |
+| DELTA | `calendar`, `--wiki-from` últimos 3 meses | 15 wikis recientes (manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm, sumikko, mangapassion, animeclick, prhcomics, kinokuniya, yenpress, shueisha, viz, **sevenseas**, **kodansha-us**) |
+| FULL | `lista` ~3432, `--min-score 30` | **+ mangavariant sitemap ~2700** + cada wiki con `--wiki-from 2000/2013/2015` (histórico) + **sevenseas** (full, catálogo completo) + **kodansha-us** (full) |
 
-Notas: `booksprivilege` **deshabilitado** (2026-05-26); `whakoom` y el histórico de `listadomanga-blog` son **opt-in/fuera** del canónico. Mangavariant: sus items son **siempre** manga válido (nunca van a blacklist).
+Notas: `booksprivilege` **deshabilitado** (2026-05-26); `whakoom` y el histórico de `listadomanga-blog` son **opt-in/fuera** del canónico. Mangavariant: sus items son **siempre** manga válido (nunca van a blacklist). **`kodansha-us`** (alta 2026-06-12): API propia `/wp-json/kodansha/v1/search-series` + JSON-LD por volumen (~61 series especiales, ~200-300 vols). Reemplaza la fuente search `US - Kodansha USA (search)` que devolvía artículos de blog (0 candidatos). **`sevenseas`** (alta 2026-06-12): API WordPress, ~150-250 especiales EN.
 
 Cada candidato pasa por el **per-source pipeline** (§3.0.bis).
 
@@ -280,7 +280,7 @@ Detalle de los 10 pasos por cada candidato (vale para sources y wikis):
    - `is_comic_not_manga()` — blacklist Marvel/DC (`comics_blacklist.yml`); bypass si el título dice "manga".
    - `score_candidate()` → `detect_signals()` (~70 keywords, **word-boundary regex no substring**, clamp [0,300]) → `signals`, `signal_types`, `product_type`, `stock_type`.
    - ⚠️ Invariante: `detect_signals` corre **solo sobre title+description**, nunca fuente/tags/keywords.
-4. **Detail enrichment** (`--fetch-details`) — HTTP por item: JSON-LD → OpenGraph → `_extract_label_value_pairs` (FR/ES/EN/IT/JP) → fallbacks → name/author/image/isbn/release_date/publisher/description.
+4. **Detail enrichment** (`--fetch-details`) — HTTP por item: JSON-LD → OpenGraph → `_extract_label_value_pairs` (FR/ES/EN/IT/JP) → fallbacks → name/author/image/isbn/release_date/publisher/description. `release_date` se normaliza a ISO (`normalize_release_date()`: YYYY-MM-DD, o YYYY-MM/YYYY si la fuente solo da granularidad parcial) en TODOS los puntos de asignación — al corpus no entran fechas crudas DD/MM/YYYY ni 年月日 (gotcha #80).
 5. **Collectible gate** `is_collectible_edition()` — solo ediciones especiales/variants/deluxe/limited/boxsets/artbooks/fanbooks/magazines. Signals **recomputados desde el título** dentro del gate.
 6. **State diff** `process_state()` — `content_hash` vs `state.json`: new/changed/seen.
 7. **Flush incremental** — escribe tras CADA fuente (resiliencia).
@@ -323,6 +323,13 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 
 Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records. Es la **verificación/corrección** del rough-assignment que hizo el scraper (`derive_series_metadata` = pass 1; este skill = pass 2, gotcha #21).
 
+> **Política de títulos (2026-06-12, gotcha #92)**: el `title` es el nombre OFICIAL
+> scrapeado y esta etapa **NO lo toca** — no se traduce, no se renombra a la serie
+> canónica, no se le inyecta tipo de edición. El campo `title_standardized` quedó
+> RETIRADO. La encontrabilidad la da la búsqueda por aliases
+> (`data/series_aliases.json`, ver ETAPA 3 y Build) y el tipo de edición se muestra
+> como badge en las UIs. Detalle en architecture.md → "Política de títulos".
+
 > **Anti-drift (2026-06-11)**: la lógica de audit/tiering y de merge que vivía COPIADA
 > en `SKILL.md` y en el workflow (y había divergido) ahora es **fuente única** en dos
 > scripts compartidos que ambos invocan: `scripts/standardize_audit.py` y
@@ -352,7 +359,7 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 > ignoraban y caía al default `limit=2000`). Verificado: `limit: 8` procesó exactamente
 > 8 y dejó el resto pendiente para la siguiente corrida incremental.
 
-**Output:** `series_key`, `series_display`, `edition_key`, `edition_display`, `volume`, `title` (estandarizado), `title_original` (preservado), `standardized_at`.
+**Output:** `series_key`, `series_display`, `edition_key`, `edition_display`, `volume`, `standardized_at` (`title` queda INTACTO = nombre oficial; `title_original` preservado).
 
 > Si aparecen `series_key` nuevos no canónicos → correr **ETAPA 3**.
 
@@ -441,6 +448,12 @@ El owner aprueba cards correctas desde el dashboard (botón aprobar):
 ### 3.★ Build / publish
 1. **`consolidate_sources.py`** — re-consolida 1-fila-por-producto (necesario tras standardize, que reasigna `edition_key` → nuevos clusters).
 2. **`build_web.py`** — normaliza URLs, agrupa por `cluster_key`, construye `sources[]`, y deja el dashboard en modo **inline** (embebido, sirve desde `file://`) o **fetch** (default: JS hace `fetch(items.jsonl)`, requiere `serve.py`).
+   También regenera **`data/series_aliases.json`** (`export_series_aliases.py`, vista
+   de búsqueda del YAML de aliases): ambas UIs buscan también contra los aliases del
+   `series_key`, así "demon slayer" / "kimetsu no yaiba" / "guardianes de la noche"
+   devuelven los mismos items aunque el `title` sea el nombre oficial de cada edición
+   (política de títulos 2026-06-12). Si editás `series_aliases.yml` a mano y no querés
+   un build completo: `.venv/bin/python scripts/export_series_aliases.py`.
 3. Servir: `scripts/serve.py` (público, :8000) — `scripts/run_local.sh` lanza también el panel admin (:8001, no deployable).
 
 ---

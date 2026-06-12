@@ -121,8 +121,9 @@ configured site URL. This FRD closes those gaps.
 ### FR-8: Structured data (JSON-LD)
 - Injected as `<script type="application/ld+json">` per route (server-rendered):
   - **`/item`** → `Product` + `Book` (name, ISBN, author, publisher, datePublished,
-    image, inLanguage) with an `Offer` (price, priceCurrency, availability derived from
-    `rarity`/`stock_type`, seller from `sources[]`).
+    image, inLanguage). **Sin `Offer`** (precios fuera del pipeline, decisión
+    2026-06-11) y **sin `bookFormat`** (no hay evidencia confiable del formato
+    físico; declarar Hardcover para todo ISBN era structured data falso).
   - **`/edition`** → `CollectionPage` / `ItemList` linking its volumes.
   - **`/series`** → `CollectionPage` / `ItemList` linking its editions.
   - **All three** → `BreadcrumbList` (home → series → edition → item; the hierarchy
@@ -186,8 +187,29 @@ configured site URL. This FRD closes those gaps.
 ## Dependencies
 
 - `lib/data.ts` — `allSeriesKeys()`, `allEditionKeys()`, `allSlugs()`,
-  `clusterBySlug()`, `loadEditionClusters()`, `seriesByKey()` (all exist).
+  `clusterBySlug()`, `loadEditionClusters()`, `seriesByKey()`, y los helpers de
+  sitemap `sitemapSeries()/sitemapEditions()/sitemapItems()` (con lastMod).
 - `items.jsonl` fields — `slug`, `series_display`, `edition_display`, `publisher`,
   `country`, `language`, `isbn`, `author`, `release_date`, `rarity`,
-  `stock_type`, `signal_types`, `extras[]`, `image_url`/`image_local`.
+  `stock_type`, `signal_types`, `extras[]`, `images[]` (la portada es `images[0]`;
+  los campos top-level `image_url`/`image_local` fueron eliminados 2026-06-09).
+
+---
+
+## Implementación — notas post-revisión (2026-06-12)
+
+- **Links internos limpios**: las cards ya NO agregan `?from=` al href. El back-state
+  vive en `BackLink` (client) + `NavigationTracker` (sessionStorage). Esto era la causa
+  raíz triple: `searchParams` en el server des-estatizaba las ~19k páginas de detalle,
+  `Disallow: /*?` hacía invisibles los links internos para crawlers, y `?from=` permitía
+  inyectar hrefs externos. Las 3 páginas de detalle declaran `dynamicParams = false`.
+- **Rutas con claves no-ASCII**: toda construcción de URL interna pasa por
+  `seriesPath()/editionPath()/itemPath()` (percent-encoding) y las páginas decodifican
+  el param con `decodeRouteParam()` — sin esto el sitemap publicaba URLs rotas (CJK /
+  homoglifos) que 404-eaban.
+- **Sitemap**: cada entrada lleva `lastModified` (max `standardized_at`/`detected_at`
+  del cluster) para priorizar re-crawl tras el delta diario.
+- **og:image**: prefiere el espejo local sobre el hotlink remoto y no declara
+  width/height inventados.
+- **robots**: sin directiva `Host` (deprecada, formato inválido).
 - Final production domain (D1) before go-live.

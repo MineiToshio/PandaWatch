@@ -123,6 +123,16 @@ app/item/[slug]/page.tsx                       [Server]
 
 ### `components/core/`
 
+> ⚠️ **Eliminado 2026-06-12.** `components/core/` (Button, Chip, Badge,
+> Typography, Heading, Icon — ~400 líneas) se borró por ser código muerto: la
+> app real nunca los consumió (los componentes de producción estilan inline /
+> con clases). Las especificaciones de abajo quedan como referencia histórica
+> del diseño original. Piezas compartidas que SÍ existen hoy:
+> `components/modules/RarityBadge.tsx` (fuente única de labels/colores/íconos
+> de rareza — antes copiada en 4 archivos), `SignalChip`, `CoverImage`,
+> `CountryFlag`, `BackLink` + `NavigationTracker` (client, back-state) y
+> `lib/images.ts` (`dedupeImages`/`imageKey`, fuente única de dedup de imágenes).
+
 #### `Button`
 ```tsx
 type ButtonProps = {

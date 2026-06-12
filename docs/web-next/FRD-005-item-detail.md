@@ -206,11 +206,13 @@ y mostraba "Fuentes (1)" perdiendo las hermanas). Fallback: si la fila no trae
 ### FR-9: Navigation
 
 **Back navigation:**
-- If arrived from `/edition/[editionKey]`: show `← {editionDisplay}` link
-- If arrived from `/`: show `← Catálogo` link
-- Default: `← Catálogo`
+- Item con `edition_key` → fallback `← {editionDisplay}` (a `/edition/[editionKey]`)
+- Item standalone → fallback `← Catálogo` (a `/`)
 
-Implemented via query param `?from=edition:{editionKey}` set by ItemCard's link.
+> ⚠️ **Actualizado 2026-06-12:** ya NO se implementa con `?from=` (eliminado —
+> ver FRD-004 FR-4 y FRD-008 §Implementación). El fallback se deriva
+> estáticamente del dato (`canonical.edition_key`); con navegación interna
+> previa, `BackLink` usa `history.back()` y restaura el estado exacto.
 
 **Sibling navigation (optional, nice-to-have):**
 Within an edition, Previous / Next volume arrows at the bottom of the page.

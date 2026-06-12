@@ -1,5 +1,8 @@
 # Fuente: Whakoom
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `ES/LatAm - Whakoom Novedades`: Novedades deshabilitada (kind js/Playwright → 1 item neto histórico). El spider whakoom opt-in sigue disponible (INCLUDE_WHAKOOM_SPIDER=1).
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-08.

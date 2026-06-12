@@ -106,8 +106,9 @@ segment — **no slug generation needed** (unlike `/item/[slug]`, see FRD-006).
 
 Shows the work header (cover, name, edition/item counts, signal chips) + a grid of
 **all editions of the series**, reusing the catalog's `CatalogGrid` / `EditionCard`.
-Edition cards link down to `/edition/[editionKey]` or `/item/[slug]`, passing
-`?from=/series/[seriesKey]` so back-navigation returns to the series page.
+Edition cards link down to `/edition/[editionKey]` or `/item/[slug]` with clean
+hrefs (sin `?from=` — ver "Back Navigation Implementation" abajo); back-navigation
+vuelve a la serie vía `history.back()`.
 
 **Static generation:** Yes. `generateStaticParams()` runs over all distinct
 `series_key` values.
@@ -123,10 +124,14 @@ URL: /edition/berserk-darkhorse-deluxe
 
 Params:
   editionKey   string       Unique edition identifier (from edition_key field)
-
-Optional query params:
-  from         string       Referrer info for back-navigation (e.g., ?from=catalog)
 ```
+
+> ⚠️ **Actualizado 2026-06-12:** el query param `from` se eliminó de TODAS las
+> rutas de detalle. Las páginas ya no leen `searchParams` (eso las convertía en
+> render dinámico) y declaran `dynamicParams = false`. Las URLs internas se
+> construyen SIEMPRE con `seriesPath()/editionPath()/itemPath()` de `lib/seo.ts`
+> (percent-encoding de claves no-ASCII) y las páginas decodifican el param con
+> `decodeRouteParam()`.
 
 **Examples:**
 ```
@@ -187,7 +192,7 @@ CATALOG (/)
 SERIES DETAIL (/series/[seriesKey])
     │
     │ click EditionCard → /edition/[editionKey] or /item/[slug]
-    │   (?from=/series/[seriesKey] returns here on back)
+    │   (BackLink → history.back() returns here)
     ▼
    …drill down…
 
@@ -203,11 +208,11 @@ ITEM DETAIL (/item/[slug])
     │
     │ ← back
     ▼
-EDITION DETAIL (/edition/[editionKey])   ← via ?from=edition:{key}
-    │
+EDITION DETAIL (/edition/[editionKey])   ← history.back() (o fallback estático
+    │                                      a /edition/{edition_key del item})
     │ ← back  
     ▼
-CATALOG (/)                              ← preserves filter URL
+CATALOG (/)                              ← history.back() preserva la URL filtrada
 
 CATALOG (/)
     │
@@ -224,27 +229,34 @@ CATALOG (/)
 
 ## Back Navigation Implementation
 
-The back navigation challenge: Server Components don't have access to the browser's
-history stack. We solve this by encoding the referrer in the URL:
+> ⚠️ **Reescrito 2026-06-12.** La v1 codificaba el referrer como `?from=` en cada
+> link de card. Eso tenía tres costos ocultos: leer `searchParams` en el server
+> convertía las ~19k páginas de detalle en render dinámico (el build descartaba
+> todo el output de `generateStaticParams`), `robots.txt` (`Disallow: /*?`)
+> hacía invisibles los links internos para crawlers, y el valor se renderizaba
+> como href sin validar (inyección de links externos).
+
+Mecanismo actual — el estado vive en el CLIENTE, las URLs quedan limpias:
 
 ```tsx
-// EditionCard.tsx (in catalog page)
-<Link href={`/edition/${cluster.editionKey}?from=catalog`}>
+// Cards: hrefs limpios, sin query params
+<Link href={editionPath(cluster.editionKey)}>   // EditionCard
+<Link href={itemPath(cluster.slug)}>            // ItemCard
 
-// ItemCard.tsx (in edition page)
-<Link href={`/item/${cluster.slug}?from=edition:${editionKey}`}>
+// NavigationTracker (client, montado en layout dentro de <Suspense>):
+//  - sessionStorage 'pw:navCount'   → cuántas rutas se visitaron en la pestaña
+//  - sessionStorage 'pw:catalogUrl' → última URL del catálogo (con filtros/página)
 
-// ItemDetail page — parse ?from to render correct back link
-const from = searchParams.from
-const backHref = from?.startsWith('edition:')
-  ? `/edition/${from.slice(8)}`  // "edition:berserk-darkhorse-deluxe" → "/edition/..."
-  : '/'
+// BackLink (client): server-renderizado como <a href={fallback}> crawleable.
+// Al click: navCount > 1 → history.back() (restaura filtros, página y scroll);
+// deep link → fallback estático ('/' o /edition/{key}), usando pw:catalogUrl
+// si el fallback es el catálogo.
+<BackLink fallbackHref={backHref} label={backLabel} />
 ```
 
-The catalog's filter state is NOT preserved in the back link (it would make URLs
-very long). The user lands on `/` (unfiltered catalog) when navigating back from
-an edition or item. This is acceptable for v1. Future: store filter state in
-`sessionStorage` and restore on mount.
+El fallback del item se deriva del dato (`canonical.edition_key` → la edición;
+si no, el catálogo) — nada viaja en la URL. Con esto las tres páginas de detalle
+son SSG puras (`dynamicParams = false`).
 
 ---
 

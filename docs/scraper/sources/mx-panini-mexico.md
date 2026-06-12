@@ -1,5 +1,8 @@
 # Fuente: Panini Manga México
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `MX - Panini Manga México`: El catálogo base se deshabilitó (2 candidatos/run → 0 netos); Boxsets + búsquedas siguen activas (67+ items).
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-08.

@@ -25,8 +25,10 @@ replaces, `web/index.html` (the personal curation dashboard):
 The app:
 - Reads `data/items.jsonl` server-side (Server Components, no API routes)
 - Serves the catalog, edition detail, and item detail views
-- Ports the full PandaTrack design system (OKLCH tokens, CVA, dark mode)
-- Will be the base for a future multi-user deployment (SQLite → Postgres migration path preserved)
+- Usa el design system **PandaWatch** (tokens bamboo/ink en hex, light-only — el
+  handoff bundle de WO-002; NO los tokens OKLCH de PandaTrack)
+- Will be the base for a future multi-user deployment (la migración a DB del
+  items.jsonl está planificada; `lib/data.ts` es la única frontera de acceso a datos)
 
 ---
 
@@ -36,14 +38,14 @@ The app:
 
 | ID | Title | Status |
 |---|---|---|
-| [FRD-001](FRD-001-data-layer.md) | Data Layer | Draft |
-| [FRD-002](FRD-002-design-system.md) | Design System | Draft |
-| [FRD-003](FRD-003-catalog.md) | Catalog Page | Draft |
-| [FRD-004](FRD-004-edition-detail.md) | Edition Detail Page | Draft |
-| [FRD-005](FRD-005-item-detail.md) | Item Detail Page | Draft |
-| [FRD-006](FRD-006-slug-generation.md) | Slug Generation | Draft |
-| [FRD-007](FRD-007-series-highlights.md) | Series Highlights & Series Page | Draft |
-| [FRD-008](FRD-008-seo-discoverability.md) | SEO & Discoverability | Draft |
+| [FRD-001](FRD-001-data-layer.md) | Data Layer | Implemented |
+| [FRD-002](FRD-002-design-system.md) | Design System | Implemented |
+| [FRD-003](FRD-003-catalog.md) | Catalog Page | Implemented |
+| [FRD-004](FRD-004-edition-detail.md) | Edition Detail Page | Implemented |
+| [FRD-005](FRD-005-item-detail.md) | Item Detail Page | Implemented |
+| [FRD-006](FRD-006-slug-generation.md) | Slug Generation | Implemented |
+| [FRD-007](FRD-007-series-highlights.md) | Series Highlights & Series Page | Implemented |
+| [FRD-008](FRD-008-seo-discoverability.md) | SEO & Discoverability | Implemented |
 
 ### Blueprints — Technical Design
 
@@ -64,6 +66,7 @@ The app:
 | [WO-004](work-orders/WO-004-catalog.md) | Catalog Page | 2 | WO-002, WO-003 |
 | [WO-005](work-orders/WO-005-edition.md) | Edition Detail Page | 3 | WO-004 |
 | [WO-006](work-orders/WO-006-item-detail.md) | Item Detail Page | 3 | WO-004, WO-005 |
+| [WO-007](work-orders/WO-007-image-lightbox.md) | Image Lightbox | 4 | WO-006 |
 | [WO-008](work-orders/WO-008-series-page.md) | Series Highlights & Series Page | 4 | WO-004, WO-005, WO-006 |
 | [WO-009](work-orders/WO-009-seo-foundations.md) | SEO Foundations (site URL, robots, sitemap, manifest) | 5 | WO-004, WO-005, WO-006, WO-008 |
 | [WO-010](work-orders/WO-010-metadata-og.md) | Rich Metadata (canonical, OG, Twitter) | 5 | WO-009, WO-011 |
@@ -82,9 +85,12 @@ The app:
 | Components | CVA (class-variance-authority) | Variant recipes |
 | Data | `fs.readFileSync` on `data/items.jsonl` | No API routes; direct server read |
 | Images | Symlink `public/images → ../../data/images/` | Python pipeline unchanged |
-| State (filters) | URL search params | `useSearchParams` + `router.replace()` |
-| Dark mode | `data-theme` attribute on `<html>` | localStorage persistence |
+| State (filters) | URL search params | `useSearchParams` + `router.replace()` (paginación usa `push`) |
+| Fonts | `next/font/google` (self-hosted) | Space Grotesk / DM Sans / JetBrains Mono vía CSS vars |
 | React | 19.x | Server Components default |
+
+(El dark mode del stack original de PandaTrack NO se portó — el design system
+PandaWatch es light-only.)
 
 ---
 
@@ -124,27 +130,41 @@ web-next/
 │       └── [slug]/
 │           └── page.tsx         ← item detail (Server Component)
 ├── components/
-│   ├── core/                    ← Typography, Heading, Button, Chip, Badge, Icon
-│   ├── modules/                 ← EditionCard, ItemCard, ImageCarousel, SignalChip
-│   ├── catalog/                 ← CatalogGrid, SidebarFilters, SortBar, Pagination
+│   ├── modules/                 ← ItemCard, CoverImage, SearchBar, Header, BackLink,
+│   │                              NavigationTracker, RarityBadge, SignalChip, CountryFlag
+│   ├── catalog/                 ← CatalogGrid, EditionCard, SidebarFilters, SortBar,
+│   │                              Pagination, CatalogControls, EmptyState
 │   ├── series/                  ← SeriesCard, SeriesHighlights, SeriesHeader (FRD-007)
 │   ├── edition/                 ← EditionHeader, VolumeGrid
-│   └── item/                   ← ItemHero, MetaTable, SourcesList
+│   ├── item/                    ← ItemHero, ImageCarousel, MetaTable, SourcesList, ExtrasSection
+│   └── seo/                     ← JsonLd
 ├── lib/
-│   ├── data.ts                  ← JSONL reader, cluster grouping
+│   ├── data.ts                  ← JSONL reader, cluster grouping, lookups (Maps), sitemap helpers
 │   ├── types.ts                 ← TypeScript types
-│   ├── slugs.ts                 ← lookupBySlug(), lookupEdition()
-│   ├── filters.ts               ← filterClusters(), sort, paginate
+│   ├── filters.ts               ← parseFilterParams(), filterClusters(), sort, paginate
+│   ├── format.ts                ← formatDate() (4 formatos de fecha), sortableDate()
+│   ├── images.ts                ← dedupeImages()/imageKey() (fuente única de dedup)
+│   ├── seo.ts                   ← siteUrl(), absoluteUrl(), seriesPath/editionPath/itemPath,
+│   │                              decodeRouteParam(), ogImage()
+│   ├── jsonld.ts                ← schema.org builders
+│   ├── descriptions.ts          ← per-entity template descriptions
 │   └── styles.ts                ← cn() utility
+├── app/{robots,sitemap,manifest}.ts   ← SEO surfaces (FRD-008)
 ├── public/
 │   └── images → ../../data/images/   ← symlink
 └── package.json
 ```
 
+(`components/core/` se eliminó 2026-06-12: era código muerto sin consumidores.
+`lib/slugs.ts` nunca existió — los lookups viven en `lib/data.ts`.)
+
 ---
 
-*Last updated: 2026-06-06 (FRD-008 + WO-009..012: SEO & discoverability **implemented** —
-site URL helper, robots/sitemap/manifest, rich metadata + OG/Twitter, per-entity template
-descriptions, and schema.org JSON-LD for web + LLM crawlers. Pending: set
-`NEXT_PUBLIC_SITE_URL=https://watch.pandatrack.app` in Vercel Production, then validate in
+*Last updated: 2026-06-12 (revisión integral post-implementación: se eliminó el mecanismo
+`?from=` — las ~19,600 páginas de detalle vuelven a ser SSG reales (`dynamicParams=false`),
+links internos limpios crawleables, back-state en sessionStorage; fechas parciales/legacy
+bien mostradas y ordenadas; saneo de searchParams hostiles; rutas con claves no-ASCII
+percent-encoded + decode; sitemap con lastModified; JSON-LD sin Offer/bookFormat;
+next/font self-hosted; RarityBadge/dedupeImages unificados; `components/core/` eliminado;
+39 tests. Pending: set `NEXT_PUBLIC_SITE_URL` in Vercel Production, then validate in
 Google Rich Results Test.)*

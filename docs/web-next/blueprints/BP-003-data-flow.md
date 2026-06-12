@@ -41,9 +41,11 @@ function readRawItems(): Item[] {
 - `process.cwd()` in Next.js = `web-next/` directory
 - `..` navigates to the repo root, then `data/items.jsonl`
 - `fs` is only available in Server Components (not in Client Components)
-- In development, Next.js does not cache `fs.readFileSync` between requests
-  (every request re-reads the file — reflects scraper updates instantly)
-- In production static export, this runs once at build time
+- ⚠️ **Actualizado 2026-06-12:** el cache se invalida por **mtime** del JSONL
+  (también en dev): si el archivo no cambió, no se re-parsea; si el scraper lo
+  actualizó, se recarga en el próximo request. `ITEMS_PATH` (env) permite
+  sobreescribir la ubicación; archivo ausente lanza error descriptivo; líneas
+  corruptas / filas sin `cluster_key` se descartan con `console.warn` (conteo).
 
 ---
 
@@ -103,43 +105,29 @@ function buildCluster(items: Item[]): Cluster {
 ## Stage 3: Public API (exported functions)
 
 ```typescript
-// lib/data.ts — public API
+// lib/data.ts — public API (actualizado 2026-06-12)
 
-let _cache: Cluster[] | null = null
-
-export function loadClusters(): Cluster[] {
-  // In production: clusters are computed once at module load (static build)
-  // In development: re-read on every call (hot reload behavior)
-  if (process.env.NODE_ENV === 'production' && _cache) return _cache
-  const items = readRawItems()
-  const clusters = groupIntoClusters(items)
-  if (process.env.NODE_ENV === 'production') _cache = clusters
-  return clusters
+// Cache invalidado por mtime del JSONL. Junto a los clusters se construyen
+// índices Map (bySlug, byEdition, series byKey): los lookups por página son
+// O(1) en vez de scans O(n) — importa durante generateStaticParams (~19k
+// páginas). byEdition ya viene ordenado por volumen + kindRank (gotcha #60).
+type DataCache = {
+  mtimeMs: number
+  clusters: Cluster[]
+  bySlug: Map<string, Cluster>
+  byEdition: Map<string, Cluster[]>
 }
 
-export function loadEditionClusters(editionKey: string): Cluster[] {
-  return loadClusters()
-    .filter(c => c.editionKey === editionKey)
-    .sort((a, b) => compareVolumes(a.volume, b.volume))
-}
-
-export function clusterBySlug(slug: string): Cluster | null {
-  return loadClusters().find(c => c.slug === slug) ?? null
-}
-
-export function allEditionKeys(): string[] {
-  return [...new Set(
-    loadClusters()
-      .map(c => c.editionKey)
-      .filter((k): k is string => Boolean(k))
-  )]
-}
-
-export function allSlugs(): string[] {
-  return loadClusters()
-    .map(c => c.slug)
-    .filter((s): s is string => Boolean(s))
-}
+export function loadClusters(): Cluster[]                    // dataCache().clusters
+export function loadEditionClusters(key: string): Cluster[]  // byEdition.get(key) ?? []
+export function clusterBySlug(slug: string): Cluster | null  // bySlug.get(slug) ?? null
+export function allEditionKeys(): string[]                   // [...byEdition.keys()]
+export function allSlugs(): string[]                         // [...bySlug.keys()]
+                                                             // (dedup + warn en colisión de slug)
+// + sitemapSeries()/sitemapEditions()/sitemapItems() — entries con lastMod
+//   (max standardized_at/detected_at por cluster) para app/sitemap.ts.
+// + compareVolumes() exportado (testeable; maneja rangos "1-3" sin empatar
+//   con el tomo "1").
 ```
 
 ---
@@ -224,9 +212,9 @@ The URL update triggers a server re-render of the catalog page with the new
 
 | Context | Behavior |
 |---|---|
-| `next dev` | `fs.readFileSync` on every request; JSONL changes reflected immediately |
-| `next build` (static export) | Data read once; pages baked into HTML at build time |
-| `next start` (server) | Module-level `_cache` prevents re-reading JSONL per request |
+| `next dev` | Cache por mtime: re-parsea SOLO si items.jsonl cambió (antes: cada request) |
+| `next build` (static export) | Data read once per worker; pages baked into HTML at build time |
+| `next start` (server) | Module-level cache (mtime) prevents re-reading JSONL per request |
 | After scraper run | Run `next build` to pick up new items; or in future, use ISR with `revalidate` |
 
 ---

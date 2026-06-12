@@ -79,6 +79,14 @@ fichas de la editorial oficial, útil para descubrir ediciones especiales del me
   `_STORE_EXACT`/`_STORE_PREFIX`), que recupera la editorial real por slug del edition_key o
   por hermano-ISBN.
 - **#29 (CJK)** — contenido en japonés: el matching de keywords usa substring CJK.
+- **#82 (dígitos full-width en títulos)** — Sanyodo escribe varios títulos íntegramente en
+  caracteres full-width ("学園アイドルマスター ＧＯＬＤ ＲＵＳＨ 特装版 ７", "ｃｉｔｒｕｓ ＋（７）特装版").
+  `\d` en regex unicode matchea ０-９, así que `_extract_volume` devolvía el dígito crudo
+  (`volume: "７"`) y contaminaba el `cluster_key` (`edition:…|７`). ✅ Fix 2026-06-12:
+  `FULLWIDTH_DIGITS_TABLE` en `manga_watch.py` (fuente única; `generate_slugs.py` la importa)
+  aplicada en `_extract_volume`, `_normalize_series_name`, `derive_cluster_key` y la frontera
+  de escritura de `volume` en `candidate_to_json`. Los 2 items afectados se repararon con
+  `backfill_cluster_key.py`.
 
 ---
 

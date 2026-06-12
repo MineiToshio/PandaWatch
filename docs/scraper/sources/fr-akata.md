@@ -1,5 +1,8 @@
 # Fuente: Akata
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `FR - Akata`: Deshabilitada: 0 items netos históricos; FR cubierta por Manga-Sanctuary + Pika/Glénat/Kurokawa/Meian.
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-08.

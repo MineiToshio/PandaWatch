@@ -1,5 +1,8 @@
 # Fuente: Pika Édition (Francia)
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `FR - Pika Planning`: Planning deshabilitada (2 items, 0 únicos). Pika Édition y Pika Livres/Artbooks siguen activas.
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-08.
@@ -62,6 +65,7 @@ desde la fuente de primera mano.
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
+- **Fechas DD/MM/YYYY crudas en `release_date`** — la ficha técnica del sitio entrega la fecha día-primero y los extractores la guardaban sin normalizar; desde 2026-06-12 `normalize_release_date()` la convierte a ISO en la ingestión y el corpus legacy se reparó con `normalize_release_dates.py` (gotcha #80). ✅
 - **#1 mojibake FR** — Pika devuelve UTF-8 leído como cp1252 (acentos rotos). ✅ Reparado
   por `_fix_mojibake()` en `clean_title()` (corre PRIMERO; no anteponer otro regex).
 

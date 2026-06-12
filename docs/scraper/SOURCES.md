@@ -9,6 +9,12 @@ ingestión, full/delta, problemas históricos, runbook). Léela ANTES de tocar l
 ingestión de esa fuente. Para documentar una fuente nueva, copiá la plantilla
 [`sources/_TEMPLATE.md`](sources/_TEMPLATE.md).
 
+**Fuentes NO activas** → [`sources/descartadas/README.md`](sources/descartadas/README.md):
+el registro completo de (1) candidatas evaluadas y descartadas (con razón y
+condición de re-evaluación), (2) fuentes implementadas y deshabilitadas
+(`enabled: false`), y (3) la watchlist. ANTES de proponer/investigar una fuente
+nueva, revisá ese registro — puede que ya esté evaluada.
+
 **Wikis / módulos propios** (`scripts/wikis/`):
 
 - [listadomanga](sources/listadomanga.md) — ES · catálogo por colección (la más importante)
@@ -27,6 +33,7 @@ ingestión de esa fuente. Para documentar una fuente nueva, copiá la plantilla
 - [shueisha](sources/shueisha.md) — JP · artbooks/databooks One Piece
 - [viz](sources/viz.md) — US · artbooks VIZ + búsqueda de ediciones especiales
 - [us-sevenseas](sources/us-sevenseas.md) — US · Seven Seas: deluxe hardcovers + box sets + collector's vía API WordPress (alta 2026-06-12)
+- [us-kodansha-usa](sources/us-kodansha-usa.md) — US · Kodansha: deluxe/omnibus/box sets vía API propia + JSON-LD (alta 2026-06-12; reemplaza la fuente search que devolvía 0)
 - [whakoom](sources/whakoom.md) — ES/LatAm · novedades + spider opt-in
 
 **Tiendas / editoriales / feeds del YAML** (fuentes simples, sin parser propio):
@@ -38,6 +45,10 @@ ingestión de esa fuente. Para documentar una fuente nueva, copiá la plantilla
 - **Estados Unidos** — [us-dark-horse-direct](sources/us-dark-horse-direct.md) · [us-square-enix-manga](sources/us-square-enix-manga.md) · [us-kodansha-usa](sources/us-kodansha-usa.md)
 - **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) · [fr-akata](sources/fr-akata.md)
 - **Italia** — [it-panini-planet-manga](sources/it-panini-planet-manga.md) · [it-star-comics](sources/it-star-comics.md) · [it-dynit](sources/it-dynit.md) · [it-funside-variant](sources/it-funside-variant.md) · [it-manga-dreams](sources/it-manga-dreams.md) · [it-edizioni-bd](sources/it-edizioni-bd.md)
+- **Polonia** (alta 2026-06-12) — [pl-mangarden](sources/pl-mangarden.md) · [pl-mangastore](sources/pl-mangastore.md)
+- **Corea del Sur** (alta 2026-06-12) — [kr-aladin](sources/kr-aladin.md)
+- **Alemania directas** (alta 2026-06-12) — [de-direct-publishers](sources/de-direct-publishers.md) (altraverse · Egmont · TOKYOPOP · Carlsen; complementan el wiki Manga-Passion)
+- **Asia/Europa pasada mundial 2** (alta 2026-06-12) — [storefronts-api](sources/storefronts-api.md) (Jade Dynasty HK · Sharp Point TW · Kim Đồng VN · IPM VN · yaakz TH, módulo `storefront_json.py`) · [tw-kadokawa](sources/tw-kadokawa.md) · [cz-crew](sources/cz-crew.md) · [tr-gerekliseyler](sources/tr-gerekliseyler.md)
 - **Japón** — [jp-kadokawa](sources/jp-kadokawa.md) · [jp-square-enix-comics](sources/jp-square-enix-comics.md) · [jp-sanyodo](sources/jp-sanyodo.md) · [jp-honto](sources/jp-honto.md) · [jp-rakuten-books](sources/jp-rakuten-books.md)
 
 > Cada ficha de tienda/editorial agrupa todas las entradas de `sources.yml` de ese

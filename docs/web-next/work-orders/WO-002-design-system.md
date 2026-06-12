@@ -2,7 +2,7 @@
 
 **Phase:** 1  
 **Effort:** M  
-**Status:** In Progress (partially implemented — needs correction)  
+**Status:** Done (corrección aplicada: globals.css usa los tokens bamboo/ink del handoff PandaWatch, no los OKLCH de PandaTrack). Nota 2026-06-12: components/core/ se eliminó por ser código muerto — los componentes reales viven en modules/catalog/item/series/edition.  
 **Related:** [FRD-002](../FRD-002-design-system.md), [BP-004](../blueprints/BP-004-component-hierarchy.md)  
 **Prerequisites:** WO-001 (project scaffold)
 

@@ -74,13 +74,13 @@ items.jsonl si necesitás precisión.
 
 | Métrica | Valor aprox. |
 |---|---|
-| Total items (1 fila por producto) | **11 456** (delta real 2026-06-12: +727 netos de 3 semanas de novedades; antes 10 730 tras merge ISBN) |
+| Total items (1 fila por producto) | **13 421** (2026-06-12 pasada mundial 2: +HK 216, +TW 559, +VN 346, +TH 93, +CZ 4, +TR 10; antes 12 391 tras sesiones 3-4: +Seven Seas 111, +Kodansha US 108, +VIZ ~59, +PL 278, +KR 404, +DE ~100) |
 | Movidos a non_manga_blacklist.jsonl (acum.) | ~684 |
 | Removidos por umbrella URL-gate (ATOM FR) | 21 (revista Manga-Sanctuary; ver gotcha #62) |
 | Removidos quirúrgicamente (junk confirmado) | 5 (respaldados en `data/diagnostics/items.audit_fp_removed-20260610.jsonl`) |
 | series_aliases.yml | ~3394 canónicos |
-| Sources en YAML / enabled | 138 / 67 (17 mixed, 15 bluesky todas off) |
-| Wikis (`--bootstrap-wiki`) | 20 (alta sevenseas 2026-06-12) |
+| Sources en YAML / enabled | 151 / 63 (altas 2026-06-12: PL×3, KR Aladin, DE×6, TW Kadokawa, CZ Crew, TR Gerekli; **poda 2026-06-12: 16 fuentes con 0 items netos deshabilitadas** — registro en `docs/scraper/sources/descartadas/`) |
+| Wikis (`--bootstrap-wiki`) | 26 (altas 2026-06-12: sevenseas, kodansha-us + 5 perfiles storefront_json: jd-intl HK, spp-tw, kimdong/ipm VN, yaakz TH) |
 | Top sources | Sumikko ~2678, **ListadoManga colecciones ~1918**, Mangavariant ~1531, Manga-Sanctuary ~1144, AnimeClick IT ~1024, Manga-Passion DE ~808 |
 | Image / image_local coverage | ~98.1% / ~98.0% (items nuevos del último delta aún sin pasada de imágenes) |
 | series_key / edition_key / standardized_at | 100% / 100% / 100% |
@@ -88,7 +88,7 @@ items.jsonl si necesitás precisión.
 | volume / release_date / ISBN / author | ~85% / ~92% / ~47% / ~57% |
 | cluster_key populado | 100% |
 | carrusel real (images.length > 1) | ~2249 (21%) |
-| Países | 14 (top: Japón ~3739, Italia ~2054, España ~1930, Francia ~1456, Alemania ~831, EEUU ~325; nuevo: Perú vía ISBN 978-612) |
+| Países | 20 (top: Japón ~3866, Italia ~2322, España ~2003, Francia ~1465, Alemania ~957; **nuevos 2026-06-12: KR ~404, PL ~278, TW ~559, VN ~346, HK ~216, TH ~93, CZ 4, TR 10**) |
 | validate_corpus | 0 violaciones duras; warnings: 1 PAIS (eBay sin ISBN, sin evidencia), 1 SERIESDUP (loosers/losers — encolado en unmapped_series.jsonl), 11 EKPREFIX (antologías multi-obra, curación manual), 4 ISBNDUP (conflictos país/volumen/lmc — visibles a propósito, invariante nueva) |
 
 ISBN/author bajos NO son regresión: muchas filas curadas (Mangavariant,
@@ -96,6 +96,49 @@ wikis) catalogan "qué variant existe", no "dónde comprarlo" (ver "URL como ref
 **Precios eliminados del pipeline (2026-06-11)**: PandaWatch es un catálogo de
 descubrimiento, no un tracker de precios. Los precios se vuelven obsoletos
 inmediatamente y no ayudan a identificar ediciones especiales.
+
+**Cambios 2026-06-12 (pasada mundial 2: poda + Asia/Europa restante)**:
+(a) **Poda de 16 fuentes muertas** — 0-1 items netos en todo el histórico pese a
+hasta 400 candidatos/run (NewPOP catálogos, Honto search, Ivreality, Distrito ES,
+Norma search, Whakoom Novedades, Akata/Ki-oon/Pika Planning FR, KADOKAWA Comics/
+SQEX JP, Panini catálogos BR/MX, JBC Títulos). ~1100 candidatos basura/run ahorrados.
+(b) **Registro `docs/scraper/sources/descartadas/README.md`** — catálogo completo
+de fuentes NO activas en 3 categorías (evaluadas-descartadas con condición de
+re-intento / deshabilitadas / watchlist); regla: toda candidata evaluada se
+registra ahí aunque se rechace.
+(c) **Módulo `storefront_json.py`** — 5 APIs JSON en UN módulo con perfiles
+declarativos: Jade Dynasty HK (WooCommerce, ~275), Sharp Point TW (91APP con
+endpoint descubierto en auditoría, ~350), Kim Đồng VN (Bizweb, ~119), IPM VN
+(Haravan con EAN+fecha, ~110), yaakz TH (Laravel, ~39).
+(d) **Fuentes YAML**: Kadokawa TW (~118), Crew CZ (mixta, gate filtra 1070/1074),
+Gerekli Şeyler TR (~13). "Venomized" a comics_blacklist (no matchea \bVenom\b).
+(e) **Señales nuevas**: chino tradicional (首刷限定版/特裝版/珍藏版/愛藏版/盒裝 —
+OJO 裝 tradicional ≠ 装 JP), vietnamita (bản đặc biệt/giới hạn/sưu tầm), tailandés
+(ชุดพิเศษ), turco (varyant kapak), checo (limitovaná/sběratelský box).
+(f) Pendientes próxima sesión: **Tong Li TW** (viable, editorial #1, requiere
+módulo con discovery de fichas — notas en auditoría), books.com.tw (watchlist).
+Corpus 12 391 → **13 421**, 20 países, suite 791.
+
+**Cambios 2026-06-12 (sesiones 3-4: fuentes US arregladas + expansión de países)**:
+(a) **VIZ search reparada** — `&category=Manga` + selectores `article.g-3` (la URL
+sin el param devolvía vista de series con 0 productos); keywords renovadas (VIZBIG,
+definitive…; omnibus/3-in-1 removidos, gotcha #18); filtro URL no-manga nuevo
+`viz.com/anime/` (Blu-rays con título "Limited Edition" sin decir DVD).
+(b) **Kodansha USA**: la fuente search devolvía artículos de blog → deshabilitada;
+wiki nuevo `kodansha_us.py` (API `/wp-json/kodansha/v1/search-series` + JSON-LD por
+volumen: ISBN/fecha/portada) en delta [2r] y full [2y]; 108 items.
+(c) **Bypass danmei/artbook en `is_pure_novel`** — las novels asiáticas con edición
+especial (Seven Seas danmei, marcador "(Novel)") están EN scope (CLAUDE.md: "light
+novels con bonus"); el detector solo caza bestsellers occidentales.
+(d) **Fix lore-edition "in-1"** — "3-in-1 Edition" ya no pasa el gate (gotcha #18).
+(e) **Expansión de países** (evaluada con /watch-evaluate-sources, 8 auditores):
+Polonia (Mangarden/JPF ~240 + Mangastore ~63), Corea del Sur (Aladin ~390 한정판 de
+fábrica), Alemania directa (altraverse/Egmont/TOKYOPOP/Carlsen ~100 — antes todo DE
+venía del wiki Manga-Passion). Señales nuevas DE/PL/KR en KEYWORD_RULES, "tom" polaco
+en volume-shape, prefijos junk de Aladin en TITLE_JUNK_PREFIXES. Panini AR evaluada y
+DESCARTADA (vende ediciones LATAM de Panini MX, mismo ISBN 978-607). Gotchas #83-#86
+(>100 headers, paginación JS, título truncado por clusters, --only-source append).
+(f) Backfill ISBN dirigido: +240 ISBNs (VIZ 39→2 sin ISBN).
 
 **Cambios 2026-06-12 (sesión de mejoras integral)**: (a) `merge_isbn_duplicates.py`
 nuevo (enforcer 3c2b) — un ISBN-13 = un producto; 63 grupos fusionados (10793→10730),
@@ -233,7 +276,10 @@ itera filtros; SQLite con multi-user/deploy — triggers en ARCHITECTURE.md).
 ### 2. `is_likely_manga()` is a 4-rule cascade, in order
 
 ```
-0. _NON_MANGA_HARD        → False (figure, DVD, Funko, statue, art print, ...)
+0. _NON_MANGA_HARD        → False (figure, Funko, statue, art print, ...)
+0b. _NON_MANGA_HARD_UNLESS_BONUS → False salvo marcador de bonus PEGADO al match
+                            (DVD/blu-ray, フィギュア, standee, Variant Bundle — los
+                            títulos OFICIALES nombran el bonus de la edición; gotcha #92)
 1. _STRONG_MANGA_PATTERNS → True  (manga, kanzenban, vol N, "Deluxe Hardcover", ...)
 2. _MANGA_WITH_EXTRAS     → True  (edición especial + figura, cofanetto, ...)
                             EXCEPT purity='mixed' → requiere STRONG hint, no pack-extras.
@@ -334,3 +380,37 @@ no parseaba ediciones especiales/cofres/variantes; ahora el delta captura la mis
 que el full, acotado a lo reciente. El dedup (synthetic URL + cluster_key, decisión #4)
 absorbe el overlap entre corridas.
 
+
+## Política de títulos (decisión owner, 2026-06-12)
+
+**`title` = nombre OFICIAL con que la editorial/fuente publica el producto. Es un
+DATO, no una traducción.** Tres reglas duras:
+
+1. **No se traduce ni se renombra a la serie canónica.** "Guardianes de la Noche 8"
+   (Norma) NO se convierte en "Demon Slayer 8"; un título japonés queda en japonés.
+   El nombre reconocible vive en `series_display` (canónico, lo que las UIs muestran
+   encima del título) y en los aliases.
+2. **No se le inyecta el tipo de edición.** "Kanzenban"/"Deluxe"/"Edición especial"
+   solo aparecen en el title si son parte del nombre oficial (ej. "Berserk Maximum").
+   El tipo vive en el slug del `edition_key` y las UIs lo muestran como **badge**
+   (web-next `EditionTypeChip`; dashboard `editionTypeLabel()`).
+3. **La encontrabilidad la resuelve la búsqueda, no el renombre.** `series_aliases.yml`
+   se exporta a `data/series_aliases.json` (`scripts/export_series_aliases.py`,
+   invocado por cada `build_web.py`) y AMBAS UIs buscan también contra los aliases del
+   `series_key` — "demon slayer", "kimetsu no yaiba" y "guardianes de la noche"
+   devuelven los mismos items.
+
+**Mecanismo**: el scraper nunca pisa el title; `standardize_apply.py` (tier1 y merge)
+ya no escribe título; el LLM del skill no emite campo de título (el campo
+`title_standardized` quedó RETIRADO del schema). Lo único que sigue tocando el title
+son normalizaciones COSMÉTICAS del enforcer sobre el nombre oficial (quitar "nº",
+orden "{serie} {vol} Edición Especial", desambiguación de colisiones, palabras de
+edición duplicadas) — nunca cambian idioma ni nombre de la obra.
+
+**Migración**: `scripts/retrofit/restore_official_titles.py` (one-shot por item, marca
+`title_restored_at`; 9.2k títulos restaurados + 1.5k re-normalizados por el enforcer;
+corpus validado + convergencia verificada). Limitación conocida: algunos
+`title_original` viejos fueron pisados por retrofits históricos, esos items conservan
+el mejor título disponible. Consecuencia en filtros: gotcha #92 (bonus context).
+La razón de producto: lo que el usuario ve debe ser lo que encuentra en la tienda y
+en Google; renombrar minaba la confianza y rompía la búsqueda externa.

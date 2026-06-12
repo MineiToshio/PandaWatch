@@ -84,17 +84,33 @@ el botón de aplicar. Los botones de acción se deshabilitan (`isSaving`) mientr
 Al cargar la cola, el frontend llama `GET /api/cover-preview` (un solo request): el servidor
 carga `cover_preview.json`, sincroniza contra `items.jsonl` vía `sync_preview()` de
 `scripts/retrofit/sync_cover_preview.py`, persiste los cambios atómicamente si los hubo, y
-responde `{"entries": [...], "mtime": <st_mtime_ns>, "synced": {stats}}`. Si el endpoint no
+responde `{"entries": [...], "mtime": "<st_mtime_ns como string>", "synced": {stats}}`. Si el endpoint no
 está disponible (servidor viejo), el frontend cae al fetch estático `cover_preview.json` +
 `GET /api/cover-preview-meta`. Si `synced` incluye cambios (> 0), se muestra un toast.
 
 ## Cover-preview — guard de concurrencia optimista
 
-`loadedMtime` viene en la respuesta de `GET /api/cover-preview` (el mtime post-sync).
-Cada POST de save incluye `expected_mtime: loadedMtime`; si el mtime del archivo en disco
-no coincide, el servidor responde **409 `{"error":"stale"}`** sin escribir. El frontend
-muestra un aviso y recarga la cola — nunca reintenta el save stale. Clientes sin
-`expected_mtime` (scripts/legado) siguen con el comportamiento anterior.
+`loadedMtime` viene en la respuesta de `GET /api/cover-preview` (el mtime post-sync) y es un
+**token STRING opaco** (`st_mtime_ns` serializado como string — un Number de JS redondearía
+todo entero > 2^53 y daría 409 espurio en cada save, gotcha #79; helpers `_mtime_token()` /
+`_mtime_matches()` en serve.py). Cada POST de save incluye `expected_mtime: loadedMtime`; si
+el token no coincide con el del archivo en disco, el servidor responde **409
+`{"error":"stale","mtime":"<token>"}`** sin escribir. El frontend muestra un aviso y recarga
+la cola — nunca reintenta el save stale. Clientes sin `expected_mtime` (scripts/legado)
+siguen con el comportamiento anterior; si un cliente viejo manda un Number, el servidor
+compara en espacio double para no rechazarlo de más.
+
+`POST /api/apply-cover-preview` acepta el mismo guard opcional (body
+`{"expected_mtime": "<token>"}`): si la cola en disco no es la que el owner estaba viendo,
+responde 409 sin aplicar nada. El frontend lo manda siempre y, antes del apply, espera los
+guardados en vuelo (el apply lee la cola del DISCO).
+
+En el frontend todos los guardados pasan por una ruta única (`save()` → `_doSave()`): una
+**cola en serie** garantiza que dos acciones rápidas (p. ej. atajos A/R, que no pasan por
+botones deshabilitados) salgan cada una con el token que dejó la anterior, en vez de
+competir y generar 409 entre sí. Si un save falla (no-409), la UI recarga la cola para no
+mostrar como guardado algo que no se persistió. `deleteGalleryImage` y `flagIrrelevant`
+usan esta misma ruta (antes duplicaban el fetch del save inline).
 
 ## Cover-preview (`web/cover-preview.html`) — atajos de teclado
 
@@ -123,3 +139,21 @@ retrofit/curación sin re-correr `build_web.py`. La copia embebida
 (`<script id="manga-data">`, generada por build_web) es SOLO fallback: `file://`
 (doble-click) o fetch fallido. Antes era al revés (embebido primero) y el dashboard
 servido mostraba datos stale hasta el próximo build — corregido 2026-06-12.
+
+## Búsqueda y badge de tipo de edición (2026-06-12)
+
+**Búsqueda con aliases**: el buscador del grid matchea `title` + `title_original` +
+`series_display` + los **aliases del `series_key`** (`this.aliasIndex`, cargado en
+`init()` desde `../data/series_aliases.json` — lo regenera `export_series_aliases.py`
+en cada `build_web.py`). Razón: política de títulos 2026-06-12 — el `title` es el
+nombre OFICIAL de cada edición y no se renombra/traduce, así que "demon slayer",
+"kimetsu no yaiba" y "guardianes de la noche" tienen que devolver lo mismo vía alias.
+En modo `file://` (embebido) el JSON no se puede fetchear: la búsqueda funciona igual
+pero sin aliases.
+
+**Badge de tipo de edición**: la tarjeta muestra un chip púrpura con el tipo derivado
+del slug del `edition_key` (`editionTypeLabel(item)`; omitido para `regular`). El
+title oficial ya no lleva "Kanzenban"/"Deluxe" inyectado — el chip lo comunica.
+Mantener `_editionTypeLabels`/`_editionCountries` en sync con
+`web-next/lib/format.ts` (`EDITION_TYPE_LABELS`) y `_VALID_COUNTRY`
+(fix_lmc_display_titles.py).

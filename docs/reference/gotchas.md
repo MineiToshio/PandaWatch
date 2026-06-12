@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 73 known gotchas
+## The 92 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -474,3 +474,141 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
 77. **`list.sort(key=…)` en CPython VACÍA la lista durante el sort — un `key` que itera la misma lista ve `[]` (2026-06-12).** Caso real: el scoring de `merge_isbn_duplicates` calculaba `_evidence(serie, group)` dentro del `key=` de `group.sort()` → la evidencia era siempre 0 → ganaba el candidato equivocado en silencio ("Rave" sobre "Marco Polo"). Patrón obligatorio: PRECOMPUTAR los scores en un dict `{id(item): score}` ANTES del sort y usar `key=lambda it: scores[id(it)]`. Sin error ni warning: CPython solo tira ValueError si MUTÁS la lista, leerla devuelve la lista vacía.
 
 78. **Sitios Next.js App Router (RSC): el catálogo vive en `__next_f`, NO en el DOM — extractor dedicado por dominio (2026-06-12).** Caso Square Enix Manga US (release-calendar): el DOM solo renderiza ~10 items del mes visible, pero el payload `self.__next_f.push([1,"…"])` embebido en `<script>` trae el catálogo COMPLETO (~488 productos). `extract_generic_html` decompone los `<script>` antes de buscar productos → 0 cards para siempre; `kind: js` tampoco ayuda (Playwright también ve solo el mes visible) y `selectors:` capturaría solo ~10. Patrón de fix: extractor dedicado registrado en `_SITE_EXTRACTORS` (manga_watch.py) — hook por substring de dominio que corre sobre el HTML CRUDO antes del flujo genérico, con falla silenciosa a `[]` (cae al genérico). Si otra fuente da "0 cards con html_size grande", revisar si es una app RSC ANTES de intentar selectores. Test del caso: `test_extract_squareenix_rsc_payload`.
+
+79. **`st_mtime_ns` como Number rompe el guard optimista de cover-preview — 409 espurio en CADA save (2026-06-12).** El guard anti-race de `cover_preview.json` (introducido 2026-06-11) enviaba el `st_mtime_ns` (~1.8e18) como entero JSON; JavaScript redondea todo entero > 2^53 (~9.0e15) al double más cercano (spacing ~256 ns en esa magnitud), así que el `expected_mtime` que el frontend devolvía casi nunca coincidía con el del disco → "La cola cambió en el servidor (otro proceso la actualizó)" al aprobar/rechazar cualquier candidata, sin que existiera concurrencia real. Fix de mecanismo: el token viaja como STRING opaco end-to-end (`_mtime_token()`/`_mtime_matches()` en serve.py; el frontend lo guarda y lo devuelve tal cual, sin parsearlo). Compat: si un cliente viejo manda un Number, se compara en espacio double (`float(expected) == float(current)`). REGLA: nunca mandar `st_mtime_ns` (ni cualquier entero > 2^53: ids de snowflake, nanotimestamps) como Number JSON hacia un navegador — siempre string. Tests: `tests/test_cover_preview_mtime_guard.py`.
+
+80. **`release_date` se guardaba con el formato CRUDO de la fuente — `normalize_release_date()` en los puntos de asignación (2026-06-12).** `extract_release_date()` devolvía el match textual sin normalizar y el JSON-LD (`datePublished`) se copiaba tal cual, así que al corpus entraban DD/MM/YYYY (label-pairs de fuentes EU: Star Comics IT, Pika FR, Dynit IT, Glénat FR, Ramen Para Dos ES, Manga Dreams IT — 131 items), `2023/09/27 10:00:00` (JSON-LD de tiendas JP, hora = inicio de venta en tienda), `2026年04月08日`, `DD.MM.YYYY` y mes textual FR ("2 juillet 2025"). Fix de mecanismo: `normalize_release_date()` en `scripts/manga_watch.py` — normaliza a ISO respetando granularidad parcial (YYYY / YYYY-MM se quedan: NUNCA inventar día/mes), valida rangos vía `datetime.date` (32/05 o 31/02 → se devuelve SIN tocar, nunca destruye información), día-primero para `D/M/YYYY` con swap solo si el segundo componente >12 (US inequívoco). Aplicada en: `extract_release_date()` (todos los matches), `fetch_metadata_from_detail()` (DESPUÉS de la excepción del componente horario, que necesita ver la hora cruda), las 2 asignaciones card-level desde `extract_schema_org_product`, el fallback RSS `published_at` y el meta de AnimeClick. OJO: `extract_schema_org_product` sigue devolviendo el valor CRUDO a propósito (la excepción tienda-vs-発売日 lo necesita); normalizar ahí rompería esa lógica. Corpus legacy: retrofit `normalize_release_dates.py` (131 DMY convertidos; `--all-formats` para 年月日/datetime/textual que siguen reportados sin tocar). Tests: `test_normalize_release_date_*` en `tests/test_extraction.py`.
+
+81. **Claves de agrupación con no-ASCII: homoglifo cirílico y CJK crudo en `series_key`/`edition_key` (2026-06-12).** Dos canónicas acuñadas por el LLM del enrich skill entraron al corpus con caracteres no-ASCII: `taihо-to-stamp` (la "о" es CIRÍLICA U+043E, visualmente indistinguible) y `maku-ga-oriru-to-bokura-wa-番` (CJK crudo). `_slugify_kebab` no era el origen (su regex ya descarta no-ASCII) pero PERDÍA letras con homoglifos — NFKD no descompone cirílico, así que "Taihо" daba "taih" — y nada sanitizaba las claves que NO derivan de él: las canónicas de `series_aliases.yml` (inyectadas vía `canonical_series_key`) y las propuestas por el LLM del standardize. Fix (mecanismo, 3 capas): (1) `_slugify_kebab` mapea homoglifos cirílicos/griegos → ASCII (`_HOMOGLYPH_TO_ASCII`, antes de NFKD); el CJK se descarta de forma controlada (actúa como separador, strip de bordes — "Maku ga Oriru to Bokura wa 番" → "maku-ga-oriru-to-bokura-wa"). (2) `sanitize_key_ascii()` (público, idempotente sobre claves limpias) se aplica en las DOS fronteras de claves no-derivadas: la resolución del YAML en `derive_series_metadata` (paso 3b de manga_watch.py) y las claves del LLM en `standardize_apply.py` (tier1 + merge; una clave que se vacía al sanitizar queda pending — el caller decide). (3) Datos: las 2 canónicas del YAML renombradas a ASCII (la clave vieja quedó como alias) y los 2 items reparados (series_key/edition_key/cluster_key/slug), con backup. Verificación: `backfill_cluster_key --dry-run` 0 refrescos, `validate_corpus` verde. Los `cluster_key` de tier `fuzzy:` siguen embebiendo título crudo japonés — eso es BY DESIGN (no son slugs). Tests: `test_slugify_kebab_homoglyphs_and_cjk_discard`, `test_sanitize_key_ascii_grouping_keys`.
+82. **Dígitos full-width JP (０-９) en títulos → `volume`/`cluster_key` contaminados (2026-06-12).**
+    `\d` en regex unicode de Python MATCHEA los dígitos full-width U+FF10-FF19, así que los
+    patterns de `_extract_volume` capturaban el dígito crudo: "学園アイドルマスター ＧＯＬＤ ＲＵＳＨ
+    特装版 ７" (JP - Sanyodo) quedaba con `volume: "７"` y `cluster_key`
+    `edition:…-special-jp|７` — el MISMO producto con "7" ASCII de otra fuente nunca fusionaría.
+    Fix de mecanismo: `FULLWIDTH_DIGITS_TABLE` en `manga_watch.py` es la FUENTE ÚNICA de la
+    tabla ０-９→0-9 (`generate_slugs.py` la importa en vez de duplicarla), aplicada en 4 puntos:
+    (1) `_extract_volume` traduce el título antes de matchear; (2) `_normalize_series_name`
+    también (sin esto el strip del volumen ASCII no matchea el "７" del texto); (3)
+    `derive_cluster_key` traduce el campo `volume` del item en los tiers `edition:` y `lmc:`
+    (el campo puede venir de un parser de fuente o del LLM del standardize, no solo de
+    `_extract_volume`); (4) `candidate_to_json` traduce `vol` antes de escribir el row (frontera
+    que cubre `candidate.volume` de los wikis). Corpus: 2 items reparados (volume +
+    `backfill_cluster_key.py`), `validate_corpus` verde. Tests:
+    `test_extract_volume_fullwidth_digits`, `test_derive_cluster_key_fullwidth_volume_normalized`.
+
+83. **`http.client` aborta con ">100 headers" en sitios con decenas de Set-Cookie (2026-06-12).**
+    `egmont-shop.de` responde con más de 100 headers HTTP y el límite default de
+    `http.client._MAXHEADERS` (100) hacía fallar la fuente con
+    `ProtocolError('Connection aborted.', HTTPException('got more than 100 headers'))`.
+    Fix global en manga_watch.py (tras los imports): `http.client._MAXHEADERS = 200`.
+    Inocuo para el resto de fuentes. Si otra fuente da este error exacto, NO es el sitio
+    caído — es este límite.
+
+84. **Paginación JS (`Javascript:Page_Set('2')`) invisible para la estrategia 4 del paginador (2026-06-12).**
+    `find_next_page_url` estrategia 4 (incrementar `?page=N`) exigía que `page=N+1`
+    apareciera en el href de algún anchor — los sitios ASP.NET/osCommerce (Aladin KR)
+    paginan con `Javascript:Page_Set('2')` y nunca cumplen esa evidencia, así que solo
+    se scrapeaba la página 1 (25 de 428 resultados). Fix: la evidencia aceptada ahora
+    incluye hrefs `javascript:` de paginación con el número N+1 como argumento (regex
+    `^javascript:[\w.]*pag\w*[_.]?\w*\(['"]?N\+1['"]?\)`). Requisito: la URL fuente debe
+    llevar `&page=1` explícito para activar la estrategia 4. El sitio debe aceptar
+    `?page=N` por GET aunque sus links usen JS (verificado en Aladin).
+
+85. **El extractor genérico de clusters puede TRUNCAR el título y el gate rechaza todo (2026-06-12).**
+    En mangastore.pl el cluster extractor capturaba "Atelier spiczastych kapeluszy" sin
+    el sufijo "(twarda okładka)" — la señal hardcover se detectaba por otro campo pero el
+    GATE evalúa el TÍTULO → 59/63 candidatos rechazados como regular_tomo. Con selectores
+    explícitos (`div.Okno.OknoRwd` + `a[href*='-p-']:not(.Zoom)`) → 63 reportables.
+    REGLA: si una fuente da "candidatos con señales" altos pero el gate descarta >80%,
+    sospechar título truncado ANTES que señales débiles — comparar el título del
+    diagnostic JSON con el real del sitio.
+
+86. **`--only-source` era single-valued: repetirlo pisaba en silencio los anteriores (2026-06-12).**
+    Una ingesta dirigida con 10 flags `--only-source` solo corrió la ÚLTIMA fuente
+    (argparse default: last-wins). Fix: `action="append"` + matching por set con error
+    explícito si algún nombre no existe. Síntoma histórico: el log muestra `[1/1]` cuando
+    esperabas N fuentes.
+
+87. **El union-merge de `images[]` descartaba el `local` del upsert post-mirror (2026-06-12).**
+    El dedup por (kind, url) preservaba ÍNTEGRO el entry viejo — diseñado para que un
+    re-scrape sin descarga no borre el `local` existente, pero el caso inverso rompía: los
+    wikis con flush incremental escriben la fila ANTES del mirror (local=""), y el upsert
+    final post-mirror (local="sha.jpg") se descartaba como duplicado → ~1700 items con la
+    imagen EN DISCO pero la fila sin referencia (parecían "sin foto" en el dashboard).
+    Fix: en colisión de clave, el entry conservado RELLENA sus campos vacíos (local,
+    description) con los del duplicado — sticky en ambas direcciones. Reparación del
+    corpus: `mirror_images.py --no-gc` (religa por nombre determinístico sha256(url)[:16]).
+    Test: `test_append_jsonl_images_merge_backfills_local`.
+
+88. **Placeholders de lazy-load como ARCHIVO real (no data-URI) → el loader entraba como portada (2026-06-12).**
+    `_img_to_url` prueba `src` primero y solo salteaba `data:` URIs. Mangarden sirve
+    `src="/gfx/pol/loader.gif"` (archivo real) con la portada en `data-src` → 167/215
+    items PL "con portada" = el loader, que `_score_image`/el mirror terminaban
+    descartando → sin foto. Fix: `_LAZY_PLACEHOLDER_RE` saltea nombres EXACTOS de
+    placeholder (loader/loading/blank/placeholder/spacer/spinner/transparent/pixel/
+    dummy/no-image/default + sufijo numérico opcional) para caer al data-src. OJO: sin
+    wildcard tras el nombre — "lazy.jpg" o "grey-edition.jpg" pueden ser imágenes
+    reales. Test: `test_extract_image_url_skips_lazy_placeholder_file`.
+
+89. **URLs/referers con no-ASCII rompían el descargador de imágenes con UnicodeEncodeError (2026-06-12).**
+    `http.client` codifica la request line y headers en latin-1; las URLs de yaakz
+    (slugs thai) y jd-intl (paths chinos) crasheaban `download_image` — y como
+    `UnicodeEncodeError` no es `RequestException`, el except no la capturaba y MATABA
+    el proceso entero de mirror_images.py a mitad de corrida. Fix: `requote_uri` sobre
+    URL y referer (el referer se omite si sigue no-latin-1) + `except (RequestException,
+    UnicodeError)`. Relacionado: el API de yaakz devuelve `images` como STRING (una URL),
+    no lista — `imgs[0]` tomaba el primer CARÁCTER ("h") como URL; fix en el mapper
+    (`storefront_json._yaakz_map`).
+
+90. **Placeholders "no cover" de cada tienda entraban como portada real (2026-06-12).**
+    Crew CZ sirve `src=/static/crew/img/ph/komiks.png` (ph = placeholder) con la portada
+    real en `data-src`; Aladin KR usa `19book_150cover.jpg` como default; Shopify IT
+    `img-non-disponibile`; Star Comics `no_cover_2021.jpg`; Amazon el píxel transparente.
+    ~53 items del corpus tenían estos placeholders COMO portada (el dashboard los mostraba
+    "sin foto" o con la imagen genérica). Fix doble: (1) `data-src`/`data-original` se
+    prueban ANTES que `src` en `_img_to_url` — cuando coexisten, data-* es la imagen real
+    por definición del patrón lazy; (2) los nombres de placeholder nuevos se agregaron a
+    `IMAGE_URL_BAD_PATTERNS`. Señal de diagnóstico: la MISMA url de portada repetida en
+    ≥3 items de una fuente = placeholder casi seguro (sweep:
+    `Counter(images[0].url)` sobre el corpus). Reparación: null + `backfill_metadata
+    --only image_url` (las páginas de detalle traen la cover real) + mirror.
+
+91. **Países fuera de `_COUNTRY_SLUG_MAP` → sufijo fallback NO idempotente en edition_key (2026-06-12).**
+    `_country_slug()` cae a "primeras 4 letras" para países desconocidos (cheq/turq/core/
+    polo/hong tras la expansión de países), pero `_has_country_suffix()` de
+    fix_edition_country validaba el tail SOLO contra los valores del mapa → no reconocía
+    el fallback y cada corrida del enforcer apendeaba OTRO sufijo:
+    "…-cheq-cheq-cheq" tras 3 corridas (503 keys afectadas: core ×253, polo ×233…).
+    Fix doble: (1) mapa completado (corea del sur→kr, polonia→pl, chequia→cz, turquía→tr,
+    hong kong→hk, china→cn, indonesia→id); (2) `_has_country_suffix(ek, country_slug)`
+    acepta además el código COMPUTADO del país del item — idempotente aunque el país no
+    esté en el mapa. REGLA: al abrir un país nuevo, agregalo al mapa EN EL MISMO TURN.
+    Reparación: strip de sufijos fallback repetidos + re-sufijo correcto +
+    backfill_cluster_key + slugs (enforcer); verificado idempotente (2× → byte-idéntico).
+
+92. **Política de títulos: title = nombre OFICIAL → re-expone keywords de bonus en filtros (2026-06-12).**
+    Decisión de producto: el `title` es el nombre oficial con que la editorial publica el
+    producto — NUNCA se traduce, NUNCA se renombra a la serie canónica y NUNCA se le inyecta
+    el tipo de edición. El nombre reconocible vive en `series_display` (canónico) y la
+    búsqueda resuelve aliases multilingües (`data/series_aliases.json`, exportado por
+    `export_series_aliases.py` en cada build_web). El skill standardize y `standardize_apply.py`
+    ya no escriben `title` (el campo `title_standardized` quedó RETIRADO del schema; migración:
+    `restore_official_titles.py`, one-shot por item vía `title_restored_at`).
+    **Consecuencia en filtros**: los títulos oficiales JP/IT nombran el BONUS de la edición
+    ("夏目友人帳 フィギュアストラップ付き特装版", "テラフォーマーズ(21)特装版 DVD LIMITED EDITION",
+    "Ediz. variant. Con acrylic standee") y los patterns HARD de figura/DVD/standee/bundle
+    los mataban. Fix: tier `_NON_MANGA_HARD_UNLESS_BONUS` + `_bonus_context_near()` — el
+    match NO descarta si hay marcador de inclusión PEGADO al match (付/同梱 hasta 12 chars
+    después; con/with/avec/mit/+ en ventana corta; 特装版/同梱版 en cualquier parte — NO 限定版
+    a secas, que también lo usan los Blu-ray BOX de anime). El marcador debe ser posicional:
+    "神の庭付き楠木邸 Blu-ray BOX" tiene 付き en el NOMBRE de la obra y sigue siendo anime.
+    También: `図鑑(?!未掲載)` (図鑑未掲載 describe el bonus) y `(?<!限定版)プレミアムBOX`
+    (限定版プレミアムBOX es un manga premium box, no idol box). Tests:
+    `test_is_likely_manga_bonus_context_*`. Una limitación conocida de la migración: algunos
+    `title_original` viejos fueron pisados por retrofits históricos (`fix_listadomanga_titles.py`
+    escribía title_original), así que esos items conservan el mejor título disponible, no
+    necesariamente el oficial original. Complemento: `recover_lost_jp_titles.py`
+    recuperó los nombres reales de los items JP con título "generado" (openBD por ISBN +
+    re-fetch Playwright de mangavariant — el sitio quedó tras sgcaptcha, ver su ficha);
+    marcadores agregados tras esa pasada: `w/` (= with, listings EN) y excepción
+    "Gangan Joker" en comics_blacklist (revista, contiene "Joker").

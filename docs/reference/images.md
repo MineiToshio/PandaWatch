@@ -46,7 +46,10 @@ filas. **Invariante crítico**: la portada de la fila canónica (`canonical.imag
 que muestra la card) va SIEMPRE primera en la union — si no, el carrusel discrepa de la
 card. Este merge vive en TRES lugares que DEBEN coincidir: `web/index.html` (`dedupByUrl`),
 `build_web.py` (`_merged_canonical`, delega en `manga_watch.merge_cluster`),
-`web-next/.../ItemHero.tsx`. Tocás uno → tocá los tres. El gestor de imágenes opera igual
+`web-next/lib/images.ts` (`dedupeImages`/`imageKey` — desde 2026-06-12 es la fuente
+ÚNICA dentro de web-next: ItemHero e ImageCarousel la importan; antes cada uno tenía
+su copia con criterio distinto y una URL http vs https pasaba un dedup pero no el otro).
+Tocás uno → tocá los tres. El gestor de imágenes opera igual
 a nivel cluster (`_update_item_images` propaga el set editado a todas las filas del cluster).
 
 **`kind` sólo tiene 2 valores**: `gallery` (foto del producto: portada, contraportada,
@@ -76,6 +79,14 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   - **`<a href="full.jpg">` envolviendo `<img>`**: cuando el `<a>` apunta a imagen del mismo
     dominio, se prefiere el href (full-res) sobre el src del `<img>` (thumb — patrón
     Magento/Fotorama/LightGallery; gotcha #68).
+  - **Placeholders de lazy-load como archivo real**: `src="/gfx/pol/loader.gif"` +
+    portada en `data-src` (Mangarden). `_LAZY_PLACEHOLDER_RE` saltea nombres exactos
+    de loader/blank/spinner para caer al data-src (gotcha #88).
+  - **URLs no-ASCII** (slugs thai/chinos): `download_image` hace `requote_uri` de URL
+    y referer; `UnicodeError` capturado para no matar el proceso (gotcha #89).
+  - **El union-merge de `images[]` es sticky en AMBAS direcciones** (gotcha #87): en
+    colisión (kind, url), el entry conservado rellena `local`/`description` vacíos con
+    los del duplicado — cubre el flush-pre-mirror de los wikis Y el re-scrape sin descarga.
 - La `url` remota de cada entry queda como provenance + fallback (espejo falla → url remota → 📚).
 - On por defecto en todo scrape; `--skip-image-download` lo desactiva. Primitivas en
   `image_store.py` (incluye los helpers `cover_url`/`cover_local`/`set_cover`); orquestado
@@ -236,10 +247,13 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
 - **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
 - Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-gallery`, `--include-no-image`,
   `--retry-failed`, `--query-extra "texto"`.
-- **Guard de concurrencia (2026-06-11)**: el frontend envía `expected_mtime` en cada save; el
-  servidor rechaza con 409 si el archivo cambió desde la carga. Ya no es crítico cerrar la
-  pestaña antes de correr el skill — si la pestaña intenta guardar encima, el 409 la fuerza a
-  recargar la cola actualizada sin pisar los cambios del servidor.
+- **Guard de concurrencia (2026-06-11, endurecido 2026-06-12)**: el frontend envía
+  `expected_mtime` (token STRING opaco — st_mtime_ns excede 2^53 y como Number daba 409
+  espurio en cada save, gotcha #79) en cada save y en el apply; el servidor rechaza con 409
+  si el archivo cambió desde la carga. Ya no es crítico cerrar la pestaña antes de correr el
+  skill — si la pestaña intenta guardar encima, el 409 la fuerza a recargar la cola
+  actualizada sin pisar los cambios del servidor. Detalle en
+  [dashboard.md](dashboard.md) § "guard de concurrencia optimista".
 - **apply_preview con archivo faltante**: si una candidata `approved` referencia un `new_image`
   que ya no existe en disco, `apply_preview` la omite (no toca `items.jsonl`), la conserva en el
   preview y reporta `skipped_missing_file` en el summary.

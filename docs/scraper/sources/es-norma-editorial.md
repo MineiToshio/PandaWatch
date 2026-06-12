@@ -1,5 +1,8 @@
 # Fuente: Norma Editorial
 
+> ⚠️ **PODA 2026-06-12 (poda de fuentes muertas)** — `ES - Norma (search)`: La búsqueda se deshabilitó (7 queries/run → 0 netos; ListadoManga cubre Norma). El catálogo ES - Norma Editorial Manga sigue activo.
+> Registro completo: [descartadas/README.md](descartadas/README.md).
+
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
 > Última revisión: 2026-06-08.

@@ -98,10 +98,20 @@ scripts/
     shueisha_books.py          JP — One Piece artbooks/databooks. Fetcher HARDCODEADO por seeds.
     viz_artbooks.py            US — ediciones especiales EN VIZ. Discovery por calendario.
     sevenseas.py               wiki US Seven Seas: listing API WP (books) + enrich por item (media?parent + ISBN/fecha del HTML). Filtro is_special_title (sin omnibus a secas ni Mature Hardcover).
+    kodansha_us.py             wiki US Kodansha: API /wp-json/kodansha/v1/search-series → series page (volume list) → volume page (JSON-LD: ISBN/fecha/portada). Filtro is_special_series.
+    storefront_json.py         5 storefronts API en UN módulo con perfiles: jd-intl (HK, WooCommerce), spp-tw (91APP), kimdong/ipm (VN, products.json), yaakz (TH, Laravel). Filtros de título por idioma.
   retrofit/                  — utilidades sobre data histórica. README.md + reglas
                                de backup/flush/nohup en "Conventions" abajo.
     rescore.py                 refresca score/signal_types/product_type (tras cambiar detectores). Salta approved y standardized (gotcha #61) salvo --include-*.
     clean_titles.py            re-limpia títulos.
+    recover_lost_jp_titles.py  recupera nombres oficiales de items JP cuyo
+                               title_original fue pisado (openBD por ISBN +
+                               re-fetch Playwright de mangavariant). One-shot.
+    restore_official_titles.py migración one-shot por item (2026-06-12, gotcha #92):
+                               title = clean_title(title_original) — nombre OFICIAL,
+                               sin traducir ni renombrar — y retira title_standardized.
+                               Marca title_restored_at; re-corridas son no-op.
+    normalize_release_dates.py normaliza release_date legacy a ISO (DD/MM/YYYY → YYYY-MM-DD; --all-formats para 年月日/datetime/textual). Gotcha #80.
     filter_non_manga.py        re-filtra (is_likely_manga / is_comic_not_manga / is_pure_novel).
     filter_collectible.py      2º gate: descarta tomos regulares.
     backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.
@@ -139,6 +149,8 @@ scripts/
                                vía rebuild_edition_key_prefix() (#71). Enforcer 3c4.
     fix_title_edition_words.py    colapsa palabra de edición duplicada en el título + quita
                                "Regular" sobrante en ediciones regulares (#72). Enforcer 3c5.
+  export_series_aliases.py     series_aliases.yml → data/series_aliases.json (vista de
+                               búsqueda por alias para ambas UIs; lo invoca build_web.py).
   validate_corpus.py           VALIDADOR ESTRUCTURAL (sin red, gate de salud del pipeline, paso [5]
                                de scrape_*.sh). Chequea en UNA pasada TODAS las invariantes duras:
                                SLUG, CLKEY (cluster_key auto-consistente), DUPCL, DUPSYN (#54),
@@ -152,6 +164,9 @@ scripts/
     unmapped_series.py         series_keys sin alias, fuzzy-matched. Lo lee enrich-series-aliases.
     data_quality.py            audit SOLO LECTURA → quality_report.json + check_urls(). Ver quality.html.
 .claude/skills/              — skills MANUALES (solo bajo pedido explícito, ver política arriba):
+  feature-spec/                Vía C: entrevista + exploración → spec en docs/specs/. No implementa.
+  ship-check/                  gate pre-commit: checks por área tocada + auditoría docs-sync.
+  product-pulse/               post-launch: PostHog + feedback.jsonl → backlog priorizado.
   standardize-catalog/         items sin standardized_at → asigna keys, mueve non-manga, dedup (#21).
   enrich-series-aliases/       cola unmapped → series_aliases.yml vía Anilist (#20).
   evaluate-sources/            evalúa fuentes candidatas antes de implementar.
@@ -170,13 +185,21 @@ web/  (dashboard HTML público + paneles)
   panel.html                 — Panel de Control (lee script_registry.py).
 admin/index.html             — redirect → web/panel.html.
 web-next/                    — app Next.js 16 + Tailwind v4 (reemplazo del dashboard).
-  app/                         App Router. Rutas: / /series/[k] /edition/[k] /item/[slug].
-  components/{core,modules,catalog,series,edition,item}/  — ver docs/web-next.
-  lib/{types,data,filters,styles}.ts  — types + carga/agrupación + filtrado + cn().
+  app/                         App Router. Rutas: / /series/[k] /edition/[k] /item/[slug]
+                               (detalle = SSG puro, dynamicParams=false) + robots/sitemap/manifest.
+  components/{modules,catalog,series,edition,item,seo}/  — ver docs/web-next
+                               (core/ eliminado 2026-06-12: código muerto sin consumidores).
+  lib/{types,data,filters,format,images,seo,jsonld,descriptions,styles}.ts
+                               — data: cache por mtime + índices Map + helpers de sitemap;
+                               format: fechas multi-formato; images: dedup único;
+                               seo: paths encoded + decodeRouteParam + og.
   public/images → ../../data/images/  — symlink al espejo local.
 tests/test_extraction.py     — pytest suite (~645 tests, <5s).
 docs/                        — README.md índice + scraper/ (ARCHITECTURE, SOURCES, PRD,
                                PIPELINE-WALKTHROUGH = runbook completo del ciclo de vida del dato)
-                               + web-html/PRD + admin/README + web-next/ (FRDs, blueprints, WOs).
+                               + web-html/PRD + admin/README + web-next/ (FRDs, blueprints, WOs)
+                               + process/AI-WORKFLOW.md (flujo de implementación con IA: vías
+                               A/B/C, verificación, eficiencia de tokens) + specs/ (SPEC-* de
+                               /feature-spec, uno por épica).
 ```
 
