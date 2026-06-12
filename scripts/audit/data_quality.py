@@ -69,7 +69,7 @@ _FIX_PROMPT_REF_ROTA = (
 )
 _FIX_PROMPT_NO_SOURCES = (
     "En el repo manga-watch, en data/items.jsonl hay items sin sources[]. "
-    "Reconstruí el array sources[] desde sus campos (url, source, price, country, "
+    "Reconstruí el array sources[] desde sus campos (url, source, country, "
     "stock_type, image_url) usando manga_watch.source_entry; si el item es basura "
     "o no es un producto, movelo fuera del catálogo. Backup antes. Reportá."
 )
@@ -235,7 +235,6 @@ def _dup_member(it: dict) -> dict:
         "publisher": it.get("publisher", ""),
         "country": it.get("country", ""),
         "language": it.get("language", ""),
-        "price": it.get("price", ""),
         "volume": it.get("volume", ""),
         "edition_display": it.get("edition_display", ""),
         "isbn": it.get("isbn", ""),
@@ -633,7 +632,7 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
         })
 
     coverage = {}
-    for f in ("isbn", "price", "author", "volume", "release_date",
+    for f in ("isbn", "author", "volume", "release_date",
               "description_es", "rarity"):
         c = sum(1 for it in items if it.get(f))
         coverage[f] = {"count": c, "pct": round(100 * c / n, 1) if n else 0}

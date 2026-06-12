@@ -8,12 +8,6 @@ const RARITY_LABELS: Record<string, string> = {
   ultra_rare: 'Ultra Rare',
 }
 
-function validPrice(price?: string): string | undefined {
-  if (!price) return undefined
-  const n = parseFloat(price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0')
-  return n > 0 ? price : undefined
-}
-
 type Row = {
   label: string
   value: string | number | null | undefined
@@ -22,7 +16,6 @@ type Row = {
 export function MetaTable({ item }: { item: Item }) {
   const rows: Row[] = [
     { label: 'ISBN',          value: item.isbn },
-    { label: 'Precio',        value: validPrice(item.price) },
     { label: 'Lanzamiento',   value: item.release_date && formatDate(item.release_date) },
     { label: 'Autor',         value: item.author },
     { label: 'Editorial',     value: item.publisher },

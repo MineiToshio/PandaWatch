@@ -207,7 +207,6 @@ COMMON = {
     "publisher":      "Shueisha",
     "country":        "Japón",
     "language":       "ja",
-    "price":          "",
     "product_type":   "manga",
     "extras":         [],
     "description_es": "",
@@ -235,7 +234,6 @@ def build_item(d: dict) -> dict:
     item["sources"] = [{
         "name":        item["source"],
         "url":         item["url"],
-        "price":       item.get("price", ""),
         "country":     item["country"],
         "language":    item["language"],
         "publisher":   item["publisher"],

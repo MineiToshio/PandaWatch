@@ -34,12 +34,6 @@ function currencyFor(country?: string): string {
   return (country && COUNTRY_CURRENCY[country]) || 'USD'
 }
 
-function priceValue(price?: string): string | null {
-  if (!price) return null
-  const n = price.replace(/[^0-9.,]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.')
-  return parseFloat(n || '0') > 0 ? n : null
-}
-
 function availabilityFor(c: Item): string {
   if (c.stock_type === 'out_of_stock') return 'https://schema.org/OutOfStock'
   if (c.rarity === 'super_rare' || c.rarity === 'ultra_rare')
@@ -57,7 +51,6 @@ function imageUrl(c: Pick<Item, 'images'>): string | undefined {
 export function itemJsonLd(cluster: Cluster, slug: string) {
   const c = cluster.canonical
   const url = absoluteUrl(`/item/${slug}`)
-  const price = priceValue(c.price)
 
   return {
     '@context': 'https://schema.org',
@@ -71,15 +64,6 @@ export function itemJsonLd(cluster: Cluster, slug: string) {
     ...(c.publisher && { publisher: { '@type': 'Organization', name: c.publisher } }),
     ...(c.release_date && { datePublished: c.release_date }),
     ...(c.language && { inLanguage: c.language }),
-    ...(price && {
-      offers: {
-        '@type': 'Offer',
-        price,
-        priceCurrency: currencyFor(c.country),
-        availability: availabilityFor(c),
-        ...(c.url && { url: c.url }),
-      },
-    }),
   }
 }
 

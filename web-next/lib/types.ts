@@ -10,7 +10,6 @@ export type Item = {
   // SÍ conserva los suyos per-fuente — es otro layer.)
   images?: ItemImage[]
   extras?: ItemExtra[]
-  price?: string
   release_date?: string
   author?: string
   isbn?: string
@@ -33,7 +32,7 @@ export type Item = {
   stock_type?: string
   rarity?: 'common' | 'rare' | 'super_rare' | 'ultra_rare'
   // Modelo 1-fila-por-producto: cada fila lleva todas las fuentes donde se
-  // encontró el producto (name/url/price/country/stock_type…). Lo escribe
+  // encontró el producto (name/url/country/stock_type…). Lo escribe
   // append_jsonl al ingestar; ver CLAUDE.md decisión #1.
   sources?: SourceEntry[]
 }
@@ -45,7 +44,6 @@ export type SourceEntry = {
   publisher?: string
   language?: string
   url: string
-  price?: string
   image_url?: string
   image_local?: string
   stock_type?: string
@@ -82,7 +80,6 @@ export type Cluster = {
   countries: string[]
   publishers: string[]
   languages: string[]
-  minPrice?: string
 }
 
 export type FacetOption = {

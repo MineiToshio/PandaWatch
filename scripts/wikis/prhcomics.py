@@ -245,12 +245,6 @@ def parse_item(li_tag: Tag) -> Candidate | None:
     author_a = li_tag.select_one('div[data-component="carousel-meta-author"] a')
     author = clean_text(author_a.get_text()) if author_a else ""
 
-    # Precio (USD preferido)
-    price_span = li_tag.select_one(
-        'div[data-component="carousel-meta-price"] span.price-usa'
-    )
-    price = price_span.get_text().strip() if price_span else ""
-
     # Fecha de lanzamiento
     date_div = li_tag.select_one('div[data-component="carousel-meta-on-sale-date"]')
     date_raw = date_div.get_text().strip() if date_div else ""
@@ -284,7 +278,6 @@ def parse_item(li_tag: Tag) -> Candidate | None:
     )
     cand.image_url = image_url
     cand.release_date = release_date
-    cand.price = price
     if author:
         cand.author = author
     if isbn:

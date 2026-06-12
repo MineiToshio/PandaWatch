@@ -35,11 +35,6 @@ function signalsToEs(signals: string[], limit = 3): string {
     .join(', ')
 }
 
-function hasPrice(price?: string): boolean {
-  if (!price) return false
-  return parseFloat(price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0') > 0
-}
-
 /**
  * Strip "read more" boilerplate that some sources leak into the description field
  * (e.g. "MÁS INFORMACIÓN …", "EN SAVOIR PLUS …"). Defensive only — the real fix is
@@ -75,7 +70,6 @@ export function itemDescription(cluster: Cluster): string {
   if (where) s += ` publicada por ${where}`
   s += '.'
   if (extras.length) s += ` Incluye ${extras.join('; ')}.`
-  if (hasPrice(c.price)) s += ` Precio: ${c.price}.`
   return s
 }
 

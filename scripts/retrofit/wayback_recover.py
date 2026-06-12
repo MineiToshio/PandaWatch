@@ -120,7 +120,7 @@ def recover_from_snapshot(
         return {}
 
     recovered: dict = {}
-    for field in ("name", "author", "isbn", "price",
+    for field in ("name", "author", "isbn",
                   "release_date", "publisher", "description"):
         if md.get(field) and not item.get(field):
             recovered[field] = md[field]

@@ -184,13 +184,8 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             )
           })()}
 
-          {/* Key purchase info */}
+          {/* Key info */}
           <div style={{ paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {canonical.price && parseFloat(canonical.price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0') > 0 && (
-              <p style={{ fontSize: 24, fontWeight: 700, color: 'var(--vermillion-500)', margin: 0 }}>
-                {canonical.price}
-              </p>
-            )}
             {canonical.release_date && (
               <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: 0 }}>
                 Lanzamiento: {formatDate(canonical.release_date)}

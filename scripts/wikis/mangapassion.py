@@ -196,14 +196,6 @@ def parse_volume(item: dict, type_label: str = "sonderausgabe") -> Candidate | N
     publishers = edition.get("publishers") or []
     publisher = clean_text(publishers[0].get("name") or "") if publishers else ""
 
-    # Precio en centavos → "XX.XX €"
-    price_cents = item.get("price")
-    price = (
-        f"{price_cents / 100:.2f} €"
-        if isinstance(price_cents, (int, float)) and price_cents > 0
-        else ""
-    )
-
     # Fecha de lanzamiento. La API a veces manda day=null con year/month
     # válidos (fecha aún no anunciada al día) — en ese caso conservamos
     # el año-mes en vez de descartar la fecha entera.
@@ -283,7 +275,6 @@ def parse_volume(item: dict, type_label: str = "sonderausgabe") -> Candidate | N
     )
     cand.image_url = image_url
     cand.release_date = release_date
-    cand.price = price
     if author:
         cand.author = author
     if isbn:

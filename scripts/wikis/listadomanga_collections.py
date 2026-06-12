@@ -705,7 +705,7 @@ def _parse_item_table(
 ) -> dict[str, str] | None:
     """Parsea un `<table class="ventana_id1" style="width: 184px;">` (un tomo).
 
-    Devuelve dict con title, image_url, description_extra, pages, price,
+    Devuelve dict con title, image_url, description_extra, pages,
     release_date, volume. None si la tabla está vacía o no tiene img.portada
     (es un placeholder de relleno de la grid).
     """
@@ -741,13 +741,11 @@ def _parse_item_table(
     title_extra_lines: list[str] = []
     description_lines: list[str] = []
     pages = ""
-    price = ""
     release_date = ""
 
     # Reglas heurísticas por línea:
     # - matchea VOLUME_PATTERN AND no contiene "páginas" → línea de título/edición
     # - contiene "páginas" → pages
-    # - contiene "€" → price
     # - matchea fecha (con o sin día) → release_date
     # - no matchea nada de lo anterior → description extra (ediciones especiales)
     PAGES_PAT = re.compile(r"p[áa]ginas", re.IGNORECASE | re.UNICODE)
@@ -760,9 +758,8 @@ def _parse_item_table(
             title_part_built = True
             continue
         if PRICE_PAT.search(line):
-            price = line
             title_part_built = True
-            continue
+            continue  # línea de precio — descartar
         if _parse_release_date(line):
             release_date = _parse_release_date(line)
             title_part_built = True
@@ -819,7 +816,6 @@ def _parse_item_table(
         "alt": alt,
         "image_url": image_url,
         "pages": pages,
-        "price": price,
         "release_date": release_date,
         "description_extra": " · ".join(description_lines),
         "volume": volume,
@@ -1531,11 +1527,6 @@ def parse_collection_page(
             # El volumen LMC viene del alt "nº13" en _parse_item_table; sin esto queda "".
             if parsed.get("volume"):
                 cand.volume = parsed["volume"]
-            # Price viene como "10,00 €" o "35,00 €" — normalizamos a "€ 10.00".
-            if parsed.get("price"):
-                price_match = re.search(r"(\d+[.,]\d{2})", parsed["price"])
-                if price_match:
-                    cand.price = f"€ {price_match.group(1).replace(',', '.')}"
             cand.tags = list(source.tags or []) + [
                 f"edition:{item_kind}",
                 f"coleccion:{coleccion_id}",

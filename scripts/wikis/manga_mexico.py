@@ -89,7 +89,6 @@ _RX_STATUS = re.compile(
     r"\(\s*(Publicándose|Publicandose|Finalizado|Anunciado|Pausado|Licenciado)\s*\)",
     re.IGNORECASE,
 )
-_RX_PRICE = re.compile(r"Precio\s+actual:\s*([\d.,]+)\s*MXN", re.IGNORECASE)
 _RX_PROX = re.compile(r"Pr[óo]x\.?\s+(?:en|para)\s+(\w+)", re.IGNORECASE)
 _RX_PERIODICITY = re.compile(
     r"\b(Mensual|Bimestral|Trimestral|Semestral|Anual|Sin\s+periodicidad)\b",
@@ -177,10 +176,6 @@ def parse_catalog_page(
             volumes_label = m_vol.group(1).strip()
         elif _RX_TOMO_UNICO.search(meta or text):
             volumes_label = "tomo único"
-        price = ""
-        m_price = _RX_PRICE.search(meta or text)
-        if m_price:
-            price = f"${m_price.group(1)} MXN"
         prox = ""
         m_prox = _RX_PROX.search(meta or text)
         if m_prox:
@@ -220,7 +215,6 @@ def parse_catalog_page(
             source, title=title, url=url, description=description,
         )
         cand.publisher = source.publisher
-        cand.price = price
         cand.tags = tags
         # Filtro non-manga (rescata art books / packs, descarta merch)
         keep, _ = is_likely_manga(cand.title, cand.description, tags=cand.tags)
@@ -311,4 +305,4 @@ if __name__ == "__main__":
     kept = [c for c in cands if c.score >= args.min_score]
     print(f"Kept (score>={args.min_score}): {len(kept)}")
     for c in kept[:15]:
-        print(f"  [{c.score}] {c.title[:60]}  price={c.price}")
+        print(f"  [{c.score}] {c.title[:60]}")

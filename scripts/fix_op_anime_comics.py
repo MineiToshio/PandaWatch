@@ -56,29 +56,29 @@ SPECS = {
     # ----- Group 1: Shueisha single anime comics (volumen -> único, ISBN ok) -----
     ("one-piece-shueisha-animecomics-movie-7", "1"): {
         "action": "single", "isbn": "9784088741727",
-        "release_date": "2006-11-02", "price": "¥ 1190",
+        "release_date": "2006-11-02",
         "title_original": "ONE PIECE THE MOVIE カラクリ城のメカ巨兵 アニメコミックス",
     },
     ("one-piece-shueisha-animecomics-movie-8", "1"): {
         "action": "single", "isbn": "9784088742366",
-        "release_date": "2008-03-04", "price": "¥ 1190",
+        "release_date": "2008-03-04",
         "title_original": "劇場版 ONE PIECE エピソードオブアラバスタ 砂漠の王女と海賊たち アニメコミックス",
     },
 
     # ----- Group 2: genuine 2-vol anime comics (fix ISBN/URL/cover/price) -----
     ("one-piece-shueisha-animecomics-movie-4", "1"): {
         "action": "fix", "isbn": "9784088735474",
-        "release_date": "2003-10-03", "price": "¥ 714",
+        "release_date": "2003-10-03",
         "title_original": "劇場版 ONE PIECE デッドエンドの冒険 アニメコミックス 上",
     },
     ("one-piece-shueisha-animecomics-movie-4", "2"): {
         "action": "fix", "isbn": "9784088735481",
-        "release_date": "2003-10-03", "price": "¥ 714",
+        "release_date": "2003-10-03",
         "title_original": "劇場版 ONE PIECE デッドエンドの冒険 アニメコミックス 下",
     },
     ("one-piece-shueisha-animecomics-movie-5", "1"): {
         "action": "fix", "isbn": "9784088737072",
-        "release_date": "2004-07-02", "price": "¥ 714",
+        "release_date": "2004-07-02",
         "title_original": "劇場版 ONE PIECE 呪われた聖剣 アニメコミックス 上",
     },
 
@@ -89,7 +89,7 @@ SPECS = {
         "edition_display": "Novela Clockwork Island (Shueisha, JUMP j BOOKS)",
         "title": "One Piece Clockwork Island (Novela)",
         "title_original": "ONE PIECE ねじまき島の冒険 (JUMP j BOOKS)",
-        "isbn": "9784087031027", "release_date": "2001-03-19", "price": "¥ 743",
+        "isbn": "9784087031027", "release_date": "2001-03-19",
         "description": "Novelización (JUMP j BOOKS) de la película One Piece: La aventura de la isla mecánica (Clockwork Island). El anime comic de esta película nunca se publicó.",
     },
     ("one-piece-shueisha-animecomics-movie-3", "1"): {
@@ -98,7 +98,7 @@ SPECS = {
         "edition_display": "Novela Chopper's Kingdom (Shueisha, JUMP j BOOKS)",
         "title": "One Piece Chopper's Kingdom (Novela)",
         "title_original": "ONE PIECE 珍獣島のチョッパー王国 (JUMP j BOOKS)",
-        "isbn": "9784087031102", "release_date": "2002-03-19", "price": "¥ 743",
+        "isbn": "9784087031102", "release_date": "2002-03-19",
         "description": "Novelización (JUMP j BOOKS) de la película One Piece: El reino de Chopper en la isla de los animales extraños. El anime comic de esta película nunca se publicó.",
     },
     ("one-piece-shueisha-animecomics-movie-6", "1"): {
@@ -107,7 +107,7 @@ SPECS = {
         "edition_display": "Novela Baron Omatsuri (Shueisha, JUMP j BOOKS)",
         "title": "One Piece Baron Omatsuri (Novela)",
         "title_original": "ONE PIECE THE MOVIE オマツリ男爵と秘密の島 (JUMP j BOOKS)",
-        "isbn": "9784087031539", "release_date": "2005-03-19", "price": "¥ 743",
+        "isbn": "9784087031539", "release_date": "2005-03-19",
         "description": "Novelización (JUMP j BOOKS) de la película One Piece: El barón Omatsuri y la isla secreta. El anime comic de esta película nunca se publicó.",
     },
 
@@ -121,7 +121,7 @@ NEW_MOVIE5_VOL2 = {
     "isbn": "9784088737089", "volume": "2",
     "title": "One Piece Cursed Holy Sword Anime Comics 2",
     "title_original": "劇場版 ONE PIECE 呪われた聖剣 アニメコミックス 下",
-    "release_date": "2004-07-02", "price": "¥ 714",
+    "release_date": "2004-07-02",
 }
 
 
@@ -143,7 +143,7 @@ def sync_sources(item):
         s = item["sources"][0]
         s["image_url"] = image_store.cover_url(item)
         s["image_local"] = image_store.cover_local(item)
-        for f in ("price", "release_date", "publisher", "country", "language"):
+        for f in ("release_date", "publisher", "country", "language"):
             if f in item:
                 s[f] = item[f]
         s["url"] = item["url"]
@@ -163,7 +163,7 @@ def apply_single(item, spec):
         item["isbn"] = spec["isbn"]
         item["url"] = shueisha_url(spec["isbn"])
         set_cover(item, spec["isbn"])
-    for f in ("release_date", "price", "title_original"):
+    for f in ("release_date", "title_original"):
         if f in spec:
             item[f] = spec[f]
     sync_sources(item)
@@ -172,7 +172,7 @@ def apply_single(item, spec):
 def apply_fix(item, spec):
     item["isbn"] = spec["isbn"]
     item["url"] = shueisha_url(spec["isbn"])
-    for f in ("release_date", "price", "title_original"):
+    for f in ("release_date", "title_original"):
         if f in spec:
             item[f] = spec[f]
     set_cover(item, spec["isbn"])
@@ -189,7 +189,6 @@ def apply_novel(item, spec):
     item["isbn"] = spec["isbn"]
     item["url"] = shueisha_url(spec["isbn"])
     item["release_date"] = spec["release_date"]
-    item["price"] = spec["price"]
     item["description"] = spec["description"]
     item["description_es"] = spec["description"]
     item["product_type"] = "novel"
@@ -249,7 +248,6 @@ def main():
         nv["title"] = sp["title"]
         nv["title_original"] = sp["title_original"]
         nv["release_date"] = sp["release_date"]
-        nv["price"] = sp["price"]
         nv["url"] = shueisha_url(sp["isbn"])
         ek = nv["edition_key"]
         nv["cluster_key"] = f"edition:{ek}|2"

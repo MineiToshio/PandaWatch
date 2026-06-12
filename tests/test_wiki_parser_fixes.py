@@ -108,32 +108,19 @@ def test_ms_parse_post_does_not_duplicate_when_label_is_canonical():
 
 
 # ---------------------------------------------------------------------------
-# FIX 2 — SocialAnime: prezzo "0" = desconocido
+# FIX 2 — SocialAnime: precios ELIMINADOS del pipeline (decisión 2026-06-11,
+# architecture.md). Los tests de _normalize_price se removieron junto con la
+# función; este guard fija que `prezzo` NUNCA llegue al Candidate.
 # ---------------------------------------------------------------------------
 
 
-def test_sa_normalize_price_zero_variants_become_empty():
-    from wikis.socialanime import _normalize_price
-
-    for raw in ("0", "0.00", "0,00", "€0", "0 €", "€ 0,00", "  0  ", "0.0"):
-        assert _normalize_price(raw) == "", f"{raw!r} debería normalizar a ''"
-    assert _normalize_price("") == ""
-
-
-def test_sa_normalize_price_keeps_real_prices_verbatim():
-    from wikis.socialanime import _normalize_price
-
-    for raw in ("4.9", "12,90", "€ 25,00", "0.99", "100"):
-        assert _normalize_price(raw) == raw
-
-
-def test_sa_parse_feed_item_zero_price_is_dropped():
+def test_sa_parse_feed_item_never_captures_price():
     from wikis import socialanime as sa
 
     item = {
         "nome": "Berserk Collection Serie Nera 1 Variant",
         "link": "https://www.amazon.it/dp/8828766397",
-        "prezzo": "0",
+        "prezzo": "12,90",
         "editore": "Panini",
         "PublicationDate": "10 Oct 2026",
     }

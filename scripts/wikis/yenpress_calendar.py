@@ -34,7 +34,6 @@ Notas de estructura:
 - La categoría usa ``white-label light-novels upper`` (no ``light``).
 - El título está en ``h3.heading.small-h1`` dentro de ``div.genre-col-txt``,
   directamente (sin ``<a>`` interior).
-- NO hay precio en la página (``<p class="label-price">`` no existe).
 - La ``<img>`` usa la URL con parámetros de resize del servidor; el parser
   genera la cover URL determinística con ``COVER_URL_TPL``.
 
@@ -209,14 +208,6 @@ def _parse_date_from_card(card: Tag, year: int, month: int) -> str:
         return f"{year:04d}-{month:02d}-01"
 
 
-def _parse_price(card: Tag) -> str:
-    """Extrae el precio de <p class="label-price">."""
-    price_el = card.select_one("p.label-price")
-    if not price_el:
-        return ""
-    return price_el.get_text().strip()
-
-
 def _category_of_card(card: Tag) -> str:
     """Extrae la categoría ('manga', 'comics', 'light-novels', 'audio') del span white-label.
 
@@ -301,14 +292,11 @@ def _parse_card(
     url = full_href
     image_url = COVER_URL_TPL.format(isbn13=isbn)
 
-    # Fecha (precio no está disponible en la página del calendario)
+    # Fecha
     release_date = _parse_date_from_card(anchor, year, month)
-    price = _parse_price(anchor)  # siempre "" — no hay precios en el calendario
 
     # Descripción con hints para detect_signals
     description = f"{title}."
-    if price:
-        description += f" Price: {price}."
 
     cand = candidate_from_source(
         source,
@@ -320,7 +308,6 @@ def _parse_card(
     cand.isbn = isbn
     cand.image_url = image_url
     cand.release_date = release_date
-    cand.price = price
 
     score_candidate(cand)
     return cand

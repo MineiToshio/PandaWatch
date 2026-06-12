@@ -87,7 +87,6 @@ UA = "manga-watch-personal/0.2"
 
 # ── Regex helpers ─────────────────────────────────────────────────
 _DATE_RE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
-_PRICE_RE = re.compile(r"([\d,]+)円")
 _FORMAT_RE = re.compile(r"(.+?)判[／/](\d+)ページ")
 _ISBN_RE = re.compile(r"ISBN[：:]?\s*([\d\-]+)")
 _NEXT_ISBN_RE = re.compile(r"isbn=([\d\-]+)")
@@ -206,7 +205,6 @@ def parse_book_page(html: str, isbn: str) -> dict | None:
     # Paper edition section — li.current-kamidigi section p
     paper_section = soup.select_one("li.current-kamidigi section")
     release_date = ""
-    price = ""
     format_str = ""
     pages = ""
     page_isbn = _isbn_clean(isbn)
@@ -219,11 +217,6 @@ def parse_book_page(html: str, isbn: str) -> dict | None:
             if m:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 release_date = f"{y:04d}-{mo:02d}-{d:02d}"
-                continue
-            # Price: 990円（税込）
-            m = _PRICE_RE.search(text)
-            if m:
-                price = f"¥{m.group(1)}"
                 continue
             # Format: Ｂ５判／170ページ
             m = _FORMAT_RE.search(text)
@@ -266,7 +259,6 @@ def parse_book_page(html: str, isbn: str) -> dict | None:
         "author": author,
         "isbn": page_isbn,
         "release_date": release_date,
-        "price": price,
         "format": format_str,
         "pages": pages,
         "cover_url": cover_url,
@@ -392,8 +384,6 @@ def _meta_to_candidate(meta: dict, signals: list[str], product_type: str,
     desc_parts = []
     if description:
         desc_parts.append(description)
-    if meta.get("price"):
-        desc_parts.append(f"Price: {meta['price']}.")
     if meta.get("format"):
         desc_parts.append(f"Format: {meta['format']}.")
 
@@ -413,7 +403,6 @@ def _meta_to_candidate(meta: dict, signals: list[str], product_type: str,
     )
     cand.image_url = meta.get("cover_url", "")
     cand.release_date = meta.get("release_date", "")
-    cand.price = meta.get("price", "")
     if meta.get("author"):
         cand.author = meta["author"]
     if meta.get("isbn"):

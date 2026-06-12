@@ -112,9 +112,6 @@ _COLLECTOR_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Prezzo italiano: "15,00 €" o "49,99€"
-_PRICE_RE = re.compile(r"(\d[\d\.,]+)\s*€", re.UNICODE)
-
 # ID edizione dall'URL path /edizione/12345/slug
 _EDITION_ID_RE = re.compile(r"/edizione/(\d+)/")
 
@@ -208,7 +205,7 @@ def parse_detail_page(html: str, detail_url: str) -> dict:
     """Estrae i campi dalla pagina di dettaglio di un'edizione.
 
     Restituisce un dict con ``title``, ``image_url``, ``description``,
-    ``release_date``, ``publisher``, ``price``.
+    ``release_date``, ``publisher``.
     """
     soup = BeautifulSoup(html, "html.parser")
     result: dict[str, str] = {}
@@ -255,12 +252,6 @@ def parse_detail_page(html: str, detail_url: str) -> dict:
             publisher = after.strip()
             if publisher:
                 result["publisher"] = publisher
-        elif "Prezzo" in text and "price" not in result:
-            parent_text = strong.parent.get_text(separator=" ")
-            m = _PRICE_RE.search(parent_text.split("Prezzo", 1)[-1])
-            if m:
-                result["price"] = f"{m.group(1)} €"
-
     # Galería multi-imagen del detail (cuando hay más de la cover principal).
     try:
         gallery = _extract_images_from_detail_soup(soup, detail_url)
@@ -457,7 +448,6 @@ def bootstrap(
         image_url = detail.get("image_url") or card.get("image_url") or ""
         description = detail.get("description") or ""
         release_date = detail.get("release_date") or ""
-        price = detail.get("price") or ""
 
         description = _inject_collector_hints(title, description)
 
@@ -474,7 +464,6 @@ def bootstrap(
         )
         cand.image_url = image_url
         cand.release_date = release_date
-        cand.price = price
         detail_images = detail.get("images") or []
         if len(detail_images) > 1:
             cand.images = detail_images

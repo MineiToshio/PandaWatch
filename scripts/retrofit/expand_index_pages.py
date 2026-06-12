@@ -57,7 +57,6 @@ import image_store  # type: ignore
 from shopify_variants import (  # type: ignore
     build_variant_url,
     extract_shopify_variants,
-    format_variant_price,
     is_volume_variants,
 )
 from wikis.whakoom import (  # type: ignore
@@ -189,8 +188,6 @@ def expand_shopify_variants_item(
         cand = candidate_from_source(
             source, full_title, url, parent_item.get("description", ""),
         )
-        if v.get("price") not in (None, ""):
-            cand.price = format_variant_price(v["price"])
         if v.get("sku"):
             cand.isbn = ""  # SKU != ISBN; lo dejamos vacío.
         # Image del padre: lo más probable es que sea la portada

@@ -45,7 +45,7 @@ export default async function ItemPage({ params, searchParams }: Props) {
   const sources = (canonical.sources && canonical.sources.length)
     ? canonical.sources
     : items.map(it => ({
-        name: it.source, url: it.url, price: it.price,
+        name: it.source, url: it.url,
         release_date: it.release_date, stock_type: it.stock_type,
         country: it.country, publisher: it.publisher,
       }))

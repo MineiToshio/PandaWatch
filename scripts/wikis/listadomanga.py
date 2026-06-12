@@ -251,9 +251,9 @@ def fetch_calendar_month(
 def fetch_detail_metadata(
     url: str, session: requests.Session, timeout: tuple[int, int] = (10, 30)
 ) -> dict[str, str]:
-    """Fetch a coleccion.php?id=N y extrae portada + precio + descripción enriquecida.
+    """Fetch a coleccion.php?id=N y extrae portada + descripción enriquecida.
 
-    Devuelve dict con image_url, price, description. Vacíos si no se encuentra.
+    Devuelve dict con image_url, description. Vacíos si no se encuentra.
 
     NO devolver image_url cuando la página es una colección con múltiples
     volúmenes — el calendario sabe el título/volumen pero no puede mapear
@@ -263,7 +263,7 @@ def fetch_detail_metadata(
     era vol 1 aunque el item del calendario fuera vol 34 Especial).
     """
     result: dict[str, Any] = {
-        "image_url": "", "price": "", "description_extra": "", "images": [],
+        "image_url": "", "description_extra": "", "images": [],
     }
     if not url:
         return result
@@ -298,14 +298,8 @@ def fetch_detail_metadata(
         if len(gallery) > 1:
             result["images"] = gallery
 
-    # 2) Precio: regex en el body buscando "X,YY €"
+    # 2) Descripción enriquecida
     body_text = soup.get_text(" ", strip=True)
-    # ListadoManga muestra precios típicos del mercado español en €.
-    price_match = re.search(r"(\d{1,3}[,.]\d{2})\s*€", body_text)
-    if price_match:
-        result["price"] = f"€ {price_match.group(1)}"
-
-    # 3) Descripción enriquecida: capturamos secciones útiles del HTML.
     # ListadoManga usa <b>Etiqueta:</b> Valor en algunas filas. Buscamos
     # info de Formato y Editorial japonesa para contexto extra.
     enriched_parts: list[str] = []
@@ -375,27 +369,23 @@ def bootstrap(
 
     # Fase de enrichment por detail-fetch (opt-in).
     if fetch_details and all_candidates:
-        print(f"\n[DETAIL-FETCH] enriqueciendo {len(all_candidates)} items con portada/precio/extras")
+        print(f"\n[DETAIL-FETCH] enriqueciendo {len(all_candidates)} items con portada/extras")
         enriched_img = 0
-        enriched_price = 0
         for i, c in enumerate(all_candidates, start=1):
             meta = fetch_detail_metadata(c.url, session, timeout=timeout)
             if meta["image_url"] and not c.image_url:
                 c.image_url = meta["image_url"]
                 enriched_img += 1
-            if meta["price"] and not c.price:
-                c.price = meta["price"]
-                enriched_price += 1
             if meta["description_extra"]:
                 c.description = f"{c.description} · {meta['description_extra']}"[:2500]
             meta_images = meta.get("images") or []
             if len(meta_images) > 1 and not c.images:
                 c.images = meta_images
             if i % 50 == 0:
-                print(f"  [{i}/{len(all_candidates)}] +imgs={enriched_img} +prices={enriched_price}")
+                print(f"  [{i}/{len(all_candidates)}] +imgs={enriched_img}")
             if sleep_seconds > 0 and i < len(all_candidates):
                 time.sleep(min(sleep_seconds, 0.3))
-        print(f"[DETAIL-FETCH] finalizado: {enriched_img} imágenes · {enriched_price} precios enriquecidos")
+        print(f"[DETAIL-FETCH] finalizado: {enriched_img} imágenes enriquecidas")
 
         # Re-score (porque description_extra puede aportar señales nuevas)
         for c in all_candidates:

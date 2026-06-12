@@ -177,7 +177,7 @@ def _parse_date(raw: str) -> str:
 def parse_product_page(html: str) -> dict | None:
     """Parsea un detail page de producto VIZ.
 
-    Devuelve dict con title, isbn, price, format, cover_url, description.
+    Devuelve dict con title, isbn, format, cover_url, description.
     (La fecha NO está en el detail page de VIZ — se setea desde el calendario.)
     """
     soup = BeautifulSoup(html, "html.parser")
@@ -224,14 +224,6 @@ def parse_product_page(html: str) -> dict | None:
         if mm:
             isbn = _isbn10_to_13(mm.group(1))
 
-    # Precio — primer monto en dólares.
-    price = ""
-    for text in soup.stripped_strings:
-        m = re.search(r"\$(\d+\.\d{2})", text)
-        if m:
-            price = f"${m.group(1)}"
-            break
-
     # Formato — Hardcover / Paperback / Box set.
     fmt = ""
     for text in soup.stripped_strings:
@@ -254,7 +246,6 @@ def parse_product_page(html: str) -> dict | None:
     return {
         "title": title,
         "isbn": isbn,
-        "price": price,
         "format": fmt,
         "cover_url": cover_url,
         "description": description,
@@ -394,7 +385,6 @@ def _meta_to_candidate(
     cand.isbn = meta.get("isbn", "")
     cand.image_url = meta.get("cover_url", "")
     cand.release_date = release_date
-    cand.price = meta.get("price", "")
 
     score_candidate(cand)
     return cand

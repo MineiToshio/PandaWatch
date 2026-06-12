@@ -121,7 +121,7 @@ def main() -> int:
             new = copy.deepcopy(it)
             new["url"] = s_url
             new["sources"] = [s]
-            for k in ("image_url", "image_local", "price", "release_date", "score"):
+            for k in ("image_url", "image_local", "release_date", "score"):
                 if k in s:
                     new[k] = s[k]
             new["volume"] = vol if vol.isdigit() else new.get("volume", "")

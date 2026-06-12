@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """backfill_metadata.py — rellena metadata faltante de items.jsonl via detail-fetch.
 
-Para cada item con campos vacíos (image_url, author, isbn, release_date, price),
+Para cada item con campos vacíos (image_url, author, isbn, release_date),
 si tiene una URL accesible, hace HTTP GET al detalle y rellena los campos
 faltantes. NO sobreescribe valores ya presentes.
 
@@ -14,7 +14,7 @@ Uso:
     python scripts/retrofit/backfill_metadata.py --sleep 0.5      # 500ms entre requests
     python scripts/retrofit/backfill_metadata.py --skip-domain darkhorse.com  # excluir dominios
 
-Campos targeteables: image_url, author, isbn, release_date, price.
+Campos targeteables: image_url, author, isbn, release_date.
 Por defecto rellena todos los que estén vacíos.
 """
 
@@ -41,7 +41,7 @@ DEFAULT_USER_AGENT = (
 )
 
 # Campos que pueden ser rellenados desde el detail-fetch.
-BACKFILL_FIELDS = ("image_url", "author", "isbn", "release_date", "price", "images")
+BACKFILL_FIELDS = ("image_url", "author", "isbn", "release_date", "images")
 
 
 def main() -> int:

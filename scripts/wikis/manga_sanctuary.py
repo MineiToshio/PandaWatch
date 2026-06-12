@@ -177,12 +177,6 @@ def _parse_post(post: Any, current_date: str, source: Source) -> Candidate | Non
         if len(ean) == 13:
             isbn = ean
 
-    # Precio: regex en el post entero.
-    price = ""
-    price_match = re.search(r"(\d{1,3}[,.]\d{2})\s*€", post.get_text(" ", strip=True))
-    if price_match:
-        price = f"€ {price_match.group(1)}"
-
     # Imagen.
     img = post.select_one(".post-thumbnail img")
     image_url = ""
@@ -216,7 +210,6 @@ def _parse_post(post: Any, current_date: str, source: Source) -> Candidate | Non
     )
     cand.publisher = publisher
     cand.release_date = current_date
-    cand.price = price
     cand.image_url = image_url
     cand.isbn = isbn
     if type_label:
@@ -454,4 +447,4 @@ if __name__ == "__main__":
     print(f"\nTotal con señales: {len(items)}")
     for it in items[:5]:
         print(f"  [{it.score:3d}] {it.publisher[:20]:20s} · {it.title[:70]}")
-        print(f"        ean={it.isbn or '—':14s} price={it.price or '—':10s}  ({it.release_date})")
+        print(f"        ean={it.isbn or '—':14s}  ({it.release_date})")

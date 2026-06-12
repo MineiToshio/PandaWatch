@@ -545,7 +545,7 @@ def candidate_from_search_result(
     description = (md.get("description") or "").strip() or snippet_text
     cand = candidate_from_source(source, title, url, description)
     # Rellenar metadata si la detail-fetch la trae
-    for field in ("image_url", "price", "release_date", "author", "isbn", "publisher"):
+    for field in ("image_url", "release_date", "author", "isbn", "publisher"):
         val = md.get(field)
         if val:
             setattr(cand, field, val)

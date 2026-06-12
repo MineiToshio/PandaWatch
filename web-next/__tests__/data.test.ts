@@ -38,7 +38,6 @@ function makeCluster(overrides: Partial<Cluster> = {}): Cluster {
     countries: [item.country!],
     publishers: [item.publisher!],
     languages: [item.language!],
-    minPrice: undefined,
     ...overrides,
   }
 }

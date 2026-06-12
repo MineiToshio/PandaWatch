@@ -142,7 +142,6 @@ def build_remix_item(vol, isbn13, release_date, subtitle_jp, subtitle_en):
         "publisher": "Shueisha",
         "country": "Japón",
         "language": "ja",
-        "price": "¥ 550",
         "release_date": release_date,
         "signal_types": ["special_edition"],
         "score": 45,
@@ -164,7 +163,6 @@ def build_remix_item(vol, isbn13, release_date, subtitle_jp, subtitle_en):
         "sources": [{
             "name": "Research import (One Piece Jump Remix)",
             "url": url,
-            "price": "¥ 550",
             "country": "Japón",
             "language": "ja",
             "publisher": "Shueisha",
@@ -214,7 +212,6 @@ def build_char_remix_item(vol, isbn13, release_date, char_jp, char_en):
         "publisher": "Shueisha",
         "country": "Japón",
         "language": "ja",
-        "price": "¥ 880",
         "release_date": release_date,
         "signal_types": ["special_edition", "bonus"],
         "score": 65,
@@ -236,7 +233,6 @@ def build_char_remix_item(vol, isbn13, release_date, char_jp, char_en):
         "sources": [{
             "name": "Research import (One Piece Jump Remix)",
             "url": url,
-            "price": "¥ 880",
             "country": "Japón",
             "language": "ja",
             "publisher": "Shueisha",

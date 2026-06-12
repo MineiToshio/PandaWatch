@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill de campos faltantes en items AnimeClick (release_date, price, description).
+"""Backfill de campos faltantes en items AnimeClick (release_date, description).
 
 Problema: los 1406 items de AnimeClick se ingirieron sin fetch_details=True,
 así que tienen release_date/price/description vacíos. El bootstrap completo
@@ -74,7 +74,7 @@ def _fetch_and_merge(
     changed = False
 
     # Aplicar campos del detail solo si el item los tiene vacíos
-    for field in ("release_date", "price", "publisher"):
+    for field in ("release_date", "publisher"):
         if detail.get(field) and not item.get(field):
             updated[field] = detail[field]
             changed = True
@@ -117,7 +117,7 @@ def main() -> None:
             if not (source.startswith("IT - AnimeClick") or "animeclick" in item.get("url", "").lower()):
                 continue
             # Backfill si falta alguno de los campos clave
-            if item.get("release_date") and item.get("price") and item.get("description"):
+            if item.get("release_date") and item.get("description"):
                 continue
             targets.append(item)
 
@@ -170,7 +170,6 @@ def main() -> None:
         for item in updated_items[:5]:
             print(f"  {item.get('url','')[:70]}")
             print(f"    release_date={item.get('release_date','')}")
-            print(f"    price={item.get('price','')}")
             print(f"    description={item.get('description','')[:80]}")
         return
 
@@ -189,7 +188,6 @@ def main() -> None:
     ]
     print(f"\nEstado final AnimeClick ({len(ac_items)} items):")
     print(f"  release_date: {sum(1 for i in ac_items if i.get('release_date'))}/{len(ac_items)}")
-    print(f"  price:        {sum(1 for i in ac_items if i.get('price'))}/{len(ac_items)}")
     print(f"  description:  {sum(1 for i in ac_items if i.get('description'))}/{len(ac_items)}")
 
 

@@ -84,19 +84,6 @@ export function ItemCard({ cluster, from }: ItemCardProps) {
           {canonical.title || 'Sin título'}
         </p>
 
-        {canonical.price && parseFloat(canonical.price.replace(/[^0-9.,]/g, '').replace(',', '.') || '0') > 0 && (
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: 'var(--color-secondary)',
-              marginBottom: 3,
-            }}
-          >
-            {canonical.price}
-          </p>
-        )}
-
         {canonical.release_date && (
           <p
             style={{

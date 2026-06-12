@@ -8,7 +8,7 @@ function hostname(url: string): string {
 }
 
 // Recibe el array `sources[]` guardado en la fila del producto (modelo
-// 1-fila-por-producto). Cada entrada es una fuente: name/url/price/stock/fecha.
+// 1-fila-por-producto). Cada entrada es una fuente: name/url/stock/fecha.
 export function SourcesList({ sources }: { sources: SourceEntry[] }) {
   return (
     <section>
@@ -23,7 +23,7 @@ export function SourcesList({ sources }: { sources: SourceEntry[] }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-              {['Fuente', 'Precio', 'Fecha', 'Stock'].map(h => (
+              {['Fuente', 'Fecha', 'Stock'].map(h => (
                 <th key={h} style={{
                   textAlign: 'left', paddingBottom: 8, paddingRight: 16,
                   fontSize: 11, fontWeight: 500, color: 'var(--color-text-tertiary)',
@@ -54,9 +54,6 @@ export function SourcesList({ sources }: { sources: SourceEntry[] }) {
                     {s.name || hostname(s.url)}
                     <ExternalLink size={11} style={{ flexShrink: 0 }} />
                   </a>
-                </td>
-                <td style={{ padding: '8px 16px 8px 0', color: 'var(--color-text-secondary)' }}>
-                  {s.price || '—'}
                 </td>
                 <td style={{ padding: '8px 16px 8px 0', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
                   {s.release_date ? formatDate(s.release_date) : '—'}

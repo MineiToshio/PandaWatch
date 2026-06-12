@@ -168,9 +168,6 @@ _EDITORA_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpela\s+MPEG\b", re.IGNORECASE), "MPEG"),
 )
 
-# Precio en R$ — devuelve la primera ocurrencia (price normal, no premium).
-_PRICE_RE = re.compile(r"R\$\s*([\d.,]+)")
-
 # Volumen del título: "#NN" o "Vol N" o "Volume N" o "Tomo N".
 _VOL_RE = re.compile(
     r"(?:#|Vol(?:ume)?\.?\s*|Tomo\s*|n[°º]?\s*)(\d{1,4})\b",
@@ -665,12 +662,6 @@ def _build_candidate(
             publisher = display
             break
 
-    # Price.
-    price = ""
-    pm = _PRICE_RE.search(prose)
-    if pm:
-        price = pm.group(0).replace(" ", "")
-
     # Release date YYYY-MM. Probamos primero el título (post 2 lleva
     # `(MM/YYYY)` ahí); si no aparece, vamos al prose.
     release_date = _extract_date(title) or _extract_date(prose)
@@ -731,7 +722,6 @@ def _build_candidate(
         if len(images_list) > 1:
             cand.images = images_list
     cand.release_date = release_date
-    cand.price = price
     cand.tags = list(source.tags) + [f"bbm-vol:{volume}"] if volume else list(source.tags)
 
     score_candidate(cand)

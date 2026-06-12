@@ -67,16 +67,6 @@ function kindRank(c: Cluster): number {
   return 10
 }
 
-function resolveMinPrice(items: Item[]): string | undefined {
-  const prices = items
-    .map(i => i.price)
-    .filter((p): p is string => Boolean(p))
-    .map(p => parseFloat(p.replace(/[^0-9.,]/g, '').replace(',', '.')))
-    .filter(n => !isNaN(n))
-  if (!prices.length) return undefined
-  return String(Math.min(...prices))
-}
-
 // Portada canónica de un item: `images[0]` es la ÚNICA fuente de verdad (los
 // campos top-level image_url/image_local fueron eliminados, 2026-06-09). Ver
 // CLAUDE.md / docs/reference/images.md.
@@ -88,10 +78,9 @@ export function coverImage(
 }
 
 // Completitud de un item: prioriza el que tiene más metadata para elegir el
-// representante canónico de un cluster (reemplaza la antigua selección por
-// score). Mismo criterio que el dedup del pipeline Python (ISBN > imagen > precio).
+// representante canónico de un cluster (reemplaza la antigua selección por score).
 function completeness(item: Item): number {
-  return (item.isbn ? 100 : 0) + (item.images?.length ? 10 : 0) + (item.price ? 5 : 0)
+  return (item.isbn ? 100 : 0) + (item.images?.length ? 10 : 0)
 }
 
 function buildCluster(items: Item[]): Cluster {
@@ -126,7 +115,8 @@ function buildCluster(items: Item[]): Cluster {
     countries: collect('country'),
     publishers: collect('publisher'),
     languages: collect('language'),
-    minPrice: resolveMinPrice(items),
+    // minPrice eliminado: precios fuera del pipeline (decisión 2026-06-11,
+    // architecture.md — catálogo de descubrimiento, no tracker de precios).
   }
 }
 
