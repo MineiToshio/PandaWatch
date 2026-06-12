@@ -7537,9 +7537,10 @@ maken-retsuken:
 makikomare-shoukan-ol-guild-kaitai:
   display: 巻き込まれて召喚された限界OL、ギルド所属の【魔物解体嬢】として奮闘中 THE COMIC
   aliases: []
-maku-ga-oriru-to-bokura-wa-番:
+maku-ga-oriru-to-bokura-wa:
   display: 幕が下りたら僕らは番
-  aliases: []
+  aliases:
+  - maku-ga-oriru-to-bokura-wa-番
 maldestro-dalla-nascita:
   display: Maldestro dalla Nascita
   aliases: []
@@ -11843,9 +11844,10 @@ tadokoro-san:
   display: Tadokoro-san
   aliases:
   - 田所さん
-taihо-to-stamp:
+taiho-to-stamp:
   display: Cannons and Stamps
-  aliases: []
+  aliases:
+  - taihо-to-stamp
 taisho-gakusei-aisaika:
   display: Taisho Gakusei Aisaika
   aliases: []
