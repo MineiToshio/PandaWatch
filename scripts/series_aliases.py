@@ -18,6 +18,9 @@ devuelve `(canonical_key, canonical_display)` aplicando estas reglas:
 1. Si el `current_series_key` ya es una key canónica del YAML → devolver tal cual.
 2. Si algún alias del YAML aparece (substring case-insensitive, sin diacríticos) en
    `title` o en `current_display` → devolver el canónico.
+2b. Fallback agresivo (gotcha #70): lookup bajo `aggressive_series_norm` (colapsa
+   "the-" inicial, apóstrofes y vocales largas del romaji) — solo matches
+   inequívocos.
 3. Si nada matchea → devolver `(current_series_key, current_display)` sin cambio.
 
 Diseño:
@@ -61,6 +64,30 @@ def _normalize(s: str) -> str:
     return s.strip()
 
 
+def aggressive_series_norm(key: str) -> str:
+    """Normalización AGRESIVA para detectar series_keys partidas (gotcha #70).
+
+    Colapsa las variantes MECÁNICAS que parten una misma obra en dos slugs:
+    artículo "the" inicial ("the-apothecary-diaries" vs "apothecary-diaries"),
+    apóstrofes slugificados ("hell-s-paradise" vs "hells-paradise"),
+    separadores, y vocales largas del romaji (ou/oo→o, uu→u: "kumichou" vs
+    "kumicho", "shoujo" vs "shojo"). NO es fuzzy matching: dos series
+    distintas solo colisionan si son idénticas bajo estas transformaciones
+    ("demon-slave" ≠ "demon-slayer", "naruto-gaiden" ≠ "naruto").
+    """
+    if not key:
+        return ""
+    s = unicodedata.normalize("NFKD", str(key).lower())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    tokens = [t for t in re.split(r"[^0-9a-z぀-ヿ一-鿿]+", s) if t]
+    # Solo el artículo INICIAL "the" como palabra completa (no "theo…").
+    if len(tokens) > 1 and tokens[0] == "the":
+        tokens = tokens[1:]
+    s = "".join(tokens)
+    s = s.replace("ou", "o").replace("uu", "u").replace("oo", "o")
+    return s
+
+
 @lru_cache(maxsize=1)
 def _load_aliases() -> dict[str, dict[str, Any]]:
     """Carga el YAML una vez. Devuelve {canonical_key: {display, aliases}}."""
@@ -97,6 +124,35 @@ def _build_lookup() -> dict[str, tuple[str, str]]:
             slug = re.sub(r"\s+", "-", n)
             if slug and slug != n and slug not in lookup:
                 lookup[slug] = (canonical_key, display)
+    return lookup
+
+
+@lru_cache(maxsize=1)
+def _build_aggressive_lookup() -> dict[str, tuple[str, str]]:
+    """Índice `{aggressive_norm: (canonical_key, display)}` (gotcha #70).
+
+    Igual que `_build_lookup` pero indexado por `aggressive_series_norm`. Si
+    DOS canónicas DISTINTAS colisionan bajo la normalización agresiva, esa
+    entrada se descarta del índice (mejor no resolver que resolver mal —
+    precisión > recall).
+    """
+    aliases_db = _load_aliases()
+    lookup: dict[str, tuple[str, str]] = {}
+    ambiguous: set[str] = set()
+    for canonical_key, info in aliases_db.items():
+        display = (info or {}).get("display", "") or canonical_key
+        variants = [display, canonical_key, *(info or {}).get("aliases", [])]
+        for variant in variants:
+            n = aggressive_series_norm(str(variant))
+            if not n:
+                continue
+            prev = lookup.get(n)
+            if prev is None:
+                lookup[n] = (canonical_key, display)
+            elif prev[0] != canonical_key:
+                ambiguous.add(n)
+    for n in ambiguous:
+        lookup.pop(n, None)
     return lookup
 
 
@@ -140,6 +196,18 @@ def canonical_series_key(
         slug = re.sub(r"\s+", "-", n)
         if slug in lookup:
             return lookup[slug]
+
+    # 2b) Fallback AGRESIVO (gotcha #70): colapsa el artículo "the", los
+    # apóstrofes slugificados y las vocales largas del romaji antes del
+    # lookup. Solo resuelve matches inequívocos (el índice descarta las
+    # colisiones entre canónicas distintas).
+    agg_lookup = _build_aggressive_lookup()
+    for candidate_val in (current_series_key, current_display):
+        if not candidate_val:
+            continue
+        n = aggressive_series_norm(candidate_val)
+        if n and n in agg_lookup:
+            return agg_lookup[n]
 
     # 3) Prefix-matching: probar prefijos progresivamente más cortos del
     # series_key contra el lookup. Cubre el caso común donde el heurístico

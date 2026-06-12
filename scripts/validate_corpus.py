@@ -22,6 +22,17 @@ Invariantes (cada una con su id corto):
   COLED  una /coleccion = UNA edición: todos sus items comparten edition_key
          (gotcha #48). [warning: cross-source puede variar — se inspecciona]
   PAIS   edition_key termina en sufijo de país conocido (gotcha #46). [warning]
+  EDSLUG el slug de TIPO del edition_key no contradice el término del título
+         (tabla edition_slug_from_text, gotcha #69; special/limited/collector/
+         deluxe). [warning — lo corrige canonicalize_edition_slugs.py]
+  SERIESDUP series_keys distintos que colapsan bajo aggressive_series_norm
+         (gotcha #70: "the-", apóstrofes, vocales largas romaji). [warning —
+         lo corrige merge_duplicate_series.py / curación del YAML]
+  PUBMIX >1 string de publisher dentro de una misma edition_key. [warning —
+         lo corrige normalize_edition_publishers.py]
+  EKPREFIX el edition_key empieza con el series_key del item (formato
+         `{series}-{pub}-{slug}-{pais}`). [warning — lo corrige
+         fix_edition_key_prefix.py; excluye approved]
 
 Exit code != 0 si hay violaciones DURAS (warnings no fallan).
 
@@ -37,7 +48,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import manga_watch as mw  # noqa: E402
+from series_aliases import aggressive_series_norm  # noqa: E402
 from wikis.listadomanga_collections import normalize_display_title  # noqa: E402
+
+# Slugs de TIPO confundibles (gotcha #69) — en sync con
+# scripts/retrofit/canonicalize_edition_slugs.py.
+_CONFUSABLE_SLUGS = {"special", "limited", "collector", "deluxe"}
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _COLE = re.compile(r"coleccion\.php\?id=(\d+)")
@@ -128,6 +144,8 @@ def main():
     syn_owner = defaultdict(list)
     cole_editions = defaultdict(set)
     ev_owner = defaultdict(list)  # (edition_key, volume) -> items (para DUPVOL)
+    sk_by_norm = defaultdict(set)  # aggressive_norm -> series_keys (SERIESDUP)
+    ek_pubs = defaultdict(set)     # edition_key -> publisher strings (PUBMIX)
 
     for it in items:
         ek = it.get("edition_key", "") or ""
@@ -150,6 +168,14 @@ def main():
         vol = (it.get("volume") or "").strip()
         if ek and vol:
             ev_owner[(ek, vol)].append(it)
+        sk = (it.get("series_key") or "").strip()
+        if sk:
+            sk_by_norm[aggressive_series_norm(sk)].add(sk)
+        # PUBMIX no audita filas approved (golden records — verdad del owner;
+        # normalize_edition_publishers tampoco las toca).
+        pub = (it.get("publisher") or "").strip()
+        if ek and pub and not it.get("approved_at"):
+            ek_pubs[ek].add(pub)
 
         # DUPSYN tokens + ONECOLE
         toks = _syn_tokens(it)
@@ -196,6 +222,26 @@ def main():
             if last not in _COUNTRIES:
                 flag("PAIS", f"{ek!r} | {title!r}")
 
+        # EKPREFIX: el SEGMENTO de serie de la key == series_key del item
+        # (parseo exacto vía rebuild_edition_key_prefix — el startswith deja
+        # pasar basura de subtítulo pegada al series_key).
+        sk_it = (it.get("series_key") or "").strip()
+        if ek and sk_it and not it.get("approved_at"):
+            if (mw.rebuild_edition_key_prefix(ek, sk_it)
+                    or not ek.startswith(sk_it + "-")):
+                flag("EKPREFIX", f"{sk_it!r} vs {ek!r} | {title[:50]!r}")
+
+        # EDSLUG: el término del título manda sobre el slug de TIPO (gotcha #69).
+        # No aplica a lmc (la /coleccion gobierna su key) ni a approved (curados).
+        if ek and not it.get("approved_at") and not _is_ldm(it):
+            slug = _slug_of_ek(ek)
+            if slug in _CONFUSABLE_SLUGS:
+                evidence = mw.edition_slug_from_text(
+                    it.get("title_original") or title or "")
+                if evidence in _CONFUSABLE_SLUGS and evidence != slug:
+                    flag("EDSLUG", f"{ek!r} pero el título dice {evidence!r} | "
+                                   f"{(it.get('title_original') or title)[:60]!r}")
+
     # DUPCL
     for ck, group in cl_owner.items():
         if ck.startswith("url:"):
@@ -229,9 +275,21 @@ def main():
         if len(non_box) > 1:
             flag("COLED", f"cole {cole}: {sorted(eks)}")
 
+    # SERIESDUP — la misma obra partida en series_keys mecánicamente equivalentes
+    # (gotcha #70). Una warning por grupo.
+    for norm, sks in sk_by_norm.items():
+        if len(sks) > 1:
+            flag("SERIESDUP", f"{sorted(sks)}")
+
+    # PUBMIX — strings de publisher mezclados dentro de una edición.
+    for ek, pubs in ek_pubs.items():
+        if len(pubs) > 1:
+            flag("PUBMIX", f"{ek}: {sorted(pubs)[:4]}")
+
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
-    order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL", "COLED", "PAIS"]
+    order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
+             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX"]
     hard_fail = 0
     for k in order:
         n = counts[k]

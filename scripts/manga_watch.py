@@ -5784,6 +5784,11 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     # contaminaba el edition_key con el slug de la tienda (`...-rakuten-...`) y
     # rompía el merge por ISBN con la ficha de la editorial oficial. Ver gotcha #44.
     "kurokawa": "kurokawa",
+    "soleil": "soleil",
+    "ankama": "ankama",
+    "akata": "akata",
+    "third éditions": "thirdeditions",
+    "third editions": "thirdeditions",
     "akita": "akita",
     "hakusensha": "hakusensha",
     "gentosha": "gentosha",
@@ -5818,6 +5823,7 @@ _PUBLISHER_SLUG_MAP: dict[str, str] = {
     "dokusho": "dokusho",
     "tokyo manga": "tokyomangasha",
     "tokyomanga": "tokyomangasha",
+    "東京漫画社": "tokyomangasha",
     # Publishers FR adicionales
     "noeve": "noeve",
     "noeve grafx": "noeve",
@@ -6001,6 +6007,58 @@ _EDITION_SLUG_TITLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bcoffret\b", re.I), "coffret"),
 )
 
+# Términos de TIPO de edición → slug canónico (tabla determinística, gotcha #69).
+# El LLM del skill standardize elegía special/limited/collector/deluxe de forma
+# inconsistente entre corridas (限定版 a veces "limited", a veces "special") y
+# partía la MISMA edición en dos edition_keys. Esta tabla es la AUTORIDAD sobre
+# el tipo: la consume el heurístico del scraper, se enuncia en los prompts del
+# skill y `canonicalize_edition_slugs.py` la re-aplica post-LLM. Se evalúa
+# DESPUÉS de las ediciones nombradas (_EDITION_SLUG_TITLE_RULES): "Ultimate
+# Deluxe" es ultimate, no deluxe.
+_EDITION_TYPE_TERM_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # JP — términos de mercado inequívocos
+    (re.compile(r"限定版"), "limited"),
+    (re.compile(r"特装版|同梱版"), "special"),
+    (re.compile(r"愛蔵版"), "deluxe"),
+    (re.compile(r"完全版"), "kanzenban"),
+    # Occidente — tipo nombrado explícito en el título
+    (
+        re.compile(
+            r"\bedici[oó]n\s+limitada\b|\bedizione\s+limitata\b|"
+            r"\b[ée]dition\s+limit[ée]e\b|\blimited\s+edition\b",
+            re.I,
+        ),
+        "limited",
+    ),
+    (
+        re.compile(
+            r"\bedici[oó]n\s+de\s+lujo\b|\bedizione\s+deluxe\b|\bdeluxe\b", re.I
+        ),
+        "deluxe",
+    ),
+)
+
+
+def edition_slug_from_text(text: str) -> str:
+    """Slug de edición derivado SOLO del texto (título), o "" si no hay término.
+
+    Fuente única de verdad del mapeo término→slug (gotcha #69): primero las
+    ediciones nombradas (Maximum, Perfect, Collector…), después los términos de
+    tipo (限定版→limited, 特装版→special…). Determinística: mismo texto → mismo
+    slug, en cualquier corrida y en cualquier consumidor (scraper, retrofit,
+    validador, prompts del skill).
+    """
+    if not text:
+        return ""
+    for pat, slug in _EDITION_SLUG_TITLE_RULES:
+        if pat.search(text):
+            return slug
+    for pat, slug in _EDITION_TYPE_TERM_RULES:
+        if pat.search(text):
+            return slug
+    return ""
+
+
 # Language → slug para tiers ambiguos (box_set, kanzenban)
 _EDITION_SLUG_LANG_MAP: dict[str, dict[str, str]] = {
     "box_set": {
@@ -6022,15 +6080,16 @@ def _refine_edition_slug(
     consultando el título por keywords de edición nombrada (Maximum, Perfect,
     Grimorio, etc.) y el idioma para slugs culturales (coffret/cofanetto).
     """
+    # 1) El TÍTULO manda (tabla determinística, gotcha #69) — aplica AUN con
+    # tier vacío: si el título dice 限定版/Collector/Maximum…, ese es el slug.
+    by_text = edition_slug_from_text(title or "")
+    if by_text:
+        return by_text
+
     if not tier:
         return "regular"
 
     title_lc = (title or "").lower()
-
-    # 1) Title-keyword refinement (más específico que el tier genérico)
-    for pat, slug in _EDITION_SLUG_TITLE_RULES:
-        if pat.search(title_lc):
-            return slug
 
     # 2) Language-aware refinement para tiers ambiguos
     lang = (language or "")[:2].lower()
@@ -6058,6 +6117,76 @@ def _refine_edition_slug(
         "special": "special",
     }
     return static_map.get(tier, "regular")
+
+
+# Slugs de edición válidos en el edition_key (mismo allowlist que los prompts
+# del skill standardize). Usado para parsear la cola `-{pub}-{slug}-{country}`.
+_KNOWN_EDITION_SLUGS = frozenset({
+    "deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto",
+    "variant", "limited", "collector", "anniversary", "celebration", "color",
+    "maximum", "ultimate", "master", "library", "integral", "artbook",
+    "fanbook", "guidebook", "magazine", "steelbox", "slipcase", "prestige",
+    "grimorio", "grimoire", "special", "regular", "lore", "omnibus",
+})
+
+
+def rebuild_edition_key_prefix(edition_key: str, series_key: str) -> str | None:
+    """Reconstruye el edition_key para que su prefijo sea `series_key`.
+
+    Invariante de formato: `edition_key = {series_key}-{pub}-{slug}-{country}`
+    (+ sufijo opcional `-cN`). Cuando el series_key se re-canonicaliza después
+    de acuñada la key (o la key vino con la serie truncada a 35 chars), el
+    prefijo queda stale y el reemplazo por startswith no lo detecta. Acá se
+    parsea la cola desde la derecha (country, slug del allowlist, publisher —
+    probando primero los de dos tokens tipo "ivrea-ar"/"panini-mx") y se
+    re-arma con el series_key actual.
+
+    Devuelve la key corregida, o None si ya está bien o no se puede parsear.
+    """
+    if not edition_key or not series_key:
+        return None
+    parts = edition_key.split("-")
+    suffix = ""
+    if parts and re.fullmatch(r"c\d+", parts[-1]):
+        suffix = "-" + parts[-1]
+        parts = parts[:-1]
+    if len(parts) < 4:
+        return None
+    country, slug = parts[-1], parts[-2]
+    if slug not in _KNOWN_EDITION_SLUGS:
+        return None
+    known_pubs = set(_PUBLISHER_SLUG_MAP.values()) | {"unknown"}
+    if len(parts) >= 5 and "-".join(parts[-4:-2]) in known_pubs:
+        pub = "-".join(parts[-4:-2])
+        series_part = "-".join(parts[:-4])
+    elif parts[-3] in known_pubs:
+        pub = parts[-3]
+        series_part = "-".join(parts[:-3])
+    else:
+        # Publisher NO reconocido: sin él no se puede separar serie/pub con
+        # certeza (mutilaría "nxb-tre"→"tre" o "panini-standard"→"standard").
+        # Precisión > recall: no tocar.
+        return None
+    # Comparar el SEGMENTO de serie exacto, no startswith.
+    if series_part == series_key:
+        return None
+    if series_part.startswith(series_key + "-"):
+        # La key es MÁS específica que el series_key. Eso puede ser un
+        # distinguidor LEGÍTIMO (danganronpa-1-2-reload, sword-art-online-
+        # aincrad: artbooks/coffrets distintos sin volumen — fusionarlos
+        # mezclaría productos). Solo reparar cuando el extra es claramente
+        # mecánico: (a) repetición del final del series_key ("takumi-kun-
+        # series-series", "shugo-chara-jewel-joker-jewel-joker"), o
+        # (b) equivalencia bajo la normalización agresiva.
+        extra = series_part[len(series_key) + 1:]
+        from series_aliases import aggressive_series_norm as _agg
+        if not (series_key.endswith("-" + extra) or series_key == extra
+                or _agg(series_part) == _agg(series_key)):
+            return None
+    # Resto de los casos: serie traducida/alias ("pokemon-sol-luna" vs
+    # "pokemon-sun-moon"), truncada, o MENOS específica que el series_key
+    # ("hakuoki" vs "hakuoki-shinkai") → re-alinear es seguro.
+    return f"{series_key}-{pub}-{slug}-{country}{suffix}"
 
 
 def derive_series_metadata(candidate: Candidate) -> dict[str, str]:

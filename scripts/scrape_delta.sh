@@ -427,6 +427,22 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04f3-unify-coleccion.log" 2>&1
     echo "    items: $(count_lines)"
 
+    # [4f5] re-deriva cluster_key: 4f1-4f3 mutan edition_keys y el upsert puede
+    # haber dejado claves stale → re-derivar mantiene la invariante CLKEY y
+    # devuelve las filas al tier edition: (gotcha #65). Idempotente.
+    # (4f4 = dedup_synthetic_source, corre vía el enforcer del skill standardize.)
+    echo ">>> [4f5] backfill_cluster_key"
+    "$VENV_PY" scripts/retrofit/backfill_cluster_key.py \
+        > "$LOG_DIR/04f5-backfill-cluster-key.log" 2>&1
+    echo "    items: $(count_lines)"
+
+    # [4f6] slugs para items nuevos del scrape (--only-missing: nunca toca
+    # slugs existentes). Sin esto un item nuevo viola SLUG hasta curarlo.
+    echo ">>> [4f6] generate_slugs --only-missing"
+    "$VENV_PY" scripts/retrofit/generate_slugs.py --only-missing \
+        > "$LOG_DIR/04f6-generate-slugs.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo ">>> [4g] consolidate_sources (1 fila por producto + sources[])"
     "$VENV_PY" scripts/retrofit/consolidate_sources.py \
         > "$LOG_DIR/04g-consolidate-sources.log" 2>&1

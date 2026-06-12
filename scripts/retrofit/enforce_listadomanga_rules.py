@@ -11,6 +11,10 @@ duras y determinísticas. Este enforcer es la ÚNICA fuente de verdad de:
     `collection_title · …`) → NO re-fetchea. Inmune a que el LLM lo traduzca.
   - **#48 una /coleccion = UNA edición** (unify_coleccion_edition).
   - **#46 país = edición** (fix_edition_country: sufijo de país en edition_key).
+  - **#69 slug de TIPO de edición por término** (canonicalize_edition_slugs:
+    限定版→limited, 特装版→special… — aplica a TODAS las fuentes no-lmc).
+  - **#70 series_key sin variantes mecánicas** (merge_duplicate_series) +
+    publisher unificado por edición (normalize_edition_publishers).
   - cluster_key tier-0 lmc, consolidate, dedup de portadas, slugs.
 
 Corré esto SIEMPRE DESPUÉS del skill de standardize (y el pipeline lo corre solo).
@@ -79,6 +83,16 @@ def main() -> int:
     _run("fix_especial_title_order.py")
     print("[enforce] 3b) desambiguar títulos de display que colisionan")
     _run("fix_listadomanga_title_collisions.py")
+    print("[enforce] 3c1) slug de TIPO de edición por término del título (#69, no-lmc)")
+    _run("canonicalize_edition_slugs.py")
+    print("[enforce] 3c2) fusionar series_keys mecánicamente duplicadas (#70)")
+    _run("merge_duplicate_series.py")
+    print("[enforce] 3c3) unificar publisher dentro de cada edición")
+    _run("normalize_edition_publishers.py")
+    print("[enforce] 3c4) re-alinear prefijo del edition_key con el series_key")
+    _run("fix_edition_key_prefix.py")
+    print("[enforce] 3c5) títulos: palabra de edición duplicada + 'Regular' sobrante")
+    _run("fix_title_edition_words.py")
     print("[enforce] 3b2) re-derivar cluster_key (edition_key cambió en standardize → "
           "el cluster viejo queda stale; sin esto consolidate no fusiona)")
     _run("backfill_cluster_key.py")
@@ -86,6 +100,11 @@ def main() -> int:
     _run("dedup_synthetic_source.py")
     print("[enforce] 4) consolidar (1 fila/producto)")
     _run("consolidate_sources.py")
+    print("[enforce] 4b) re-normalizar títulos lmc POST-consolidate (el merge de filas "
+          "puede revivir un título contaminado que el fixer ya había limpiado — "
+          "sin esto el enforcer necesitaba 2 pasadas para converger)")
+    _run("fix_lmc_display_titles.py")
+    _run("fix_especial_title_order.py")
     print("[enforce] 5) dedup de portadas del carrusel")
     _run("dedup_carousel_images.py", "--all")
     print("[enforce] 6) slugs")
