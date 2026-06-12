@@ -513,10 +513,20 @@ sources:
     language: "Español"
     publisher: "Distrito Manga"
     source_class: "official"
-    kind: "js"
+    # 2026-06-12: era kind js con 0 cards — el listado principal carga por AJAX
+    # con sesión y Playwright veía "Sin resultados". El HTML ESTÁTICO ya trae 3
+    # carruseles PrestaShop (~27 productos únicos: novedades + bestsellers) que
+    # cubren las ediciones especiales recientes. html + selectores = más barato
+    # y estable que JS.
+    kind: "html"
     url: "https://www.penguinlibros.com/es/221600-distrito-manga"
     enabled: true
     tags: ["manga", "official"]
+    selectors:
+      item_selector: "article.product-miniature"
+      title_selector: "[itemprop=\"name\"]"
+      link_selector: "a.thumbnail.product-thumbnail"
+      description_selector: ".product-description-short"
 
   - name: "ES - Arechi Manga Próximamente"
     country: "España"
@@ -690,7 +700,11 @@ sources:
     publisher: "Square Enix Manga & Books"
     source_class: "official"
     kind: "html"
+    # App Next.js RSC: el catálogo completo (~488 productos) viene embebido en
+    # el payload __next_f del HTML — lo parsea el extractor dedicado
+    # extract_squareenix_rsc (_SITE_EXTRACTORS en manga_watch.py), sin JS.
     url: "https://squareenixmangaandbooks.square-enix-games.com/en-us/release-calendar"
+    purity: "manga_only"
     enabled: true
     tags: ["manga", "official", "coming-soon"]
 

@@ -1235,6 +1235,27 @@ AUTHOR_FIRST_WORD_BLACKLIST = frozenset({
     "sin", "without", "no", "not", "with", "con", "y", "and", "or",
 })
 
+# Etiqueta de "autor" horneada al inicio del VALOR ("Autori: Kentaro Miura").
+# Pasa cuando la fuente repite el label dentro del campo (Panini IT, JSON-LD
+# sucio). Sólo con [:：] — "Di"/"By" sin dos puntos pueden ser parte del nombre.
+_AUTHOR_LABEL_PREFIX = re.compile(
+    r"^\s*(?:autori?|autor(?:es)?|authors?|auteurs?|autrice|by|par|von"
+    r"|著者|作者|原作|作画)\s*[:：]\s*",
+    re.IGNORECASE,
+)
+
+
+def clean_author(raw: str) -> str:
+    """Limpia el campo author: quita labels horneados al inicio del valor.
+    Único punto de normalización — candidate_to_json lo aplica SIEMPRE."""
+    s = clean_text(raw or "")
+    while True:
+        m = _AUTHOR_LABEL_PREFIX.match(s)
+        if not m:
+            break
+        s = s[m.end():]
+    return s.strip()
+
 
 def _validate_author_candidate(raw: str) -> str:
     cleaned = clean_text(raw)
@@ -1392,13 +1413,6 @@ SCHEMA_ORG_CURRENCY_SYMBOLS = {
 }
 
 
-def _format_schema_price(price: str, currency: str) -> str:
-    if not price:
-        return ""
-    cur = (currency or "").upper().strip()
-    sym = SCHEMA_ORG_CURRENCY_SYMBOLS.get(cur, cur)
-    return f"{sym} {price}".strip()
-
 
 def _schema_iter_items(data: Any) -> list[dict]:
     """Aplana JSON-LD: dict, lista, o @graph → lista de dicts."""
@@ -1431,7 +1445,7 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
     card contiene un <script type='application/ld+json'> con Product, devuelve
     todos los campos disponibles. Si no, devuelve dict vacío.
 
-    Devuelve dict con: name, image_url, description, author, isbn, price,
+    Devuelve dict con: name, image_url, description, author, isbn,
     release_date, publisher, product_type (manga/artbook/boxset/...).
     """
     result = {
@@ -1440,7 +1454,6 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
         "description": "",
         "author": "",
         "isbn": "",
-        "price": "",
         "release_date": "",
         "publisher": "",
         "product_type": "",
@@ -1533,23 +1546,6 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
                         if len(cleaned) == 10:
                             result["isbn"] = cleaned
                             break
-
-            # price (offers.price o offers.lowPrice)
-            if not result["price"]:
-                offers = item.get("offers")
-                offer_list: list[dict] = []
-                if isinstance(offers, dict):
-                    offer_list = [offers]
-                elif isinstance(offers, list):
-                    offer_list = [o for o in offers if isinstance(o, dict)]
-                for off in offer_list:
-                    p = off.get("price") or off.get("lowPrice")
-                    if p is None:
-                        continue
-                    currency = off.get("priceCurrency", "")
-                    result["price"] = _format_schema_price(str(p), str(currency))
-                    if result["price"]:
-                        break
 
             # release_date / datePublished
             if not result["release_date"]:
@@ -1988,10 +1984,6 @@ _FIELD_LABELS: dict[str, tuple[str, ...]] = {
         "data uscita", "data di pubblicazione", "data di uscita",
         "発売日", "刊行日", "publication",
     ),
-    "price": (
-        "prix", "precio", "price", "prezzo",
-        "価格", "本体価格", "税込価格", "定価",
-    ),
     "isbn": (
         "ean-13", "ean", "isbn", "isbn-13", "isbn-10",
     ),
@@ -2015,7 +2007,7 @@ def _extract_label_value_pairs(soup) -> dict[str, str]:
       - <tr><td>LABEL</td><td>VALUE</td></tr> (tablas sin th)
 
     Devuelve dict con claves normalizadas (author, publisher, release_date,
-    price, isbn) si encuentra un label conocido. Solo el PRIMER valor por
+    isbn) si encuentra un label conocido. Solo el PRIMER valor por
     campo se conserva.
     """
     found: dict[str, str] = {}
@@ -2074,7 +2066,7 @@ def fetch_metadata_from_detail(
 ) -> dict[str, Any]:
     """Fetch HTTP a la URL del producto y extrae todos los metadatos posibles.
 
-    Devuelve dict con author / image_url / isbn / name / price / release_date /
+    Devuelve dict con author / image_url / isbn / name / release_date /
     publisher / description / images (campos vacíos si no se encuentra). Hace
     1 HTTP request opt-in (--fetch-details).
 
@@ -2086,7 +2078,7 @@ def fetch_metadata_from_detail(
     """
     result: dict[str, Any] = {
         "author": "", "image_url": "", "isbn": "",
-        "name": "", "price": "", "release_date": "",
+        "name": "", "release_date": "",
         "publisher": "", "description": "",
         "images": [],
     }
@@ -2103,7 +2095,7 @@ def fetch_metadata_from_detail(
 
     # === Schema.org/JSON-LD primero (es la fuente más confiable) ===
     schema = extract_schema_org_product(soup, url)
-    for key in ("name", "price", "release_date", "publisher", "description"):
+    for key in ("name", "release_date", "publisher", "description"):
         if schema.get(key):
             result[key] = schema[key]
     if schema.get("image_url"):
@@ -2117,7 +2109,7 @@ def fetch_metadata_from_detail(
     # Cubre Manga-Sanctuary, Pika, Glénat y muchos otros sitios que estructuran
     # los metadatos del producto como una lista de pares.
     label_pairs = _extract_label_value_pairs(soup)
-    for field in ("author", "publisher", "release_date", "price", "isbn"):
+    for field in ("author", "publisher", "release_date", "isbn"):
         if not result.get(field) and label_pairs.get(field):
             result[field] = label_pairs[field]
 
@@ -3938,7 +3930,7 @@ def is_approved(item: dict[str, Any]) -> bool:
 
 _SOURCE_FIELDS = (
     "source", "source_class", "country", "publisher", "language", "url",
-    "price", "image_url", "image_local", "stock_type", "detected_at",
+    "image_url", "image_local", "stock_type", "detected_at",
     "release_date", "score",
 )
 
@@ -3986,14 +3978,13 @@ def _cluster_completeness(it: dict[str, Any]) -> int:
         + (1 if it.get("standardized_at") else 0) * 1000
         + (100 if it.get("isbn") else 0)
         + (10 if _row_cover(it) else 0)
-        + (5 if it.get("price") else 0)
     )
 
 
 def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
     """Fusiona N filas del MISMO producto en una sola, con `sources[]`.
 
-    - Canónica = la más completa (aprobada > estandarizada > ISBN > imagen > precio).
+    - Canónica = la más completa (aprobada > estandarizada > ISBN > imagen).
     - Campos faltantes en la canónica se rellenan desde cualquier miembro.
     - `sources[]` = union de las fuentes (usa el `sources[]` guardado de cada
       miembro si lo trae, si no `source_entry(member)`), dedup por URL.
@@ -4009,7 +4000,7 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
 
     canonical = max(group, key=_cluster_completeness)
     merged = dict(canonical)
-    for f in ("author", "price", "release_date",
+    for f in ("author", "release_date",
               "description", "isbn", "publisher"):
         if not merged.get(f):
             for it in group:
@@ -4167,8 +4158,8 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         "signal_types",
     )
     # Campos volátiles de mercado: SÍ se refrescan aunque el item esté aprobado
-    # (un golden record congela la metadata descriptiva, no el precio/stock).
-    _VOLATILE_FIELDS = ("price", "stock_type", "sources", "detected_at")
+    # (un golden record congela la metadata descriptiva, no el stock).
+    _VOLATILE_FIELDS = ("stock_type", "sources", "detected_at")
     for row in rows:
         url = row.get("url", "")
         if not url:
@@ -4868,7 +4859,6 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
                 candidate.title = clean_title(schema["name"])[:260]
             if schema.get("description") and len(schema["description"]) > len(candidate.description):
                 candidate.description = schema["description"][:2500]
-            candidate.price = schema.get("price") or extract_price(candidate.description)
             candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
             candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
             candidate.author = schema.get("author") or extract_author(candidate.description, card)
@@ -5161,7 +5151,6 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     if schema.get("description") and len(schema["description"]) > len(candidate.description):
         candidate.description = schema["description"][:2500]
 
-    candidate.price = schema.get("price") or extract_price(candidate.description)
     candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
     candidate.release_date = schema.get("release_date") or extract_release_date(candidate.description)
     candidate.author = schema.get("author") or extract_author(candidate.description, card)
@@ -5209,12 +5198,126 @@ def detect_empty_or_js(html_text: str, soup: BeautifulSoup) -> tuple[str, str] |
     return None
 
 
+_SQEX_CDN = "https://fyre.cdn.sewest.net/"
+_SQEX_BASE = "https://squareenixmangaandbooks.square-enix-games.com"
+_SQEX_NEXT_F_RE = re.compile(r'self\.__next_f\.push\(\[1,(.+)\]\)$', re.DOTALL)
+
+
+def extract_squareenix_rsc(
+    source: Source,
+    html_text: str,
+    max_items: int,
+    info: dict[str, Any] | None = None,
+) -> list[Candidate]:
+    """Square Enix Manga & Books US (release-calendar): app Next.js RSC.
+
+    El DOM solo renderiza ~10 items del mes visible, pero el catálogo COMPLETO
+    (~488 productos, todos los meses) viene embebido en el payload `__next_f`
+    (React Server Components wire format) dentro de <script> sin type — que la
+    extracción genérica descarta al decomponer scripts. Acá se concatena el
+    payload, se localiza el array `"products":` y se emiten candidatos.
+    Sin Playwright: el payload llega en el HTML servido (SSR).
+    Falla silenciosamente a [] si Square Enix cambia el build de Next.js.
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+    payload = ""
+    for s in soup.find_all("script", src=False):
+        t = (s.string or "").strip()
+        m = _SQEX_NEXT_F_RE.match(t)
+        if m:
+            try:
+                payload += json.loads(m.group(1))
+            except (json.JSONDecodeError, TypeError):
+                continue
+    idx = payload.find('"products":')
+    if idx == -1:
+        if info is not None:
+            info["extraction_method"] = "sqex-rsc-no-products"
+        return []
+    idx += len('"products":')
+    depth, end = 0, idx
+    for i in range(idx, len(payload)):
+        c = payload[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    try:
+        products = json.loads(payload[idx:end + 1])
+    except json.JSONDecodeError:
+        if info is not None:
+            info["extraction_method"] = "sqex-rsc-bad-json"
+        return []
+
+    candidates: list[Candidate] = []
+    seen: set[str] = set()
+    for p in products:
+        if not isinstance(p, dict) or not p.get("slug") or not p.get("title"):
+            continue
+        url = f"{_SQEX_BASE}/en-us/product/{p['slug']}"
+        if url in seen:
+            continue
+        seen.add(url)
+        release = (p.get("releaseMonth") or "").strip()  # "July 2026"
+        cand = candidate_from_source(
+            source,
+            title=p["title"],
+            url=url,
+            description=f"{release} — {p['title']}".strip(" —"),
+        )
+        cover = ((p.get("coverArt") or {}).get("image") or "").strip()
+        if cover:
+            cand.image_url = cover if cover.startswith("http") else _SQEX_CDN + cover
+        if release:
+            # "July 2026" → "2026-07-01" (el calendario solo da mes/año)
+            m = re.match(r"^([A-Za-z]+)\s+(\d{4})$", release)
+            if m:
+                months = {"january": "01", "february": "02", "march": "03",
+                          "april": "04", "may": "05", "june": "06", "july": "07",
+                          "august": "08", "september": "09", "october": "10",
+                          "november": "11", "december": "12"}
+                mm = months.get(m.group(1).lower())
+                if mm:
+                    cand.release_date = f"{m.group(2)}-{mm}-01"
+            if not cand.release_date:
+                cand.release_date = extract_release_date(release)
+        candidates.append(cand)
+        if len(candidates) >= max_items:
+            break
+    if info is not None:
+        info["extraction_method"] = "sqex-rsc"
+        info["cards_found"] = len(candidates)
+        info["candidates_after_signals"] = len(candidates)
+    return candidates
+
+
+# Extractores DEDICADOS por dominio: sitios cuyo contenido no es alcanzable ni
+# con selectores YAML ni con clusters (p.ej. payload Next.js RSC embebido en
+# <script>, que extract_generic_html descarta). Se chequean ANTES del flujo
+# genérico en extract_generic_html. Clave = substring del dominio en source.url.
+_SITE_EXTRACTORS: dict[str, Any] = {
+    "squareenixmangaandbooks.square-enix-games.com": extract_squareenix_rsc,
+}
+
+
 def extract_generic_html(
     source: Source,
     html_text: str,
     max_items: int,
     info: dict[str, Any] | None = None,
 ) -> list[Candidate]:
+    # 0) Extractor dedicado del sitio (si existe) — corre sobre el HTML CRUDO
+    # (los datos pueden vivir en <script>, que abajo se decompone).
+    for domain, extractor in _SITE_EXTRACTORS.items():
+        if domain in (source.url or ""):
+            dedicated = extractor(source, html_text, max_items, info)
+            if dedicated:
+                return dedicated
+            break  # dedicado falló → cae al flujo genérico (mejor que nada)
+
     soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
@@ -5360,7 +5463,6 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
         if not is_manga:
             continue
         candidate = candidate_from_source(source, title, link, summary, published_at=published_at)
-        candidate.price = extract_price(summary)
         # RSS rara vez incluye <img> en el summary; intentamos parsearlo si está embebido.
         if "<img" in (entry.get("summary", "") or entry.get("content", "") or ""):
             try:
@@ -5580,10 +5682,9 @@ def _recompute_content_hash(candidate: Candidate) -> None:
                 "score": candidate.score,
                 "signals": candidate.signals,
                 "source_class": candidate.source_class,
-                "price": candidate.price,
                 "release_date": candidate.release_date,
                 "product_type": candidate.product_type,
-                "author": candidate.author,
+                "author": clean_author(candidate.author),
                 "stock_type": candidate.stock_type,
                 "isbn": candidate.isbn,
             },
@@ -5711,10 +5812,9 @@ def process_state(
             "content_hash": candidate.content_hash,
             "first_seen_at": previous.get("first_seen_at") if previous else now,
             "last_seen_at": now,
-            "price": candidate.price,
             "release_date": candidate.release_date,
             "product_type": candidate.product_type,
-            "author": candidate.author,
+            "author": clean_author(candidate.author),
             "stock_type": candidate.stock_type,
             "isbn": candidate.isbn,
         }
@@ -6341,10 +6441,9 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "published_at": candidate.published_at,
         "description": candidate.description,
         "content_hash": candidate.content_hash,
-        "price": candidate.price,
         "release_date": candidate.release_date,
         "product_type": candidate.product_type,
-        "author": candidate.author,
+        "author": clean_author(candidate.author),
         "stock_type": candidate.stock_type,
         "isbn": candidate.isbn,
     }
@@ -6547,8 +6646,6 @@ def write_markdown_report(
                 lines.append(f"- **Autor:** {item.author}")
             if item.stock_type == "limited":
                 lines.append("- **Stock:** ⚠️ limitado / numerado")
-            if item.price:
-                lines.append(f"- **Precio:** {item.price}")
             if item.release_date:
                 lines.append(f"- **Fecha de lanzamiento:** {item.release_date}")
             if item.published_at:
@@ -7164,6 +7261,8 @@ def _run_wiki_bootstrap(
         from wikis.shueisha_books import bootstrap as wiki_bootstrap, iter_year_months
     elif args.bootstrap_wiki == "viz":
         from wikis.viz_artbooks import bootstrap as wiki_bootstrap, iter_year_months
+    elif args.bootstrap_wiki == "sevenseas":
+        from wikis.sevenseas import bootstrap as wiki_bootstrap, iter_year_months
     else:
         raise SystemExit(f"Wiki no soportada: {args.bootstrap_wiki}")
 
@@ -7187,6 +7286,12 @@ def _run_wiki_bootstrap(
     # detail page. El flag --fetch-details de la CLI es para el source loop
     # principal (distinto propósito), no para wiki bootstraps.
     if args.bootstrap_wiki == "animeclick":
+        extra_kwargs["fetch_details"] = True
+
+    # sevenseas TAMBIÉN: el listing API no trae ISBN/fecha/portada — viven en
+    # el detail (media?parent + HTML del libro). Sin enrich la fuente pierde
+    # su valor de dedup (ISBN).
+    if args.bootstrap_wiki == "sevenseas":
         extra_kwargs["fetch_details"] = True
 
     # Evitar argumento duplicado: si extra_kwargs ya setea fetch_details
@@ -7336,7 +7441,6 @@ def _run_sitemap_mining(
             description = md.get("description") or title
             cand = candidate_from_source(source, title=title[:260], url=prod_url, description=description[:2500])
             cand.publisher = md.get("publisher") or source.publisher
-            cand.price = md.get("price", "")
             cand.image_url = md.get("image_url", "")
             md_images = md.get("images") or []
             if md_images:
@@ -8052,7 +8156,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz"],
+        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz", "sevenseas"],
         help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), booksprivilege (agregador JP de 店舗特典/extras de tienda: por cada release lista los bonus de cada retailer japonés — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN, etc. — que no aparecen en el catálogo regular), sumikko (catálogo curado JP de 限定版/特装版 — ~3178 ediciones limitadas y especiales con ISBN, complementario a booksprivilege que es store-bonus; sumikko se enfoca en la edición en sí: acrylic stand付き, 小冊子付き, 缶バッジ付き, BOX, etc.), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(
