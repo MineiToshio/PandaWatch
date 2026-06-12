@@ -2,6 +2,7 @@ import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import { editionDescription } from '@/lib/descriptions'
+import { coverImage } from '@/lib/data'
 import type { Cluster } from '@/lib/types'
 
 type EditionHeaderProps = {
@@ -35,8 +36,8 @@ export function EditionHeader({ cluster, totalVolumes, signalTypes }: EditionHea
           }}
         >
           <CoverImage
-            imageLocal={canonical.image_local}
-            imageUrl={canonical.image_url}
+            imageLocal={coverImage(canonical).local}
+            imageUrl={coverImage(canonical).url}
             alt={canonical.title || 'Portada'}
             fill
             sizes="64px"

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests
 from manga_watch import backup_and_rotate, append_jsonl
+import image_store
 from image_store import download_image
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -149,8 +150,6 @@ def build_remix_item(vol, isbn13, release_date, subtitle_jp, subtitle_en):
         "rarity": "rare",
         "source": "Research import (One Piece Jump Remix)",
         "source_class": "curated",
-        "image_url": image_url,
-        "image_local": local_name or "",
         "images": [{
             "url": image_url,
             "local": local_name or "",
@@ -223,8 +222,6 @@ def build_char_remix_item(vol, isbn13, release_date, char_jp, char_en):
         "rarity": "rare",
         "source": "Research import (One Piece Jump Remix)",
         "source_class": "curated",
-        "image_url": image_url,
-        "image_local": local_name or "",
         "images": [{
             "url": image_url,
             "local": local_name or "",
@@ -268,14 +265,14 @@ def main(dry_run: bool = False):
     print("--- One Piece Remix (24 vols) ---")
     for vol, isbn13, release_date, subtitle_jp, subtitle_en in REMIX_VOLS:
         item = build_remix_item(vol, isbn13, release_date, subtitle_jp, subtitle_en)
-        local = item["image_local"]
+        local = image_store.cover_local(item)
         print(f"  Vol {vol:2d}: {isbn13} | img={local or '❌'}")
         new_items.append(item)
 
     print(f"\n--- One Piece Jump Character Remix (11 vols) ---")
     for vol, isbn13, release_date, char_jp, char_en in CHAR_REMIX_VOLS:
         item = build_char_remix_item(vol, isbn13, release_date, char_jp, char_en)
-        local = item["image_local"]
+        local = image_store.cover_local(item)
         print(f"  Vol {vol:2d} ({char_en}): {isbn13} | img={local or '❌'}")
         new_items.append(item)
 

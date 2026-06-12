@@ -28,6 +28,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 from manga_watch import append_jsonl  # type: ignore[import]
+import image_store  # type: ignore[import]
 from wikis.animeclick import parse_detail_page, _inject_collector_hints  # type: ignore[import]
 
 ITEMS_PATH = _ROOT / "data" / "items.jsonl"
@@ -87,9 +88,9 @@ def _fetch_and_merge(
             updated["description"] = new_desc
             changed = True
 
-    # Actualizar image_url solo si el item no tenía ninguna
-    if detail.get("image_url") and not item.get("image_url"):
-        updated["image_url"] = detail["image_url"]
+    # Sembrar la portada (images[0]) solo si el item no tenía ninguna.
+    if detail.get("image_url") and not image_store.cover_url(item):
+        image_store.set_cover(updated, detail["image_url"])
         changed = True
 
     return updated if changed else None

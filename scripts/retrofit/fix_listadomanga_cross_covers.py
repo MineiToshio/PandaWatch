@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "wikis"))
 import requests  # noqa: E402
+import image_store  # noqa: E402
 import listadomanga_collections as lmc  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
@@ -67,7 +68,7 @@ def main() -> int:
     for it in items:
         if "coleccion.php" not in (it.get("url", "") or ""):
             continue
-        il = it.get("image_local")
+        il = image_store.cover_local(it)
         if il:
             byloc[il].append(it)
     # cross-cover = mismo image_local en items de COLECCIONES distintas
@@ -82,17 +83,18 @@ def main() -> int:
         if not cid or not k:
             continue
         real = _real_portada(cid, k[0], k[1])
-        # Resetear SIEMPRE (el image_local cruzado es lo que se ve, aunque el
-        # image_url ya sea correcto). Solo saltamos si ya está limpio.
-        if not real or (it.get("image_url") == real and not it.get("image_local")
-                        and (it.get("images") or [{}])[0].get("url") == real):
+        # Resetear SIEMPRE (el local cruzado de la portada es lo que se ve, aunque
+        # la url ya sea correcta). Solo saltamos si ya está limpio (portada = real
+        # sin local, ya en images[0]).
+        if not real or (image_store.cover_url(it) == real
+                        and not image_store.cover_local(it)):
             continue
         if len(diffs) < 40:
-            diffs.append((it.get("title", "")[:30], cid, (it.get("image_local") or "")[:14],
+            diffs.append((it.get("title", "")[:30], cid,
+                          (image_store.cover_local(it) or "")[:14],
                           real.split("/")[-1][:16]))
         if not args.dry_run:
-            it["image_url"] = real
-            it["image_local"] = ""   # se re-espeja luego; la cruzada era incorrecta
+            # se re-espeja luego; la portada cruzada (local) era incorrecta
             it["images"] = [{"url": real, "local": "", "kind": "gallery", "description": ""}]
         changed += 1
 

@@ -155,7 +155,7 @@ def _collect_targets(items: list[dict]) -> list[tuple[dict, str]]:
         if not any(isbn13.startswith(p) for p in _EN_ISBN_PREFIXES):
             continue
         # Si ya usa PRH CDN, no hay nada que hacer.
-        cur_url = image_store.normalize_image_url(it.get("image_url") or "")
+        cur_url = image_store.normalize_image_url(image_store.cover_url(it))
         if cur_url == PRH_CDN_BASE + isbn13:
             continue
         out.append((it, isbn13))
@@ -188,7 +188,7 @@ def _try_prh(
         return None
 
     # Compara contra la imagen actual si existe.
-    old_local = item.get("image_local") or ""
+    old_local = image_store.cover_local(item)
     old_path = images_dir / old_local if old_local else None
     if old_path and old_path.exists():
         old_px = _pixels(old_path)
@@ -199,12 +199,7 @@ def _try_prh(
 
 
 def _apply(item: dict, new_url: str, new_local: str) -> None:
-    item["image_url"] = new_url
-    item["image_local"] = new_local
-    imgs = item.get("images") or []
-    if imgs and isinstance(imgs[0], dict):
-        imgs[0]["url"] = new_url
-        imgs[0]["local"] = new_local
+    image_store.set_cover(item, new_url, new_local)
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -231,7 +226,7 @@ def run(
     if dry_run:
         print("[DRY-RUN] No se harán cambios.")
         for it, isbn13 in targets[:15]:
-            cur_url = (it.get("image_url") or "")[:55]
+            cur_url = image_store.cover_url(it)[:55]
             print(f"  {isbn13}  →  {PRH_CDN_BASE}{isbn13}")
             print(f"           cur: {cur_url}")
         if total > 15:
@@ -251,10 +246,11 @@ def run(
     print(f"ISBNs únicos a probar: {len(unique_isbns)}")
 
     def _process(isbn13: str) -> tuple[str, tuple[str, str] | None]:
-        # Usa el item con image_local válido para la comparación de píxeles.
+        # Usa el item con portada local válida para la comparación de píxeles.
         sample = next(
             (it for it in isbn_to_items[isbn13]
-             if it.get("image_local") and (images_dir / it["image_local"]).exists()),
+             if image_store.cover_local(it)
+             and (images_dir / image_store.cover_local(it)).exists()),
             isbn_to_items[isbn13][0],
         )
         return isbn13, _try_prh(sample, isbn13, images_dir, session, timeout, min_gain)

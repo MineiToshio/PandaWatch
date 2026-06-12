@@ -3,11 +3,16 @@
 
 PandaWatch venía hotlinkeando las portadas directamente del sitio fuente
 (retailers, wikis). Para un servicio desplegable multi-usuario queremos
-**ser dueños de los bytes**: este módulo descarga cada portada a
-`data/images/` y el pipeline guarda el filename local en el campo
-`image_local` de cada item. `image_url` queda intacto como provenance
-+ fallback (si la fuente muere o agrega anti-hotlink, la card sigue
-mostrando la copia local).
+**ser dueños de los bytes**: este módulo descarga cada imagen a
+`data/images/` y el pipeline guarda el filename local en el campo `local`
+del entry correspondiente de `images[]`. La URL remota (`url`) queda como
+provenance + fallback (si la fuente muere o agrega anti-hotlink, la card
+sigue mostrando la copia local).
+
+**Portada = `images[0]`** (decisión 2026-06-09): se eliminaron los campos
+top-level `image_url`/`image_local` del item; `images[0]` es la ÚNICA fuente
+de verdad de la portada. Los helpers `cover_url`/`cover_local`/`set_cover` al
+final del módulo centralizan el acceso.
 
 Diseño:
 
@@ -255,3 +260,56 @@ def download_image(
         tmp.unlink(missing_ok=True)
         return ""
     return filename
+
+
+# ── Portada por posición — images[0] es la ÚNICA fuente de verdad ──────────────
+# Decisión 2026-06-09: se eliminaron los campos top-level `image_url`/
+# `image_local` del item. La portada es `images[0]`; cada entry de `images[]`
+# lleva `url` (remota) + `local` (filename del espejo). Estos helpers centralizan
+# la derivación para que ningún sitio la reimplemente (la divergencia entre
+# sitios fue la raíz del drift de portadas). Operan sobre el dict del item/row;
+# el `Candidate` runtime conserva `image_url`/`image_local` como input del
+# scraper y `candidate_to_json` los convierte en `images[0]` al serializar.
+
+def cover_image(item: dict) -> dict | None:
+    """Primer elemento de `images[]` con `url` (la portada), o None."""
+    for im in (item.get("images") or []):
+        if im and im.get("url"):
+            return im
+    return None
+
+
+def cover_url(item: dict) -> str:
+    """URL remota de la portada (`images[0].url`), o "" si no hay."""
+    im = cover_image(item)
+    return im.get("url", "") if im else ""
+
+
+def cover_local(item: dict) -> str:
+    """Filename del espejo local de la portada (`images[0].local`), o ""."""
+    im = cover_image(item)
+    return im.get("local", "") if im else ""
+
+
+def set_cover(item: dict, url: str, local: str = "") -> None:
+    """Setea `images[0]` como la portada (crea `images[]` si falta).
+
+    Preserva `kind`/`description` del elemento existente; el resto de la galería
+    (`images[1:]`) queda intacta. Para BORRAR la portada usá `clear_cover`.
+    """
+    imgs = item.get("images")
+    if not isinstance(imgs, list):
+        imgs = []
+        item["images"] = imgs
+    if imgs:
+        imgs[0] = {**imgs[0], "url": url, "local": local}
+    else:
+        imgs.append({"url": url, "local": local, "kind": "gallery", "description": ""})
+
+
+def clear_cover(item: dict) -> None:
+    """Quita la portada (`images[0]`). Si la galería tenía más fotos, la
+    siguiente pasa a ser la portada; si no, `images[]` queda vacío."""
+    imgs = item.get("images")
+    if isinstance(imgs, list) and imgs:
+        imgs.pop(0)

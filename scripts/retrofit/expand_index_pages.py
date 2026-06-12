@@ -53,6 +53,7 @@ from manga_watch import (  # type: ignore
     normalize_url_for_dedup,
     score_candidate,
 )
+import image_store  # type: ignore
 from shopify_variants import (  # type: ignore
     build_variant_url,
     extract_shopify_variants,
@@ -193,9 +194,10 @@ def expand_shopify_variants_item(
         if v.get("sku"):
             cand.isbn = ""  # SKU != ISBN; lo dejamos vacío.
         # Image del padre: lo más probable es que sea la portada
-        # representativa de la serie. Mejor que vacío.
-        if parent_item.get("image_url"):
-            cand.image_url = parent_item["image_url"]
+        # representativa de la serie. Mejor que vacío. Portada = images[0].
+        parent_cover = image_store.cover_url(parent_item)
+        if parent_cover:
+            cand.image_url = parent_cover
         candidates.append(cand)
     return candidates, "expanded"
 

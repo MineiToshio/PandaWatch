@@ -112,6 +112,27 @@ Patrones **no agregados** (verificados como no viables): Amazon (los modificador
 
 El download pasa `referer=<url del item>` para evitar 403 de CDNs con anti-hotlink. La comparación de píxeles (umbral `--min-gain 0.10`) evita reemplazar por la misma imagen o peor.
 
+## Promoción de hi-res intra-cluster — `promote_hires_cover.py`
+
+Caso: un item tiene su portada en `images[0]` como thumbnail de listadomanga (<90 000 px,
+`static.listadomanga.com`) pero la MISMA portada en alta resolución ya está en `images[1+]`
+porque el cluster tiene otra fuente (Panini, Norma, Whakoom, etc.). El script intercambia
+`images[0] ↔ images[k]` para que la hi-res quede como portada. No hace ninguna petición de
+red — trabaja con lo que ya está en el catálogo.
+
+**Criterio de identidad thumbnail↔full** (mismo que `dedup_carousel_images.py`): el thumbnail
+de listadomanga (~100×150 px) degrada el hash lo suficiente como para superar el umbral
+estricto de `_same_cover`. Por eso usa un umbral relajado: si la portada actual tiene lado
+menor ≤ 170 px y la candidata es ≥ 2× más grande → par thumbnail↔full → aHash ≤ 14/64 bits
++ aspect ratio ≤ 12%. Si no cumple ese par, se aplica `_same_cover` estricto (AND-gate).
+
+El thumbnail queda en la galería; ejecutar `dedup_carousel_images.py` después si se quiere
+eliminarlo. Tests: `tests/test_promote_hires_cover.py`. Flags: `--dry-run`.
+
+Cuándo usarlo: después de `upgrade_image_resolution.py` (paso 3 del sub-pipeline de imágenes)
+y antes de cualquier retrofit que necesite ir a la red, ya que resuelve el problema sin costo
+de red cuando la hi-res ya está en el cluster.
+
 ## Dedup de portada en el carrusel — `dedup_carousel_images.py`
 
 Cuando un item termina con la MISMA portada en dos resoluciones en `images[]` (ej.

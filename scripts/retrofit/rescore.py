@@ -38,6 +38,7 @@ from manga_watch import (  # type: ignore
     backup_and_rotate,
     is_approved,
 )
+import image_store  # type: ignore
 
 
 def _item_to_candidate(item: dict) -> Candidate:
@@ -53,7 +54,11 @@ def _item_to_candidate(item: dict) -> Candidate:
         source_class=item.get("source_class", "") or "",
         tags=list(item.get("tags", []) or []),
         description=item.get("description", "") or "",
-        image_url=item.get("image_url", "") or "",
+        # Portada = images[0] (única fuente de verdad). Reconstruimos el
+        # Candidate runtime desde ahí para que score_candidate la vea.
+        image_url=image_store.cover_url(item),
+        image_local=image_store.cover_local(item),
+        images=list(item.get("images") or []),
         price=item.get("price", "") or "",
         release_date=item.get("release_date", "") or "",
         author=item.get("author", "") or "",

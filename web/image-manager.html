@@ -747,7 +747,7 @@
           this.items = text.trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
           this.fileSizes = await sr.json();
           for (const item of this.items) {
-            item._fileSize = this.fileSizes[item.image_local || ''] || 0;
+            item._fileSize = this.fileSizes[this.coverLocal(item)] || 0;
             item._quality = this.getQuality(item);
             if (item.images) for (const img of item.images) img._fileSize = this.fileSizes[img.local || ''] || 0;
           }
@@ -787,14 +787,14 @@
       },
 
       getQuality(item) {
-        if (!item.image_local) return 'none';
+        if (!this.coverLocal(item)) return 'none';
         const sz = item._fileSize || 0;
         if (sz === 0) return 'none';
         if (sz < 50000) return 'low';
         if (sz < 200000) return 'medium';
         return 'good';
       },
-      isUpscaled(item) { return (item.image_local || '').endsWith('.png'); },
+      isUpscaled(item) { return this.coverLocal(item).endsWith('.png'); },
 
       computeCounts() {
         const c = { all: 0, no_image: 0, low: 0, medium: 0, upscaled: 0, single: 0 };
@@ -865,11 +865,11 @@
           if (lk) seenLocal.add(lk);
           out.push(JSON.parse(JSON.stringify(im)));
         };
-        // 1) portada de la fila seleccionada primero.
-        const cover = this.selected.image_url || this.selected.image_local;
-        if (cover) {
-          const own = (this.selected.images || []).find(im => im && key(im.url) === key(this.selected.image_url));
-          push(own || { url: this.selected.image_url || '', local: this.selected.image_local || '', kind: 'gallery', description: '' });
+        // 1) portada de la fila seleccionada primero (images[0] = fuente de verdad).
+        const cov = this.coverImage(this.selected);
+        if (cov && (cov.url || cov.local)) {
+          const own = (this.selected.images || []).find(im => im && key(im.url) === key(cov.url));
+          push(own || { url: cov.url || '', local: cov.local || '', kind: 'gallery', description: '' });
         }
         // 2) resto de imágenes de la fila seleccionada + de los siblings.
         for (const im of (this.selected.images || [])) push(im);
@@ -926,7 +926,15 @@
 
       // ==================== IMAGE SOURCES ====================
 
-      coverSrc(item) { return item.image_local ? '../data/images/' + item.image_local : item.image_url || ''; },
+      // images[0] = única fuente de verdad de la portada.
+      coverImage(item) {
+        if (!item) return { url: '', local: '' };
+        const imgs = Array.isArray(item.images) ? item.images : [];
+        const first = imgs.find(im => im && im.url);
+        return first || { url: '', local: '' };
+      },
+      coverLocal(item) { return this.coverImage(item).local || ''; },
+      coverSrc(item) { const l = this.coverLocal(item); return l ? '../data/images/' + l : (this.coverImage(item).url || ''); },
       imgSrc(img) { if (!img) return ''; return img.local ? '../data/images/' + img.local : img.url || ''; },
       currentImage() { return this.selected?.images?.[this.previewIdx] || null; },
       currentPreviewSrc() { return this.imgSrc(this.currentImage()); },
@@ -1139,8 +1147,8 @@
       googleLensUrl() {
         // Lens por URL de la portada actual (imágenes similares / mejor versión).
         const src = this.currentPreviewSrc();
-        // Las locales (../data/images/..) no sirven para Lens; preferimos image_url.
-        const remote = (this.currentImage()?.url) || this.selected?.image_url || '';
+        // Las locales (../data/images/..) no sirven para Lens; preferimos la URL remota.
+        const remote = (this.currentImage()?.url) || this.coverImage(this.selected).url || '';
         const u = /^https?:/.test(remote) ? remote : src;
         return 'https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(u);
       },
@@ -1215,10 +1223,10 @@
             ? this.items.filter(i => (i.cluster_key || '') === ck)
             : this.items.filter(i => i.url === this.selected.url);
           for (const orig of targets) {
+            // images[0] es la portada (única fuente de verdad); no hay campos
+            // top-level image_url/image_local que sincronizar.
             orig.images = JSON.parse(JSON.stringify(cleanImages));
-            if (cleanImages.length > 0) { orig.image_url = cleanImages[0].url; orig.image_local = cleanImages[0].local; }
-            else { orig.image_url = ''; orig.image_local = ''; }
-            orig._fileSize = this.fileSizes[orig.image_local || ''] || 0;
+            orig._fileSize = this.fileSizes[this.coverLocal(orig)] || 0;
             orig._quality = this.getQuality(orig);
           }
           this.originalImages = JSON.parse(JSON.stringify(cleanImages));

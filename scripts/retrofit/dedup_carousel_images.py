@@ -135,12 +135,9 @@ def main() -> int:
         if not new_imgs:
             continue  # nunca dejar sin imágenes
         dropped = [im for k, im in zip(keep, imgs) if not k]
-        # si la cover principal (image_url/image_local) fue descartada → apuntar a la kept[0]
-        kept0 = new_imgs[0]
-        cur_local = it.get("image_local") or ""
-        if cur_local and cur_local in {d.get("local") for d in dropped}:
-            it["image_url"] = kept0.get("url", it.get("image_url", ""))
-            it["image_local"] = kept0.get("local", "")
+        # La portada es images[0]: si la portada (imgs[0]) cayó como duplicado de
+        # menor resolución, new_imgs[0] (el hi-res que quedó) pasa a ser la portada
+        # automáticamente al reescribir images[]. No hace falta repuntar nada aparte.
         if not args.dry_run:
             it["images"] = new_imgs
         removed_total += len(dropped)

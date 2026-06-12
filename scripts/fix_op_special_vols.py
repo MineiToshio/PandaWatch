@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests
 from manga_watch import backup_and_rotate, append_jsonl
+import image_store
 from image_store import download_image
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -219,11 +220,13 @@ COMMON = {
 
 def build_item(d: dict) -> dict:
     item = {**COMMON, **d}
+    # `image_url` en los datos seed es solo el insumo para la portada, no un campo
+    # top-level del item. La portada es images[0] (única fuente de verdad).
+    image_url = item.pop("image_url", "")
     # Download image
-    local = download_image(item["image_url"], IMAGES_DIR, SESSION)
-    item["image_local"] = local or ""
+    local = download_image(image_url, IMAGES_DIR, SESSION)
     item["images"] = [{
-        "url":         item["image_url"],
+        "url":         image_url,
         "local":       local or "",
         "kind":        "gallery",
         "description": "",
@@ -236,7 +239,7 @@ def build_item(d: dict) -> dict:
         "country":     item["country"],
         "language":    item["language"],
         "publisher":   item["publisher"],
-        "image_url":   item["image_url"],
+        "image_url":   image_url,
         "image_local": local or "",
         "release_date":item.get("release_date", ""),
         "score":       item.get("score", 50),
@@ -296,7 +299,7 @@ def main(dry_run: bool = False):
     new_items = []
     for d in NEW_ITEMS_DATA:
         item = build_item(d)
-        local = item["image_local"]
+        local = image_store.cover_local(item)
         print(f"  {item['title']:50s} | img={'✓ ' + local if local else '❌'}")
         new_items.append(item)
 

@@ -32,6 +32,41 @@ function compareVolumes(a?: string, b?: string): number {
   return a.localeCompare(b)
 }
 
+// Rango de kind para desempate dentro del mismo volumen (gotcha #60).
+// Orden global: regular(0) → variant(1) → special/limited(2) →
+// deluxe/kanzenban(3) → artbook/fanbook(4) → boxset(5) → desconocido(10).
+const KIND_RANK: Record<string, number> = {
+  regular: 0,
+  variant: 1, alternativa: 1,
+  special: 2, especial: 2, limited: 2, limitada: 2, collector: 2, premium: 2,
+  deluxe: 3, kanzenban: 3, omnibus: 3, hardcover: 3,
+  artbook: 4, fanbook: 4, guidebook: 4,
+  box: 5, boxset: 5,
+}
+
+function kindRank(c: Cluster): number {
+  // Tier 1: cluster_key lmc → kind en posición 2 ("lmc:ID:kind:vol")
+  if (c.clusterKey.startsWith('lmc:')) {
+    const parts = c.clusterKey.split(':')
+    if (parts.length >= 3 && parts[2] in KIND_RANK) return KIND_RANK[parts[2]]
+  }
+  // Tier 2: edition_key slug → penúltimo segmento antes del país
+  if (c.editionKey) {
+    const parts = c.editionKey.split('-')
+    if (parts.length >= 2) {
+      const k = parts[parts.length - 2]
+      if (k in KIND_RANK) return KIND_RANK[k]
+    }
+  }
+  // Tier 3: signal_types
+  const sigs = c.signalTypes
+  if (sigs.includes('variant_cover')) return 1
+  if (sigs.some(s => ['special_edition','limited','collector','premium_format'].includes(s))) return 2
+  if (sigs.some(s => ['artbook','fanbook'].includes(s))) return 4
+  if (sigs.some(s => ['box_set','bundle'].includes(s))) return 5
+  return 10
+}
+
 function resolveMinPrice(items: Item[]): string | undefined {
   const prices = items
     .map(i => i.price)
@@ -42,11 +77,21 @@ function resolveMinPrice(items: Item[]): string | undefined {
   return String(Math.min(...prices))
 }
 
+// Portada canónica de un item: `images[0]` es la ÚNICA fuente de verdad (los
+// campos top-level image_url/image_local fueron eliminados, 2026-06-09). Ver
+// CLAUDE.md / docs/reference/images.md.
+export function coverImage(
+  item: Pick<Item, 'images'>,
+): { url?: string; local?: string } {
+  const first = (item.images ?? []).find(im => im && im.url)
+  return first ? { url: first.url, local: first.local } : {}
+}
+
 // Completitud de un item: prioriza el que tiene más metadata para elegir el
 // representante canónico de un cluster (reemplaza la antigua selección por
 // score). Mismo criterio que el dedup del pipeline Python (ISBN > imagen > precio).
 function completeness(item: Item): number {
-  return (item.isbn ? 100 : 0) + (item.image_url ? 10 : 0) + (item.price ? 5 : 0)
+  return (item.isbn ? 100 : 0) + (item.images?.length ? 10 : 0) + (item.price ? 5 : 0)
 }
 
 function buildCluster(items: Item[]): Cluster {
@@ -104,7 +149,7 @@ export function loadClusters(): Cluster[] {
 export function loadEditionClusters(editionKey: string): Cluster[] {
   return loadClusters()
     .filter(c => c.editionKey === editionKey)
-    .sort((a, b) => compareVolumes(a.volume, b.volume))
+    .sort((a, b) => compareVolumes(a.volume, b.volume) || kindRank(a) - kindRank(b))
 }
 
 export function clusterBySlug(slug: string): Cluster | null {
@@ -198,9 +243,10 @@ function buildSeries(seriesKey: string, clusters: Cluster[]): Series {
 
     const it = c.canonical
     const score = completeness(it)
-    if ((it.image_local || it.image_url) && score > bestCover) {
+    const cov = coverImage(it)
+    if ((cov.local || cov.url) && score > bestCover) {
       bestCover = score
-      cover = { imageLocal: it.image_local, imageUrl: it.image_url }
+      cover = { imageLocal: cov.local, imageUrl: cov.url }
     }
     const ri = it.rarity ? RARITY_ORDER.indexOf(it.rarity as typeof RARITY_ORDER[number]) : -1
     if (ri > topRarityIdx) topRarityIdx = ri

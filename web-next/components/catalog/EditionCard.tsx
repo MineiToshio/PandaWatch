@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { Cluster } from '@/lib/types'
+import { coverImage } from '@/lib/data'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
@@ -41,8 +42,8 @@ export function EditionCard({ cluster, from }: EditionCardProps) {
         {/* Cover */}
         <div style={{ position: 'relative', aspectRatio: '2/3', background: 'var(--ink-100)' }}>
           <CoverImage
-            imageLocal={canonical.image_local}
-            imageUrl={canonical.image_url}
+            imageLocal={coverImage(canonical).local}
+            imageUrl={coverImage(canonical).url}
             alt={canonical.title || 'Portada'}
             fill
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"

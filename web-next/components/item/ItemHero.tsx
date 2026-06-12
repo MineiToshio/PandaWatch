@@ -3,6 +3,7 @@ import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import { formatDate } from '@/lib/format'
 import { itemDescription } from '@/lib/descriptions'
+import { coverImage } from '@/lib/data'
 import type { Cluster, ItemImage } from '@/lib/types'
 
 const RARITY_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -48,7 +49,7 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
   const { canonical, signalTypes } = cluster
 
   // El carrusel muestra la UNION de images[] de todas las fuentes del cluster,
-  // con la portada de la canónica (image_url, la que se ve en la card) primera.
+  // con la portada de la canónica (images[0], la que se ve en la card) primera.
   // Mismo invariante que web/index.html: carrusel[0] == card, y el detalle no
   // depende de qué fila quedó como canónica. Dedup por URL (sin esquema/query).
   const imgKey = (u?: string) =>
@@ -62,9 +63,11 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
     seen.add(k)
     images.push(im)
   }
-  if (canonical.image_url || canonical.image_local) {
-    const own = (canonical.images ?? []).find(im => imgKey(im.url) === imgKey(canonical.image_url))
-    pushImg(own ?? { url: canonical.image_url ?? '', local: canonical.image_local, kind: 'gallery' })
+  // images[0] de la canónica = fuente de verdad de la portada; legacy fallback.
+  const cov = coverImage(canonical)
+  if (cov.url || cov.local) {
+    const own = (canonical.images ?? []).find(im => imgKey(im.url) === imgKey(cov.url))
+    pushImg(own ?? { url: cov.url ?? '', local: cov.local, kind: 'gallery' })
   }
   for (const it of cluster.items) {
     for (const im of it.images ?? []) pushImg(im)

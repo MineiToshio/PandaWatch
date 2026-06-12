@@ -5,6 +5,7 @@
  * engines extract most reliably — this is the highest-leverage discoverability surface.
  */
 import { absoluteUrl } from '@/lib/seo'
+import { coverImage } from '@/lib/data'
 import { itemDescription, editionDescription, seriesDescription } from '@/lib/descriptions'
 import type { Cluster, Item, Series } from '@/lib/types'
 
@@ -46,9 +47,10 @@ function availabilityFor(c: Item): string {
   return 'https://schema.org/InStock'
 }
 
-function imageUrl(c: Pick<Item, 'image_url' | 'image_local'>): string | undefined {
-  if (c.image_url) return c.image_url
-  if (c.image_local) return absoluteUrl(`/images/${c.image_local}`)
+function imageUrl(c: Pick<Item, 'images'>): string | undefined {
+  const { url, local } = coverImage(c)
+  if (url) return url
+  if (local) return absoluteUrl(`/images/${local}`)
   return undefined
 }
 

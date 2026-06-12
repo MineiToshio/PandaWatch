@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { clusterBySlug, allSlugs } from '@/lib/data'
+import { clusterBySlug, allSlugs, coverImage } from '@/lib/data'
 import { ItemHero } from '@/components/item/ItemHero'
 import { MetaTable } from '@/components/item/MetaTable'
 import { ExtrasSection } from '@/components/item/ExtrasSection'
@@ -111,7 +111,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = canonical.title ?? cluster.seriesDisplay ?? 'Ficha'
   const description = itemDescription(cluster)
   const path = `/item/${slug}`
-  const images = ogImage(canonical.image_url ?? canonical.image_local, title)
+  const cov = coverImage(canonical)
+  const images = ogImage(cov.url ?? cov.local, title)
 
   return {
     title,

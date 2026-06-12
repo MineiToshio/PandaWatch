@@ -2,6 +2,7 @@ import Link from 'next/link'
 import type { Cluster } from '@/lib/types'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
+import { coverImage } from '@/lib/data'
 import { formatDate } from '@/lib/format'
 
 type ItemCardProps = {
@@ -35,8 +36,8 @@ export function ItemCard({ cluster, from }: ItemCardProps) {
       {/* Cover area */}
       <div style={{ position: 'relative', aspectRatio: '2/3', background: 'var(--ink-100)' }}>
         <CoverImage
-          imageLocal={canonical.image_local}
-          imageUrl={canonical.image_url}
+          imageLocal={coverImage(canonical).local}
+          imageUrl={coverImage(canonical).url}
           alt={canonical.title || 'Portada'}
           fill
           sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 15vw"

@@ -5,8 +5,9 @@ export type Item = {
   title_original?: string
   description?: string
   description_es?: string
-  image_url?: string
-  image_local?: string
+  // Portada = images[0] (única fuente de verdad, 2026-06-09). Los campos
+  // top-level image_url/image_local fueron eliminados del item. (SourceEntry
+  // SÍ conserva los suyos per-fuente — es otro layer.)
   images?: ItemImage[]
   extras?: ItemExtra[]
   price?: string

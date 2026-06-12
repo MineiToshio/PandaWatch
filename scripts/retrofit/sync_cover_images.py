@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-"""Re-establece el invariante de la convención images[]: images[0] == portada.
+"""Limpia la galería images[] alrededor de la portada (images[0]).
 
-Por convención (CLAUDE.md "Convención images[] — portada por posición"),
-`images[0]` SIEMPRE debe ser la portada, sincronizada con
-`image_url`/`image_local`. La card del dashboard muestra `image_url`/
-`image_local`; el carrusel/lightbox del modal muestra `images[]`. Cuando
-ambos divergen, el usuario ve una foto en la card y OTRA al abrir el carrusel
-(bug reportado 2026-06-02 con los tomos Dark Horse Deluxe: la card mostraba
-la portada PRH por ISBN y el carrusel una foto genérica de grupo de la tienda).
+La portada es `images[0]` (única fuente de verdad, decisión 2026-06-09): no hay
+campos top-level `image_url`/`image_local` que reconciliar. Lo que queda de este
+retrofit es la limpieza de la galería:
 
-La divergencia se acumuló por rutas de escritura que actualizaron
-`image_url`/`image_local` (backfill manual de ISBNs/portadas PRH, distintos
-extractores de detail page) sin tocar `images[0]`.
-
-Este retrofit, para cada item donde `images[0]` no coincide con la portada:
-  1. Pone la portada (`image_url`/`image_local`) como `images[0]`
-     (kind=gallery — la portada es posición 0 por convención).
-  2. Conserva el resto de imágenes de galería SALVO:
-     - las que son la MISMA imagen que la portada en otra resolución
-       (dedup por URL normalizada y por basename),
-     - basura conocida (banners de tienda, placeholders) vía
-       IMAGE_URL_BAD_PATTERNS.
-  Esto repara la divergencia y, cuando había una 2da foto real, restaura la
-  navegación del carrusel.
+  1. Si la portada (images[0]) es un placeholder/banner conocido (junk), la
+     reemplaza por la primera imagen real de images[]; si no hay, la limpia
+     (el dashboard muestra el placeholder 📚).
+  2. Quita de images[] los duplicados exactos de la portada (misma imagen en
+     otra resolución, dedup por URL normalizada / basename) y la basura conocida
+     (banners de tienda, placeholders) vía IMAGE_URL_BAD_PATTERNS.
+  3. Limpia refs basura en sources[] (otro layer, per-fuente).
 
 Items aprobados (`approved_at`) se saltean por defecto (--include-approved
 para forzar). Idempotente. Backup vía backup_and_rotate antes de escribir.
@@ -44,8 +33,10 @@ try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
 except ImportError:  # pragma: no cover
     from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
 try:
+    import image_store  # noqa: E402
     from image_store import normalize_image_url  # noqa: E402
 except ImportError:  # pragma: no cover
+    from scripts import image_store  # noqa: E402
     from scripts.image_store import normalize_image_url  # noqa: E402
 
 DEFAULT_ITEMS = _SCRIPTS_DIR.parent / "data" / "items.jsonl"
@@ -99,7 +90,8 @@ def _compute_junk_local(items: list[dict], images_dir: Path) -> set[str]:
     f2works: dict[str, set] = defaultdict(set)
     for it in items:
         w = _work(it)
-        locs = [it.get("image_local")] + [im.get("local") for im in (it.get("images") or []) if isinstance(im, dict)]
+        # La portada es images[0]; recorremos todas las entries de images[].
+        locs = [im.get("local") for im in (it.get("images") or []) if isinstance(im, dict)]
         for f in locs:
             if f:
                 f2works[f].add(w)
@@ -154,8 +146,8 @@ def _same_image(a_url: str, b_url: str) -> bool:
 
 
 def _fix_bad_cover(item: dict) -> bool:
-    """Si la portada (image_url) es un placeholder/banner conocido (_is_junk),
-    la reemplaza por la primera imagen real de images[]; si no hay, la limpia
+    """Si la portada (images[0]) es un placeholder/banner conocido (_is_junk),
+    la reemplaza por la primera imagen real de la galería; si no hay, la limpia
     para que el dashboard muestre el placeholder 📚.
 
     Dispara SOLO con `_is_junk` (visuel_defaut, banner promo Panini, etc.) — NO
@@ -164,23 +156,24 @@ def _fix_bad_cover(item: dict) -> bool:
 
     Devuelve True si modificó la portada.
     """
-    iu = item.get("image_url") or ""
-    il = item.get("image_local") or ""
+    iu = image_store.cover_url(item)
+    il = image_store.cover_local(item)
     # Portada basura: por patrón de URL (placeholder/banner) O por archivo local
     # conocido (píxel/ad/poster compartido). Si no es basura, no tocar.
     if not _img_is_junk(iu, il):
         return False
-    for im in (item.get("images") or []):
-        if not isinstance(im, dict):
+    imgs = item.get("images") or []
+    # Busca la primera imagen REAL del resto de la galería y la promueve a portada
+    # (images[0]), descartando la portada basura. Si no hay ninguna real, limpia.
+    for i, im in enumerate(imgs):
+        if i == 0 or not isinstance(im, dict):
             continue
         u = im.get("url") or ""
         loc = im.get("local") or ""
         if u and not _img_is_junk(u, loc) and not _is_related_product_thumb(u) and not _same_image(u, iu):
-            item["image_url"] = u
-            item["image_local"] = loc
+            # La buena pasa a portada (pos 0); el resto de la galería se conserva.
+            item["images"] = [im] + [g for j, g in enumerate(imgs) if j not in (0, i)]
             return True
-    item["image_url"] = ""
-    item["image_local"] = ""
     item["images"] = []
     return True
 
@@ -210,79 +203,41 @@ def _clean_sources_junk(item: dict) -> bool:
 
 
 def _rebuild(item: dict) -> bool:
-    """Re-establece images[0] == portada y limpia duplicados exactos / basura.
+    """Limpia duplicados exactos / basura de la galería, preservando la portada.
 
-    Acota su acción a dos casos claros y seguros (NO toca la contaminación de
-    "productos relacionados" de gotcha #31, que es un problema aparte):
-
-      A) images[0] es una imagen genuinamente DISTINTA de la portada
-         (`image_url`/`image_local`) → antepone la portada como images[0].
-         Es el bug reportado: la card muestra una foto y el carrusel otra.
-      B) images[] contiene duplicados exactos de una URL o basura conocida
-         (banners, placeholders) → los elimina, sin tocar el resto.
+    La portada es images[0] (única fuente de verdad). Solo limpiamos las
+    posiciones >=1: dups exactos de una URL o de la portada, y basura conocida
+    (banners, placeholders). NO toca la contaminación de "productos relacionados"
+    de gotcha #31 (problema aparte).
 
     Devuelve True si modificó el item.
     """
-    image_url = item.get("image_url") or ""
-    if not image_url:
-        return False
     imgs = item.get("images") or []
     if not isinstance(imgs, list) or not imgs:
         return False
+    if not isinstance(imgs[0], dict):
+        return False
 
-    first_url = imgs[0].get("url", "") if isinstance(imgs[0], dict) else ""
-    needs_cover = not _same_image(first_url, image_url)
+    first_url = imgs[0].get("url", "")
+    if not first_url:
+        return False
 
-    if needs_cover:
-        # Caso A: la portada va en pos 0, el resto se conserva (menos dups/basura
-        # y menos copias exactas de la portada).
-        image_local = item.get("image_local") or ""
-        new_imgs = [{
-            "url": image_url, "local": image_local,
-            "kind": "gallery", "description": "",
-        }]
-        seen = {_norm(image_url)}
-        for im in imgs:
-            if not isinstance(im, dict):
-                continue
-            u = im.get("url") or ""
-            if not u or _img_is_junk(u, im.get("local") or "") or _is_related_product_thumb(u):
-                continue
-            if _same_image(u, image_url) or _norm(u) in seen:
-                continue
-            seen.add(_norm(u))
-            new_im = dict(im)
-            if new_im.get("kind") == "cover":
-                new_im["kind"] = "gallery"
-            new_imgs.append(new_im)
-    else:
-        # Caso B: images[0] ya es la portada. Solo limpiamos dups exactos y
-        # basura de posiciones >=1, preservando todo lo demás tal cual.
-        new_imgs = [imgs[0]]
-        seen = {_norm(first_url)}
-        for im in imgs[1:]:
-            if not isinstance(im, dict):
-                new_imgs.append(im)
-                continue
-            u = im.get("url") or ""
-            if (u or im.get("local")) and (_img_is_junk(u, im.get("local") or "") or _is_related_product_thumb(u)):
-                continue
-            if u and _norm(u) in seen:
-                continue
-            if u:
-                seen.add(_norm(u))
+    # images[0] es la portada. Limpiamos dups exactos y basura de posiciones >=1,
+    # preservando la portada y el resto tal cual.
+    new_imgs = [imgs[0]]
+    seen = {_norm(first_url)}
+    for im in imgs[1:]:
+        if not isinstance(im, dict):
             new_imgs.append(im)
-
-    # Sincronizar el espejo local de images[0] con la portada: si la portada ya
-    # está descargada (image_local) pero images[0].local quedó vacío (típico en
-    # Mangavariant: el scrape bajó la cover a image_local pero no pobló el campo
-    # en el array), copiarlo. Sin esto el carrusel hotlinkea la 1ª foto en vez
-    # de usar la copia local. Solo cuando images[0] ES la portada (misma imagen).
-    image_local = item.get("image_local") or ""
-    if (new_imgs and isinstance(new_imgs[0], dict) and image_local
-            and _same_image(new_imgs[0].get("url", ""), image_url)
-            and new_imgs[0].get("local") != image_local):
-        new_imgs[0] = {**new_imgs[0], "local": image_local}
+            continue
+        u = im.get("url") or ""
+        if (u or im.get("local")) and (_img_is_junk(u, im.get("local") or "") or _is_related_product_thumb(u)):
+            continue
+        if u and _norm(u) in seen:
+            continue
+        if u:
+            seen.add(_norm(u))
+        new_imgs.append(im)
 
     if new_imgs == imgs:
         return False
@@ -302,10 +257,7 @@ def run(items_path: Path, *, dry_run: bool, include_approved: bool) -> None:
     examples = []
     for it in items:
         if it.get("approved_at") and not include_approved:
-            imgs = it.get("images") or []
-            iu = it.get("image_url") or ""
-            if imgs and isinstance(imgs[0], dict) and not _same_image(imgs[0].get("url", ""), iu):
-                skipped_approved += 1
+            skipped_approved += 1
             continue
         before = len(it.get("images") or [])
         touched = False

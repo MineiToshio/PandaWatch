@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests
 from manga_watch import backup_and_rotate
+import image_store
 from image_store import download_image
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -125,21 +126,24 @@ NEW_MOVIE5_VOL2 = {
 
 
 def set_cover(item, isbn13):
-    """Descarga la portada Amazon por ISBN y actualiza image_url/local/images[0]."""
+    """Descarga la portada Amazon por ISBN y la fija como images[0] (la portada)."""
     url = amazon_cover(isbn13)
     local = download_image(url, IMAGES_DIR, session=SESSION)
-    item["image_url"] = url
-    item["image_local"] = local
     item["images"] = [{"kind": "cover", "url": url, "local": local}]
     return bool(local)
 
 
 def sync_sources(item):
-    """Re-sincroniza sources[0] (la única) con los campos top-level."""
+    """Re-sincroniza sources[0] (la única) con la portada (images[0]) + campos top-level.
+
+    Los campos `image_url`/`image_local` de sources[] son per-fuente (otro layer):
+    se rellenan desde la portada del item (images[0]).
+    """
     if item.get("sources"):
         s = item["sources"][0]
-        for f in ("image_url", "image_local", "price", "release_date",
-                  "publisher", "country", "language"):
+        s["image_url"] = image_store.cover_url(item)
+        s["image_local"] = image_store.cover_local(item)
+        for f in ("price", "release_date", "publisher", "country", "language"):
             if f in item:
                 s[f] = item[f]
         s["url"] = item["url"]
@@ -227,7 +231,7 @@ def main():
         elif act == "novel":
             apply_novel(it, spec)
         touched[act] += 1
-        print(f"  {act.upper():6} {it['edition_key']} -> vol={it.get('volume')!r} isbn={it.get('isbn')} cover={'ok' if it.get('image_local') else 'NO'}")
+        print(f"  {act.upper():6} {it['edition_key']} -> vol={it.get('volume')!r} isbn={it.get('isbn')} cover={'ok' if image_store.cover_local(it) else 'NO'}")
         if NEW_MOVIE5_VOL2["_clone_from"] == key:
             clone_src = it
         out.append(it)
@@ -253,7 +257,7 @@ def main():
         set_cover(nv, sp["isbn"])
         sync_sources(nv)
         out.append(nv)
-        print(f"  ADD    {ek} vol2 isbn={nv['isbn']} cover={'ok' if nv.get('image_local') else 'NO'}")
+        print(f"  ADD    {ek} vol2 isbn={nv['isbn']} cover={'ok' if image_store.cover_local(nv) else 'NO'}")
 
     tmp = ITEMS.with_suffix(".jsonl.tmp")
     with tmp.open("w", encoding="utf-8") as f:

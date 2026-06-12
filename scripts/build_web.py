@@ -178,7 +178,7 @@ def main() -> int:
     if deduped:
         countries = {i.get("country") for i in deduped if i.get("country")}
         publishers = {i.get("publisher") for i in deduped if i.get("publisher")}
-        with_image = sum(1 for i in deduped if i.get("image_url"))
+        with_image = sum(1 for i in deduped if i.get("images"))
         with_price = sum(1 for i in deduped if i.get("price"))
         print(f"[OK] embebidos {len(deduped)} items en {output}")
         print(f"     {len(countries)} países, {len(publishers)} editoriales")

@@ -43,8 +43,10 @@ if str(_SCRIPTS) not in sys.path:
 
 try:
     from scripts.manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
+    from scripts import image_store  # type: ignore
 except ImportError:
     from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
+    import image_store  # type: ignore
 
 
 WAYBACK_API = "http://archive.org/wayback/available"
@@ -118,10 +120,16 @@ def recover_from_snapshot(
         return {}
 
     recovered: dict = {}
-    for field in ("name", "author", "image_url", "isbn", "price",
+    for field in ("name", "author", "isbn", "price",
                   "release_date", "publisher", "description"):
         if md.get(field) and not item.get(field):
             recovered[field] = md[field]
+    # Portada = images[0]: si el item no tiene portada, sembrarla desde wayback
+    # (no como campo top-level, que ya no existe).
+    if md.get("image_url") and not image_store.cover_url(item):
+        tmp = {"images": [dict(im) for im in (item.get("images") or [])]}
+        image_store.set_cover(tmp, md["image_url"])
+        recovered["images"] = tmp["images"]
     if recovered:
         recovered["recovered_from_wayback"] = True
         recovered["wayback_snapshot_url"] = snap_url

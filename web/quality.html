@@ -556,8 +556,11 @@ function qualityApp() {
     toggle(id) { this.open[id] = !this.open[id]; this._persistOpen(); },
 
     coverSrc(it) {
-      if (it.image_local) return "../data/images/" + it.image_local;
-      return it.image_url || "";
+      // images[0] es la única fuente de verdad de la portada.
+      const imgs = Array.isArray(it && it.images) ? it.images : [];
+      const first = imgs.find(im => im && im.url) || { url: "", local: "" };
+      if (first.local) return "../data/images/" + first.local;
+      return first.url || "";
     },
 
     linkFor(cat, it) {

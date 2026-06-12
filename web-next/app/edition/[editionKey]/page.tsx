@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { loadEditionClusters, allEditionKeys } from '@/lib/data'
+import { loadEditionClusters, allEditionKeys, coverImage } from '@/lib/data'
 import { EditionHeader } from '@/components/edition/EditionHeader'
 import { VolumeGrid } from '@/components/edition/VolumeGrid'
 import { BackLink } from '@/components/modules/BackLink'
@@ -70,7 +70,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = canonical.edition_display || canonical.series_display || editionKey
   const description = editionDescription(first, clusters.length, allSignalTypes)
   const path = `/edition/${editionKey}`
-  const images = ogImage(canonical.image_url ?? canonical.image_local, title)
+  const cov = coverImage(canonical)
+  const images = ogImage(cov.url ?? cov.local, title)
 
   return {
     title,

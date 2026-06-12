@@ -3,23 +3,22 @@
 
 Image storage Fase 1, pasos restantes (ver "Image storage" en CLAUDE.md):
 
-1. BACKFILL — para cada item de items.jsonl:
-   - **Cover**: si tiene `image_url` y le falta `image_local`, descarga
-     la portada a data/images/ y setea `image_local`.
-   - **Gallery** (multi-imagen, 2026-05-26): para cada entry en
-     `images[]` (idx > 0) que tenga `url` pero le falte
-     `local`, descarga la imagen y setea `images[i].local`. El scrape
-     (`manga_watch.py::mirror_candidate_images`) ya lo hace para items
-     nuevos; este retrofit cubre el corpus histórico que recién recibió
-     `images[]` poblado por `backfill_metadata.py --only images`.
+1. BACKFILL — para cada item de items.jsonl, recorre TODAS las entries de
+   `images[]` (idx 0 = portada, idx > 0 = galería): para cada una que tenga
+   `url` pero le falte `local`, descarga la imagen a data/images/ y setea
+   `images[i].local`. La portada es `images[0]` (única fuente de verdad); no
+   hay campo top-level que mirar. El scrape
+   (`manga_watch.py::mirror_candidate_images`) ya lo hace para items nuevos;
+   este retrofit cubre el corpus histórico que recién recibió `images[]`
+   poblado por `backfill_metadata.py --only images`.
 
 2. GC mark-and-sweep — busca en data/images/ los archivos que NINGÚN
    item de items.jsonl referencia (orphans, típicamente de items que
    se quitaron del corpus) y los saca de la carpeta. El set de
-   "referenciadas" incluye tanto `image_local` (cover) como cada
-   `images[i].local` (gallery) — si solo mirara cover, los archivos
-   de gallery caerían como orphans. Por defecto los manda a una
-   cuarentena (data/images/_orphans/) — reversible; `--gc-delete` los
+   "referenciadas" incluye cada `images[i].local` (portada + galería) y
+   cada `sources[i].image_local` (per-fuente) — si solo mirara la portada,
+   los archivos de galería/fuente caerían como orphans. Por defecto los manda
+   a una cuarentena (data/images/_orphans/) — reversible; `--gc-delete` los
    borra de verdad.
 
 Idempotente: re-correrlo no re-descarga imágenes ya en disco (el nombre
@@ -96,22 +95,15 @@ def _run_backfill(
     user_agent: str,
     dry_run: bool,
 ) -> int:
-    """Descarga las portadas + gallery faltantes. Devuelve cuántos items
-    se actualizaron.
+    """Descarga el `local` faltante de CADA entry de images[]. Devuelve cuántos
+    consumers (entries de images[]) se actualizaron.
 
-    Procesa dos clases de targets:
-    1) **Cover**: items con `image_url` y sin `image_local` (portada = images[0]).
-    2) **Gallery**: items con `images[]` (idx > 0) que tienen `url` pero
-       no `local`. Una imagen gallery = un download.
+    Target = cualquier `images[idx]` con `url` y sin `local` (idx 0 = portada,
+    idx > 0 = galería). El owner quiere que TODAS las fotos tengan su espejo
+    local, no solo la portada.
     """
-    # 1) Cover targets (comportamiento original).
-    cover_targets = [
-        it for it in items
-        if "_raw" not in it and it.get("image_url") and not it.get("image_local")
-    ]
-    # 2) Gallery targets: por item, recopilo los índices de images[] que
-    # son non-cover y todavía no tienen `local` poblado.
-    gallery_targets: list[tuple[dict, int]] = []
+    # Targets: (item, idx) por cada entry de images[] con url y sin local.
+    img_targets: list[tuple[dict, int]] = []
     for it in items:
         if "_raw" in it:
             continue
@@ -119,55 +111,46 @@ def _run_backfill(
         for idx, im in enumerate(imgs):
             if not isinstance(im, dict):
                 continue
-            if idx == 0:
-                continue
             if im.get("url") and not im.get("local"):
-                gallery_targets.append((it, idx))
+                img_targets.append((it, idx))
 
     if limit > 0:
-        # Limit aplica al total de URLs únicas para ser fair entre cover
-        # y gallery (no caemos en un sesgo dispar).
-        cover_targets = cover_targets[:limit]
-        # Si todavía hay capacidad, gallery hasta completar limit.
-        remaining = max(0, limit - len(cover_targets))
-        gallery_targets = gallery_targets[:remaining]
+        img_targets = img_targets[:limit]
 
-    # Dedup por URL: muchos items comparten la misma portada (tomos de
-    # una edición, cross-source). Bajamos cada URL única una sola vez
-    # y mapeamos el filename a todos sus consumers.
-    # consumers: list of either "cover_for(it)" or "gallery_for(it, idx)".
-    by_url: dict[str, list[tuple[str, dict, int]]] = {}
-    for it in cover_targets:
-        by_url.setdefault(it["image_url"], []).append(("cover", it, -1))
-    for it, idx in gallery_targets:
+    # Dedup por URL: muchos items comparten la misma imagen (tomos de una
+    # edición, cross-source, portada repetida en galería). Bajamos cada URL
+    # única una sola vez y mapeamos el filename a todos sus consumers.
+    # consumers: list of (it, idx) sobre images[].
+    by_url: dict[str, list[tuple[dict, int]]] = {}
+    for it, idx in img_targets:
         url = it["images"][idx]["url"]
-        by_url.setdefault(url, []).append(("gallery", it, idx))
+        by_url.setdefault(url, []).append((it, idx))
 
-    n_cover = len(cover_targets)
-    n_gallery = len(gallery_targets)
-    print(f"[BACKFILL] {n_cover} covers + {n_gallery} gallery sin local "
-          f"({len(by_url)} URLs de imagen únicas).")
+    n_targets = len(img_targets)
+    n_covers = sum(1 for _, idx in img_targets if idx == 0)
+    print(f"[BACKFILL] {n_targets} imágenes sin local ({n_covers} portadas, "
+          f"{n_targets - n_covers} galería) — {len(by_url)} URLs únicas.")
     if not by_url:
         return 0
     if dry_run:
-        src_counter = Counter(t.get("source", "?") for t in cover_targets)
-        if src_counter:
-            print("[BACKFILL] Top sources pendientes (covers):")
-            for source, n in src_counter.most_common(10):
+        cover_counter = Counter(it.get("source", "?") for it, idx in img_targets if idx == 0)
+        if cover_counter:
+            print("[BACKFILL] Top sources pendientes (portadas):")
+            for source, n in cover_counter.most_common(10):
                 print(f"  {n:5d}  {source}")
-        if n_gallery:
-            g_counter = Counter(t.get("source", "?") for t, _ in gallery_targets)
-            print("[BACKFILL] Top sources pendientes (gallery):")
-            for source, n in g_counter.most_common(10):
+        gallery_counter = Counter(it.get("source", "?") for it, idx in img_targets if idx != 0)
+        if gallery_counter:
+            print("[BACKFILL] Top sources pendientes (galería):")
+            for source, n in gallery_counter.most_common(10):
                 print(f"  {n:5d}  {source}")
         print("[DRY-RUN] No se descargó nada.")
         return 0
 
     session = make_session(user_agent)
 
-    def _one(entry: tuple[str, list[tuple[str, dict, int]]]) -> tuple[list[tuple[str, dict, int]], str]:
+    def _one(entry: tuple[str, list[tuple[dict, int]]]) -> tuple[list[tuple[dict, int]], str]:
         url, consumers = entry
-        referer = consumers[0][1].get("url", "")
+        referer = consumers[0][0].get("url", "")
         filename = image_store.download_image(
             url, images_dir, session=session,
             timeout=timeout, referer=referer,
@@ -184,14 +167,8 @@ def _run_backfill(
             consumers, filename = fut.result()
             done += 1
             if filename:
-                for role, it, idx in consumers:
-                    if role == "cover":
-                        it["image_local"] = filename
-                        imgs = it.get("images") or []
-                        if imgs and imgs[0].get("url") == it["image_url"]:
-                            imgs[0]["local"] = filename
-                    else:
-                        it["images"][idx]["local"] = filename
+                for it, idx in consumers:
+                    it["images"][idx]["local"] = filename
                 updated += len(consumers)
             else:
                 failed_urls += 1
@@ -203,7 +180,7 @@ def _run_backfill(
                     print(f"  → flush parcial ({done} procesadas)", flush=True)
 
     print(f"[BACKFILL] {updated} consumers actualizados, {failed_urls} URLs "
-          f"fallidas (esos items quedan con image_url/images[].url como fallback).")
+          f"fallidas (esas entries quedan con images[].url como fallback).")
     return updated
 
 
@@ -221,17 +198,14 @@ def _run_gc(
         print("[GC] data/images/ no existe todavía — nada que limpiar.")
         return 0
 
-    # Referenciadas = cover (`image_local`) + gallery (`images[i].local`) +
+    # Referenciadas = portada + galería (`images[i].local`, idx 0 = portada) +
     # CADA fuente (`sources[i].image_local`, modelo 1-fila-por-producto). Sin
     # incluir sources[], el GC borraría fotos que una fuente sí usa (58 archivos
-    # de ese tipo detectados el 2026-06-02). Si solo mirara cover, los de gallery
-    # quedarían como orphans.
+    # de ese tipo detectados el 2026-06-02).
     referenced: set[str] = set()
     for it in items:
         if "_raw" in it:
             continue
-        if it.get("image_local"):
-            referenced.add(it["image_local"])
         for im in (it.get("images") or []):
             if isinstance(im, dict) and im.get("local"):
                 referenced.add(im["local"])
@@ -362,7 +336,7 @@ def main() -> int:
 
     # Flush final (cubre el último bloque y cualquier cambio del GC)
     _write_items(dst, items)
-    print(f"[OK] Escribí {dst} — {updated} items con image_local nuevo.")
+    print(f"[OK] Escribí {dst} — {updated} entries de images[] con local nuevo.")
     return 0
 
 

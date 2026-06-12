@@ -202,17 +202,24 @@ def _collect_targets(
 ) -> list[tuple[str, Path, list[dict]]]:
     """Agrupa por `image_local` los items que tienen imágenes pequeñas.
 
-    Devuelve [(image_local, path, [items_that_reference_it]), ...] sólo
+    Devuelve [(local, path, [items_that_reference_it]), ...] sólo
     para archivos que existen y tienen píxeles < max_pixels.
+
+    Agrupa por cada `local` de images[] (la portada es images[0], el resto
+    galería). Un mismo archivo lo pueden referenciar varios items (cross-source).
     """
     local_to_items: dict[str, list[dict]] = {}
     for it in items:
         if "_raw" in it:
             continue
-        local = it.get("image_local") or ""
-        if not local:
-            continue
-        local_to_items.setdefault(local, []).append(it)
+        seen_locals: set[str] = set()
+        for im in (it.get("images") or []):
+            if not isinstance(im, dict):
+                continue
+            local = im.get("local") or ""
+            if local and local not in seen_locals:
+                seen_locals.add(local)
+                local_to_items.setdefault(local, []).append(it)
 
     targets = []
     for local, refs in local_to_items.items():
@@ -317,12 +324,11 @@ def run(
         print(f"{old_px:,} → {new_px:,} px ✓")
         counter["upscaled"] += 1
 
-        # Si el extension cambió (jpg → png), actualizar image_local en items
+        # Si el extension cambió (jpg → png), actualizar el `local` en cada entry
+        # de images[] que apunte al archivo viejo (la portada es images[0]).
         new_local = dst_path.name
         if new_local != local:
             for it in refs:
-                it["image_local"] = new_local
-                # Sincronizar también dentro de images[0] si apunta al mismo archivo
                 imgs = it.get("images") or []
                 for img in imgs:
                     if isinstance(img, dict) and img.get("local") == local:
