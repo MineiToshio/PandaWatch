@@ -24,17 +24,40 @@ de `data/items.jsonl` que NO tienen el campo `standardized_at` —
 típicamente items recién scrapeados que llegaron con asignación
 heurística cruda (o sin asignación) del pipeline.
 
-**Cómo funciona**:
-1. Audita pendientes (filtra items sin `standardized_at` **y sin
-   `approved_at`** — los golden records aprobados por el owner nunca se
-   re-procesan; se pueden leer como referencia pero jamás se sobreescriben).
-2. Particiona en chunks de ~150-200.
-3. Delega a subagentes paralelos (7 por wave) que re-derivan
-   series_key/edition_key/volume/title_standardized desde cero via LLM.
-4. Merge: aplica `canonical_series_key()` de `series_aliases.yml`,
-   dedupea por `(series_key, edition_key, volume)`, mueve no-manga
-   a `data/non_manga_blacklist.jsonl`.
-5. Marca cada item con `standardized_at`.
+**Cómo funciona** — el audit y el merge son scripts **COMPARTIDOS** con el
+workflow (`scripts/standardize_audit.py` / `scripts/standardize_apply.py`,
+fuente única anti-drift, 2026-06-11): el skill los invoca, nunca embebe
+copias de la lógica.
+1. **Audit** (`standardize_audit.py`, flags `--limit`/`--force-all`): filtra
+   items sin `standardized_at` **y sin `approved_at`** (los golden records
+   aprobados por el owner nunca se re-procesan; se pueden leer como
+   referencia pero jamás se sobreescriben), asigna `confidence_tier` y
+   escribe las proyecciones `tier{1,2,3}.json` con `proposed_*`,
+   `existing_edition_key` (el LLM no re-agrupa items con edición asignada) y
+   `known_edition_keys` (keys ya existentes en el corpus para esa serie —
+   el LLM las REUSA en vez de acuñar variantes special/limited, gotcha #69).
+2. **Tier 1** (`standardize_apply.py tier1`): aplica la propuesta
+   determinística (0 tokens LLM) y marca `standardized_at`.
+3. **Tier 2/3**: subagentes paralelos en chunks chicos validan (T2) o
+   derivan desde cero (T3) series_key/edition_key/volume/title_standardized
+   via LLM; cada chunk escribe su propio `result_*.jsonl`. **Modelos del
+   workflow**: los agentes mecánicos (audit, tier1, chunkers, checkpoints,
+   merge, cleanup) y la validación Tier 2 usan `haiku`; SOLO la derivación
+   Tier 3 usa `sonnet`. Costo fijo ~200k tokens/corrida → conviene lotes
+   de ≥100 items.
+4. **Merge** (`standardize_apply.py merge`): PRESERVA el `edition_key`
+   existente, fallback a la propuesta heurística si el LLM devolvió keys
+   vacías (sin keys usables → el item queda PENDIENTE), aplica
+   `canonical_series_key()` de `series_aliases.yml`, mueve no-manga a
+   `data/non_manga_blacklist.jsonl`, detecta outliers de serie por
+   /coleccion, consolida duplicados y reporta INTEGRITY.
+5. **Enforcer** (`scripts/retrofit/enforce_listadomanga_rules.py`, Step 6b):
+   re-aplica determinísticamente las reglas duras de agrupación — el LLM NO
+   es autoridad. Incluye los pasos 3c1/3c2/3c3/3c4/3c5 (slug de tipo de
+   edición #69, series duplicadas #70, publisher por edición, prefijo de
+   serie del edition_key #71, palabra de edición duplicada/"Regular" en
+   títulos #72) para TODAS las fuentes, y el paso 4b re-corre los fixers de
+   título DESPUÉS de consolidate (converge en una sola pasada).
 
 **Cuándo invocarlo**:
 - Después de cada `manga_watch.py` scrape (items nuevos vienen sin
@@ -42,9 +65,9 @@ heurística cruda (o sin asignación) del pipeline.
 - Antes de publicar un build fresco del dashboard.
 - Semanal como pasada de curación.
 
-**Modo `--force-all`**: snippet embebido en el skill que limpia
-`standardized_at` de TODOS los items para forzar re-procesamiento
-(útil al cambiar reglas de estandarización mayor).
+**Modo `--force-all`**: flag de `standardize_audit.py` que trata TODOS los
+items como pendientes para forzar re-procesamiento (útil al cambiar reglas
+de estandarización mayor).
 
 **Output esperado por subagente** (per item):
 ```json

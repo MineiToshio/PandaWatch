@@ -58,14 +58,14 @@ for i, it in enumerate(items, 1):
     print(f"    country       : {it.get('country','?')}")
     print(f"    series_key    : {it.get('series_key','?')}")
     print(f"    edition_key   : {it.get('edition_key','?')}")
-    print(f"    image_url     : {it.get('image_url','?')[:80]}")
+    print(f"    cover         : {((it.get('images') or [{}])[0].get('url') or '?')[:80]}")
     print(f"    reason        : {it.get('reason','?')}")
     print(f"    submitted_at  : {it.get('submitted_at','?')}")
 ```
 
 ## Step 2 — Categorize each item
 
-For each deduplicated item, classify the feedback using the taxonomy below. Read `reason` first — it often tells you exactly what's wrong. Then look at `signal_types`, `source`, `publisher`, `image_url`, and `url` to confirm.
+For each deduplicated item, classify the feedback using the taxonomy below. Read `reason` first — it often tells you exactly what's wrong. Then look at `signal_types`, `source`, `publisher`, the cover (`images[0]`), and `url` to confirm.
 
 ### Taxonomy
 
@@ -158,11 +158,14 @@ def corpus_signal_hits(signal_name, corpus):
 For K/L/M/N, show the specific item(s) from feedback and whether similar items in the corpus are likely affected by the same issue.
 
 ```python
-# K — wrong_image: check corpus for items from same source with similar image_url pattern
+# K — wrong_image: check corpus for items from same source whose cover (images[0])
+# matches a bad URL pattern. La portada es images[0] (única fuente de verdad).
+import sys; sys.path.insert(0, "scripts")
+import image_store
 def corpus_image_issue_hits(source_name, bad_image_pattern_re, corpus):
     return [i for i in corpus
             if i.get("source") == source_name
-            and bad_image_pattern_re.search(i.get("image_url",""))]
+            and bad_image_pattern_re.search(image_store.cover_url(i))]
 
 # M — wrong_classification: find siblings with same series_key that may also be wrong
 def corpus_series_siblings(series_key, corpus):
@@ -187,9 +190,9 @@ PROPUESTAS DE MEJORA (N total):
         → Si aprobás esta propuesta, el retrofit los elimina también.
 
 [2] [K: wrong_image] Portada equivocada en "Berserk Deluxe 12"
-    Motivo: image_url apunta a la portada del vol.11 (Norma CDN).
+    Motivo: la portada (images[0]) apunta a la del vol.11 (Norma CDN).
     Fix: backfill_metadata.py --only image_url --url "<url>"
-    (o corrección manual del image_url en items.jsonl)
+    (o corrección manual de images[0] en items.jsonl vía image_store.set_cover)
 
 [3] [M: wrong_classification] series_key "berserk-41" → debería ser "berserk"
     Motivo: el heurístico del scraper interpretó el número como parte del slug.
@@ -260,8 +263,10 @@ Option 1 — run backfill for that specific item:
 
 Option 2 — manual fix in items.jsonl (for a single item when the correct URL is known):
 ```python
-import json
+import json, sys
 from pathlib import Path
+sys.path.insert(0, "scripts")
+import image_store
 
 items_path = Path("data/items.jsonl")
 target_url = "<item_url>"
@@ -274,8 +279,9 @@ with items_path.open(encoding="utf-8") as f:
         if not line: continue
         row = json.loads(line)
         if row.get("url") == target_url:
-            row["image_url"] = correct_image_url
-            row["image_local"] = ""  # force re-download by mirror_images
+            # La portada es images[0] (única fuente de verdad); set_cover la
+            # actualiza con local="" para forzar el re-download de mirror_images.
+            image_store.set_cover(row, correct_image_url, "")
         rows.append(row)
 
 tmp = items_path.with_name("items.jsonl.tmp")

@@ -79,59 +79,20 @@ Each standardized item carries a `standardized_at` ISO timestamp. The skill **on
 
 ## Step 1 — Audit + tier distribution
 
+La lógica de auditoría/tiering vive en `scripts/standardize_audit.py` (fuente
+única — NO embebas una copia acá). Escribe las proyecciones por tier a
+`/tmp/manga-standardize-run/tier{1,2,3}.json`. Cada proyección Tier 2/3 trae
+`proposed_*`, `existing_edition_key` (si el item ya tiene edición asignada) y
+`known_edition_keys` (keys YA existentes en el corpus para esa serie — para
+REUSAR, no acuñar variantes).
+
 ```bash
-.venv/bin/python << 'PY'
-import json, sys
-sys.path.insert(0, 'scripts')
-from manga_watch import derive_series_metadata, Candidate
-
-items = [json.loads(l) for l in open('data/items.jsonl')]
-# Golden records: items aprobados manualmente desde el dashboard (approved_at)
-# NUNCA se re-procesan — son fuente de verdad. Pueden usarse como ejemplos de
-# referencia de "dato bien hecho", pero jamás se sobreescriben.
-pending = [it for it in items
-           if not it.get('standardized_at') and not it.get('approved_at')]
-approved = [it for it in items if it.get('approved_at')]
-print(f'Total items: {len(items)}')
-print(f'Pendientes (sin standardized_at): {len(pending)}')
-print(f'Aprobados (golden records, no se tocan): {len(approved)}')
-
-if not pending:
-    print('\nNothing to standardize.')
-    exit()
-
-# Re-derive metadata to get confidence_tier for routing
-tiers = {1: [], 2: [], 3: []}
-for it in pending:
-    c = Candidate(
-        title=it.get('title_original') or it.get('title',''),
-        url=it.get('url',''), source=it.get('source',''),
-        source_url=it.get('source_url',''), country=it.get('country',''),
-        language=it.get('language',''), publisher=it.get('publisher',''),
-        source_class=it.get('source_class',''), tags=it.get('tags',[]),
-        description=it.get('description',''),
-        signal_types=it.get('signal_types',[]),
-    )
-    md = derive_series_metadata(c)
-    tier = md.get('confidence_tier', 3) if md else 3
-    tiers[tier].append((it, md or {}))
-
-print(f'\nTier 1 (auto-standardize): {len(tiers[1])}')
-print(f'Tier 2 (LLM validation):   {len(tiers[2])}')
-print(f'Tier 3 (full LLM):         {len(tiers[3])}')
-
-# Save tier assignments for later steps
-import pickle
-from pathlib import Path
-base = Path('/tmp/manga-standardize-run')
-base.mkdir(parents=True, exist_ok=True)
-with open(base / 'tiers.pkl', 'wb') as f:
-    pickle.dump(tiers, f)
-print(f'\nTier data saved to {base / "tiers.pkl"}')
-PY
+.venv/bin/python scripts/standardize_audit.py            # [--limit N] [--force-all]
 ```
 
-If `Pendientes = 0` → report "nothing to standardize" and stop.
+Los items con `approved_at` (golden records) NUNCA entran al pending set.
+
+If `PENDING = 0` → report "nothing to standardize" and stop.
 
 If `Pendientes < 15` → process ALL tiers inline (no subagents needed).
 
@@ -139,55 +100,11 @@ If `Pendientes >= 15` → use the tiered workflow below.
 
 ## Step 2 — Auto-standardize Tier 1 (deterministic, no LLM)
 
-Tier 1 items have high-confidence heuristic assignments. Apply them directly:
+Tier 1 items have high-confidence heuristic assignments. Apply them directly
+(la lógica vive en `scripts/standardize_apply.py` — NO embebas una copia):
 
 ```bash
-.venv/bin/python << 'PY'
-import json, pickle, datetime as dt, sys
-sys.path.insert(0, 'scripts')
-from series_aliases import canonical_series_key
-from pathlib import Path
-
-BASE = Path('/tmp/manga-standardize-run')
-ITEMS = Path('data/items.jsonl')
-
-with open(BASE / 'tiers.pkl', 'rb') as f:
-    tiers = pickle.load(f)
-
-items = [json.loads(l) for l in open(ITEMS)]
-url_to_md = {it['url']: md for it, md in tiers[1]}
-now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
-applied = 0
-
-for it in items:
-    if it.get('standardized_at'):
-        continue
-    md = url_to_md.get(it.get('url',''))
-    if not md:
-        continue
-    # Apply deterministic standardization
-    if not it.get('title_original'):
-        it['title_original'] = it.get('title', '')
-    it['series_key'] = md['series_key']
-    it['series_display'] = md['series_display']
-    it['edition_key'] = md['edition_key']
-    it['edition_display'] = md['edition_display']
-    it['volume'] = md['volume']
-    if md.get('title_standardized'):
-        it['title'] = md['title_standardized']
-    it['standardized_at'] = now_iso
-    applied += 1
-
-# Write back
-tmp = ITEMS.with_suffix(ITEMS.suffix + '.tmp')
-with tmp.open('w', encoding='utf-8') as fh:
-    for it in items:
-        fh.write(json.dumps(it, ensure_ascii=False) + '\n')
-tmp.replace(ITEMS)
-
-print(f'Tier 1 auto-standardized: {applied} items (0 tokens used)')
-print(f'Remaining for LLM: {len(tiers[2]) + len(tiers[3])} items')
-PY
+.venv/bin/python scripts/standardize_apply.py tier1     # [--force-all]
 ```
 
 ## Step 3 — Partition Tier 2 + 3 into chunks
@@ -200,49 +117,28 @@ session limits — the #1 reliability problem in past runs).
 
 ```bash
 .venv/bin/python << 'PY'
-import json, re, pickle
+import json, re
 from pathlib import Path
 from collections import defaultdict
 
 BASE = Path('/tmp/manga-standardize-run')
-with open(BASE / 'tiers.pkl', 'rb') as f:
-    tiers = pickle.load(f)
-
 CHUNK_SIZE = 25
 
-# Combine Tier 2 + Tier 3 items
-remaining = [(it, md, 2) for it, md in tiers[2]] + [(it, md, 3) for it, md in tiers[3]]
+# Las proyecciones YA vienen completas del audit (proposed_*, tier,
+# existing_edition_key, known_edition_keys) — acá solo se particiona.
+remaining = (json.load(open(BASE / 'tier2.json'))
+             + json.load(open(BASE / 'tier3.json')))
 
-def project(it, md, tier):
-    return {
-        'url': it.get('url',''),
-        'title': it.get('title',''),
-        'title_original': it.get('title_original',''),
-        'source': it.get('source',''),
-        'publisher': it.get('publisher',''),
-        'country': it.get('country',''),
-        'language': it.get('language',''),
-        'isbn': it.get('isbn',''),
-        'signal_types': it.get('signal_types', []),
-        'description_excerpt': (it.get('description','') or '')[:200],
-        'tier': tier,
-        # Tier 2: include heuristic proposal for validation
-        'proposed_series_key': md.get('series_key', ''),
-        'proposed_edition_key': md.get('edition_key', ''),
-        'proposed_volume': md.get('volume', ''),
-        'proposed_title': md.get('title_standardized', ''),
-    }
-
-def group_key(it):
-    url = it.get('url','')
+def group_key(p):
+    url = p.get('url','')
     m = re.search(r'listadomanga\.es/coleccion\.php\?id=(\d+)', url)
     if m: return f'lmc:{m.group(1)}'
     m = re.match(r'^(https?://[^?#]+)', url)
     return f'url:{m.group(1) if m else url}'
 
 groups = defaultdict(list)
-for it, md, tier in remaining:
-    groups[group_key(it)].append((it, md, tier))
+for p in remaining:
+    groups[group_key(p)].append(p)
 
 # Pack into chunks respecting groups
 for old in BASE.glob('chunk_*.jsonl'): old.unlink()
@@ -262,10 +158,7 @@ if current: chunks.append(current)
 
 for idx, chunk in enumerate(chunks):
     p = BASE / f'chunk_{idx:02d}.jsonl'
-    p.write_text('\n'.join(
-        json.dumps(project(it, md, tier), ensure_ascii=False)
-        for it, md, tier in chunk
-    ))
+    p.write_text('\n'.join(json.dumps(x, ensure_ascii=False) for x in chunk))
 
 print(f'Chunks: {len(chunks)}, sizes: {sorted([len(c) for c in chunks], reverse=True)[:5]}...')
 print(f'Total items for LLM: {sum(len(c) for c in chunks)}')
@@ -318,12 +211,34 @@ Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized nam
 
 ### edition_key — `{series}-{publisher_slug}-{edition_slug}-{country_slug}`
 
-**NO RE-DERIVES la edición si el item YA tiene `edition_key` asignado.** El scraper ya
-aplicó las reglas duras de agrupación (coleccion=edición, país, nombre oficial) — está
-bien. Para esos items tu trabajo es SOLO: serie canónica + traducir el título del TOMO +
-detectar non-manga. El apply del skill conserva el `edition_key`/`edition_display`
-existentes. Sólo derivá la edición desde cero para items SIN `edition_key` (ej. algunas
-fuentes que no son listadomanga). Las reglas de abajo aplican a esos casos.
+**NO RE-DERIVES la edición si el item YA tiene `edition_key` asignado** (viene como
+`existing_edition_key` en el input). El scraper ya aplicó las reglas duras de agrupación
+(coleccion=edición, país, nombre oficial) — está bien. Para esos items tu trabajo es
+SOLO: serie canónica + traducir el título del TOMO + detectar non-manga. El apply del
+skill conserva el `edition_key`/`edition_display` existentes. Sólo derivá la edición
+desde cero para items SIN `edition_key` (ej. algunas fuentes que no son listadomanga).
+Las reglas de abajo aplican a esos casos.
+
+**REUSO DE KEYS EXISTENTES (gotcha #69)**: si el item trae `known_edition_keys`
+(edition_keys YA existentes en el corpus para esa serie), y una matchea el
+publisher+tipo+país de este item, USA ESA KEY EXACTA. NUNCA acuñes una key nueva que
+difiera de una existente solo en el slug de tipo (special/limited/collector/deluxe) —
+eso parte la misma edición en dos páginas.
+
+**TABLA DE TÉRMINOS DE TIPO (DURA, gotcha #69)** — el término del título manda y se
+mapea SIEMPRE igual (un post-paso determinístico, `canonicalize_edition_slugs.py`,
+re-aplica esta tabla; no la contradigas):
+- 限定版 → `limited` · 特装版 / 同梱版 → `special` · 愛蔵版 → `deluxe` · 完全版 → `kanzenban`
+- "edición limitada" / "edizione limitata" / "édition limitée" / "limited edition" → `limited`
+- "coleccionista" / "collector" → `collector` · "edición de lujo" / "deluxe" → `deluxe`
+- Ediciones NOMBRADAS (Maximum, Perfect, Ultimate, Master, Grimorio…) ganan sobre el
+  término de tipo: "One Piece Maximum 限定版" → `maximum`.
+- **GUARD de nombre de serie**: si la palabra "de edición" es parte del NOMBRE de la
+  serie ("Trigun Maximum", "Ultimate Muscle"), NO es tipo de edición — usá la evidencia
+  real de edición (o `regular`) y NUNCA repitas la palabra en el título ("Trigun
+  Maximum Maximum 2" está mal → "Trigun Maximum 2").
+- Ediciones `regular`: el título NO lleva palabra de edición ("Noragami 27", nunca
+  "Noragami Regular 27").
 
 **REGLA DE NEGOCIO DURA (gotcha #46): país distinto = edición distinta, SIEMPRE.**
 El `edition_key` TERMINA con el código de país de la EDICIÓN (derivado de
@@ -482,229 +397,19 @@ If missing > 0, process inline (≤10) or spawn a retry subagent (>10).
 
 ## Step 6 — Merge results + apply
 
+La lógica de merge vive en `scripts/standardize_apply.py` (fuente única — NO
+embebas una copia acá). Lee los `result_*.jsonl`, aplica los veredictos
+preservando el `edition_key` existente (el LLM no re-agrupa), usa la propuesta
+heurística como fallback de keys vacías (sin keys usables → el item queda
+PENDIENTE, nunca huérfano), manda los non-manga a la blacklist, corrige
+outliers de serie por /coleccion, recomputa cluster_key y consolida:
+
 ```bash
-.venv/bin/python << 'PY'
-import json, sys
-sys.path.insert(0, 'scripts')
-import series_aliases, importlib
-importlib.reload(series_aliases)
-from series_aliases import canonical_series_key, _build_lookup
-_build_lookup.cache_clear()
-from pathlib import Path
-import datetime as dt
-
-BASE = Path('/tmp/manga-standardize-run')
-ITEMS = Path('data/items.jsonl')
-BLACKLIST = Path('data/non_manga_blacklist.jsonl')
-
-results = {}
-for p in sorted(BASE.glob('result_*.jsonl')):
-    for line in open(p):
-        r = json.loads(line)
-        results[r['url']] = r
-
-items = [json.loads(l) for l in open(ITEMS)]
-now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
-
-non_manga = []
-final = []
-for it in items:
-    if it.get('standardized_at'):
-        final.append(it); continue
-    r = results.get(it.get('url',''))
-    if not r:
-        final.append(it); continue
-    if not r.get('is_manga', True):
-        non_manga.append({
-            'url': it.get('url',''), 'title': it.get('title',''),
-            'source': it.get('source',''), 'publisher': it.get('publisher',''),
-            'reason': r.get('non_manga_reason','flagged_by_review'),
-            'reviewed_at': now_iso,
-        })
-        continue
-    it['series_key'] = r.get('series_key','')
-    it['series_display'] = r.get('series_display','')
-    # PRESERVAR la EDICIÓN ya asignada determinísticamente: el parser (scraper) ya
-    # aplicó las reglas duras (coleccion=edición, país, nombre oficial). El LLM NO
-    # re-agrupa — sólo asigna edición a items que NO tienen una. Si el item ya trae
-    # edition_key, conservamos edition_key + edition_display + volume; el LLM sólo
-    # aporta serie (canónica) + título del tomo (traducido). Evita que el LLM
-    # deshaga el ordenamiento (decisión owner 2026-06-07).
-    if (it.get('edition_key') or '').strip():
-        it['volume'] = it.get('volume','') or r.get('volume','')
-    else:
-        it['edition_key'] = r.get('edition_key','')
-        it['edition_display'] = r.get('edition_display','')
-        it['volume'] = r.get('volume','')
-    new_title = r.get('title_standardized','').strip()
-    if new_title:
-        if not it.get('title_original'):
-            it['title_original'] = it.get('title','')
-        it['title'] = new_title
-    new_sk, new_sd = canonical_series_key(it['title'], it['series_key'], it['series_display'])
-    if new_sk != it['series_key']:
-        old_sk = it['series_key']
-        it['series_key'] = new_sk
-        it['series_display'] = new_sd
-        if it['edition_key'].startswith(old_sk + '-'):
-            it['edition_key'] = new_sk + it['edition_key'][len(old_sk):]
-    elif new_sd != it['series_display']:
-        it['series_display'] = new_sd
-    it['standardized_at'] = now_iso
-    final.append(it)
-
-# Consistency check for listadomanga collection groups
-import re as _re
-from collections import defaultdict as _dd, Counter as _cnt
-_groups = _dd(list)
-for it in final:
-    if not it.get('standardized_at'): continue
-    url = it.get('url','') or ''
-    m = _re.search(r'listadomanga\.es/coleccion\.php\?id=(\d+)', url)
-    if m: _groups[f'lmc:{m.group(1)}'].append(it)
-
-_outliers_fixed = 0
-for gk, grp in _groups.items():
-    if len(grp) < 4: continue
-    sk_counts = _cnt(it.get('series_key','') for it in grp)
-    dom_sk, dom_sk_n = sk_counts.most_common(1)[0]
-    if dom_sk_n >= 3:
-        for it in grp:
-            if it.get('series_key','') and it['series_key'] != dom_sk:
-                old_ek = it.get('edition_key','')
-                if old_ek.startswith(it['series_key'] + '-'):
-                    it['edition_key'] = dom_sk + old_ek[len(it['series_key']):]
-                it['series_key'] = dom_sk
-                dom_sd = next((x.get('series_display','') for x in grp if x.get('series_key')==dom_sk), '')
-                if dom_sd: it['series_display'] = dom_sd
-                _outliers_fixed += 1
-
-print(f"[CONSISTENCY] outliers fixed: {_outliers_fixed}")
-
-# ENFORCE regla del owner (2026-06-06): cada /coleccion?id=N es UNA edición.
-# Colecciones distintas de la misma obra = ediciones DISTINTAS, NUNCA el mismo
-# edition_key. + corregir dos mislabels frecuentes del LLM. Determinístico, sobre
-# los mismos campos confiables del parser (tag edition:KIND, from_extras, título
-# de colección en description). Mantener sincronizado con
-# scripts/retrofit/fix_listadomanga_editions.py.
-_ARTBOOK_RE = _re.compile(r"\b(?:artbook|art\s*book|art\s*works?|illustrations?|"
-                          r"ilustraciones|libro\s+de\s+ilustraciones|the\s+art\s+of|"
-                          r"画集|イラスト集)\b", _re.IGNORECASE)
-_WRONG_COFRE = {"special","limited","collector","integral","deluxe","variant"}
-def _ed_kind(it):
-    for t in it.get('tags') or []:
-        if t.startswith('edition:'): return t.split(':',1)[1]
-    return 'regular'
-def _split_ek(ek, sk):
-    if not ek or not sk or not ek.startswith(sk+'-'): return None
-    rem = ek[len(sk)+1:]
-    if '-' not in rem: return None
-    pub, slug = rem.rsplit('-',1); return pub, slug
-_lmc = [it for it in final if 'coleccion.php' in (it.get('url','') or '')]
-_prop = {}  # id(it) -> (new_ek_base, slug_changed, slug, cid)
-for it in _lmc:
-    sk = it.get('series_key',''); sp = _split_ek(it.get('edition_key',''), sk)
-    m = _re.search(r'coleccion\.php\?id=(\d+)', it.get('url',''))
-    if not sp or not m: continue
-    pub, old_slug = sp; cid = m.group(1)
-    ct = (it.get('description','') or '').split(' · ')[0]
-    tags = it.get('tags') or []
-    slug = old_slug
-    if _ed_kind(it)=='regular' and 'from_extras' in tags and old_slug in _WRONG_COFRE:
-        slug = 'regular'
-    elif old_slug in (_WRONG_COFRE | {'regular'}) and _ARTBOOK_RE.search(ct):
-        slug = 'artbook'
-    _prop[id(it)] = (f"{sk}-{pub}-{slug}", slug!=old_slug, slug, cid)
-_ek_cids = _dd(set)
-for ekb, _, _, cid in _prop.values(): _ek_cids[ekb].add(cid)
-_collide = {ek for ek, cids in _ek_cids.items() if len(cids) > 1}
-_LMC_DISPLAY = {"regular":"","artbook":"Artbook"}
-_lmc_fixed = 0
-for it in _lmc:
-    pr = _prop.get(id(it))
-    if not pr: continue
-    ekb, changed, slug, cid = pr
-    new_ek = f"{ekb}-c{cid}" if ekb in _collide else ekb
-    if new_ek == it.get('edition_key',''): continue
-    it['edition_key'] = new_ek
-    if changed and slug in _LMC_DISPLAY:  # solo special->regular / ->artbook
-        # NO tocar edition_display (gotcha #49): es el NOMBRE OFICIAL de la
-        # coleccion (sin traducir), ya viene correcto en el item. Sólo el title
-        # del TOMO se ajusta.
-        sd = it.get('series_display') or ''; vol = it.get('volume') or ''
-        if sd: it['title'] = ' '.join(x for x in [sd, _LMC_DISPLAY[slug], vol] if x).strip()
-    _lmc_fixed += 1
-print(f"[LMC-EDITIONS] coleccion=edicion enforced: {_lmc_fixed} fixed, {len(_collide)} collisions split")
-
-# Desambiguar TÍTULOS de display que colisionan entre EDICIONES distintas de la
-# misma obra (gotcha #42): dos ediciones (publishers/idiomas/años distintos) con
-# el MISMO title se ven idénticas aunque su edition_key las distinga. Prioridad:
-# editorial → idioma → año → coleccion. Sincronizado con
-# scripts/retrofit/fix_listadomanga_title_collisions.py.
-_PUBLAB = [(_re.compile(r"planeta",_re.I),"Planeta"),(_re.compile(r"norma",_re.I),"Norma"),
-           (_re.compile(r"panini",_re.I),"Panini"),(_re.compile(r"ivrea",_re.I),"Ivrea"),
-           (_re.compile(r"gl[ée]nat",_re.I),"Glénat"),(_re.compile(r"\bedt\b",_re.I),"EDT")]
-def _publab(p):
-    for rx,l in _PUBLAB:
-        if rx.search(p or ""): return l
-    return (p or "").split()[0] if p else ""
-_tgroups = _dd(list)
-for it in final:
-    if 'coleccion.php' in (it.get('url','') or '') and it.get('edition_key'):
-        _tgroups[(it.get('series_key',''), _re.sub(r"\s+"," ",(it.get('title','') or '')).strip().lower())].append(it)
-_disamb = 0
-for _k, _g in _tgroups.items():
-    if len({i.get('edition_key') for i in _g}) < 2: continue
-    _pubs={_publab(i.get('publisher','')) for i in _g}
-    _langs={(i.get('language') or '').strip() for i in _g}
-    _yrs={(i.get('release_date','') or '')[:4] for i in _g if (i.get('release_date','') or '')[:4]}
-    _mode = 'pub' if len(_pubs)>1 else 'lang' if len(_langs)>1 else 'year' if (len(_yrs)>1 and all((i.get('release_date','') or '')[:4] for i in _g)) else 'cole'
-    for it in _g:
-        if _mode=='pub': _tag=_publab(it.get('publisher',''))
-        elif _mode=='lang': _tag=(it.get('language') or '').strip()
-        elif _mode=='year': _tag=(it.get('release_date','') or '')[:4]
-        else:
-            _m=_re.search(r'id=(\d+)', it.get('url','')); _tag=f"col. {_m.group(1)}" if _m else ''
-        _t=it.get('title','') or ''
-        if _tag and f"({_tag})" not in _t:
-            it['title']=it['title_standardized']=f"{_t} ({_tag})"; _disamb+=1
-print(f"[LMC-EDITIONS] títulos desambiguados por colisión: {_disamb}")
-
-# Consolidar por producto (modelo 1-fila-por-producto).
-# El edition_key/volume cambió al estandarizar, así que recomputamos cluster_key
-# y FUSIONAMOS los duplicados con merge_cluster (NO los borramos — borrar
-# perdería las fuentes hermanas). consolidate_by_cluster es la MISMA primitiva
-# que usa append_jsonl al ingestar (fuente única de verdad del merge): une
-# sources[], imágenes (portada canónica primera) y extras.
-from manga_watch import derive_cluster_key, consolidate_by_cluster
-for it in final:
-    it['cluster_key'] = derive_cluster_key(it)
-_before_consolidate = len(final)
-deduped = consolidate_by_cluster(final)
-dedup_removed = _before_consolidate - len(deduped)
-
-tmp = ITEMS.with_suffix(ITEMS.suffix + '.tmp')
-with tmp.open('w', encoding='utf-8') as fh:
-    for it in deduped:
-        fh.write(json.dumps(it, ensure_ascii=False) + '\n')
-tmp.replace(ITEMS)
-
-existing_bl = set()
-if BLACKLIST.exists():
-    for line in open(BLACKLIST):
-        try: existing_bl.add(json.loads(line).get('url',''))
-        except: pass
-new_bl = [nm for nm in non_manga if nm['url'] not in existing_bl]
-with BLACKLIST.open('a', encoding='utf-8') as fh:
-    for nm in new_bl:
-        fh.write(json.dumps(nm, ensure_ascii=False) + '\n')
-
-print(f'Items: {len(items)} → {len(deduped)}')
-print(f'Standardized: {sum(1 for it in deduped if it.get("standardized_at"))}')
-print(f'Non-manga: {len(new_bl)}')
-print(f'Deduped: {dedup_removed}')
-PY
+.venv/bin/python scripts/standardize_apply.py merge     # [--force-all]
 ```
+
+El viejo enforcement embebido `[LMC-EDITIONS]` ya NO va acá: lo cubre el
+Step 6b (enforcer determinístico).
 
 ## Step 6b — Enforce REGLAS DE AGRUPACIÓN (determinístico, AUTORIDAD FINAL)
 
@@ -715,6 +420,10 @@ reglas duras y sobreescribe lo que haya quedado mal — es la fuente de verdad d
   del `description`, sin red).
 - **#48** una `/coleccion` = UNA edición (unify).
 - **#46** país = edición (sufijo de país en `edition_key`).
+- **#69** slug de TIPO de edición = término del título (canonicalize_edition_slugs:
+  限定版→limited, 特装版→special… — corrige la inconsistencia del LLM en fuentes no-lmc).
+- **#70** series_key sin variantes mecánicas (merge_duplicate_series: "the-",
+  apóstrofes, vocales largas romaji) + publisher unificado (normalize_edition_publishers).
 - cluster_key tier-0 lmc, desambiguación de títulos, consolidate, dedup de portadas, slugs.
 
 Corré SIEMPRE esto al final (reemplaza el viejo enforcement embebido `[LMC-EDITIONS]`
