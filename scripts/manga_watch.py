@@ -2443,59 +2443,12 @@ _REFERENCE_ONLY_SOURCES = frozenset({
     "mangavariant", "sumikko", "booksprivilege", "blogbbm",
 })
 
-# Reglas de catálogo permanente: (publisher_substring, title_regex_or_None).
-# Un item matchea si el publisher contiene el substring Y el título matchea el regex
-# (o el regex es None = cualquier título del publisher). Basado en investigación
-# de convenciones editoriales por mercado (2026-05-30, 6 agentes de research).
-#
-# Reglas ordenadas por especificidad — las más específicas primero.
-# Solo aplican cuando NO hay señales de escasez (_SCARCITY_SIGS).
-_COMMON_CATALOG_RULES: tuple[tuple[str, re.Pattern[str] | None], ...] = (
-    # US — líneas ongoing con reprints documentados
-    ("dark horse",      None),          # Berserk Deluxe, Hellsing Deluxe — reprints confirmados
-    ("viz",             None),          # Viz Box Sets (One Piece, DB) — restocks confirmados
-    ("yen press",       None),          # Yen Press CE — ongoing catalog
-    ("seven seas",      None),          # Seven Seas CE (manga) — ongoing
-    # ES — sin límite declarado, retail estándar
-    ("norma editorial", None),          # Norma — retail estándar, sin límite
-    ("distrito manga",  None),          # Distrito — retail estándar
-    ("milky way",       None),          # Milky Way — Grimorio, hardcovers, ongoing
-    ("ivrea",           None),          # Ivrea España + Argentina — catálogo estándar
-    ("ecc ediciones",   None),          # ECC — catálogo manga (DC filtrado por blacklist)
-    ("arechi",          None),          # Arechi Manga — ediciones premium ongoing
-    # FR — líneas de catálogo permanentes (no per-volume collectors)
-    ("glénat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
-    ("glenat",          re.compile(r"prestige|perfect.?edition|full.?color", re.I)),
-    ("pika",            re.compile(r"masterpiece", re.I)),
-    ("ki-oon",          re.compile(r"coffret.*t[0-9]|perfect.?edition", re.I)),
-    ("kana",            re.compile(r"deluxe|prestige", re.I)),
-    ("meian",           re.compile(r"perfect.?edition", re.I)),
-    ("kazé",            re.compile(r"coffret.*t[0-9]", re.I)),
-    ("kaze",            re.compile(r"coffret.*t[0-9]", re.I)),
-    ("crunchyroll",     re.compile(r"coffret.*t[0-9]", re.I)),
-    # DE — líneas ongoing
-    ("carlsen",         re.compile(r"massiv|sammelschuber", re.I)),
-    # IT — líneas multi-volumen deluxe con reprints documentados (Panini/Planet Manga)
-    ("panini",          re.compile(r"master.?edition|deluxe|taniguchi|ultimate", re.I)),
-    # ES — Planeta Cómic líneas ongoing (incl. box sets = catálogo estándar)
-    ("planeta",         re.compile(r"perfect.?edition|kanzenban|deluxe|box.?set", re.I)),
-    # DE — altraverse CEs son per-volume pero las top-tier se reimprimen;
-    # Carlsen Perfect Edition / box sets son catálogo (no "Sonderausgabe" sueltas)
-    ("carlsen",         re.compile(r"perfect.?edition|box.?set", re.I)),
-    # IT — Edizioni BD/Dynit deluxe box sets son catálogo ongoing
-    ("edizioni bd",     re.compile(r"deluxe|collection", re.I)),
-    ("dynit",           re.compile(r"deluxe|collector", re.I)),
-)
-
-
-def _matches_common_catalog(pub: str, title: str) -> bool:
-    """True si el (publisher, title) matchea alguna regla de catálogo permanente."""
-    pub_l = pub.lower()
-    for pub_sub, title_re in _COMMON_CATALOG_RULES:
-        if pub_sub in pub_l:
-            if title_re is None or title_re.search(title):
-                return True
-    return False
+# NOTA (2026-06-11): se eliminó la whitelist `_COMMON_CATALOG_RULES` /
+# `_matches_common_catalog` (líneas de catálogo permanente por publisher,
+# 2026-05-30). Era parte del modelo viejo default-rare (excepción para llegar
+# a common); con el modelo default-common quedó sin callers — el default ya ES
+# common y la escasez se prueba con evidencia. Si se necesita de nuevo, está
+# en git history (commit 0a4ead5 y anteriores).
 
 
 def _is_reference_only_source(source: str) -> bool:
