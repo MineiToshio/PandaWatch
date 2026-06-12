@@ -175,7 +175,6 @@ def main() -> int:
                 it["edition_display"] = SLUG_DISPLAY.get(p["slug"], "")
                 if it.get("series_display"):
                     it["title"] = new_title
-                    it["title_standardized"] = new_title
         changed += 1
 
     # Reporte

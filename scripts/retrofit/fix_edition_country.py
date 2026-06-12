@@ -34,14 +34,21 @@ ITEMS = ROOT / "data" / "items.jsonl"
 _VALID_SLUGS = set(mw._COUNTRY_SLUG_MAP.values())
 
 
-def _has_country_suffix(ek: str) -> bool:
+def _has_country_suffix(ek: str, country_slug: str = "") -> bool:
     tail = ek.rsplit("-", 1)[-1] if "-" in ek else ""
+    # Idempotencia ROBUSTA (gotcha #91): además de los códigos del mapa,
+    # aceptar el código COMPUTADO para el país de este item — si el país no
+    # está en el mapa, el fallback de 4 letras (cheq/turq/core…) seguía sin
+    # reconocerse y cada corrida del enforcer re-apendeaba otro sufijo
+    # (caso real: "…-cheq-cheq-cheq" tras 3 corridas).
+    if country_slug and tail == country_slug:
+        return True
     return tail in _VALID_SLUGS or (len(tail) in (2, 4) and tail == "xx")
 
 
 def _suffix_country(ek: str, country: str) -> str:
     cs = mw._country_slug(country)
-    if _has_country_suffix(ek):
+    if _has_country_suffix(ek, cs):
         return ek  # ya sufijado (idempotente)
     return f"{ek}-{cs}"
 

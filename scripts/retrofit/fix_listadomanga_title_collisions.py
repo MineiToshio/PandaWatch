@@ -97,7 +97,6 @@ def main() -> int:
                 diffs.append((t, new))
             if not args.dry_run:
                 it["title"] = new
-                it["title_standardized"] = new
             changed += 1
 
     print(f"[collisions] títulos desambiguados: {changed}")

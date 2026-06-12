@@ -131,8 +131,11 @@ def main() -> int:
             new["edition_key"] = (f"{_ek_base}-c{cid}" if _ek_base in _ek_collide else _ek_base) if sk else new.get("edition_key", "")
             suffix = SLUG_DISPLAY.get(slug, "")
             if sd:
+                # Best-effort: sources[] no guarda el título oficial por-fuente,
+                # así que al separar se reconstruye un título distinguible.
+                # (Única excepción tolerada a la política de títulos 2026-06-12;
+                # herramienta de reparación manual, fuera del pipeline canónico.)
                 new["title"] = " ".join(x for x in [sd, suffix, new.get("volume", "")] if x).strip()
-                new["title_standardized"] = new["title"]
             new["edition_display"] = suffix
             # Atribuir imágenes: las que matchean el cover local del source, o cuyo
             # hash matchea el disambiguador del source url, o extras de este source.

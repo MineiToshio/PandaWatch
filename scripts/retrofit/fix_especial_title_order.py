@@ -38,8 +38,6 @@ def main() -> int:
                 ex.append((old, new))
             if not args.dry_run:
                 it["title"] = new
-                if it.get("title_standardized") == old:
-                    it["title_standardized"] = new
             changed += 1
     print(f"[especial-order] títulos reordenados: {changed}")
     for o, n in ex:

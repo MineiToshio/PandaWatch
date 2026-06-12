@@ -36,7 +36,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate  # type: ignore
+from manga_watch import FULLWIDTH_DIGITS_TABLE, backup_and_rotate  # type: ignore
 
 
 _SLUG_VALID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
@@ -48,8 +48,8 @@ _VOL_PREFIX_RE = re.compile(
 )
 # Strips trailing JP volume markers
 _VOL_SUFFIX_RE = re.compile(r'[巻冊号]$')
-# Full-width digits → ASCII
-_FULLWIDTH_TABLE = str.maketrans('０１２３４５６７８９', '0123456789')
+# Full-width digits → ASCII: tabla única importada de manga_watch (gotcha #82)
+_FULLWIDTH_TABLE = FULLWIDTH_DIGITS_TABLE
 # JP parentheses / brackets
 _JP_BRACKETS_RE = re.compile(r'[（）【】「」『』]')
 

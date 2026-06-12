@@ -77,7 +77,6 @@ def main() -> int:
                     diffs.append((old, it.get("title", ""), cand_title))
                 if not args.dry_run:
                     it["title"] = cand_title
-                    it["title_standardized"] = cand_title
                     it["title_original"] = cand_title
                 changed += 1
         if n % 200 == 0:

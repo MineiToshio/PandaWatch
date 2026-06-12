@@ -77,8 +77,6 @@ def main() -> int:
             if len(ex) < 25:
                 ex.append((old, new))
             it["title"] = new
-            if it.get("title_standardized"):
-                it["title_standardized"] = new
             it["cluster_key"] = mw.derive_cluster_key(it)
             changed += 1
     print(f"[title-edwords] títulos corregidos: {changed}")
