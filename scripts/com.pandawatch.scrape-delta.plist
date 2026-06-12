@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent: scrape DELTA diario de PandaWatch (3:30 AM).
+
+  Instalar (decisión del owner — no se auto-instala):
+    cp scripts/com.pandawatch.scrape-delta.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.pandawatch.scrape-delta.plist
+
+  Desinstalar:
+    launchctl unload ~/Library/LaunchAgents/com.pandawatch.scrape-delta.plist
+    rm ~/Library/LaunchAgents/com.pandawatch.scrape-delta.plist
+
+  Probar ya mismo (sin esperar a las 3:30):
+    launchctl start com.pandawatch.scrape-delta
+
+  Notas:
+  - El script ya tiene lock global (data/.scrape.lock): si hay otro scrape
+    corriendo, el run se aborta solo — seguro ante solapamientos.
+  - stdout/stderr van a logs/launchd-scrape-delta.{out,err}.log además de
+    los logs por fase de logs/scrape-delta-<TS>/.
+  - Si la Mac está dormida a las 3:30, launchd corre el job al despertar.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pandawatch.scrape-delta</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/Shared/Proyectos/manga-watch/scripts/scrape_delta.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/Shared/Proyectos/manga-watch</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/Proyectos/manga-watch/logs/launchd-scrape-delta.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/Proyectos/manga-watch/logs/launchd-scrape-delta.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
