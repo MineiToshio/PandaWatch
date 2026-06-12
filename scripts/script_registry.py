@@ -597,6 +597,35 @@ SCRIPTS: list[dict[str, Any]] = [
                 },
             },
             {
+                "id": "sevenseas_delta",
+                "label": "🇺🇸 Seven Seas - especiales recientes (3 meses)",
+                "desc": (
+                    "Anuncios nuevos de Seven Seas vía su API de WordPress: deluxe "
+                    "hardcovers, box sets, collector's y special editions (manga, "
+                    "manhwa y light novels EN). Enriquece cada uno con ISBN, fecha "
+                    "y portada desde la ficha del libro."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "sevenseas",
+                    "--wiki-from": "2026-04",
+                },
+            },
+            {
+                "id": "sevenseas_full",
+                "label": "🇺🇸 Seven Seas - catálogo completo de especiales",
+                "desc": (
+                    "Recorre el catálogo completo (~6150 libros) de Seven Seas y "
+                    "captura todas las ediciones especiales: deluxe hardcover "
+                    "omnibus, box sets con extras, collector's editions, danmei "
+                    "deluxe (Mo Dao Zu Shi…). ~150-250 items, el mayor gap de "
+                    "cobertura de EEUU."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "sevenseas",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
                 "id": "viz_full",
                 "label": "🇺🇸 VIZ Special Editions - catálogo completo",
                 "desc": (
@@ -1036,9 +1065,9 @@ SCRIPTS: list[dict[str, Any]] = [
         "flags": [
             _flag("--only", "Solo este campo",
                   "Si querés rellenar solo uno: image_url, author, isbn, "
-                  "release_date, price, o images (carrusel multi-imagen).",
+                  "release_date, o images (carrusel multi-imagen).",
                   type="choice", default="",
-                  choices=["", "image_url", "author", "isbn", "release_date", "price", "images"]),
+                  choices=["", "image_url", "author", "isbn", "release_date", "images"]),
             _flag("--limit", "Máx items a procesar",
                   "0 = sin límite. Útil para probar con --limit 50.",
                   type="int", default=0, placeholder="50"),
@@ -1063,11 +1092,11 @@ SCRIPTS: list[dict[str, Any]] = [
         "id": "backfill_animeclick_details",
         "category": "Mantenimiento",
         "icon": "🇮🇹",
-        "name": "Backfill AnimeClick (fecha, precio, descripción)",
-        "tagline": "Rellena release_date / price / description en items AnimeClick que quedaron vacíos.",
+        "name": "Backfill AnimeClick (fecha, descripción)",
+        "tagline": "Rellena release_date / description en items AnimeClick que quedaron vacíos.",
         "what": (
             "Cuando se ingestaron los items de AnimeClick sin buscar el "
-            "detalle de cada edición, los campos release_date, price y "
+            "detalle de cada edición, los campos release_date y "
             "description quedaron vacíos. Este script los rellena fetching "
             "directamente las páginas de detalle — sin re-navegar el "
             "calendario semana a semana. Con 4 workers tarda ~8 min para "
