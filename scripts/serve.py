@@ -369,6 +369,36 @@ def _serialized(fn):
     return _wrapper
 
 
+def _mtime_token(path: Path) -> str:
+    """st_mtime_ns del archivo como STRING — token opaco para el guard optimista
+    de cover_preview.json.
+
+    Va como string porque st_mtime_ns (~1.8e18) excede el entero máximo seguro
+    de JavaScript (2^53 ≈ 9.0e15): si viaja como Number, el navegador lo redondea
+    al double más cercano y el round-trip devuelve OTRO valor → 409 espurio en
+    casi todos los saves (gotcha #79)."""
+    try:
+        return str(path.stat().st_mtime_ns)
+    except OSError:
+        return "0"
+
+
+def _mtime_matches(expected: object, current_token: str) -> bool:
+    """Compara el expected_mtime que mandó el cliente contra el token actual.
+
+    - Cliente nuevo: manda el token como string → comparación exacta.
+    - Cliente viejo (página cacheada): manda un Number con precisión perdida
+      → comparar en espacio double (lo que el navegador realmente vio)."""
+    if isinstance(expected, str):
+        return expected == current_token
+    if isinstance(expected, (int, float)):
+        try:
+            return float(expected) == float(int(current_token))
+        except (TypeError, ValueError, OverflowError):
+            return False
+    return False
+
+
 def _load_items() -> list[dict]:
     items: list[dict] = []
     if not ITEMS_PATH.exists():
@@ -1233,10 +1263,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == "/api/cover-preview-meta":
             _cp = ROOT / "data" / "cover_preview.json"
-            if _cp.exists():
-                self._json(200, {"mtime": _cp.stat().st_mtime_ns, "exists": True})
-            else:
-                self._json(200, {"mtime": 0, "exists": False})
+            # mtime como string: st_mtime_ns no es representable en un Number de JS.
+            self._json(200, {"mtime": _mtime_token(_cp), "exists": _cp.exists()})
             return
         if self.path == "/api/cover-preview":
             self._handle_cover_preview_get()
@@ -1666,12 +1694,14 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         y si hubo cambios los persiste atómicamente ANTES de responder (bajo
         @_serialized para no pisar un save concurrente).
 
-        Responde: {"entries": [...], "mtime": <st_mtime_ns post-sync>, "synced": {<stats>}}
-        El mtime es el que el frontend debe usar como expected_mtime del guard anti-race.
+        Responde: {"entries": [...], "mtime": "<st_mtime_ns post-sync>", "synced": {<stats>}}
+        El mtime viaja como STRING (token opaco): st_mtime_ns excede 2^53 y un
+        Number de JS lo redondearía (409 espurio). El frontend lo devuelve tal
+        cual como expected_mtime del guard anti-race.
         """
         dst = ROOT / "data" / "cover_preview.json"
         if not dst.exists():
-            self._json(200, {"entries": [], "mtime": 0, "synced": {}})
+            self._json(200, {"entries": [], "mtime": "0", "synced": {}})
             return
 
         try:
@@ -1695,8 +1725,7 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(dst)
 
-        mtime = dst.stat().st_mtime_ns if dst.exists() else 0
-        self._json(200, {"entries": synced, "mtime": mtime, "synced": stats})
+        self._json(200, {"entries": synced, "mtime": _mtime_token(dst), "synced": stats})
 
     def _handle_item_get(self) -> None:
         """GET /api/item?slug=<slug>[&cluster=1]
@@ -1735,10 +1764,10 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         para no dejar JSON truncado si el proceso muere a mitad del write.
 
         Guard de concurrencia optimista: si el payload incluye `expected_mtime`
-        (st_mtime_ns capturado al cargar), se compara con el mtime actual del
-        archivo. Si no coinciden → 409 sin escribir (el frontend debe recargar).
-        Clientes sin expected_mtime (legado) siguen con el comportamiento anterior
-        para no romper compatibilidad."""
+        (token string capturado al cargar — ver _mtime_token), se compara con el
+        mtime actual del archivo. Si no coinciden → 409 sin escribir (el frontend
+        debe recargar). Clientes sin expected_mtime (legado) siguen con el
+        comportamiento anterior para no romper compatibilidad."""
         try:
             payload = self._read_json(max_bytes=5_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1763,23 +1792,40 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
 
         # Guard de concurrencia optimista: rechaza saves con mtime stale.
         if expected_mtime is not None:
-            current_mtime = dst.stat().st_mtime_ns if dst.exists() else 0
-            if current_mtime != int(expected_mtime):
-                self._json(409, {"error": "stale", "mtime": current_mtime})
+            current = _mtime_token(dst)
+            if not _mtime_matches(expected_mtime, current):
+                self._json(409, {"error": "stale", "mtime": current})
                 return
 
         tmp = dst.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(dst)
-        new_mtime = dst.stat().st_mtime_ns
-        self._json(200, {"ok": True, "saved": len(entries), "mtime": new_mtime})
+        self._json(200, {"ok": True, "saved": len(entries), "mtime": _mtime_token(dst)})
 
     @_serialized
     def _handle_apply_cover_preview(self) -> None:
         """Aplica al catálogo las candidatas APROBADAS del cover_preview.json y
         quita del JSON las decididas (aprobadas + rechazadas), dejando solo las
         pendientes. Reusa apply_preview() de fetch_better_covers. Muta items.jsonl
-        + borra archivos huérfanos → va bajo @_serialized (gotcha #34)."""
+        + borra archivos huérfanos → va bajo @_serialized (gotcha #34).
+
+        Acepta body opcional {"expected_mtime": "<token>"} con el mismo guard
+        optimista del save: si la cola en disco no es la que el owner estaba
+        viendo (otro proceso la reescribió), responde 409 sin aplicar nada."""
+        expected_mtime = None
+        if int(self.headers.get("Content-Length") or 0) > 0:
+            try:
+                payload = self._read_json(max_bytes=10_000)
+                if isinstance(payload, dict):
+                    expected_mtime = payload.get("expected_mtime")
+            except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                self.send_error(400, f"Invalid body: {e}")
+                return
+        if expected_mtime is not None:
+            current = _mtime_token(ROOT / "data" / "cover_preview.json")
+            if not _mtime_matches(expected_mtime, current):
+                self._json(409, {"error": "stale", "mtime": current})
+                return
         retro_dir = str(ROOT / "scripts" / "retrofit")
         if retro_dir not in sys.path:
             sys.path.insert(0, retro_dir)

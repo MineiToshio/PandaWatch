@@ -162,6 +162,14 @@ def main() -> int:
         print(f"[OK] data embebida limpiada en {output}")
         return 0
 
+    # Vista de búsqueda de aliases (data/series_aliases.json) — la consumen
+    # el dashboard y web-next para que la búsqueda resuelva nombres
+    # multilingües de serie (el title es el nombre oficial, no se renombra).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from export_series_aliases import export as export_aliases
+    n_aliases = export_aliases()
+    print(f"[INFO] {n_aliases} series en data/series_aliases.json")
+
     input_path = Path(args.input)
     items = load_items(input_path)
     deduped = dedupe_by_url(items)

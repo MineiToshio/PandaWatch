@@ -625,10 +625,14 @@ function previewApp() {
     itemsBySlug: {},
     _itemsPromise: null,
     isSaving: false,
-    // mtime (st_mtime_ns) del cover_preview.json al momento de la última carga.
-    // Se envía como expected_mtime en cada POST; el servidor responde 409 si el
-    // archivo cambió desde entonces (otra pestaña o proceso lo actualizó).
-    loadedMtime: 0,
+    // Token de versión del cover_preview.json (st_mtime_ns como STRING opaco) al
+    // momento de la última carga. Se envía como expected_mtime en cada POST; el
+    // servidor responde 409 si el archivo cambió desde entonces (otra pestaña o
+    // proceso lo actualizó). Es string porque st_mtime_ns excede 2^53 y un
+    // Number de JS lo redondearía → 409 espurio en cada save (gotcha #79).
+    loadedMtime: '0',
+    // Cola de guardados en serie: cada POST sale con el token que dejó el anterior.
+    _saveQueue: null,
     // ?return=<url> habilita el botón de volver al lugar de origen (p. ej. el
     // Panel de Calidad). Sin el param, vuelve al catálogo.
     returnUrl: '',
@@ -710,7 +714,7 @@ function previewApp() {
           this.entries.forEach((e, i) => {
             this.collapsed[e.slug || i] = this.entryDone(e);
           });
-          this.loadedMtime = body.mtime || 0;
+          this.loadedMtime = String(body.mtime ?? '0');
           // Toast informativo si la sincronización quitó sugerencias obsoletas.
           if (body.synced) {
             const pruned = (body.synced.pruned_cover_ok || 0)
@@ -745,7 +749,7 @@ function previewApp() {
         }
         if (metaResp.ok) {
           const meta = await metaResp.json();
-          this.loadedMtime = meta.mtime || 0;
+          this.loadedMtime = String(meta.mtime ?? '0');
         }
       } catch { this.entries = []; }
     },
@@ -933,22 +937,10 @@ function previewApp() {
         if (sel != null && sel >= e.current_images.length) {
           this.selImgIdx[ekey] = Math.max(0, e.current_images.length - 1);
         }
-        // Persistir el cambio en cover_preview.json (current_images quedó sin la foto).
-        const saveResp = await fetch('/api/save-cover-preview', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entries: this.cleanPayload(), expected_mtime: this.loadedMtime }),
-        });
-        if (saveResp.status === 409) {
-          this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
-          await this.loadEntries();
-          return;
-        }
-        if (saveResp.ok) {
-          const saveData = await saveResp.json().catch(() => ({}));
-          if (saveData.mtime) this.loadedMtime = saveData.mtime;
-        }
+        // Persistir el cambio en cover_preview.json (current_images quedó sin la
+        // foto) por la ruta central de guardado (cola + guard 409 + recarga).
         const del = data.deleted_files?.length || 0;
-        this.showToast('Imagen eliminada' + (del ? ` · ${del} archivo borrado del disco` : ''), 'ok');
+        await this.save('Imagen eliminada' + (del ? ` · ${del} archivo borrado del disco` : ''));
       } catch (err) {
         this.showToast('Error: ' + err.message, 'err');
       }
@@ -1059,7 +1051,19 @@ function previewApp() {
         `Aplicar ${a} aprobada(s) al catálogo (modifica items.jsonl)` +
         (r > 0 ? ` y quitar ${r} rechazada(s) del listado` : '') + '. ¿Seguir?')) return;
       try {
-        const resp = await fetch('/api/apply-cover-preview', { method: 'POST' });
+        // Esperar los guardados en vuelo: el apply lee la cola del DISCO, así que
+        // toda decisión tiene que estar persistida antes de aplicar.
+        await (this._saveQueue || Promise.resolve()).catch(() => {});
+        const resp = await fetch('/api/apply-cover-preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expected_mtime: this.loadedMtime }),
+        });
+        if (resp.status === 409) {
+          this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
+          await this.loadEntries();
+          return;
+        }
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.ok) {
           const skipped = data.skipped_missing_file || 0;
@@ -1226,21 +1230,8 @@ function previewApp() {
         });
         if (r.ok) {
           this.entries = this.entries.filter(e => e.slug !== entry.slug);
-          const saveResp = await fetch('/api/save-cover-preview', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entries: this.cleanPayload(), expected_mtime: this.loadedMtime }),
-          });
-          if (saveResp.status === 409) {
-            this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
-            await this.loadEntries();
-            return;
-          }
-          if (saveResp.ok) {
-            const saveData = await saveResp.json().catch(() => ({}));
-            if (saveData.mtime) this.loadedMtime = saveData.mtime;
-          }
-          this.showToast(`"${entry.title || entry.slug}" → feedback.jsonl`, 'ok');
+          // Quitar la entry de la cola por la ruta central (cola + guard 409).
+          await this.save(`"${entry.title || entry.slug}" → feedback.jsonl`);
         } else {
           const data = await r.json().catch(() => ({}));
           this.showToast('Error: ' + (data.error || 'no se pudo guardar feedback'), 'err');
@@ -1293,7 +1284,17 @@ function previewApp() {
       }));
     },
 
-    async save(label) {
+    // Encola el guardado: dos acciones rápidas (p. ej. A y R desde el teclado,
+    // que no pasan por botones deshabilitados) se serializan, así cada POST sale
+    // con el token que dejó el anterior y no se generan 409 entre sí.
+    // Devuelve true si guardó OK; false si hubo 409 (ya recargó) o error.
+    save(label) {
+      this._saveQueue = (this._saveQueue || Promise.resolve())
+        .then(() => this._doSave(label), () => this._doSave(label));
+      return this._saveQueue;
+    },
+
+    async _doSave(label) {
       this.isSaving = true;
       try {
         const r = await fetch('/api/save-cover-preview', {
@@ -1306,17 +1307,22 @@ function previewApp() {
           // No reintentamos: recargamos la cola desde el servidor para no pisar cambios.
           this.showToast('La cola cambió en el servidor (otro proceso la actualizó). Recargando…', 'err');
           await this.loadEntries();
-          return;
+          return false;
         }
         if (r.ok) {
           const data = await r.json().catch(() => ({}));
-          if (data.mtime) this.loadedMtime = data.mtime;
+          if (data.mtime) this.loadedMtime = String(data.mtime);
           this.showToast(label, 'ok');
-        } else {
-          this.showToast('Error al guardar', 'err');
+          return true;
         }
+        // Error del servidor: el estado en memoria divergió del disco — recargar
+        // para que la UI no muestre como guardado algo que no se guardó.
+        this.showToast('Error al guardar — recargando la cola…', 'err');
+        await this.loadEntries();
+        return false;
       } catch (err) {
         this.showToast('Error: ' + err.message, 'err');
+        return false;
       } finally {
         this.isSaving = false;
       }

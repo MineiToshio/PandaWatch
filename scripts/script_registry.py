@@ -626,6 +626,50 @@ SCRIPTS: list[dict[str, Any]] = [
                 },
             },
             {
+                "id": "kodansha_us_delta",
+                "label": "🇺🇸 Kodansha USA - especiales recientes (3 meses)",
+                "desc": (
+                    "Ediciones especiales de Kodansha USA (deluxe hardcovers, omnibus, "
+                    "collector's, box sets) desde su API propia. Modo delta: solo "
+                    "volúmenes publicados en los últimos 3 meses (Vinland Saga Deluxe, "
+                    "Battle Angel Alita Deluxe, Ghost in the Shell Deluxe, Attack on "
+                    "Titan Omnibus…). Incluye ISBN y portada por volumen."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "kodansha-us",
+                    "--wiki-from": "2026-04",
+                },
+            },
+            {
+                "id": "kodansha_us_full",
+                "label": "🇺🇸 Kodansha USA - catálogo completo de especiales",
+                "desc": (
+                    "Descarga todo el catálogo de ediciones especiales de Kodansha USA "
+                    "(~45 series, ~200-300 volúmenes): deluxe, omnibus, collector's, "
+                    "hardcover y box sets. Enriquece cada volumen con ISBN, fecha y "
+                    "portada desde las páginas individuales."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "kodansha-us",
+                    "--wiki-from": "2000-01",
+                },
+            },
+            {
+                "id": "storefronts_api",
+                "label": "🌏 Storefronts API - HK/TW/VN/TH (los 5 perfiles)",
+                "desc": (
+                    "Catálogos completos de las 5 tiendas editoriales con API JSON "
+                    "(storefront_json.py): Jade Dynasty HK (珍藏版/愛藏版, ~340), "
+                    "Sharp Point TW (特裝版, ~340+), Kim Đồng VN (bản đặc biệt, ~119), "
+                    "IPM VN (bản sưu tầm, ~110) y yaakz TH (box sets, ~47). "
+                    "Correr cada perfil por separado con --bootstrap-wiki "
+                    "jd-intl|spp-tw|kimdong|ipm|yaakz."
+                ),
+                "values": {
+                    "--bootstrap-wiki": "jd-intl",
+                },
+            },
+            {
                 "id": "viz_full",
                 "label": "🇺🇸 VIZ Special Editions - catálogo completo",
                 "desc": (
@@ -907,6 +951,47 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "restore_official_titles",
+        "category": "Mantenimiento",
+        "icon": "📛",
+        "name": "Restaurar títulos oficiales",
+        "tagline": "title = nombre oficial scrapeado (migración one-shot).",
+        "what": (
+            "Migración de la política de títulos 2026-06-12: restaura el "
+            "título oficial (title_original limpio) en items que el skill de "
+            "standardize había renombrado/traducido, y retira el campo "
+            "title_standardized. Marca cada item procesado "
+            "(title_restored_at) y nunca lo re-procesa, así que re-correrla "
+            "es seguro y normalmente no hace nada. Después de aplicar, "
+            "correr el enforcer de listadomanga."
+        ),
+        "when": (
+            "Ya se corrió sobre todo el corpus (2026-06-12). Solo volver a "
+            "correrla si aparecen items viejos restaurados de un backup."
+        ),
+        "command": [PYTHON, "scripts/retrofit/restore_official_titles.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Cuenta cuántos restauraría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Restaurar",
+                "desc": "Aplica con backup y marca los items.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Cuenta cuántos títulos restauraría sin guardar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "clean_titles",
         "category": "Mantenimiento",
         "icon": "🧼",
@@ -940,6 +1025,53 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--dry-run", "Modo prueba",
                   "Cuenta cuántos títulos cambiarían sin guardar nada.",
                   type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "normalize_release_dates",
+        "category": "Mantenimiento",
+        "icon": "📅",
+        "name": "Normalizar fechas de lanzamiento",
+        "tagline": "Convierte release_date legacy (DD/MM/YYYY) a ISO.",
+        "what": (
+            "Normaliza release_date a formato ISO (YYYY-MM-DD). Por defecto "
+            "convierte solo la familia DD/MM/YYYY (día primero, rangos "
+            "validados); YYYY y YYYY-MM se respetan como granularidad parcial "
+            "legítima. Los demás formatos se reportan sin tocar. Es seguro "
+            "correrlo varias veces."
+        ),
+        "when": (
+            "Si el reporte de formatos muestra fechas legacy en el corpus "
+            "(p.ej. tras restaurar un backup viejo). Los scrapes nuevos ya "
+            "entran normalizados."
+        ),
+        "command": [PYTHON, "scripts/retrofit/normalize_release_dates.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Reporta qué cambiaría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Normalizar",
+                "desc": "Aplica la normalización con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Reporta qué fechas cambiarían sin guardar nada.",
+                  type="bool", default=False),
+            _flag("--all-formats", "Todos los formatos",
+                  "Además de DD/MM/YYYY normaliza fechas japonesas (年月日), "
+                  "datetime de tienda (YYYY/MM/DD hh:mm:ss) y mes textual.",
+                  type="bool", default=False, advanced=True),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también los items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
         ],
     },
 
