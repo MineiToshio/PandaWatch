@@ -32,6 +32,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+import image_store  # type: ignore
 from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate, is_approved  # type: ignore
 
 DEFAULT_USER_AGENT = (
@@ -191,6 +192,11 @@ def main() -> int:
                 # que una pasada previa lo procesó.
                 if len(item.get("images") or []) < 2:
                     return True
+            elif f == "image_url":
+                # La portada es images[0] (única fuente de verdad), no un campo
+                # top-level. "Falta portada" = images[] sin ninguna url.
+                if not image_store.cover_url(item):
+                    return True
             else:
                 if not item.get(f):
                     return True
@@ -285,10 +291,10 @@ def main() -> int:
                 new_imgs = md.get("images") or []
                 existing = item.get("images") or []
                 if len(new_imgs) > len(existing) and len(new_imgs) >= 2:
+                    # images[0] de la metadata ya ES la portada (única fuente de
+                    # verdad); reemplazamos la galería entera. No hay que tocar
+                    # ningún campo top-level: la portada vive en images[0].
                     item["images"] = new_imgs
-                    cover_url = new_imgs[0].get("url") if new_imgs else ""
-                    if cover_url and not item.get("image_url"):
-                        item["image_url"] = cover_url
                     fields_filled[field] += 1
                     changed = True
                 # SIEMPRE marcamos el item como "ya intentado" (con o sin
@@ -297,6 +303,13 @@ def main() -> int:
                 # mejorará y no tiene sentido pegarle de nuevo.
                 item["images_backfilled_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
                 changed = True
+            elif field == "image_url":
+                # La portada es images[0]: si falta, la sembramos desde la
+                # metadata (sin local todavía; mirror_images.py lo espeja luego).
+                if not image_store.cover_url(item) and md.get(field):
+                    image_store.set_cover(item, md[field])
+                    fields_filled[field] += 1
+                    changed = True
             else:
                 if not item.get(field) and md.get(field):
                     item[field] = md[field]

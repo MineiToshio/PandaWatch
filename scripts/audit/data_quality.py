@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
 from manga_watch import IMAGE_URL_BAD_PATTERNS, _cluster_completeness  # noqa: E402
+import image_store  # noqa: E402
 # Reusamos la MISMA derivación de slug que el retrofit (fuente única de verdad)
 # para detectar slugs "desincronizados" sin reimplementar la lógica.
 import generate_slugs as _slugs  # noqa: E402
@@ -218,8 +219,8 @@ def _entry(it: dict, detail: str = "") -> dict:
         "url": it.get("url", ""),
         "title": (it.get("title") or "")[:120],
         "source": it.get("source", ""),
-        "image_url": it.get("image_url", ""),
-        "image_local": it.get("image_local", ""),
+        "image_url": image_store.cover_url(it),
+        "image_local": image_store.cover_local(it),
         "detail": detail,
     }
 
@@ -238,8 +239,8 @@ def _dup_member(it: dict) -> dict:
         "volume": it.get("volume", ""),
         "edition_display": it.get("edition_display", ""),
         "isbn": it.get("isbn", ""),
-        "image_url": it.get("image_url", ""),
-        "image_local": it.get("image_local", ""),
+        "image_url": image_store.cover_url(it),
+        "image_local": image_store.cover_local(it),
     }
 
 
@@ -448,9 +449,7 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
     file_to_works: dict[str, set] = defaultdict(set)
     for it in items:
         work = (it.get("series_key") or (it.get("title") or "")[:24]).lower()
-        il = it.get("image_local")
-        if il:
-            file_to_works[il].add(work)
+        # La portada es images[0]; recorremos todas las entries de images[].
         for im in (it.get("images") or []):
             loc = im.get("local")
             if loc:
@@ -475,9 +474,9 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
 
     cat: dict[str, list] = defaultdict(list)
     for it in items:
-        iu = it.get("image_url") or ""
-        il = it.get("image_local") or ""
         imgs = it.get("images") or []
+        iu = image_store.cover_url(it)
+        il = image_store.cover_local(it)
 
         if not iu and not il and not imgs:
             cat["sin_imagen"].append(_entry(it))
@@ -635,9 +634,12 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
 
     coverage = {}
     for f in ("isbn", "price", "author", "volume", "release_date",
-              "description_es", "rarity", "image_local"):
+              "description_es", "rarity"):
         c = sum(1 for it in items if it.get(f))
         coverage[f] = {"count": c, "pct": round(100 * c / n, 1) if n else 0}
+    # Portada = images[0].local (espejo local); ya no hay campo image_local top-level.
+    c_cover = sum(1 for it in items if image_store.cover_local(it))
+    coverage["image_local"] = {"count": c_cover, "pct": round(100 * c_cover / n, 1) if n else 0}
 
     readiness = _compute_readiness(
         items,
@@ -677,8 +679,6 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
     for it in items:
         cluster_counts[it.get("cluster_key", "")] += 1
         work = (it.get("series_key") or (it.get("title") or "")[:24]).lower()
-        if it.get("image_local"):
-            file_to_works[it["image_local"]].add(work)
         for im in (it.get("images") or []):
             if im.get("local"):
                 file_to_works[im["local"]].add(work)
@@ -717,10 +717,10 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
         _ek = it.get("edition_key") or ""
         if _sk and _ek and len(trip_ck.get((_sk, _ek, it.get("volume") or ""), ())) > 1:
             cats.add("dup_product")
-        # imágenes
-        iu = it.get("image_url") or ""
-        il = it.get("image_local") or ""
+        # imágenes (portada = images[0])
         imgs = it.get("images") or []
+        iu = image_store.cover_url(it)
+        il = image_store.cover_local(it)
         if not iu and not il and not imgs:
             cats.add("sin_imagen")
         else:
