@@ -45,6 +45,11 @@ dependencia/env var/CLI flag, feature de UI nueva o cambio de UX, endpoint nuevo
 script nuevo en el registry, componente/ruta/data-layer nuevo en web-next, decisión
 de arquitectura, o un bug fix que cambia comportamiento documentado.
 
+**Regla de FUENTES (dura)**: cada vez que se modifica o se descubre algo de CUALQUIER
+fuente (un bug, un quirk, un cambio de parser/selectores, un problema, un fix, un
+cambio de cobertura), se actualiza su ficha `docs/scraper/sources/<fuente>.md` en el
+MISMO turn. Si la fuente aún no tiene ficha, se crea desde `_TEMPLATE.md`. No es opcional.
+
 **Qué NO necesita docs** (estricto): bug fix que restaura comportamiento ya
 documentado, tests de reglas ya documentadas, refactor puro sin cambio de
 comportamiento (probado por la suite), typos.
@@ -62,6 +67,7 @@ comportamiento (probado por la suite), typos.
 | **Cambio en el FLUJO end-to-end o que impacta la BASE DE DATOS** (nueva etapa/paso del ciclo de vida del dato, nuevo proceso post-scrape, reordenamiento de etapas, campo nuevo en items.jsonl, nueva funcionalidad del workflow) | `docs/scraper/PIPELINE-WALKTHROUGH.md` (runbook completo — **mantener SIEMPRE sincronizado**) |
 | Scraper — pipeline internals, data flow (deep dive) | `docs/scraper/ARCHITECTURE.md` |
 | Scraper — agregar/mantener fuentes, recetas | `docs/scraper/SOURCES.md` |
+| **Cualquier cambio o hallazgo en una FUENTE específica** (parser/selectores/quirk/problema/fix/comportamiento/cobertura/anti-bot de esa fuente) | `docs/scraper/sources/<fuente>.md` — la ficha de ESA fuente, **SIEMPRE en el mismo turn** (si no existe, créala desde `_TEMPLATE.md`). Regla dura. |
 | Scraper — roadmap, wikis activos, no-goals | `docs/scraper/PRD.md` |
 | Scraper — retrofits / skills | `scripts/retrofit/README.md` / `.claude/skills/README.md` |
 | Web HTML — features, UX | `docs/web-html/PRD.md` |
@@ -91,7 +97,7 @@ scraper periódicamente y navega resultados en una UI web local.
   defecto — opt-in `--enable-js`, serializado por el worker thread; gotcha #12)
 - HTML + Alpine.js + Tailwind CDN (UI estática) + app Next.js nueva en `web-next/`
 - Storage: JSONL, 1 fila por producto con `sources[]` (decisión #1)
-- Tests: pytest (~538 al último commit)
+- Tests: pytest (~645 al último commit)
 
 ## 2 scripts canónicos: full vs delta
 
@@ -134,7 +140,7 @@ chico. ANTES de tocar código de un área, leé su doc:
 
 | Vas a… | Leé primero |
 |---|---|
-| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 53 gotchas) |
+| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 73 gotchas) |
 | Cambiar storage, cluster_key, el pipeline, o entender el modelo de datos | [docs/reference/architecture.md](docs/reference/architecture.md) (pipeline + corpus state + las 7 decisiones) |
 | Escribir/modificar un retrofit, fuente, wiki, o script del registry | [docs/reference/conventions.md](docs/reference/conventions.md) (filtros, backup/flush/nohup, registry, playbooks) |
 | Ubicar un archivo o entender qué hace cada módulo | [docs/reference/file-map.md](docs/reference/file-map.md) |
@@ -240,9 +246,9 @@ strictly to prevent autocompact thrashing.
 
 ---
 
-Last updated: 2026-06-05. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
+Last updated: 2026-06-11. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 53 gotchas, convenciones, dashboard,
+referencia (file map, las 7 decisiones, las 73 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,

@@ -607,8 +607,8 @@ forma.
 
 Ejemplo concreto: `scripts/wikis/listadomanga_collections.py`. Layout A +
 Formato/título premium + Layout B con merge extra→tomo + schema `images[]`
-aditivo (`image_url` / `image_local` son alias del primer cover para no romper
-consumidores). Tres modos de discovery (`--coleccion-mode`):
+aditivo (la portada es `images[0]`; ya no hay campos top-level
+`image_url`/`image_local`). Tres modos de discovery (`--coleccion-mode`):
 - **`lista`** (default, FULL): `lista.php` → ~3436 colecciones activas.
 - **`calendar`** (DELTA, P1 2026-06-06): ids con actividad en `calendario.php`
   dentro de `--wiki-from`→`--wiki-to` → parsea solo esas (~500-600). Da la

@@ -146,6 +146,20 @@ call `fetch_with_playwright(url, ...)` which puts a job on the queue
 and blocks until the worker thread returns the result. See CLAUDE.md
 gotcha #12 for the full story.
 
+All `requests` traffic (main scrape, wiki bootstraps, `--fetch-details`,
+image mirror) goes through the shared session from `make_session()`, which
+mounts an `HTTPAdapter` with automatic **retries for transient failures**
+(2026-06-10): `Retry(total=3, connect=2, read=2, backoff_factor=1.5)` on
+GET/HEAD for status 429/500/502/503/504, honoring `Retry-After`. Before
+this, a single TCP reset or 5xx blip silently dropped the whole source
+(or a whole listadomanga collection) from the run. Retries happen inside
+the adapter while the per-host semaphore is held, so the per-host
+concurrency limit still applies during retries. Non-retryable statuses
+(404, 403 anti-bot) fail immediately as before — `raise_on_status=False`
+keeps the `raise_for_status()` semantics of every caller intact. The
+adapter also raises the connection pool to 32/32 (default 10) to avoid
+"connection pool is full" discards under `--workers 8`.
+
 Per-source pipeline:
 
 1. **Fetch.**
@@ -243,10 +257,11 @@ Per-source pipeline:
 8. **Image mirror** (Image storage Fase 1, on by default,
    `--skip-image-download` to opt out):
    - `mirror_candidate_images(reportable, data_dir, session, ...)`
-     downloads the cover of each `new`/`changed` candidate to
-     `data/images/<sha256(image_url)[:16]>.<ext>` and sets
-     `candidate.image_local` to the filename. `image_url` stays as
-     provenance + fallback.
+     downloads EACH image of every `new`/`changed` candidate to
+     `data/images/<sha256(url)[:16]>.<ext>` and sets the entry's `local`
+     in `images[]` (`images[0]` = cover). The remote `url` stays as
+     provenance + fallback. (`candidate.image_url`/`image_local` are
+     runtime-only inputs; `candidate_to_json` folds them into `images[0]`.)
    - Parallelized with `ThreadPoolExecutor` (same `--workers`).
      Idempotent: a file already on disk is reused without a request.
      Magic-byte validation rejects non-image responses (anti-bot HTML).
@@ -260,8 +275,9 @@ Per-source pipeline:
    - `append_jsonl(items_path, new_or_changed)`:
      - Read existing items.jsonl into a dict keyed by
        `normalize_url_for_dedup(url)`.
-     - Upsert each row (last-wins by detected_at). `image_local` is
-       sticky — a re-scrape that did not download keeps the old mirror.
+     - Upsert each row (last-wins by detected_at). The cover's `local`
+       (`images[0].local`) is sticky via the `images[]` union-merge — a
+       re-scrape that did not download keeps the old mirror.
      - Atomic write via `.tmp` + `rename`.
    - `save_state(state_path, state)`.
    - `write_markdown_report(report_path, ...)`.
@@ -447,8 +463,10 @@ Row schema (the fields written by `candidate_to_json`):
                    // Frontend shows description_es when non-empty, falls back to description.
   "content_hash":  "sha256 for state-diff",
   "price":         "e.g. '19,99 €' or empty",
-  "image_url":     "absolute remote URL or empty (provenance + fallback)",
-  "image_local":   "filename in data/images/ or empty (local mirror, Fase 1)",
+  // Portada = images[0] (única fuente de verdad, 2026-06-09). NO hay campos
+  // top-level image_url/image_local en el item. Cada entry de images[] lleva
+  // url (remota, provenance+fallback) + local (filename en data/images/).
+  "images":        "[{url, local, kind:gallery|extra, description}] — images[0] = portada",
   "release_date":  "ISO date or empty",
   "product_type":  "manga | artbook | fanbook | magazine | boxset | ...",
   "author":        "extracted author or empty",
@@ -484,7 +502,9 @@ Row schema (the fields written by `candidate_to_json`):
                     Priority: isbn cluster_key → edition_key+volume →
                     edition_key only → isbn field → item-{sha1(url)[:12]}.
                     Collision-safe (oldest keeps clean slug, newer gets -b/-c).
-                    Set ONLY by generate_slugs.py (not by scraper or skill).",
+                    Set ONLY by generate_slugs.py (not by scraper or skill).
+                    Sticky in append_jsonl for ALL rows: a re-scrape never
+                    leaves slug=None (gotcha #65).",
 
   // --- Multi-image carousel (added 2026-05-26, Image storage Fase 1+2) ---
   "images": [
@@ -541,14 +561,14 @@ to the cleaned scraped title; pass 2 backs up `title` to `title_original`
 
 - Directory under `data/`, gitignored via its own `data/images/`
   entry in `.gitignore` (`data/` is not ignored wholesale).
-- One file per unique cover image: `<sha256(image_url)[:16]>.<ext>`.
+- One file per unique image: `<sha256(url)[:16]>.<ext>`.
   Deterministic — a re-scrape of the same image reuses the file.
 - Extension comes from the downloaded bytes' magic signature, not the
-  URL. A non-image response (anti-bot HTML page) is rejected and
-  `image_local` stays empty.
+  URL. A non-image response (anti-bot HTML page) is rejected and the
+  entry's `local` stays empty.
 - Written by `mirror_candidate_images()` (orchestration in
   `manga_watch.py`) using the primitives in `scripts/image_store.py`.
-- The JSONL stores only the **filename** in `image_local` — the base
+- The JSONL stores only the **filename** in each `images[].local` — the base
   path is environment config (`../data/images/` locally; a Cloudflare
   R2 public URL in Fase 2). The row stays deploy-agnostic.
 - Backfilling the historic corpus and a mark-and-sweep GC for orphaned
@@ -657,6 +677,16 @@ of a standardized item will not wipe translations written by the retrofit.
 For non-standardized items, `description_es` also has sticky behavior:
 if the incoming row has no `description_es` but the existing row does,
 the existing value is preserved.
+
+Since gotcha #65 (2026-06-10) `_CURATED_FIELDS` also includes `slug`,
+`detected_at`, `score`, `signals` and `signal_types`: a re-scrape must not
+degrade a standardized row (post-standardization truth lives in the derived
+edition label, not in the raw text — gotcha #61). The standardized merge
+re-derives `cluster_key` AFTER restoring the curated fields, so the row
+stays at the `edition:` tier and the CLKEY invariant
+(`stored == derive_cluster_key(item)`) holds without manual repair.
+`slug` is additionally sticky for ALL rows (like `description_es`): the
+scraper never produces slugs, only `generate_slugs.py` does.
 
 #### Frontend behavior
 

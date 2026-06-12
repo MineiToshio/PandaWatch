@@ -67,31 +67,50 @@ Observability: scripts/audit/source_health.py parses N recent overnight
 
 ## Current corpus state
 
-Baseline para sanity-check (medido 2026-06-10 tras auditoría/fixes). Si un retrofit
-tira la image coverage de 99% a 60%, algo se rompió. Números aproximados; se vuelven
-stale — re-medí con un snippet sobre items.jsonl si necesitás precisión.
+Baseline para sanity-check (medido 2026-06-11 tras la auditoría de ListadoManga +
+fixes de parser #73-#75). Si un retrofit tira la image coverage de 98% a 60%, algo
+se rompió. Números aproximados; se vuelven stale — re-medí con un snippet sobre
+items.jsonl si necesitás precisión.
 
 | Métrica | Valor aprox. |
 |---|---|
-| Total items (1 fila por producto) | **10 645** |
-| Movidos a non_manga_blacklist.jsonl (acum.) | ~591 (+17 audit 2026-06-10 incl. Sorayama artbook bajo "Venom") |
+| Total items (1 fila por producto) | **10 793** |
+| Movidos a non_manga_blacklist.jsonl (acum.) | ~684 |
 | Removidos por umbrella URL-gate (ATOM FR) | 21 (revista Manga-Sanctuary; ver gotcha #62) |
 | Removidos quirúrgicamente (junk confirmado) | 5 (respaldados en `data/diagnostics/items.audit_fp_removed-20260610.jsonl`) |
-| series_aliases.yml | ~2844 canónicos (~32% con aliases multilingüe) |
+| series_aliases.yml | ~3394 canónicos |
 | Sources en YAML / enabled | 138 / 67 (17 mixed, 15 bluesky todas off) |
 | Wikis (`--bootstrap-wiki`) | 19 |
-| Top sources | Sumikko ~2717, Mangavariant ~1606, AnimeClick IT ~1037, ListadoManga colecciones ~987, Manga-Sanctuary ~926, Manga-Passion DE ~793 |
-| Image / image_local coverage | ~99.9% / ~99.8% |
-| series_key / edition_key / standardized_at | ~99% / ~99% / ~99.6% |
+| Top sources | Sumikko ~2678, **ListadoManga colecciones ~1918**, Mangavariant ~1531, Manga-Sanctuary ~1144, AnimeClick IT ~1024, Manga-Passion DE ~808 |
+| Image / image_local coverage | ~98.1% / ~98.0% (items nuevos del último delta aún sin pasada de imágenes) |
+| series_key / edition_key / standardized_at | 100% / 100% / 100% |
 | slug | 100% |
-| volume / release_date / ISBN / price / author | ~84% / ~91% / ~48% / ~51% / ~56% |
+| volume / release_date / ISBN / price / author | ~85% / ~92% / ~47% / ~53% / ~57% |
 | cluster_key populado | 100% |
-| carrusel real (images.length > 1) | ~2623 (26%) |
-| Países | 13 (top: Japón ~3758, Italia ~2182, Francia ~1295, España ~1279, Alemania ~841, EEUU ~309) |
-| validate_corpus | 0 violaciones duras; 7 warnings PAIS (editoriales multi-país / `unknown`) |
+| carrusel real (images.length > 1) | ~2249 (21%) |
+| Países | 13 (top: Japón ~3739, Italia ~2073, España ~1924, Francia ~1457, Alemania ~829, EEUU ~325) |
+| validate_corpus | 0 violaciones duras; warnings: 7 PAIS (país `xx` sin resolver), 15 SERIESDUP (canonicals casi-duplicados por transliteración — candidatos al skill de aliases), 11 EKPREFIX (antologías multi-obra, curación manual) |
 
 ISBN/price/author bajos NO son regresión: muchas filas curadas (Mangavariant,
 wikis) catalogan "qué variant existe", no "dónde comprarlo" (ver "URL como referencia").
+
+**Cambios 2026-06-11 (auditoría ListadoManga)**: 3 fixes de parser en
+`listadomanga_collections.py` — sección "Números en preparación (Packs)" reconocida
+(#73, packs anunciados ya no se pierden), volumen ya no se contamina con números
+embebidos en el nombre de la serie (#74, "Kaiju Nº8 nº16" → vol 16), y cofres
+listados inline en "Números editados" no-premium se emiten como `box` (#75, caso
+Boichi). 2 keys sintéticas stale del corpus reparadas + `backfill_cluster_key`.
+Verificado: 645 tests, corpus válido, enforcer idempotente (2× → byte-idéntico).
+
+**Lección aprendida (2026-06-11)**: la suite de tests no alcanza para validar el
+parser — los 3 bugs de arriba solo aparecieron al correr el parser standalone
+(`listadomanga_collections.py --ids …`) contra una **muestra estratificada en vivo**
+(un id por tipo de caso: pack/box/especial/variante/limitada/premium/regular/reciente)
+y revisar el output a mano. Un "0 items" o un volumen raro en esa corrida es señal de
+bug o de filtro intencional — verificar contra el HTML real antes de asumir. La
+invariante CLKEY del validador detecta al instante cualquier key sintética que un fix
+de parser deje stale (el cluster_key lmc se deriva de la URL): correr `validate_corpus`
+después de cualquier reparación de URLs y cerrar con `backfill_cluster_key`.
 
 
 ## Modelo de rareza — `derive_rarity_tier()` en `set_rarity.py`

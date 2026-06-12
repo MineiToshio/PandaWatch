@@ -94,7 +94,7 @@ incrementales: solo tocan lo que falta).
 | **8** | **Feedback** 🧠 | skill `/watch-review-feedback` | corrige errores reportados (👎) |
 | **9** | **Aprobación humana** | dashboard → `approved_at` + `apply_approvals.py` | golden records congelados |
 | **★** | **Build / publish** | `consolidate_sources.py` + `build_web.py` | `web/index.html` + web-next |
-| **✔** | **Validación estructural** | `validate_corpus.py` (gate de salud, paso [5] de scrape_*.sh) | reporte de invariantes (0 violaciones duras = corpus válido) |
+| **✔** | **Validación estructural** | `validate_corpus.py` (gate de salud, paso [5] de scrape_*.sh) | reporte de invariantes (0 violaciones duras = corpus válido) + warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX (gotchas #69/#70/#71) |
 
 🧠 = LLM-driven (skill). **Nunca corre solo** — el owner lo invoca por nombre (policy de tokens, CLAUDE.md).
 
@@ -311,17 +311,34 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 
 Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records. Es la **verificación/corrección** del rough-assignment que hizo el scraper (`derive_series_metadata` = pass 1; este skill = pass 2, gotcha #21).
 
+> **Anti-drift (2026-06-11)**: la lógica de audit/tiering y de merge que vivía COPIADA
+> en `SKILL.md` y en el workflow (y había divergido) ahora es **fuente única** en dos
+> scripts compartidos que ambos invocan: `scripts/standardize_audit.py` y
+> `scripts/standardize_apply.py`.
+
 **Flujo** (workflow con checkpoints en `data/standardize-progress.json`):
-1. **Audit** — re-deriva `confidence_tier`:
+1. **Audit** — `standardize_audit.py` (flags `--limit`/`--force-all`; markers TOTAL/PENDING/TIER1/2/3) re-deriva `confidence_tier` y escribe proyecciones `tier{1,2,3}.json` con `proposed_*` (la propuesta heurística), `existing_edition_key` (el LLM NO re-agrupa items con edición asignada) y `known_edition_keys` (las keys YA existentes en el corpus para esa serie — el LLM debe REUSAR en vez de acuñar variantes special/limited, gotcha #69):
    - **Tier 1 ~30%**: serie en `series_aliases.yml`, publisher conocido → **determinista, 0 tokens**.
    - **Tier 2 ~9%**: edición ambigua → **LLM valida** la propuesta (chunks de 20).
    - **Tier 3 ~37%**: serie desconocida / CJK → **LLM deriva** desde cero (chunks de 15).
-2. **Tier 1** — aplica heurística, marca `standardized_at`.
-3. **Tier 2** — subagentes paralelos validan/corrigen contra allowlists de **publisher slug** + **edition slug** (output schema-validado; reglas anti-compound, artbook-vs-special, 画集付き=bonus).
+2. **Tier 1** — `standardize_apply.py tier1` aplica la heurística, marca `standardized_at`.
+3. **Tier 2** — subagentes paralelos validan/corrigen contra allowlists de **publisher slug** + **edition slug** (output schema-validado; reglas anti-compound, artbook-vs-special, 画集付き=bonus; tabla determinística término→slug de tipo de edición, gotcha #69).
 4. **Tier 3** — subagentes derivan todo desde cero.
-5. **Merge** — `canonical_series_key()` (consolida multilingüe), consistency check por colección listadomanga, no-manga → `non_manga_blacklist.jsonl` (Mangavariant **nunca**), recomputa `cluster_key` y **fusiona duplicados** con `consolidate_by_cluster` (no borra — preserva fuentes hermanas).
-6. **→ ETAPA 4 (slugs)** y **→ ETAPA 5 (traducción)**.
-7. `pytest tests/test_extraction.py`.
+5. **Merge** — `standardize_apply.py merge`: **preserva el `edition_key` existente**, fallback a la propuesta heurística si el LLM devolvió keys vacías (sin keys usables → el item queda PENDIENTE y se reintenta), `canonical_series_key()` (consolida multilingüe), outliers de serie por /coleccion, no-manga → `non_manga_blacklist.jsonl` (Mangavariant **nunca**), recomputa `cluster_key`, **fusiona duplicados** con `consolidate_by_cluster` (no borra — preserva fuentes hermanas) y emite reporte INTEGRITY.
+6. **Enforcer** — `enforce_listadomanga_rules.py` (Step 6b del skill): re-aplica determinísticamente TODAS las reglas duras de agrupación sobre lo que el LLM dejó. Desde 2026-06-11 incluye 5 pasos nuevos (3c1 `canonicalize_edition_slugs.py` #69, 3c2 `merge_duplicate_series.py` #70, 3c3 `normalize_edition_publishers.py`, 3c4 `fix_edition_key_prefix.py` #71, 3c5 `fix_title_edition_words.py` #72, antes de `backfill_cluster_key`) y **ya no es solo-listadomanga**: esos pasos aplican a todas las fuentes. Además el **paso 4b** re-corre `fix_lmc_display_titles` + `fix_especial_title_order` DESPUÉS de consolidate — el merge de filas podía revivir un título contaminado ya limpiado y el enforcer necesitaba 2 pasadas para converger; con 4b converge en UNA (verificado: 2ª corrida → items.jsonl byte-idéntico).
+7. **→ ETAPA 4 (slugs)** y **→ ETAPA 5 (traducción)**.
+8. `pytest tests/test_extraction.py` + `validate_corpus.py` (0 violaciones duras; warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX en 0 o justificados).
+
+> **Modelos del workflow (ahorro de tokens, 2026-06-11)**: TODOS los agentes mecánicos
+> (audit, tier1, chunkers, checkpoints, merge-and-finalize, cleanup, load-progress) y la
+> validación **Tier 2** corren con `model: 'haiku'`; SOLO la derivación **Tier 3** usa
+> `'sonnet'`. El costo fijo por corrida es ~200k tokens de subagentes
+> (audit+chunk+merge+checkpoints) — conviene correr **lotes de ≥100 items** para
+> amortizarlo (corrida de 250 items ≈ 750k tokens en total con esta config).
+> **`args` del workflow**: el harness puede pasarlos como STRING JSON — el script hace
+> `JSON.parse` defensivo, así que `limit`/`force_all` funcionan (sin el parse se
+> ignoraban y caía al default `limit=2000`). Verificado: `limit: 8` procesó exactamente
+> 8 y dejó el resto pendiente para la siguiente corrida incremental.
 
 **Output:** `series_key`, `series_display`, `edition_key`, `edition_display`, `volume`, `title` (estandarizado), `title_original` (preservado), `standardized_at`.
 
@@ -364,17 +381,18 @@ translate_descriptions.py --workers 4
 
 ---
 
-### 3.6 ETAPA 6 — Imágenes / portadas (sub-pipeline de 7 pasos)
+### 3.6 ETAPA 6 — Imágenes / portadas (sub-pipeline de 8 pasos)
 
 El scrape ya baja la portada de items nuevos (Fase 1 del espejo). Esta etapa **mejora la calidad** del corpus histórico. Orden recomendado (cada paso es idempotente; corré `--dry-run` primero):
 
 1. **`mirror_images.py`** — espejo local del histórico: baja a `data/images/` el `local` faltante de CADA entry de `images[]` (portada `images[0]` + galería). GC mark-and-sweep saca archivos huérfanos (cuenta `images[].local` + `sources[].image_local`; → `_orphans/` o `--gc-delete`).
 2. **`upgrade_image_resolution.py`** — quita parámetros/segmentos CDN de resize (9 patrones: Magento query params, WP -NxM, Shopify _Nx, Amazon ._SY300_., Rakuten ?_ex=, Buscalibre fit-in/, Cultura cdn-cgi/image/, Whakoom small→large, Magento cache path). Pasa Referer del item para evitar 403. Compara píxeles (`--min-gain 0.10`). **Automático en `scrape_full.sh` [4g2]**. → luego `mirror_images.py --gc`.
-3. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
-4. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
-5. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). Requiere `brew install waifu2x-ncnn-vulkan`.
-6. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida `_same_cover` (misma portada, mejor resolución), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`.
-7. **`sync_cover_images.py`** — saneamiento integral: portadas placeholder/banner, `images[0]` desincronizado de la card, duplicados/junk (avatares, íconos, banners), galerías que son otros tomos. Idempotente, salta aprobados.
+3. **`promote_hires_cover.py`** — sin red: cuando `images[0]` es un thumbnail (<90 000 px) y la misma portada en hi-res ya existe en `images[1+]` (vino de otra fuente del cluster, ej. Panini/Norma/Whakoom vs listadomanga), intercambia `images[0] ↔ images[k]`. Usa criterio thumbnail↔full relajado (aHash ≤ 14 bits + aspect ±12%) porque el thumbnail degrada tanto el hash que no pasa `_same_cover` estricto. El thumbnail queda en la galería; correr `dedup_carousel_images.py` después si se quiere eliminar el dup. Flags: `--dry-run`.
+4. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
+5. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
+6. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). Requiere `brew install waifu2x-ncnn-vulkan`.
+7. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida `_same_cover` (misma portada, mejor resolución), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`.
+8. **`sync_cover_images.py`** — saneamiento integral: portadas placeholder/banner, `images[0]` desincronizado de la card, duplicados/junk (avatares, íconos, banners), galerías que son otros tomos. Idempotente, salta aprobados.
 
 **Invariante de imágenes** (docs/reference/images.md): `images[0]` = SIEMPRE la portada (sincronizada con `image_url`/`image_local`). El carrusel es a nivel **cluster** (union dedupeada). El merge vive en TRES lugares que deben coincidir: `web/index.html` (`dedupByUrl`), `build_web.py` (`_merged_canonical`), `web-next/.../ItemHero.tsx`.
 

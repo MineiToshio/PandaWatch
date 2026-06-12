@@ -62,6 +62,13 @@ scripts/
   series_aliases.py          — canonical_series_key() + log_unmapped_series(). Ver #20.
   image_store.py             — primitivas del espejo local (hash, magic-bytes, idempotencia).
   shopify_variants.py        — parser de variants multi-tomo Shopify (ver #16).
+  standardize_audit.py       — AUDIT de /watch-standardize-catalog (fuente única
+                               skill+workflow, anti-drift): tiering + proyecciones
+                               tier{1,2,3}.json con proposed_*, existing_edition_key,
+                               known_edition_keys (#69). Flags --limit/--force-all.
+  standardize_apply.py       — APPLY de /watch-standardize-catalog (fuente única):
+                               subcomandos tier1 y merge. El merge PRESERVA el
+                               edition_key existente; sin keys usables → PENDIENTE.
   wikis/                     — parsers dedicados. País + scope; detalles en gotchas/docs:
     listadomanga.py            ES — calendario mensual (delta).
     listadomanga_collections.py ES — coleccion.php?id=N (full vía lista.php). URLs
@@ -101,11 +108,17 @@ scripts/
     search_discovery.py        discovery multi-engine (Gemini + Tavily + DDG).
     wayback_recover.py         recupera items 404/410 vía archive.org (no 403/429, ver #13).
     expand_whakoom_ediciones.py / expand_index_pages.py  expanden páginas-índice (#14, #16, #17).
-    mirror_images.py           backfill espejo local + GC mark-and-sweep.
-    upgrade_image_resolution.py / backfill_prh_covers.py / upscale_images.py / fetch_better_covers.py
-                               — mejora de portadas (CDN full-res, PRH, AI upscale, búsqueda).
+    strip_legacy_cover_fields.py  migración one-shot (2026-06-09): elimina image_url/
+                               image_local top-level del item; portada = images[0].
+    mirror_images.py           backfill espejo local (todas las images[]) + GC mark-and-sweep.
+    upgrade_image_resolution.py / promote_hires_cover.py / backfill_prh_covers.py /
+    upscale_images.py / fetch_better_covers.py / sync_cover_preview.py
+                               — mejora de portadas (CDN full-res, hi-res intra-cluster,
+                               PRH, AI upscale, búsqueda, sincronización de cola).
                                fetch_better_covers: SEGURO POR DEFECTO (preview, no auto-aplica
                                baja confianza). --apply (alta confianza) / --apply-preview.
+                               sync_cover_preview.py: poda candidatas pending cuya premisa ya
+                               no existe; invocado automáticamente por GET /api/cover-preview.
     sync_cover_images.py       saneamiento integral de imágenes (#31): portada mala, images[0]
                                sync, basura UI, productos relacionados.
     translate_descriptions.py  description → description_es (Google Translate + DeepL opcional).
@@ -116,11 +129,19 @@ scripts/
     disambiguate_coleccion_editions.py  coleccion distinta=edición distinta: -c{cole} si edition_key colisiona (#57). Enforcer 3-0.
     collapse_baseurl_tomos.py     fusiona fila base-url phantom en su tomo sintético del mismo (cole,vol) (#56). Enforcer 3-1.
     merge_crosssource_into_lmc.py fusiona ficha de tienda (edition:) en su tomo lmc por edition_key+vol+título (#56). Enforcer 3-2.
+    canonicalize_edition_slugs.py re-aplica la tabla término→slug de tipo de edición post-LLM (no-lmc) + absorbe hermanas confundibles (#69). Enforcer 3c1.
+    merge_duplicate_series.py     fusiona series_keys/canónicas del YAML partidas por variantes mecánicas del slug (#70). Enforcer 3c2.
+    normalize_edition_publishers.py unifica por mayoría el publisher dentro de cada edition_key. Enforcer 3c3.
+    fix_edition_key_prefix.py     re-alinea el prefijo de serie del edition_key con el series_key
+                               vía rebuild_edition_key_prefix() (#71). Enforcer 3c4.
+    fix_title_edition_words.py    colapsa palabra de edición duplicada en el título + quita
+                               "Regular" sobrante en ediciones regulares (#72). Enforcer 3c5.
   validate_corpus.py           VALIDADOR ESTRUCTURAL (sin red, gate de salud del pipeline, paso [5]
                                de scrape_*.sh). Chequea en UNA pasada TODAS las invariantes duras:
                                SLUG, CLKEY (cluster_key auto-consistente), DUPCL, DUPSYN (#54),
                                LMCKIND, TITLE, ONECOLE, DUPVOL (tomo duplicado en una edición, #56/#57)
-                               + warnings COLED/PAIS. Exit≠0 si hay violación dura.
+                               + warnings COLED/PAIS/EDSLUG (#69)/SERIESDUP (#70)/EKPREFIX (#71)/PUBMIX.
+                               Exit≠0 si hay violación dura.
   audit_lista_full_bidir.py    auditoría de RED bidireccional: re-fetchea las 3436 colecciones de
                                lista.php y compara (kind,vol) parser vs DB → FALTANTES + SOBRANTES.
   audit/
@@ -150,7 +171,7 @@ web-next/                    — app Next.js 16 + Tailwind v4 (reemplazo del das
   components/{core,modules,catalog,series,edition,item}/  — ver docs/web-next.
   lib/{types,data,filters,styles}.ts  — types + carga/agrupación + filtrado + cn().
   public/images → ../../data/images/  — symlink al espejo local.
-tests/test_extraction.py     — pytest suite (~538 tests, <2s).
+tests/test_extraction.py     — pytest suite (~645 tests, <5s).
 docs/                        — README.md índice + scraper/ (ARCHITECTURE, SOURCES, PRD,
                                PIPELINE-WALKTHROUGH = runbook completo del ciclo de vida del dato)
                                + web-html/PRD + admin/README + web-next/ (FRDs, blueprints, WOs).
