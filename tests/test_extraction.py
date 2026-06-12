@@ -340,25 +340,69 @@ def test_extract_release_date_iso():
 
 
 def test_extract_release_date_dd_mm_yyyy():
-    assert mw.extract_release_date("Sortie le 15/06/2026") == "15/06/2026"
+    # El match crudo DD/MM/YYYY sale normalizado a ISO (gotcha #80).
+    assert mw.extract_release_date("Sortie le 15/06/2026") == "2026-06-15"
 
 
 def test_extract_release_date_japanese():
-    assert "2026" in mw.extract_release_date("発売日: 2026年6月15日")
+    assert mw.extract_release_date("発売日: 2026年6月15日") == "2026-06-15"
 
 
 def test_extract_release_date_english_month():
-    result = mw.extract_release_date("Release date: June 15, 2026")
-    assert "June 15" in result and "2026" in result
+    assert mw.extract_release_date("Release date: June 15, 2026") == "2026-06-15"
 
 
 def test_extract_release_date_spanish_month():
-    result = mw.extract_release_date("Disponible el 15 de junio de 2026")
-    assert "15" in result and "junio" in result.lower() and "2026" in result
+    assert mw.extract_release_date("Disponible el 15 de junio de 2026") == "2026-06-15"
 
 
 def test_extract_release_date_empty():
     assert mw.extract_release_date("Manga genial sin fecha") == ""
+
+
+def test_normalize_release_date_dmy_family():
+    # Día primero (fuentes EU), separadores / . -, rangos validados.
+    assert mw.normalize_release_date("05/05/2026") == "2026-05-05"
+    assert mw.normalize_release_date("07.05.2026") == "2026-05-07"
+    assert mw.normalize_release_date("13-11-2025") == "2025-11-13"
+    # Mes-primero inequívoco (segundo componente > 12) → US, se interpreta MM/DD.
+    assert mw.normalize_release_date("05/27/2026") == "2026-05-27"
+    # Fechas imposibles NO se tocan (nunca destruir información).
+    assert mw.normalize_release_date("32/05/2026") == "32/05/2026"
+    assert mw.normalize_release_date("31/02/2026") == "31/02/2026"
+
+
+def test_normalize_release_date_partial_granularity_untouched():
+    # YYYY y YYYY-MM son granularidad legítima: no se inventa día ni mes.
+    assert mw.normalize_release_date("2026") == "2026"
+    assert mw.normalize_release_date("2014-01") == "2014-01"
+    assert mw.normalize_release_date("") == ""
+
+
+def test_normalize_release_date_store_datetime_and_jp():
+    # JSON-LD de tiendas JP: "2023/09/27 10:00:00" y 年月日.
+    assert mw.normalize_release_date("2023/09/27 10:00:00") == "2023-09-27"
+    assert mw.normalize_release_date("2026/03/05") == "2026-03-05"
+    assert mw.normalize_release_date("2026年04月08日") == "2026-04-08"
+    assert mw.normalize_release_date("2026年04月") == "2026-04"
+    assert mw.normalize_release_date("2026-06-15T10:00:00") == "2026-06-15"
+
+
+def test_normalize_release_date_textual_months():
+    assert mw.normalize_release_date("2 juillet 2025") == "2025-07-02"
+    assert mw.normalize_release_date("mer. 30 mars 2022") == "2022-03-30"
+    assert mw.normalize_release_date("30 août 2023") == "2023-08-30"
+    assert mw.normalize_release_date("1er ottobre 2026") == "2026-10-01"
+    assert mw.normalize_release_date("June 15, 2026") == "2026-06-15"
+    assert mw.normalize_release_date("Wed, 02 Jul 2025 10:00:00 GMT") == "2025-07-02"
+
+
+def test_normalize_release_date_unknown_passthrough_and_idempotent():
+    # Formato no reconocido → sin tocar; normalizar dos veces = una vez.
+    assert mw.normalize_release_date("Em breve") == "Em breve"
+    for raw in ("05/05/2026", "2026年04月08日", "2 juillet 2025", "2026", "2014-01"):
+        once = mw.normalize_release_date(raw)
+        assert mw.normalize_release_date(once) == once
 
 
 # ---------------------------------------------------------------------------
@@ -2457,6 +2501,52 @@ def test_is_likely_manga_rejects_pure_merchandise():
         assert not is_manga, f"Should NOT be manga ({label}): {t!r} (reason={reason})"
 
 
+def test_is_likely_manga_bonus_context_rescues_official_titles():
+    """Gotcha #92: desde la política de títulos 2026-06-12 el title es el
+    nombre OFICIAL scrapeado, que nombra el bonus de la edición (figura, DVD,
+    standee…). El marcador de inclusión pegado al match rescata el item."""
+    cases = [
+        # JP: 付き/付/同梱 después del producto-bonus
+        "夏目友人帳 ニャンコ先生フィギュアストラップ付き特装版 29",
+        "3月のライオン18 ミニアクリルフィギュア12キャラ付き特装版",
+        "侵略! イカ娘 17 オリジナルビデオアニメ(Blu-ray)付限定版 (少年チャンピオン・コミックス)",
+        "マケン姫っ! -MAKEN-KI! - 11 ブルーレイ付き限定版 (ドラゴンコミックスエイジ)",
+        "UQ HOLDER!(16)限定版 DVD＋パクティオカード同梱",
+        # 特装版 = edición de LIBRO, rescata aunque el disco no lleve 付
+        "テラフォーマーズ(21)特装版 DVD LIMITED EDITION",
+        # 限定版プレミアムBOX = premium box de un manga, no idol box
+        "帝都初恋心中 5 限定版プレミアムBOX",
+        # 図鑑未掲載 describe el bonus, no es una enciclopedia
+        "キン肉マン「技」(ダウンロード 図鑑未掲載!超人技データファイル(正義超人セット)全5種)【楽天ブックス限定特典】",
+        # EN: "w/" = with (listings de Mangavariant recuperados, 2026-06-12)
+        "Fairy Tail — Vol.35 - Special edition w/ DVD",
+        "Beelzebub — Vol.9 - Special edition w/DVD",
+        # IT: con/+ marcan el bonus o el bundle de dos obras
+        "L'estate in cui Hikaru è morto. Ediz. variant. Con acrylic standee (Vol. 1)",
+        "Il Mio Dannato Rivale N° 2 - Variant Bundle con Storia Extra-Piccante - Planet Manga",
+        "Sakamoto Days Variant con T-shirt 3",
+        "Yomi No Tsugai Variant + Fullmetal Alchemist Variant Bundle 1",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should be manga (bonus de edición): {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_bonus_context_still_rejects_products():
+    """La guarda de bonus NO rescata productos completos: el marcador tiene
+    que estar pegado al match (神の庭付き楠木邸 tiene 付き en el NOMBRE de la
+    obra y sigue siendo un Blu-ray de anime)."""
+    cases = [
+        ("神の庭付き楠木邸 Blu-ray BOX 下巻", "Blu-ray de anime"),
+        ("体育する生徒会限定箱「生徒会の一存」富士見書房公式フィギュア", "figura oficial"),
+        ("ワンピース ルフィ フィギュア", "figura"),
+        ("AKB48 プレミアムBOX", "idol box"),
+    ]
+    for t, label in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should NOT be manga ({label}): {t!r} (reason={reason})"
+
+
 def test_is_likely_manga_default_accepts_unknown():
     # Sin pattern claro: aceptar (mejor false-positive que perder mangas reales).
     is_manga, _ = mw.is_likely_manga("Some Unusual Title Here")
@@ -2688,6 +2778,57 @@ def test_is_likely_manga_rejects_by_blog_url():
         is_manga, reason = mw.is_likely_manga(title, url=url)
         assert not is_manga, f"Should reject by URL: {url!r} (reason={reason})"
         assert reason.startswith("blog_url:"), f"reason should be blog_url: but got {reason}"
+
+
+def test_is_likely_manga_rejects_by_non_manga_url():
+    """Secciones no-manga del sitio (viz.com/anime/ = Blu-ray/DVD): el título
+    no menciona DVD/Blu-ray pero la URL delata el tipo de producto."""
+    cases = [
+        ("Castlevania: The Complete Series, Limited Edition",
+         "https://www.viz.com/anime/tv-series/castlevania-season-1/product/8604"),
+        ("Naruto Triple Feature Collector's Edition (Steelbook)",
+         "https://www.viz.com/anime/movie/naruto-the-movie-video/product/6489"),
+        ("Sailor Moon Crystal, Set 2 (Limited Edition)",
+         "https://www.viz.com/anime/tv-series/sailor-moon-crystal-video-volume-2-0/product/5117"),
+        ("UZUMAKI: Animated TV Series, Limited Edition",
+         "https://www.viz.com/anime/tv-series/uzumaki-video/product/8212"),
+    ]
+    for title, url in cases:
+        is_manga, reason = mw.is_likely_manga(title, url=url)
+        assert not is_manga, f"Should reject by URL: {url!r} (reason={reason})"
+        assert reason.startswith("non_manga_url:"), f"reason should be non_manga_url: but got {reason}"
+    # Un producto manga de VIZ (path /manga-books/) NO debe ser rechazado por URL.
+    is_manga, reason = mw.is_likely_manga(
+        "Revolutionary Girl Utena Complete Deluxe Box Set",
+        url="https://www.viz.com/manga-books/manga/revolutionary-girl-utena-complete-deluxe-box-set/product/5054",
+    )
+    assert is_manga, f"VIZ manga-books product wrongly rejected: {reason}"
+
+
+def test_is_pure_novel_bypasses_asian_novels_and_artbooks():
+    """Las light novels/danmei con edición especial están EN scope (CLAUDE.md:
+    'light novels con bonus'). El detector de novelas puras caza bestsellers
+    occidentales, no la línea asiática de Seven Seas."""
+    in_scope = [
+        # danmei en la descripción
+        ("Dinghai Fusheng Records (Novel) Vol. 1 (Special Edition)",
+         "The hit danmei novel series that inspired the manhua and donghua!"),
+        # marcador "(Novel)" en el título, sin danmei en la desc
+        ("Run Wild: Sa Ye (Novel) Vol. 1 (Special Edition)",
+         "In this novel series originally released in Chinese, two young men…"),
+        # artbook que menciona "novel series" en la desc
+        ("The Untamed: The Official Artbook (Hardcover)",
+         "An artbook for the drama (adaptation of the bestselling fantasy novel series Mo Dao Zu Shi)."),
+    ]
+    for title, desc in in_scope:
+        is_novel, reason = mw.is_pure_novel(title, desc)
+        assert not is_novel, f"In-scope item rejected as novel: {title!r} ({reason})"
+    # Un bestseller occidental sigue siendo rechazado.
+    is_novel, reason = mw.is_pure_novel(
+        "Alas de Sangre. Edición coleccionista",
+        "La saga romántica bestseller del fenómeno BookTok.",
+    )
+    assert is_novel, "Western bestseller should still be rejected"
 
 
 def test_is_likely_manga_rejects_blog_news_listings():
@@ -3257,6 +3398,11 @@ def test_is_collectible_edition_rejects_plain_omnibus():
         ("Eyeshield 21 (Edición 3 en 1) nº1 (de 13)", ["omnibus"]),
         ("Bleach 3 en 1 #14", ["omnibus"]),
         ("CUATRO FANTÁSTICOS DE BYRNE (MARVEL OMNIBUS)", ["omnibus"]),
+        # "N-in-1 Edition" (VIZ/Shojo Beat): "in-1" NO es lore-word del
+        # patrón <Word> Edition (bug 2026-06-12: capturaba "in-1").
+        ("X (3-in-1 Edition), Vol. 6", []),
+        ("Naruto (3-in-1 Edition), Vol. 1", []),
+        ("Fushigi Yûgi (2-in-1 Edition), Vol. 4", []),
     ]
     for title, sigs in plain_omnibus_cases:
         ok, reason = mw.is_collectible_edition(title, "", sigs, "manga")
@@ -5025,6 +5171,31 @@ def test_mangavariant_fetch_variant_urls_filters_index_pages():
     # 3 variants reales en la fixture; /variant/ y /about/ quedan fuera.
     assert len(urls) == 3
     assert all("/variant/" in u and not u.endswith("/variant/") for u in urls)
+
+
+def test_mangavariant_detects_sgcaptcha_challenge():
+    """El challenge sgcaptcha de SiteGround (202 + meta-refresh a
+    /.well-known/sgcaptcha/) se detecta; respuestas reales no."""
+    from wikis import mangavariant as mv
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, text: str) -> None:
+            self.status_code = status_code
+            self.text = text
+
+    challenge_html = (
+        '<html><head><meta http-equiv="refresh" '
+        'content="0;url=/.well-known/sgcaptcha/?r=%2Fvariant%2F"></head></html>'
+    )
+    # 202 solo ya es challenge; el marker en el body también (aun con 200).
+    assert mv._looks_like_challenge(_FakeResponse(202, challenge_html))
+    assert mv._looks_like_challenge(_FakeResponse(202, ""))
+    assert mv._looks_like_challenge(_FakeResponse(200, challenge_html))
+    # Páginas reales: detail page y sitemap XML.
+    assert not mv._looks_like_challenge(
+        _FakeResponse(200, _mv_html("aot_vol34_crunchyroll.html")))
+    assert not mv._looks_like_challenge(
+        _FakeResponse(200, _mv_html("sitemap_sample.xml")))
 
 
 def test_mangavariant_iter_year_months_returns_single_batch():
@@ -10573,3 +10744,171 @@ def test_extract_squareenix_rsc_payload():
     assert len(via_generic) == 2
     # HTML sin payload → [] silencioso (no crash)
     assert mw.extract_squareenix_rsc(src, "<html><body>nada</body></html>", 50, {}) == []
+
+
+def test_slugify_kebab_homoglyphs_and_cjk_discard():
+    # Gotcha #81 — casos reales del corpus (2026-06-12).
+    # "о" cirílica U+043E: NFKD no la descompone; sin el mapa de homoglifos
+    # el regex la descartaba como punctuation → "taih-to-stamp".
+    assert mw._slugify_kebab("Taihо to Stamp") == "taiho-to-stamp"
+    # CJK = descarte controlado (separador + strip de bordes), sin colas.
+    assert mw._slugify_kebab("Maku ga Oriru to Bokura wa 番") == "maku-ga-oriru-to-bokura-wa"
+    # Sin regresión sobre el camino normal (diacríticos latinos).
+    assert mw._slugify_kebab("Café Señor 5") == "cafe-senor-5"
+
+
+def test_sanitize_key_ascii_grouping_keys():
+    # Gotcha #81 — claves acuñadas por LLM/YAML con no-ASCII.
+    assert (mw.sanitize_key_ascii("taihо-to-stamp-kodansha-limited-jp")
+            == "taiho-to-stamp-kodansha-limited-jp")
+    assert (mw.sanitize_key_ascii("maku-ga-oriru-to-bokura-wa-番")
+            == "maku-ga-oriru-to-bokura-wa")
+    # Idempotente sobre claves limpias (no rompe nada existente).
+    clean = "maku-ga-oriru-to-bokura-wa-takeshobo-limited-jp"
+    assert mw.sanitize_key_ascii(clean) == clean
+    # Clave íntegramente CJK → "" (el caller decide el fallback).
+    assert mw.sanitize_key_ascii("幕が下りたら僕らは番") == ""
+
+
+def test_extract_volume_fullwidth_digits():
+    # Gotcha #82 — casos reales del corpus (JP - Sanyodo, 2026-06-12). \d en
+    # regex unicode matchea ０-９ → el volumen salía con el dígito full-width
+    # crudo ("７" U+FF17) y contaminaba volume + cluster_key.
+    assert mw._extract_volume("学園アイドルマスター ＧＯＬＤ ＲＵＳＨ 特装版 ７") == "7"
+    assert mw._extract_volume("ｃｉｔｒｕｓ ＋（７）特装版") == "7"
+    # Marker JP 巻 con dígitos full-width
+    assert mw._extract_volume("ワンピース １０３巻") == "103"
+    # Sin regresión sobre dígitos ASCII
+    assert mw._extract_volume("One Piece vol. 100") == "100"
+
+
+def test_derive_cluster_key_fullwidth_volume_normalized():
+    # Gotcha #82 — el campo volume puede venir de un parser de fuente o del
+    # LLM (no solo de _extract_volume): derive_cluster_key normaliza igual.
+    item = {
+        "edition_key": "citrus-unknown-special-jp",
+        "volume": "７",
+        "url": "https://www.sanyodo.co.jp/?s=978-4-7580-9966",
+    }
+    assert mw.derive_cluster_key(item) == "edition:citrus-unknown-special-jp|7"
+    # Tier lmc también normaliza el volume del item
+    lmc = {
+        "url": "https://www.listadomanga.es/coleccion.php?id=99",
+        "lm_kind": "regular",
+        "volume": "７",
+    }
+    assert mw.derive_cluster_key(lmc) == "lmc:99:regular:7"
+
+
+# ---------------------------------------------------------------------------
+# Señales DE/PL/KR (fuentes nuevas 2026-06-12: altraverse/Egmont/TOKYOPOP/
+# Carlsen, Mangarden/Mangastore, Aladin)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_signals_german():
+    cases = {
+        "GACHIAKUTA Band 01-05 im Schuber": "box_set",
+        "Attack on Titan, Bände 1-5 im Sammelschuber mit Extra": "box_set",
+        "Wedding Peach - Luxury Edition 02": "premium_format",
+        "Jubiläumsedition #12: Rising of Shield Hero": "collector",
+        "Frau Faust Band 03 Limited Edition": "limited",
+        "Kohva Collectors Edition Band 02": "collector",
+    }
+    for title, expected_type in cases.items():
+        score, _, types = mw.detect_signals(title)
+        assert expected_type in types, f"{title!r}: esperaba {expected_type}, obtuve {types}"
+        assert score > 0
+
+
+def test_detect_signals_polish():
+    cases = {
+        "Akira - edycja specjalna tom 04 (oprawa twarda)": {"special_edition", "hardcover"},
+        "Atak Tytanów tom 01 (oprawa twarda)": {"hardcover"},
+        "Atelier spiczastych kapeluszy #05 (twarda okładka)": {"hardcover"},
+        "Fullmetal Alchemist Deluxe tom 12 (oprawa twarda)": {"deluxe", "hardcover"},
+    }
+    for title, expected in cases.items():
+        _, _, types = mw.detect_signals(title)
+        assert expected <= set(types), f"{title!r}: esperaba {expected}, obtuve {types}"
+
+
+def test_detect_signals_korean():
+    cases = {
+        "장송의 프리렌 15 (한정판)": "limited",
+        "블루 아카이브 오피셜 아트웍스 (한정판)": "artbook",
+        "나 혼자만 레벨업 15 (한정판)": "limited",
+        "주문은 토끼입니까? 13 특별판": "special_edition",
+    }
+    for title, expected_type in cases.items():
+        _, _, types = mw.detect_signals(title)
+        assert expected_type in types, f"{title!r}: esperaba {expected_type}, obtuve {types}"
+
+
+def test_polish_korean_pass_collectible_gate():
+    """Los títulos PL con tapa dura / KR con 한정판 pasan el gate (señal
+    hardcover/limited + volume shape 'tom N' / número final)."""
+    passing = [
+        "Akira - edycja specjalna tom 04 (oprawa twarda)",
+        "장송의 프리렌 15 (한정판)",
+        "Sailor Moon Eternal Edition tom 01 (oprawa twarda)",
+    ]
+    for title in passing:
+        _, _, types = mw.detect_signals(title)
+        ok, reason = mw.is_collectible_edition(title, "", types, "")
+        assert ok, f"{title!r} debería pasar el gate (reason={reason})"
+
+
+def test_detect_signals_chinese_traditional():
+    """Señales TW/HK (chino tradicional usa 裝, no 装 como el JP). Fuentes
+    2026-06-12: Tong Li, Kadokawa TW, SPP, Jade Dynasty HK."""
+    cases = {
+        "銀魂 愛藏版 9（首刷限定版）": {"limited", "premium_format"},
+        "哈利路亞寶貝 (5)（特裝版）": {"special_edition"},
+        "貓眼完全版盒裝套書(08-15冊)【首刷限定版】": {"limited", "box_set", "premium_format"},
+        "帶子雄狼愛藏版 第1至20期20本": {"premium_format"},
+        "赤鳩珍藏版盒裝 1-6": {"premium_format", "box_set"},
+        "《藏海花》漫画典藏版": {"premium_format"},
+    }
+    for title, expected in cases.items():
+        _, _, types = mw.detect_signals(title)
+        assert expected <= set(types), f"{title!r}: esperaba {expected}, obtuve {types}"
+        ok, reason = mw.is_collectible_edition(title, "", types, "")
+        assert ok, f"{title!r} debería pasar el gate (reason={reason})"
+
+
+def test_append_jsonl_images_merge_backfills_local(tmp_path):
+    """El union-merge de images[] rellena `local` vacío con el del duplicado
+    (en ambas direcciones). Bug 2026-06-12: el flush incremental de un wiki
+    escribía la fila sin local y el upsert final post-mirror se descartaba."""
+    import json as _json
+    p = tmp_path / "items.jsonl"
+    url = "https://example.com/prod/1"
+    img_url = "https://cdn.example.com/cover.jpg"
+    # 1ª escritura (flush pre-mirror): sin local
+    mw.append_jsonl(p, [{"url": url, "title": "X", "images": [{"url": img_url, "local": "", "kind": "gallery"}]}])
+    # 2ª escritura (upsert post-mirror): con local
+    mw.append_jsonl(p, [{"url": url, "title": "X", "images": [{"url": img_url, "local": "abc123.jpg", "kind": "gallery"}]}])
+    rows = [_json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    assert len(rows) == 1
+    assert rows[0]["images"][0]["local"] == "abc123.jpg"
+    # Dirección inversa: re-scrape sin local NO borra el local existente
+    mw.append_jsonl(p, [{"url": url, "title": "X", "images": [{"url": img_url, "local": "", "kind": "gallery"}]}])
+    rows = [_json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    assert rows[0]["images"][0]["local"] == "abc123.jpg"
+
+
+def test_extract_image_url_skips_lazy_placeholder_file():
+    """Placeholder de lazy-load como ARCHIVO real (no data-URI): saltearlo y
+    caer al data-src. Caso Mangarden (gotcha #88): src=/gfx/pol/loader.gif
+    + data-src con la portada real → 167 items PL sin foto."""
+    soup = make_soup(
+        '<div><img class="b-lazy" src="/gfx/pol/loader.gif?r=123" '
+        'data-src="/hpeciai/abc/pol_il_Cover-16353jpg" alt="x"></div>'
+    )
+    div = soup.find("div")
+    url = mw.extract_image_url(div, "https://mangarden.pl/")
+    assert url == "https://mangarden.pl/hpeciai/abc/pol_il_Cover-16353jpg"
+    # Una imagen real llamada lazy.jpg NO se saltea (no es placeholder exacto)
+    soup2 = make_soup('<div><img data-src="/img/lazy.jpg"></div>')
+    assert mw.extract_image_url(soup2.find("div"), "https://example.com/") == "https://example.com/img/lazy.jpg"
