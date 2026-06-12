@@ -3,10 +3,9 @@ import type { Cluster } from '@/lib/types'
 
 type VolumeGridProps = {
   clusters: Cluster[]
-  editionKey: string
 }
 
-export function VolumeGrid({ clusters, editionKey }: VolumeGridProps) {
+export function VolumeGrid({ clusters }: VolumeGridProps) {
   return (
     <div>
       <style>{`
@@ -31,7 +30,7 @@ export function VolumeGrid({ clusters, editionKey }: VolumeGridProps) {
       <ul role="list" className="volume-grid">
         {clusters.map(cluster => (
           <li key={cluster.clusterKey}>
-            <ItemCard cluster={cluster} from={`edition:${editionKey}`} />
+            <ItemCard cluster={cluster} />
           </li>
         ))}
       </ul>

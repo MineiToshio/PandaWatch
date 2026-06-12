@@ -35,7 +35,9 @@ export function Pagination({ total, current }: PaginationProps) {
     } else {
       next.set('page', String(page))
     }
-    router.replace(`${pathname}?${next.toString()}`)
+    // push (no replace): cada página es una entrada de historial — "atrás"
+    // desde la pág. 5 vuelve a la 4, no sale del sitio
+    router.push(`${pathname}?${next.toString()}`)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 

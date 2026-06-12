@@ -4,17 +4,16 @@ import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { coverImage } from '@/lib/data'
 import { formatDate } from '@/lib/format'
+import { itemPath } from '@/lib/seo'
 
 type ItemCardProps = {
   cluster: Cluster
-  from?: string
 }
 
-export function ItemCard({ cluster, from }: ItemCardProps) {
+export function ItemCard({ cluster }: ItemCardProps) {
   const { canonical, signalTypes, slug } = cluster
-  const href = slug
-    ? `/item/${slug}${from ? `?from=${encodeURIComponent(from)}` : ''}`
-    : '#'
+  // Href limpio (sin ?from=) — el back-state vive en BackLink/sessionStorage.
+  const href = slug ? itemPath(slug) : '#'
 
   const visibleSignals = signalTypes.slice(0, 2)
 

@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { ChevronLeft, ChevronRight, BookOpen, X } from 'lucide-react'
 import type { ItemImage } from '@/lib/types'
+import { dedupeImages } from '@/lib/images'
 
 const KIND_LABELS: Record<string, string> = {
   gallery:       'Galería',
@@ -13,31 +14,6 @@ const KIND_LABELS: Record<string, string> = {
 function kindLabelForIdx(img: ItemImage, idx: number): string {
   if (idx === 0) return 'Portada'
   return KIND_LABELS[img.kind] ?? img.kind ?? 'Galería'
-}
-
-function getInitialSrc(img: ItemImage): string | null {
-  return img.local ? `/images/${img.local}` : (img.url || null)
-}
-
-// Deduplicate images by URL stem (strip query params).
-// When two entries share the same base URL, keep the first's kind/description
-// but borrow `local` from whichever has it (gallery sometimes has the
-// downloaded file even when the cover entry doesn't).
-function dedupeImages(images: ItemImage[]): ItemImage[] {
-  const seen = new Map<string, ItemImage>()
-  for (const img of images) {
-    const key = (img.url || '').split('?')[0].split('#')[0]
-    if (!key) continue
-    if (!seen.has(key)) {
-      seen.set(key, img)
-    } else {
-      const existing = seen.get(key)!
-      if (!existing.local && img.local) {
-        seen.set(key, { ...existing, local: img.local })
-      }
-    }
-  }
-  return Array.from(seen.values())
 }
 
 function Placeholder() {
@@ -91,42 +67,59 @@ function DotsRow({
 export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[]; alt: string }) {
   const images = useMemo(() => dedupeImages(rawImages), [rawImages])
   const [idx, setIdx] = useState(0)
-  const [src, setSrc] = useState<string | null>(
-    images.length ? getInitialSrc(images[0]) : null
-  )
+  // src se DERIVA de idx + nivel de fallback por imagen (nada de estado espejo
+  // sincronizado por efecto): 'remote' = el espejo local falló → usar url;
+  // 'none' = nada cargó → placeholder.
+  const [errored, setErrored] = useState<Record<number, 'remote' | 'none'>>({})
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  const closeBtnRef = useRef<HTMLButtonElement>(null)
 
   const prev = useCallback(() => setIdx(i => (i - 1 + images.length) % images.length), [images.length])
   const next = useCallback(() => setIdx(i => (i + 1) % images.length), [images.length])
 
-  // Sync src when navigating to a different image
-  useEffect(() => {
-    setSrc(images[idx] ? getInitialSrc(images[idx]) : null)
-  }, [idx, images])
+  const fallbackLevel = errored[idx]
+  const currentImg = images[idx]
+  const src: string | null =
+    !currentImg || fallbackLevel === 'none'
+      ? null
+      : fallbackLevel === 'remote'
+        ? (currentImg.url || null)
+        : currentImg.local
+          ? `/images/${currentImg.local}`
+          : (currentImg.url || null)
 
-  // Keyboard: arrows + Escape
+  // Teclado global SOLO con el lightbox abierto — sin esto, las flechas
+  // cambiaban la imagen desde cualquier punto de la página. El carrusel
+  // inline navega con onKeyDown cuando tiene foco.
   useEffect(() => {
+    if (!lightboxOpen) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && lightboxOpen) { setLightboxOpen(false); return }
+      if (e.key === 'Escape') { setLightboxOpen(false); return }
       if (images.length <= 1) return
-      if (e.key === 'ArrowLeft') { if (lightboxOpen) e.preventDefault(); prev() }
-      if (e.key === 'ArrowRight') { if (lightboxOpen) e.preventDefault(); next() }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
+      if (e.key === 'ArrowRight') { e.preventDefault(); next() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [images.length, lightboxOpen, prev, next])
 
-  // Scroll lock while lightbox is open
+  // Lightbox: scroll lock + mover el foco adentro y devolverlo al cerrar
   useEffect(() => {
     if (!lightboxOpen) return
+    const prevFocus = document.activeElement as HTMLElement | null
     document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
+    closeBtnRef.current?.focus()
+    return () => {
+      document.body.style.overflow = ''
+      prevFocus?.focus()
+    }
   }, [lightboxOpen])
 
   const handleError = () => {
-    const current = images[idx]
-    if (src?.startsWith('/images/') && current?.url) setSrc(current.url)
-    else setSrc(null)
+    setErrored(prevErr => ({
+      ...prevErr,
+      [idx]: src?.startsWith('/images/') && currentImg?.url ? 'remote' : 'none',
+    }))
   }
 
   if (!images.length) {
@@ -140,7 +133,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
     )
   }
 
-  const current = images[idx]
+  const current = currentImg
   const isLocal = Boolean(src?.startsWith('/images/'))
   const kindLabel = kindLabelForIdx(current, idx)
 
@@ -150,9 +143,17 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
         role="region" aria-label="Galería de imágenes">
 
-        {/* Main image — click to open lightbox */}
+        {/* Main image — click/Enter abre lightbox; flechas navegan con foco */}
         <div
           onClick={() => setLightboxOpen(true)}
+          role="button"
+          tabIndex={0}
+          aria-label="Ampliar imagen"
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxOpen(true) }
+            else if (e.key === 'ArrowLeft' && images.length > 1) { e.preventDefault(); prev() }
+            else if (e.key === 'ArrowRight' && images.length > 1) { e.preventDefault(); next() }
+          }}
           style={{
             position: 'relative', aspectRatio: '2/3',
             background: 'var(--ink-100)', borderRadius: 10, overflow: 'hidden',
@@ -165,6 +166,9 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
                 src={src}
                 alt={`${alt} — ${kindLabel}`}
                 fill
+                // Es la imagen principal de la ficha (LCP) — eager, no lazy
+                priority
+                sizes="(max-width: 640px) 100vw, 280px"
                 style={{ objectFit: 'contain' }}
                 onError={handleError}
               />
@@ -173,6 +177,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
               <img
                 src={src}
                 alt={`${alt} — ${kindLabel}`}
+                decoding="async"
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                 onError={handleError}
               />
@@ -246,6 +251,7 @@ export function ImageCarousel({ images: rawImages, alt }: { images: ItemImage[];
         >
           {/* Close button */}
           <button
+            ref={closeBtnRef}
             onClick={() => setLightboxOpen(false)}
             aria-label="Cerrar galería"
             style={{

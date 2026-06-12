@@ -8,7 +8,6 @@ import { SortBar } from './SortBar'
 type CatalogControlsProps = {
   facets: Facets
   current: FilterParams
-  total: number
   sort: SortKey
   page: number
   pages: number
@@ -21,7 +20,6 @@ type CatalogControlsProps = {
 export function CatalogControls({
   facets,
   current,
-  total,
   sort,
   page,
   pages,
@@ -56,7 +54,6 @@ export function CatalogControls({
         }}
       >
         <SortBar
-          total={total}
           sort={sort}
           page={page}
           pages={pages}

@@ -6,17 +6,18 @@ import { BackLink } from '@/components/modules/BackLink'
 import { JsonLd } from '@/components/seo/JsonLd'
 import { editionDescription } from '@/lib/descriptions'
 import { editionJsonLd, breadcrumbJsonLd } from '@/lib/jsonld'
-import { ogImage } from '@/lib/seo'
+import { ogImage, decodeRouteParam, seriesPath, editionPath } from '@/lib/seo'
 import type { Metadata } from 'next'
 
 type Props = {
   params: Promise<{ editionKey: string }>
-  searchParams: Promise<{ from?: string }>
 }
 
-export default async function EditionPage({ params, searchParams }: Props) {
-  const { editionKey } = await params
-  const { from } = await searchParams
+// Sólo las ediciones de generateStaticParams existen — render 100% estático.
+export const dynamicParams = false
+
+export default async function EditionPage({ params }: Props) {
+  const editionKey = decodeRouteParam((await params).editionKey)
   const clusters = loadEditionClusters(editionKey)
 
   if (!clusters.length) notFound()
@@ -29,11 +30,11 @@ export default async function EditionPage({ params, searchParams }: Props) {
   if (c.series_key && (c.series_display || firstCluster.seriesDisplay))
     trail.push({
       name: c.series_display || firstCluster.seriesDisplay!,
-      path: `/series/${c.series_key}`,
+      path: seriesPath(c.series_key),
     })
   trail.push({
     name: firstCluster.editionDisplay ?? firstCluster.seriesDisplay ?? editionKey,
-    path: `/edition/${editionKey}`,
+    path: editionPath(editionKey),
   })
 
   return (
@@ -44,13 +45,13 @@ export default async function EditionPage({ params, searchParams }: Props) {
           breadcrumbJsonLd(trail),
         ]}
       />
-      <BackLink href={from || '/'} label="Catálogo" />
+      <BackLink fallbackHref="/" label="Catálogo" />
       <EditionHeader
         cluster={firstCluster}
         totalVolumes={clusters.length}
         signalTypes={allSignalTypes}
       />
-      <VolumeGrid clusters={clusters} editionKey={editionKey} />
+      <VolumeGrid clusters={clusters} />
     </main>
   )
 }
@@ -60,7 +61,7 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { editionKey } = await params
+  const editionKey = decodeRouteParam((await params).editionKey)
   const clusters = loadEditionClusters(editionKey)
   if (!clusters.length) return {}
 
@@ -69,9 +70,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const allSignalTypes = [...new Set(clusters.flatMap(c => c.signalTypes))]
   const title = canonical.edition_display || canonical.series_display || editionKey
   const description = editionDescription(first, clusters.length, allSignalTypes)
-  const path = `/edition/${editionKey}`
+  const path = editionPath(editionKey)
   const cov = coverImage(canonical)
-  const images = ogImage(cov.url ?? cov.local, title)
+  const images = ogImage(cov.local ?? cov.url, title)
 
   return {
     title,

@@ -1,4 +1,5 @@
-import type { Cluster, FilterParams, SortKey, Facets } from './types'
+import type { Cluster, FilterParams, SortKey } from './types'
+import { sortableDate } from './format'
 
 const LIMITED_SIGNALS = new Set([
   'limited',
@@ -13,6 +14,10 @@ const LIMITED_SIGNALS = new Set([
   'retailer_exclusive',
 ])
 
+const SORT_KEYS: ReadonlySet<string> = new Set([
+  'date_desc', 'date_asc', 'title_asc', 'title_desc',
+] satisfies SortKey[])
+
 export function parseFilterParams(
   params: Record<string, string | string[]>
 ): FilterParams {
@@ -21,9 +26,18 @@ export function parseFilterParams(
     if (!v) return undefined
     return Array.isArray(v) ? v : [v]
   }
+  // Next entrega los searchParams repetidos (?q=a&q=b) como string[] — para los
+  // params escalares nos quedamos con el primero en vez de asumir string.
+  const getStr = (key: string): string | undefined => {
+    const v = params[key]
+    return Array.isArray(v) ? v[0] : v
+  }
+
+  const rawSort = getStr('sort') ?? ''
+  const rawPage = Number(getStr('page'))
 
   return {
-    q: params.q as string | undefined,
+    q: getStr('q'),
     country: getArr('country'),
     language: getArr('language'),
     publisher: getArr('publisher'),
@@ -31,15 +45,20 @@ export function parseFilterParams(
     source_class: getArr('source_class'),
     signal_types: getArr('signal_types'),
     rarity: getArr('rarity'),
-    only_limited: params.only_limited === 'true',
-    sort: (params.sort as SortKey) || 'date_desc',
-    page: params.page ? Number(params.page) : 1,
+    only_limited: getStr('only_limited') === 'true',
+    sort: SORT_KEYS.has(rawSort) ? (rawSort as SortKey) : 'date_desc',
+    page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
   }
 }
 
 export function filterClusters(
   clusters: Cluster[],
-  params: FilterParams
+  params: FilterParams,
+  // series_key → nombres de la serie en lowercase (lib/data.ts
+  // aliasSearchIndex()). El title es el nombre OFICIAL de la edición (no se
+  // renombra ni traduce); los aliases hacen que "demon slayer", "kimetsu no
+  // yaiba" y "guardianes de la noche" devuelvan los mismos resultados.
+  aliasIndex: Record<string, string> = {}
 ): Cluster[] {
   return clusters.filter(c => {
     const item = c.canonical
@@ -47,7 +66,12 @@ export function filterClusters(
     // Full-text search
     if (params.q) {
       const q = params.q.toLowerCase()
-      const searchable = [item.title, item.title_original, item.series_display]
+      const searchable = [
+        item.title,
+        item.title_original,
+        item.series_display,
+        item.series_key ? aliasIndex[item.series_key] : undefined,
+      ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -101,7 +125,7 @@ export function sortClusters(
         if (!da && !db) return 0
         if (!da) return 1
         if (!db) return -1
-        return db.localeCompare(da)
+        return sortableDate(db).localeCompare(sortableDate(da))
       }
       case 'date_asc': {
         const da = a.canonical.release_date || ''
@@ -109,7 +133,7 @@ export function sortClusters(
         if (!da && !db) return 0
         if (!da) return 1
         if (!db) return -1
-        return da.localeCompare(db)
+        return sortableDate(da).localeCompare(sortableDate(db))
       }
       case 'title_asc':
         return (a.canonical.title || '').localeCompare(b.canonical.title || '')
@@ -124,7 +148,8 @@ export function sortClusters(
 export function paginate<T>(items: T[], page: number, pageSize = 60) {
   const total = items.length
   const pages = Math.ceil(total / pageSize)
-  const safeP = Math.max(1, Math.min(page, pages || 1))
+  const wanted = Number.isFinite(page) ? Math.trunc(page) : 1
+  const safeP = Math.max(1, Math.min(wanted, pages || 1))
   const start = (safeP - 1) * pageSize
   return {
     items: items.slice(start, start + pageSize),

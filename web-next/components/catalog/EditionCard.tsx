@@ -1,30 +1,57 @@
 import Link from 'next/link'
 import type { Cluster } from '@/lib/types'
 import { coverImage } from '@/lib/data'
+import { editionPath, itemPath } from '@/lib/seo'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
+import { EditionTypeChip } from '@/components/modules/EditionTypeChip'
+import { editionTypeLabel, editionSlugFromKey } from '@/lib/format'
+
+// Señales que repiten el concepto del chip de tipo de edición — se omiten
+// para no mostrar "Box Set Box Set" / "Omnibus Omnibus" en la misma tarjeta.
+const SIGNALS_EQUIV_TO_EDITION: Record<string, string[]> = {
+  boxset:    ['box_set'],
+  coffret:   ['box_set'],
+  cofanetto: ['box_set'],
+  special:   ['special_edition'],
+  limited:   ['limited'],
+  collector: ['collector'],
+  deluxe:    ['deluxe'],
+  kanzenban: ['kanzenban'],
+  omnibus:   ['omnibus'],
+  artbook:   ['artbook'],
+  variant:   ['variant_cover'],
+}
 import { CountryFlag } from '@/components/modules/CountryFlag'
+import { RarityBadge } from '@/components/modules/RarityBadge'
 
 type EditionCardProps = {
   cluster: Cluster
-  from?: string
+  /** Portada above-the-fold → carga eager (LCP). */
+  priority?: boolean
 }
 
-export function EditionCard({ cluster, from }: EditionCardProps) {
+export function EditionCard({ cluster, priority = false }: EditionCardProps) {
   const { canonical, signalTypes, volumeCount, countries, slug } = cluster
   const leaves = Math.min(volumeCount, 3) as 1 | 2 | 3
 
   // Multi-volume editions → /edition/[editionKey]
   // Single-volume editions + standalone items → /item/[slug]  (FRD-003)
-  const baseHref = (cluster.editionKey && volumeCount > 1)
-    ? `/edition/${cluster.editionKey}`
-    : (slug ? `/item/${slug}` : '#')
-  const href = (from && baseHref !== '#')
-    ? `${baseHref}?from=${encodeURIComponent(from)}`
-    : baseHref
+  // Hrefs limpios (sin ?from=): el back-state vive en BackLink/sessionStorage,
+  // y robots.txt bloquea /*? — un querystring acá esconde el link a crawlers.
+  const href = (cluster.editionKey && volumeCount > 1)
+    ? editionPath(cluster.editionKey)
+    : (slug ? itemPath(slug) : '#')
 
-  // Show at most 2 signal chips to keep card compact
-  const visibleSignals = signalTypes.slice(0, 2)
+  // Chip del TIPO de edición (desde edition_key — el title oficial ya no lo
+  // lleva inyectado) + signal chips. Máximo 2 chips para mantener la tarjeta
+  // compacta: con chip de edición entra 1 signal, sin él entran 2.
+  const editionType = editionTypeLabel(cluster.canonical.edition_key)
+  const equivSignals = SIGNALS_EQUIV_TO_EDITION[editionSlugFromKey(cluster.canonical.edition_key)] ?? []
+  const candidateSignals = editionType
+    ? signalTypes.filter(s => !equivSignals.includes(s))
+    : signalTypes
+  const visibleSignals = candidateSignals.slice(0, editionType ? 1 : 2)
 
   return (
     // Outer wrapper: owns the stack pseudo-elements and hover lift.
@@ -46,11 +73,17 @@ export function EditionCard({ cluster, from }: EditionCardProps) {
             imageUrl={coverImage(canonical).url}
             alt={canonical.title || 'Portada'}
             fill
+            priority={priority}
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
           />
 
           {/* Rarity badge — top left, glassy dark pill */}
-          {canonical.rarity && <RarityBadge rarity={canonical.rarity} />}
+          {canonical.rarity && (
+            <RarityBadge
+              rarity={canonical.rarity}
+              style={{ position: 'absolute', top: 8, left: 8, zIndex: 2 }}
+            />
+          )}
 
           {/* Country flags — bottom left */}
           {countries.length > 0 && (
@@ -123,10 +156,13 @@ export function EditionCard({ cluster, from }: EditionCardProps) {
 
           {/* Signal chips — anchored to the bottom of the fixed-height info block */}
           <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 4, marginTop: 'auto', minHeight: 18, overflow: 'hidden' }}>
+            {editionType && (
+              <EditionTypeChip editionKey={cluster.canonical.edition_key} size="sm" />
+            )}
             {visibleSignals.map(s => (
               <SignalChip key={s} signal={s} size="sm" />
             ))}
-            {signalTypes.length > 2 && (
+            {candidateSignals.length > visibleSignals.length && (
               <span
                 style={{
                   fontSize: 10,
@@ -134,7 +170,7 @@ export function EditionCard({ cluster, from }: EditionCardProps) {
                   alignSelf: 'center',
                 }}
               >
-                +{signalTypes.length - 2}
+                +{candidateSignals.length - visibleSignals.length}
               </span>
             )}
           </div>
@@ -142,79 +178,6 @@ export function EditionCard({ cluster, from }: EditionCardProps) {
 
       </div>{/* /.edition-card-inner */}
     </Link>
-  )
-}
-
-// ─── Rarity badge ────────────────────────────────────────────────────────────
-
-const RARITY_META: Record<
-  'common' | 'rare' | 'super_rare' | 'ultra_rare',
-  { label: string; color: string; icon: React.ReactNode }
-> = {
-  common: {
-    label: 'Accessible',
-    color: '#9CA3AF',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-        <circle cx={12} cy={12} r={10} />
-      </svg>
-    ),
-  },
-  rare: {
-    label: 'Rare',
-    color: '#8BA8F8',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-      </svg>
-    ),
-  },
-  super_rare: {
-    label: 'Super Rare',
-    color: '#C4A8FF',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
-      </svg>
-    ),
-  },
-  ultra_rare: {
-    label: 'Ultra Rare',
-    color: '#FDE68A',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M6 3h12l4 6-10 13L2 9z" />
-      </svg>
-    ),
-  },
-}
-
-function RarityBadge({ rarity }: { rarity: 'common' | 'rare' | 'super_rare' | 'ultra_rare' }) {
-  const meta = RARITY_META[rarity]
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 8,
-        left: 8,
-        zIndex: 2,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '4px 8px',
-        borderRadius: 5,
-        fontSize: 10,
-        fontWeight: 600,
-        fontFamily: 'var(--font-display)',
-        color: meta.color,
-        background: 'rgba(20,17,14,0.82)',
-        backdropFilter: 'blur(6px)',
-        border: '1px solid rgba(255,255,255,0.12)',
-      }}
-    >
-      {meta.icon}
-      {meta.label}
-    </div>
   )
 }
 

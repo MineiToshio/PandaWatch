@@ -49,7 +49,6 @@ export type SourceEntry = {
   stock_type?: string
   detected_at?: string
   release_date?: string
-  score?: number
 }
 
 export type ItemImage = {
@@ -91,8 +90,6 @@ export type Facets = {
   countries: FacetOption[]
   languages: FacetOption[]
   publishers: FacetOption[]
-  productTypes: FacetOption[]
-  sourceClasses: FacetOption[]
   signalTypes: FacetOption[]
 }
 

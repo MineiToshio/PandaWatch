@@ -23,10 +23,26 @@ export function SearchBar() {
     }
   }, [params])
 
+  // Cancelar el debounce pendiente al desmontar (navegación mid-typing)
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
   function commit(value: string) {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = null
-    const next = new URLSearchParams(params.toString())
+    // El buscador vive en el Header de TODAS las páginas, pero la búsqueda es
+    // del catálogo: desde una ficha/edición/serie navega a `/?q=…` (la página
+    // de detalle es estática e ignora searchParams).
+    if (pathname !== '/') {
+      if (value.trim()) router.push(`/?q=${encodeURIComponent(value.trim())}`)
+      return
+    }
+    // URL viva (no el snapshot del hook): si un filtro cambió durante la
+    // ventana del debounce, no hay que pisarlo con params stale.
+    const next = new URLSearchParams(window.location.search)
     if (value.trim()) {
       next.set('q', value.trim())
     } else {
@@ -63,7 +79,8 @@ export function SearchBar() {
     setQuery('')
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = null
-    const next = new URLSearchParams(params.toString())
+    if (pathname !== '/') return // en detalle no hay búsqueda aplicada que limpiar
+    const next = new URLSearchParams(window.location.search)
     next.delete('q')
     next.delete('page')
     router.replace(`${pathname}?${next.toString()}`)
@@ -103,7 +120,11 @@ export function SearchBar() {
 
       <input
         ref={inputRef}
-        type="search"
+        // type="text" (no "search"): WebKit/Chrome pintan su ✕ nativo junto al
+        // botón clear custom y quedan dos
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         placeholder="Buscar por manga, serie, editorial, ISBN…"
         value={query}
         onChange={(e) => handleChange(e.target.value)}

@@ -37,7 +37,11 @@ export function CountryFlag({ country, showLabel = false, className }: CountryFl
   const flag = COUNTRY_FLAGS[country] ?? '🌐'
 
   return (
-    <span className={cn('inline-flex items-center gap-1', className)}>
+    // Sin label visible, el país sigue existiendo para lectores de pantalla
+    <span
+      className={cn('inline-flex items-center gap-1', className)}
+      {...(!showLabel && { role: 'img', 'aria-label': country })}
+    >
       <span aria-hidden="true">{flag}</span>
       {showLabel && (
         <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>

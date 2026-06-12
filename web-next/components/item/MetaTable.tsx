@@ -1,12 +1,6 @@
 import { formatDate, PRODUCT_TYPE_LABELS } from '@/lib/format'
+import { RARITY_META, type RarityValue } from '@/components/modules/RarityBadge'
 import type { Item } from '@/lib/types'
-
-const RARITY_LABELS: Record<string, string> = {
-  common:     'Accessible',
-  rare:       'Rare',
-  super_rare: 'Super Rare',
-  ultra_rare: 'Ultra Rare',
-}
 
 type Row = {
   label: string
@@ -22,7 +16,7 @@ export function MetaTable({ item }: { item: Item }) {
     { label: 'País',          value: item.country },
     { label: 'Idioma',        value: item.language },
     { label: 'Tipo',          value: item.product_type && (PRODUCT_TYPE_LABELS[item.product_type] ?? item.product_type) },
-    { label: 'Rareza',        value: item.rarity ? (RARITY_LABELS[item.rarity] ?? item.rarity) : undefined },
+    { label: 'Rareza',        value: item.rarity ? (RARITY_META[item.rarity as RarityValue]?.label ?? item.rarity) : undefined },
     { label: 'Detectado',     value: item.detected_at && formatDate(item.detected_at) },
     {
       label: 'Estandarizado',

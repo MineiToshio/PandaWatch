@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { Series } from '@/lib/types'
+import { seriesPath } from '@/lib/seo'
 import { CoverImage } from '@/components/modules/CoverImage'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 
@@ -15,7 +16,7 @@ export function SeriesCard({ series }: SeriesCardProps) {
 
   return (
     <Link
-      href={`/series/${seriesKey}`}
+      href={seriesPath(seriesKey)}
       style={{
         display: 'block',
         textDecoration: 'none',

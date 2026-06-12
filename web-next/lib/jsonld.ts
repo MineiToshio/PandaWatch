@@ -4,42 +4,10 @@
  * Structured facts are what search engines turn into rich results and what LLM answer
  * engines extract most reliably — this is the highest-leverage discoverability surface.
  */
-import { absoluteUrl } from '@/lib/seo'
+import { absoluteUrl, seriesPath, editionPath, itemPath } from '@/lib/seo'
 import { coverImage } from '@/lib/data'
 import { itemDescription, editionDescription, seriesDescription } from '@/lib/descriptions'
 import type { Cluster, Item, Series } from '@/lib/types'
-
-/** Best-effort country → ISO-4217 currency. Defaults to USD (logged as a gap upstream). */
-const COUNTRY_CURRENCY: Record<string, string> = {
-  Japan: 'JPY',
-  Japón: 'JPY',
-  USA: 'USD',
-  'Estados Unidos': 'USD',
-  'United States': 'USD',
-  'Reino Unido': 'GBP',
-  UK: 'GBP',
-  España: 'EUR',
-  Francia: 'EUR',
-  France: 'EUR',
-  Italia: 'EUR',
-  Alemania: 'EUR',
-  Germany: 'EUR',
-  Brasil: 'BRL',
-  Brazil: 'BRL',
-  México: 'MXN',
-  Argentina: 'ARS',
-}
-
-function currencyFor(country?: string): string {
-  return (country && COUNTRY_CURRENCY[country]) || 'USD'
-}
-
-function availabilityFor(c: Item): string {
-  if (c.stock_type === 'out_of_stock') return 'https://schema.org/OutOfStock'
-  if (c.rarity === 'super_rare' || c.rarity === 'ultra_rare')
-    return 'https://schema.org/LimitedAvailability'
-  return 'https://schema.org/InStock'
-}
 
 function imageUrl(c: Pick<Item, 'images'>): string | undefined {
   const { url, local } = coverImage(c)
@@ -50,7 +18,7 @@ function imageUrl(c: Pick<Item, 'images'>): string | undefined {
 
 export function itemJsonLd(cluster: Cluster, slug: string) {
   const c = cluster.canonical
-  const url = absoluteUrl(`/item/${slug}`)
+  const url = absoluteUrl(itemPath(slug))
 
   return {
     '@context': 'https://schema.org',
@@ -59,7 +27,9 @@ export function itemJsonLd(cluster: Cluster, slug: string) {
     description: itemDescription(cluster),
     url,
     ...(imageUrl(c) && { image: imageUrl(c) }),
-    ...(c.isbn && { isbn: c.isbn, bookFormat: 'https://schema.org/Hardcover' }),
+    // Sin bookFormat: no hay evidencia confiable del formato físico y declarar
+    // Hardcover para todo item con ISBN era structured data falso.
+    ...(c.isbn && { isbn: c.isbn }),
     ...(c.author && { author: { '@type': 'Person', name: c.author } }),
     ...(c.publisher && { publisher: { '@type': 'Organization', name: c.publisher } }),
     ...(c.release_date && { datePublished: c.release_date }),
@@ -79,7 +49,7 @@ export function editionJsonLd(
     '@type': 'CollectionPage',
     name: cluster.editionDisplay ?? cluster.seriesDisplay ?? editionKey,
     description: editionDescription(cluster, totalVolumes, signalTypes),
-    url: absoluteUrl(`/edition/${editionKey}`),
+    url: absoluteUrl(editionPath(editionKey)),
     mainEntity: {
       '@type': 'ItemList',
       numberOfItems: clusters.length,
@@ -87,7 +57,7 @@ export function editionJsonLd(
         '@type': 'ListItem',
         position: i + 1,
         name: v.canonical.title,
-        url: absoluteUrl(`/item/${v.slug}`),
+        url: absoluteUrl(itemPath(v.slug)),
       })),
     },
   }
@@ -99,7 +69,7 @@ export function seriesJsonLd(series: Series, editions: Cluster[], seriesKey: str
     '@type': 'CollectionPage',
     name: series.seriesDisplay,
     description: seriesDescription(series),
-    url: absoluteUrl(`/series/${seriesKey}`),
+    url: absoluteUrl(seriesPath(seriesKey)),
     mainEntity: {
       '@type': 'ItemList',
       numberOfItems: editions.length,
@@ -108,8 +78,8 @@ export function seriesJsonLd(series: Series, editions: Cluster[], seriesKey: str
         position: i + 1,
         name: e.editionDisplay ?? e.canonical.title,
         url: e.editionKey
-          ? absoluteUrl(`/edition/${e.editionKey}`)
-          : absoluteUrl(`/item/${e.slug}`),
+          ? absoluteUrl(editionPath(e.editionKey))
+          : absoluteUrl(itemPath(e.slug)),
       })),
     },
   }

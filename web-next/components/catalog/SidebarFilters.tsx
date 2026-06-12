@@ -1,11 +1,12 @@
 'use client'
 
-import { useRouter, useSearchParams, usePathname } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { X, Search } from 'lucide-react'
 import type { Facets, FilterParams } from '@/lib/types'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
+import { RARITY_META, RARITY_VALUES } from '@/components/modules/RarityBadge'
 
 type SidebarFiltersProps = {
   facets: Facets
@@ -16,49 +17,56 @@ type SidebarFiltersProps = {
 
 const SIGNAL_DISPLAY_LIMIT = 8
 
-const RARITY_OPTIONS = [
-  {
-    value: 'common',
-    label: 'Accessible',
-    color: '#9CA3AF',
-    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>',
-  },
-  {
-    value: 'rare',
-    label: 'Rare',
-    color: '#8BA8F8',
-    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
-  },
-  {
-    value: 'super_rare',
-    label: 'Super Rare',
-    color: '#C4A8FF',
-    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg>',
-  },
-  {
-    value: 'ultra_rare',
-    label: 'Ultra Rare',
-    color: '#FDE68A',
-    icon: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12l4 6-10 13L2 9z"/></svg>',
-  },
-]
-
 export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFiltersProps) {
   const router   = useRouter()
   const pathname = usePathname()
-  const params   = useSearchParams()
 
   // Local search text with debounce
   const [searchText, setSearchText] = useState(current.q ?? '')
+  const [isFocused, setIsFocused] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
 
-  // Sync if URL changes externally (e.g. back/forward)
+  // Sync URL → input cuando cambia externamente (back/forward), pero no
+  // mientras el usuario tipea. Ajuste durante render (no en un efecto):
+  // patrón "adjusting state during render" de React.
+  const [prevQ, setPrevQ] = useState(current.q ?? '')
+  if ((current.q ?? '') !== prevQ) {
+    setPrevQ(current.q ?? '')
+    if (!isFocused) setSearchText(current.q ?? '')
+  }
+
+  // Cancelar el debounce pendiente al desmontar
   useEffect(() => {
-    setSearchText(current.q ?? '')
-  }, [current.q])
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
+  // Drawer móvil: Escape cierra, scroll del body bloqueado, foco adentro
+  useEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    drawerRef.current?.focus()
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [isOpen, onClose])
+
+  // Los mutadores leen window.location.search (la URL viva), no el snapshot
+  // del hook: dos interacciones dentro de la misma ventana de render/debounce
+  // no deben pisarse entre sí.
+  function liveParams(): URLSearchParams {
+    return new URLSearchParams(window.location.search)
+  }
 
   function updateParam(key: string, value: string | null) {
-    const next = new URLSearchParams(params.toString())
+    const next = liveParams()
     if (value === null || value === '') {
       next.delete(key)
     } else {
@@ -69,7 +77,7 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
   }
 
   function toggleArrayParam(key: string, value: string) {
-    const next = new URLSearchParams(params.toString())
+    const next = liveParams()
     const existing = next.getAll(key)
     if (existing.includes(value)) {
       next.delete(key)
@@ -90,7 +98,13 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
   }
 
   function clearAll() {
-    router.replace(pathname)
+    // Cancelar el debounce pendiente: sin esto, un commit en vuelo re-aplica
+    // la búsqueda recién borrada
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = null
+    // El orden elegido no es un filtro — se conserva
+    const sort = liveParams().get('sort')
+    router.replace(sort ? `${pathname}?sort=${encodeURIComponent(sort)}` : pathname)
     setSearchText('')
     onClose()
   }
@@ -185,6 +199,8 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
               type="text"
               value={searchText}
               onChange={e => handleSearch(e.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
               placeholder="Título, serie..."
               style={{
                 width: '100%',
@@ -227,7 +243,8 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
         {/* Rarity */}
         <FilterSection title="Rareza">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {RARITY_OPTIONS.map(({ value, label, color, icon }) => {
+            {RARITY_VALUES.map(value => {
+              const { label, color, icon } = RARITY_META[value]
               const active = current.rarity?.includes(value) ?? false
               return (
                 <button
@@ -252,7 +269,7 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
                     transition: 'all 120ms',
                   }}
                 >
-                  <span dangerouslySetInnerHTML={{ __html: icon }} />
+                  {icon}
                   {label}
                 </button>
               )
@@ -294,7 +311,8 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
         {facets.countries.length > 0 && (
           <FilterSection title="País">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {facets.countries.slice(0, 10).map(({ value, count }) => {
+              {/* Sin límite: son ~14 países y recortar deja filtros inalcanzables */}
+              {facets.countries.map(({ value, count }) => {
                 const active = current.country?.includes(value) ?? false
                 return (
                   <CheckRow
@@ -399,6 +417,11 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
           />
           {/* Drawer */}
           <div
+            ref={drawerRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Filtros"
             style={{
               position: 'relative',
               width: 'min(320px, 90vw)',
@@ -408,6 +431,7 @@ export function SidebarFilters({ facets, current, isOpen, onClose }: SidebarFilt
               zIndex: 1,
               display: 'flex',
               flexDirection: 'column',
+              outline: 'none',
             }}
           >
             {content}

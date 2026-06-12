@@ -2,33 +2,70 @@ import fs from 'fs'
 import path from 'path'
 import type { Item, Cluster, Facets, Series } from './types'
 
-// Path relative to web-next/ (process.cwd() in Next.js)
-const ITEMS_PATH = path.join(process.cwd(), '..', 'data', 'items.jsonl')
+// Path relative to web-next/ (process.cwd() in Next.js). Overridable via env
+// for deploys where the data lives elsewhere (pending: migración a DB).
+const ITEMS_PATH =
+  process.env.ITEMS_PATH ?? path.join(process.cwd(), '..', 'data', 'items.jsonl')
 
-let _cache: Cluster[] | null = null
+// Vista de búsqueda de aliases ({series_key: [nombres…]}), generada desde
+// series_aliases.yml por scripts/export_series_aliases.py (la regenera cada
+// build_web.py). Vive junto al items.jsonl.
+const ALIASES_PATH = path.join(path.dirname(ITEMS_PATH), 'series_aliases.json')
 
 function readRawItems(): Item[] {
-  const raw = fs.readFileSync(ITEMS_PATH, 'utf-8')
-  return raw
+  let raw: string
+  try {
+    raw = fs.readFileSync(ITEMS_PATH, 'utf-8')
+  } catch {
+    throw new Error(
+      `items.jsonl not found at ${ITEMS_PATH} — run the scraper first ` +
+      `(or set ITEMS_PATH to the corpus location)`
+    )
+  }
+  let malformed = 0
+  let noCluster = 0
+  const items = raw
     .split('\n')
     .filter(Boolean)
     .flatMap(line => {
       try {
         return [JSON.parse(line) as Item]
       } catch {
+        malformed++
         return []
       }
     })
-    .filter(item => Boolean(item.standardized_at))
+    .filter(item => {
+      // Una fila sin cluster_key agruparía todos los registros rotos bajo un
+      // cluster fantasma `undefined` — se descarta con warn, no en silencio.
+      if (!item.cluster_key) {
+        noCluster++
+        return false
+      }
+      return Boolean(item.standardized_at)
+    })
+  if (malformed) console.warn(`[data] items.jsonl: ${malformed} malformed lines skipped`)
+  if (noCluster) console.warn(`[data] items.jsonl: ${noCluster} rows without cluster_key skipped`)
+  return items
 }
 
-function compareVolumes(a?: string, b?: string): number {
+// Volúmenes-rango ("1-3" de un cofre): parseFloat("1-3") = 1, así que un rango
+// empata con su primer tomo. Se desempata por el extremo final del rango
+// (el tomo suelto "1" va antes que el cofre "1-3").
+function volumeBounds(v: string): [number, number] | null {
+  const range = v.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/)
+  if (range) return [parseFloat(range[1]), parseFloat(range[2])]
+  const num = parseFloat(v)
+  return isNaN(num) ? null : [num, num]
+}
+
+export function compareVolumes(a?: string, b?: string): number {
   if (!a && !b) return 0
   if (!a) return 1  // no volume → end
   if (!b) return -1
-  const numA = parseFloat(a)
-  const numB = parseFloat(b)
-  if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+  const ba = volumeBounds(a)
+  const bb = volumeBounds(b)
+  if (ba && bb) return ba[0] - bb[0] || ba[1] - bb[1]
   return a.localeCompare(b)
 }
 
@@ -41,7 +78,8 @@ const KIND_RANK: Record<string, number> = {
   special: 2, especial: 2, limited: 2, limitada: 2, collector: 2, premium: 2,
   deluxe: 3, kanzenban: 3, omnibus: 3, hardcover: 3,
   artbook: 4, fanbook: 4, guidebook: 4,
-  box: 5, boxset: 5,
+  box: 5, boxset: 5, coffret: 5,  // coffret = box set francés (muy frecuente)
+  ultimate: 3, integrale: 3,      // ediciones recopilatorias FR
 }
 
 function kindRank(c: Cluster): number {
@@ -120,8 +158,59 @@ function buildCluster(items: Item[]): Cluster {
   }
 }
 
-export function loadClusters(): Cluster[] {
-  if (process.env.NODE_ENV === 'production' && _cache) return _cache
+// Cache invalidado por mtime del JSONL: en build/prod se parsea una sola vez
+// por proceso; en dev se re-parsea sólo cuando el archivo cambió (sin esto,
+// cada request de dev re-leía y re-agrupaba el corpus completo).
+// Los Maps evitan scans O(n) por página durante generateStaticParams
+// (~19k páginas × lookup lineal de ~9.5k clusters).
+type DataCache = {
+  mtimeMs: number
+  clusters: Cluster[]
+  bySlug: Map<string, Cluster>
+  byEdition: Map<string, Cluster[]>
+}
+
+let _cache: DataCache | null = null
+
+// Índice de búsqueda por alias: series_key → todos los nombres de la serie
+// (canónico + traducciones/romanizaciones) en lowercase. Permite que la
+// búsqueda encuentre "Guardianes de la Noche 8" tecleando "demon slayer" o
+// "kimetsu no yaiba": el title de cada item es el nombre OFICIAL de la
+// edición y NUNCA se renombra (política de títulos 2026-06-12).
+// Cache por mtime, mismo patrón que dataCache(). Si el JSON no existe
+// todavía, la búsqueda funciona sin aliases (índice vacío).
+type AliasCache = { mtimeMs: number; index: Record<string, string> }
+let _aliasCache: AliasCache | null = null
+
+export function aliasSearchIndex(): Record<string, string> {
+  let mtimeMs = 0
+  try {
+    mtimeMs = fs.statSync(ALIASES_PATH).mtimeMs
+  } catch {
+    return {}
+  }
+  if (_aliasCache && _aliasCache.mtimeMs === mtimeMs) return _aliasCache.index
+  let index: Record<string, string> = {}
+  try {
+    const raw = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8')) as Record<string, string[]>
+    index = Object.fromEntries(
+      Object.entries(raw).map(([k, names]) => [k, names.join(' ').toLowerCase()])
+    )
+  } catch {
+    console.warn(`[data] series_aliases.json ilegible en ${ALIASES_PATH} — búsqueda sin aliases`)
+  }
+  _aliasCache = { mtimeMs, index }
+  return index
+}
+
+function dataCache(): DataCache {
+  let mtimeMs = 0
+  try {
+    mtimeMs = fs.statSync(ITEMS_PATH).mtimeMs
+  } catch {
+    // readRawItems() reporta el error descriptivo
+  }
+  if (_cache && _cache.mtimeMs === mtimeMs) return _cache
 
   const items = readRawItems()
   const groups = new Map<string, Item[]>()
@@ -132,34 +221,53 @@ export function loadClusters(): Cluster[] {
   }
 
   const clusters = Array.from(groups.values()).map(buildCluster)
-  if (process.env.NODE_ENV === 'production') _cache = clusters
-  return clusters
+
+  const bySlug = new Map<string, Cluster>()
+  for (const c of clusters) {
+    if (!c.slug) continue
+    if (bySlug.has(c.slug)) {
+      // La unicidad slug↔cluster es una invariante del pipeline Python
+      // (FRD-006 FR-2); si se rompe upstream, acá se detecta en vez de
+      // hacer shadowing silencioso de la ficha.
+      console.warn(`[data] duplicate slug "${c.slug}" — cluster ${c.clusterKey} shadowed`)
+      continue
+    }
+    bySlug.set(c.slug, c)
+  }
+
+  const byEdition = new Map<string, Cluster[]>()
+  for (const c of clusters) {
+    if (!c.editionKey) continue
+    if (!byEdition.has(c.editionKey)) byEdition.set(c.editionKey, [])
+    byEdition.get(c.editionKey)!.push(c)
+  }
+  for (const list of byEdition.values()) {
+    list.sort((a, b) => compareVolumes(a.volume, b.volume) || kindRank(a) - kindRank(b))
+  }
+
+  _cache = { mtimeMs, clusters, bySlug, byEdition }
+  _seriesCache = null
+  return _cache
+}
+
+export function loadClusters(): Cluster[] {
+  return dataCache().clusters
 }
 
 export function loadEditionClusters(editionKey: string): Cluster[] {
-  return loadClusters()
-    .filter(c => c.editionKey === editionKey)
-    .sort((a, b) => compareVolumes(a.volume, b.volume) || kindRank(a) - kindRank(b))
+  return dataCache().byEdition.get(editionKey) ?? []
 }
 
 export function clusterBySlug(slug: string): Cluster | null {
-  return loadClusters().find(c => c.slug === slug) ?? null
+  return dataCache().bySlug.get(slug) ?? null
 }
 
 export function allEditionKeys(): string[] {
-  return [
-    ...new Set(
-      loadClusters()
-        .map(c => c.editionKey)
-        .filter((k): k is string => Boolean(k))
-    ),
-  ]
+  return [...dataCache().byEdition.keys()]
 }
 
 export function allSlugs(): string[] {
-  return loadClusters()
-    .map(c => c.slug)
-    .filter((s): s is string => Boolean(s))
+  return [...dataCache().bySlug.keys()]
 }
 
 /**
@@ -193,10 +301,11 @@ export function groupByEdition(clusters: Cluster[]): Cluster[] {
       const entry = result[idx]
       entry.volumeCount += 1
 
-      // Promote to canonical if this cluster's item is more complete (ISBN/image/price)
+      // Promote to canonical if this cluster's item is more complete (ISBN/image)
       if (completeness(cluster.canonical) > completeness(entry.canonical)) {
         entry.canonical = cluster.canonical
         entry.slug = cluster.slug
+        entry.volume = cluster.volume  // mantener portada y volumen coherentes
       }
 
       // Union all metadata arrays
@@ -258,10 +367,13 @@ function buildSeries(seriesKey: string, clusters: Cluster[]): Series {
   }
 }
 
-let _seriesCache: Series[] | null = null
+// Invalidado junto con el cache principal (dataCache() lo resetea al cambiar
+// el mtime del JSONL).
+let _seriesCache: { series: Series[]; byKey: Map<string, Series> } | null = null
 
-export function loadSeries(): Series[] {
-  if (process.env.NODE_ENV === 'production' && _seriesCache) return _seriesCache
+function seriesCache(): { series: Series[]; byKey: Map<string, Series> } {
+  dataCache() // resetea _seriesCache si el corpus cambió
+  if (_seriesCache) return _seriesCache
 
   const bySeries = new Map<string, Cluster[]>()
   for (const c of loadClusters()) {
@@ -281,18 +393,16 @@ export function loadSeries(): Series[] {
       collator.compare(a.seriesDisplay, b.seriesDisplay)
     )
 
-  if (process.env.NODE_ENV === 'production') _seriesCache = series
-  return series
+  _seriesCache = { series, byKey: new Map(series.map(s => [s.seriesKey, s])) }
+  return _seriesCache
 }
 
-export function topSeries(limit = 12): Series[] {
-  return loadSeries()
-    .filter(s => s.cover.imageLocal || s.cover.imageUrl)
-    .slice(0, limit)
+export function loadSeries(): Series[] {
+  return seriesCache().series
 }
 
 export function seriesByKey(seriesKey: string): Series | null {
-  return loadSeries().find(s => s.seriesKey === seriesKey) ?? null
+  return seriesCache().byKey.get(seriesKey) ?? null
 }
 
 export function loadSeriesEditions(seriesKey: string): Cluster[] {
@@ -347,16 +457,49 @@ export function buildFacets(clusters: Cluster[]): Facets {
     countries: count(clusters.flatMap(c => c.countries)),
     languages: count(clusters.flatMap(c => c.languages)),
     publishers: count(clusters.flatMap(c => c.publishers)),
-    productTypes: count(
-      clusters.flatMap(c =>
-        c.items.map(i => i.product_type).filter((t): t is string => Boolean(t))
-      )
-    ),
-    sourceClasses: count(
-      clusters.flatMap(c =>
-        c.items.map(i => i.source_class).filter((s): s is string => Boolean(s))
-      )
-    ),
     signalTypes: count(clusters.flatMap(c => c.signalTypes)),
   }
+}
+
+// ─── Sitemap helpers ──────────────────────────────────────────────────────────
+
+/** Última actividad conocida de un cluster (para lastModified del sitemap). */
+function clusterLastMod(c: Cluster): string | undefined {
+  let max: string | undefined
+  for (const it of c.items) {
+    for (const d of [it.standardized_at, it.detected_at]) {
+      if (d && (!max || d > max)) max = d
+    }
+  }
+  return max
+}
+
+const maxDate = (a?: string, b?: string) =>
+  !a ? b : !b ? a : a > b ? a : b
+
+export function sitemapItems(): { slug: string; lastMod?: string }[] {
+  return [...dataCache().bySlug.values()].map(c => ({
+    slug: c.slug,
+    lastMod: clusterLastMod(c),
+  }))
+}
+
+export function sitemapEditions(): { editionKey: string; lastMod?: string }[] {
+  return [...dataCache().byEdition.entries()].map(([editionKey, clusters]) => ({
+    editionKey,
+    lastMod: clusters.map(clusterLastMod).reduce(maxDate, undefined),
+  }))
+}
+
+export function sitemapSeries(): { seriesKey: string; lastMod?: string }[] {
+  const lastModBySeries = new Map<string, string | undefined>()
+  for (const c of loadClusters()) {
+    const key = c.canonical.series_key
+    if (!key) continue
+    lastModBySeries.set(key, maxDate(lastModBySeries.get(key), clusterLastMod(c)))
+  }
+  return allSeriesKeys().map(seriesKey => ({
+    seriesKey,
+    lastMod: lastModBySeries.get(seriesKey),
+  }))
 }

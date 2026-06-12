@@ -1,49 +1,12 @@
 import { ImageCarousel } from '@/components/item/ImageCarousel'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { CountryFlag } from '@/components/modules/CountryFlag'
+import { RarityBadge } from '@/components/modules/RarityBadge'
 import { formatDate } from '@/lib/format'
 import { itemDescription } from '@/lib/descriptions'
 import { coverImage } from '@/lib/data'
+import { dedupeImages, imageKey } from '@/lib/images'
 import type { Cluster, ItemImage } from '@/lib/types'
-
-const RARITY_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  common: {
-    label: 'Accessible',
-    color: '#9CA3AF',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-        <circle cx={12} cy={12} r={10} />
-      </svg>
-    ),
-  },
-  rare: {
-    label: 'Rare',
-    color: '#8BA8F8',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-      </svg>
-    ),
-  },
-  super_rare: {
-    label: 'Super Rare',
-    color: '#C4A8FF',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
-      </svg>
-    ),
-  },
-  ultra_rare: {
-    label: 'Ultra Rare',
-    color: '#FDE68A',
-    icon: (
-      <svg width={9} height={9} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M6 3h12l4 6-10 13L2 9z" />
-      </svg>
-    ),
-  },
-}
 
 export function ItemHero({ cluster }: { cluster: Cluster }) {
   const { canonical, signalTypes } = cluster
@@ -51,27 +14,18 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
   // El carrusel muestra la UNION de images[] de todas las fuentes del cluster,
   // con la portada de la canónica (images[0], la que se ve en la card) primera.
   // Mismo invariante que web/index.html: carrusel[0] == card, y el detalle no
-  // depende de qué fila quedó como canónica. Dedup por URL (sin esquema/query).
-  const imgKey = (u?: string) =>
-    (u ?? '').split('?')[0].replace(/^https?:\/\//, '').toLowerCase()
-  const seen = new Set<string>()
-  const images: ItemImage[] = []
-  const pushImg = (im?: ItemImage) => {
-    if (!im?.url) return
-    const k = imgKey(im.url)
-    if (seen.has(k)) return
-    seen.add(k)
-    images.push(im)
-  }
+  // depende de qué fila quedó como canónica. Dedup compartido (lib/images).
+  const candidates: ItemImage[] = []
   // images[0] de la canónica = fuente de verdad de la portada; legacy fallback.
   const cov = coverImage(canonical)
   if (cov.url || cov.local) {
-    const own = (canonical.images ?? []).find(im => imgKey(im.url) === imgKey(cov.url))
-    pushImg(own ?? { url: cov.url ?? '', local: cov.local, kind: 'gallery' })
+    const own = (canonical.images ?? []).find(im => imageKey(im.url) === imageKey(cov.url))
+    candidates.push(own ?? { url: cov.url ?? '', local: cov.local, kind: 'gallery' })
   }
   for (const it of cluster.items) {
-    for (const im of it.images ?? []) pushImg(im)
+    candidates.push(...(it.images ?? []))
   }
+  const images = dedupeImages(candidates)
 
   return (
     <>
@@ -157,32 +111,10 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             </div>
           )}
 
-          {/* Rarity badge — same visual as EditionCard's RarityBadge */}
-          {canonical.rarity && RARITY_META[canonical.rarity] && (() => {
-            const rm = RARITY_META[canonical.rarity!]
-            return (
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '4px 8px',
-                  borderRadius: 5,
-                  fontSize: 10,
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-display)',
-                  color: rm.color,
-                  background: 'rgba(20,17,14,0.82)',
-                  backdropFilter: 'blur(6px)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  alignSelf: 'flex-start',
-                }}
-              >
-                {rm.icon}
-                {rm.label}
-              </div>
-            )
-          })()}
+          {/* Rarity badge — misma fuente única que EditionCard/SidebarFilters */}
+          {canonical.rarity && (
+            <RarityBadge rarity={canonical.rarity} style={{ alignSelf: 'flex-start' }} />
+          )}
 
           {/* Key info */}
           <div style={{ paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>

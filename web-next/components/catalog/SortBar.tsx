@@ -12,7 +12,6 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 type SortBarProps = {
-  total: number
   sort: SortKey
   page: number
   pages: number
@@ -22,7 +21,7 @@ type SortBarProps = {
   onOpenFilters: () => void
 }
 
-export function SortBar({ total, sort, page, pages, totalTomos, totalEditions, totalObras, onOpenFilters }: SortBarProps) {
+export function SortBar({ sort, page, pages, totalTomos, totalEditions, totalObras, onOpenFilters }: SortBarProps) {
   const router   = useRouter()
   const pathname = usePathname()
   const params   = useSearchParams()

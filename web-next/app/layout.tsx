@@ -1,9 +1,18 @@
 import type { Metadata, Viewport } from 'next'
+import { Suspense } from 'react'
+import { Space_Grotesk, DM_Sans, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Header } from '@/components/modules/Header'
+import { NavigationTracker } from '@/components/modules/NavigationTracker'
 import { JsonLd } from '@/components/seo/JsonLd'
 import { siteUrl } from '@/lib/seo'
 import { websiteJsonLd, organizationJsonLd } from '@/lib/jsonld'
+
+// Self-hosted vía next/font (antes: <link> a Google Fonts — FOUT + warning de
+// lint). globals.css consume estas variables en --font-display/body/mono.
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk' })
+const dmSans = DM_Sans({ subsets: ['latin'], style: ['normal', 'italic'], variable: '--font-dm-sans' })
+const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains-mono' })
 
 const DEFAULT_DESCRIPTION =
   'Descubrí ediciones especiales de manga de todo el mundo: deluxe, box sets, limited editions, artbooks, kanzenban y más.'
@@ -37,17 +46,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html
+      lang="es"
+      suppressHydrationWarning
+      className={`${spaceGrotesk.variable} ${dmSans.variable} ${jetbrainsMono.variable}`}
+    >
       <body>
         <JsonLd data={[websiteJsonLd(), organizationJsonLd()]} />
+        {/* useSearchParams → Suspense para no des-estatizar las páginas de detalle */}
+        <Suspense fallback={null}>
+          <NavigationTracker />
+        </Suspense>
         <Header />
         {children}
       </body>

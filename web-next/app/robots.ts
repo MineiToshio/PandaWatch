@@ -34,10 +34,7 @@ export default function robots(): MetadataRoute.Robots {
       },
     ],
     sitemap: absoluteUrl('/sitemap.xml'),
-    host: siteHost(),
+    // Sin `host`: la directiva (sólo Yandex, deprecada) espera hostname sin
+    // esquema y emitíamos la URL completa.
   }
-}
-
-function siteHost(): string {
-  return absoluteUrl('/').replace(/\/$/, '')
 }

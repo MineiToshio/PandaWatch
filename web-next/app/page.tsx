@@ -1,4 +1,4 @@
-import { loadClusters, buildFacets, groupByEdition, seriesFromClusters } from '@/lib/data'
+import { loadClusters, buildFacets, groupByEdition, seriesFromClusters, aliasSearchIndex } from '@/lib/data'
 import { parseFilterParams, filterClusters, sortClusters, paginate } from '@/lib/filters'
 import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
@@ -34,10 +34,10 @@ export default async function CatalogPage({
   const allClusters = loadClusters()
   const facets      = buildFacets(allClusters)
   const fp          = parseFilterParams(rawParams)
-  const filtered    = filterClusters(allClusters, fp)
+  const filtered    = filterClusters(allClusters, fp, aliasSearchIndex())
   const sorted      = sortClusters(filtered, fp.sort)
   const editions    = groupByEdition(sorted)
-  const { items, total, pages, page } = paginate(editions, fp.page)
+  const { items, pages, page } = paginate(editions, fp.page)
 
   const totalTomos    = filtered.length
   const totalEditions = editions.length
@@ -49,20 +49,19 @@ export default async function CatalogPage({
   // no filter → global top 12; searching "demon slayer" → Demon Slayer card.
   const highlightSeries = seriesFromClusters(filtered)
 
-  // Build the catalog URL to pass as ?from= in detail-page links,
-  // so BackLink can return to the exact same filtered/paginated state.
-  const qs = new URLSearchParams()
-  for (const [k, v] of Object.entries(rawParams)) {
-    if (Array.isArray(v)) v.forEach(val => qs.append(k, val))
-    else qs.append(k, v)
+  // Recortar los facets a lo que la UI muestra ANTES de serializarlos al
+  // client component (los ~400 publishers completos viajaban en el payload
+  // RSC para renderizar 12).
+  const uiFacets = {
+    ...facets,
+    languages: facets.languages.slice(0, 8),
+    publishers: facets.publishers.slice(0, 12),
   }
-  const catalogFrom = qs.toString() ? `/?${qs.toString()}` : '/'
 
   return (
     <CatalogControls
-      facets={facets}
+      facets={uiFacets}
       current={fp}
-      total={total}
       sort={fp.sort}
       page={page}
       pages={pages}
@@ -71,7 +70,7 @@ export default async function CatalogPage({
       totalObras={totalObras}
     >
       <SeriesHighlights series={highlightSeries} />
-      <CatalogGrid clusters={items} from={catalogFrom} />
+      <CatalogGrid clusters={items} eagerCovers={4} />
       {pages > 1 && <Pagination total={pages} current={page} />}
     </CatalogControls>
   )

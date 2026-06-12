@@ -1,5 +1,6 @@
 @import "tailwindcss";
-/* Google Fonts are loaded via <link> in layout.tsx (preconnect + stylesheet) */
+/* Fuentes self-hosted vía next/font en layout.tsx — expone
+   --font-space-grotesk / --font-dm-sans / --font-jetbrains-mono en <html> */
 
 /* ============================================================
    PandaWatch Design System — CSS Custom Properties
@@ -10,9 +11,9 @@
 :root {
 
   /* ── FONTS ── */
-  --font-display: 'Space Grotesk', system-ui, sans-serif;
-  --font-body:    'DM Sans', system-ui, sans-serif;
-  --font-mono:    'JetBrains Mono', 'Courier New', monospace;
+  --font-display: var(--font-space-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  --font-body:    var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  --font-mono:    var(--font-jetbrains-mono), 'JetBrains Mono', 'Courier New', monospace;
 
   /* ── BAMBOO (Primary Green) ── */
   --bamboo-50:  #EDFAF3;

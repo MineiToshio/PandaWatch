@@ -24,6 +24,28 @@ export function absoluteUrl(path = '/'): string {
   return `${siteUrl()}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+// ─── Route paths ──────────────────────────────────────────────────────────────
+// Única fuente de construcción de rutas internas: las claves pueden traer
+// caracteres no-ASCII (CJK, homoglifos), así que SIEMPRE van percent-encoded
+// — un <loc> del sitemap con el carácter crudo es inválido y la página
+// 404-ea si el link no coincide con el param decodificado.
+
+export const seriesPath = (key: string) => `/series/${encodeURIComponent(key)}`
+export const editionPath = (key: string) => `/edition/${encodeURIComponent(key)}`
+export const itemPath = (slug: string) => `/item/${encodeURIComponent(slug)}`
+
+/**
+ * Decodifica un segmento dinámico de ruta (Next lo entrega percent-encoded).
+ * Sin esto, `/series/...%E7%95%AA` no matchea la clave real y da 404 falso.
+ */
+export function decodeRouteParam(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 /**
  * Build an OpenGraph image entry from a remote URL or a local mirror filename.
  * Returns [] when no image, so it can be spread into `openGraph.images`.
@@ -31,6 +53,9 @@ export function absoluteUrl(path = '/'): string {
  * - `http(s)://…`        → used as-is
  * - `/path`              → resolved against the site origin
  * - bare `filename.jpg`  → the local mirror, served at `/images/<filename>`
+ *
+ * Sin width/height: las dimensiones reales no se conocen y declararlas
+ * inventadas es peor que omitirlas.
  */
 export function ogImage(value?: string | null, alt?: string) {
   if (!value) return []
@@ -38,5 +63,5 @@ export function ogImage(value?: string | null, alt?: string) {
   if (value.startsWith('http')) url = value
   else if (value.startsWith('/')) url = absoluteUrl(value)
   else url = absoluteUrl(`/images/${value}`)
-  return [{ url, width: 800, height: 1200, alt: alt ?? 'PandaWatch' }]
+  return [{ url, alt: alt ?? 'PandaWatch' }]
 }

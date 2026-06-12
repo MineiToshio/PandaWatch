@@ -6,17 +6,18 @@ import { BackLink } from '@/components/modules/BackLink'
 import { JsonLd } from '@/components/seo/JsonLd'
 import { seriesDescription } from '@/lib/descriptions'
 import { seriesJsonLd, breadcrumbJsonLd } from '@/lib/jsonld'
-import { ogImage } from '@/lib/seo'
+import { ogImage, decodeRouteParam, seriesPath } from '@/lib/seo'
 import type { Metadata } from 'next'
 
 type Props = {
   params: Promise<{ seriesKey: string }>
-  searchParams: Promise<{ from?: string }>
 }
 
-export default async function SeriesPage({ params, searchParams }: Props) {
-  const { seriesKey } = await params
-  const { from } = await searchParams
+// Sólo las series de generateStaticParams existen — render 100% estático.
+export const dynamicParams = false
+
+export default async function SeriesPage({ params }: Props) {
+  const seriesKey = decodeRouteParam((await params).seriesKey)
   const series = seriesByKey(seriesKey)
   if (!series) notFound()
 
@@ -24,15 +25,15 @@ export default async function SeriesPage({ params, searchParams }: Props) {
 
   const trail = [
     { name: 'Inicio', path: '/' },
-    { name: series.seriesDisplay, path: `/series/${seriesKey}` },
+    { name: series.seriesDisplay, path: seriesPath(seriesKey) },
   ]
 
   return (
     <main style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 16px 64px' }}>
       <JsonLd data={[seriesJsonLd(series, editions, seriesKey), breadcrumbJsonLd(trail)]} />
-      <BackLink href={from || '/'} label="Catálogo" />
+      <BackLink fallbackHref="/" label="Catálogo" />
       <SeriesHeader series={series} />
-      <CatalogGrid clusters={editions} from={`/series/${seriesKey}`} />
+      <CatalogGrid clusters={editions} />
     </main>
   )
 }
@@ -42,14 +43,14 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { seriesKey } = await params
+  const seriesKey = decodeRouteParam((await params).seriesKey)
   const series = seriesByKey(seriesKey)
   if (!series) return {}
 
   const title = series.seriesDisplay
   const description = seriesDescription(series)
-  const path = `/series/${seriesKey}`
-  const images = ogImage(series.cover.imageUrl ?? series.cover.imageLocal, title)
+  const path = seriesPath(seriesKey)
+  const images = ogImage(series.cover.imageLocal ?? series.cover.imageUrl, title)
 
   return {
     title,

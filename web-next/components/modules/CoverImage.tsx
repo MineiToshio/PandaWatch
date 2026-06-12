@@ -68,13 +68,16 @@ export function CoverImage({
     )
   }
 
-  // Remote fallback — plain <img> to avoid remotePatterns config across ~76 domains
+  // Remote fallback — plain <img> to avoid remotePatterns config across ~270 domains.
+  // lazy por defecto (consistente con next/image); eager sólo si priority (LCP).
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt={alt}
       className={className}
+      loading={priority ? 'eager' : 'lazy'}
+      decoding="async"
       style={
         fill
           ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
