@@ -252,6 +252,26 @@ PACK_EXTRAS_KEYWORDS = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+# Cofre listado INLINE dentro de la sección regular "Números editados"
+# ("Cofre de 2 tomos" — caso real Boichi cole 6240): único caso en que un
+# item de la sección regular sin premium es coleccionable; se emite como box.
+INLINE_BOX_RE = re.compile(r"\bcofres?\b", re.IGNORECASE)
+
+
+def _strip_series_prefix(text: str, series_title: str) -> str:
+    """Quita el prefijo del nombre de la colección de `text` (para extraer el
+    volumen): en series con número embebido en el NOMBRE ("Kaiju Nº8"), el
+    primer `nº` del texto es el de la serie, no el del tomo. Prueba el título
+    completo y su forma sin el sufijo parentético ("InuYasha (Kanzenban)")."""
+    t = text or ""
+    full = (series_title or "").strip()
+    bases = [full, re.sub(r"\s*\([^)]*\)\s*$", "", full).strip()]
+    for b in bases:
+        if b and t.lower().startswith(b.lower()):
+            return t[len(b):]
+    return t
+
+
 # Marcador de volumen "nº"/"n°" a quitar del título de display (gotcha #52):
 # "Atelier of Witch Hat nº5" → "Atelier of Witch Hat 5".
 _VOL_MARKER_RE = re.compile(r"\s*n[º°]\s*(\d+)", re.IGNORECASE)
@@ -387,6 +407,16 @@ SECTION_RULES: list[tuple[re.Pattern[str], str, str, list[str]]] = [
         "alternativa",
         "Portada Alternativa",
         ["variant_cover"],
+    ),
+    # `Números en preparación (Packs)` — packs ANUNCIADOS (caso real id=5584,
+    # detectado en logs/listadomanga_unknown_h2.txt). Mismo tratamiento que
+    # `Números editados (Packs)`: kind=pack + filtro PACK_EXTRAS_KEYWORDS;
+    # `status:upcoming` se aplica vía EN_PREPARACION_PATTERN (prefijo).
+    (
+        re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*\(\s*Packs?\s*\)", re.IGNORECASE),
+        "pack",
+        "Pack",
+        ["bundle"],
     ),
     (
         re.compile(r"^N[úu]meros\s+en\s+preparaci[oó]n\s*$", re.IGNORECASE),
@@ -771,8 +801,16 @@ def _parse_item_table(
     full_title = _decode_text(full_title)
 
     # Volumen: prefirir alt (que es canónico), sino del título compuesto.
+    # ANTES de buscar el nº, quitar el prefijo del nombre de la colección:
+    # series con número EMBEBIDO en el nombre ("Kaiju Nº8") hacían que el
+    # primer match fuera el de la serie, no el del tomo — "Kaiju Nº8 nº16"
+    # daba vol 8 (y el cofre cuyo alt es SOLO el nombre heredaba un vol 8
+    # fantasma). Caso real cole 4139, prueba 2026-06-11.
     volume = ""
-    vol_match = VOLUME_PATTERN.search(alt) or VOLUME_PATTERN.search(full_title)
+    vol_match = (
+        VOLUME_PATTERN.search(_strip_series_prefix(alt, base_alt_fallback))
+        or VOLUME_PATTERN.search(_strip_series_prefix(full_title, base_alt_fallback))
+    )
     if vol_match:
         volume = vol_match.group(1)
 
@@ -1319,9 +1357,22 @@ def parse_collection_page(
 
         # Filtro: si es "regular" y NO hay premium signals, descartar
         # toda la sección (tomos regulares no son coleccionables salvo
-        # que la página entera sea formato premium).
+        # que la página entera sea formato premium). EXCEPCIÓN: cofres
+        # listados inline en la sección ("Cofre de 2 tomos", Boichi cole
+        # 6240 — antes solo lo capturaba el calendario plano legacy); si
+        # los hay, se emiten SOLO esos items (como box), el resto se
+        # sigue descartando.
+        inline_box_only = False
         if edition_kind == "regular" and not premium_signals:
-            continue
+            inline_box_only = any(
+                p and INLINE_BOX_RE.search(p.get("description_extra", ""))
+                for p in (
+                    _parse_item_table(t, base_alt_fallback=collection_title)
+                    for t in _iter_item_tables_after(h2)
+                )
+            )
+            if not inline_box_only:
+                continue
 
         # Si el formato es "en cofre", saltamos la emisión de items
         # individuales — los tomos numerados viven dentro del cofre y
@@ -1350,29 +1401,42 @@ def parse_collection_page(
             if not parsed:
                 continue
 
+            # Modo cofre-inline: SOLO se emiten los items marcados como
+            # cofre; toman kind=box (el resto de la sección regular no
+            # premium sigue descartado).
+            item_kind = edition_kind
+            item_display = edition_display
+            item_signal_inject = signal_inject
+            if inline_box_only:
+                if not INLINE_BOX_RE.search(parsed.get("description_extra", "")):
+                    continue
+                item_kind = "box"
+                item_display = "Cofre"
+                item_signal_inject = ["box_set"]
+
             # Filtro pack: solo aceptar si la descripción tiene keywords de extras.
-            if edition_kind == "pack":
+            if item_kind == "pack":
                 desc = parsed.get("description_extra", "")
                 if not PACK_EXTRAS_KEYWORDS.search(desc):
                     continue
 
             # Construir título display + descripción.
-            # Caso especial PACK: el title de listadomanga es solo el nombre
-            # de la serie (sin nº) — "The Legend of Zelda". El gate
+            # Caso especial PACK/BOX inline: el title de listadomanga es solo
+            # el nombre de la serie (sin nº) — "The Legend of Zelda". El gate
             # is_collectible_edition exige number-shape en el title o URL
             # canónica para aprobar signals como box_set. Enriquecemos el
-            # title con el desc_extra del pack (que sí lleva info distintiva:
+            # title con el desc_extra (que sí lleva info distintiva:
             # "Pack especial tomos 1 a 5 + cofre de regalo") para que el
             # gate lo apruebe correctamente.
             title = parsed["title"]
-            if edition_kind == "pack" and parsed.get("description_extra"):
+            if item_kind in ("pack", "box") and parsed.get("description_extra"):
                 title = f"{title} — {parsed['description_extra']}"
             else:
                 # Quitar "nº" + marcar edición especial en el display (gotcha #52).
-                title = normalize_display_title(title, edition_kind)
+                title = normalize_display_title(title, item_kind)
             desc_parts = [collection_title]
-            if edition_display:
-                desc_parts.append(edition_display)
+            if item_display:
+                desc_parts.append(item_display)
             if parsed.get("description_extra"):
                 desc_parts.append(parsed["description_extra"])
             if parsed.get("pages"):
@@ -1388,8 +1452,8 @@ def parse_collection_page(
             # detect_signals levante los signal_types apropiados.
             # Para "regular" con premium format, inyectamos los premium signals.
             # Para especial/alternativa/pack, inyectamos los del section_rules.
-            extra_signals = list(signal_inject)
-            if edition_kind == "regular":
+            extra_signals = list(item_signal_inject)
+            if item_kind == "regular":
                 extra_signals.extend(premium_signals)
             elif premium_signals:
                 # En secciones especial/alternativa de una página premium,
@@ -1418,6 +1482,8 @@ def parse_collection_page(
                     keyword_hints.append("Artbook")
                 elif s == "bundle":
                     keyword_hints.append("Pack")
+                elif s == "box_set":
+                    keyword_hints.append("Box Set")
             if keyword_hints:
                 description += " · " + " · ".join(keyword_hints)
 
@@ -1439,7 +1505,7 @@ def parse_collection_page(
             disambig = image_id or parsed.get("description_extra", "")
             synthetic_url = _make_synthetic_url(
                 coleccion_id,
-                edition_kind,
+                item_kind,
                 parsed.get("volume", ""),
                 disambiguator=disambig,
             )
@@ -1471,7 +1537,7 @@ def parse_collection_page(
                 if price_match:
                     cand.price = f"€ {price_match.group(1).replace(',', '.')}"
             cand.tags = list(source.tags or []) + [
-                f"edition:{edition_kind}",
+                f"edition:{item_kind}",
                 f"coleccion:{coleccion_id}",
             ]
             if is_upcoming:
@@ -1500,7 +1566,7 @@ def parse_collection_page(
             # recibe los extras del merge. Los demás coexisten en `candidates`
             # con sus propias covers únicas (disambiguator por image_id).
             vol = parsed.get("volume", "")
-            idx_key = (edition_kind, vol)
+            idx_key = (item_kind, vol)
             if idx_key not in layout_a_index:
                 layout_a_index[idx_key] = cand
 

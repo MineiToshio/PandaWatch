@@ -50,7 +50,8 @@ acá. Todo cambio en su ingestión debe terminar con el corpus VÁLIDO (ver §7)
   - **Números editados** (tomos numerados de la edición).
   - **Números editados (Ediciones Especiales)**.
   - **Números editados (Portadas alternativas)**.
-  - **Números editados (Packs)**.
+  - **Números editados (Packs)** / **Números en preparación (Packs)** (packs
+    anunciados, aún sin editar — capturados como `pack` + `status:upcoming`; #73).
   - **Cofres de regalo con las primeras ediciones de {obra}**.
   - **Números no editados** / **en preparación** (sin precio, se descartan).
   - **Sinopsis de {obra}**.
@@ -150,9 +151,13 @@ Parser: [`scripts/wikis/listadomanga_collections.py`](../../../scripts/wikis/lis
 
 - **Layout A** (`<table class="ventana_id1">`): items numerados.
   - `Números editados` → SÓLO si el `Formato:` es premium (kanzenban/cartoné/A5/tomo
-    doble/libro de ilustraciones). Edición normal → no se capturan los tomos regulares.
+    doble/libro de ilustraciones). Edición normal → no se capturan los tomos regulares,
+    SALVO cofres listados inline ("Cofre de 2 tomos") que se emiten como `box` (#75).
+  - El volumen del tomo se extrae tras quitar el prefijo del nombre de la colección —
+    series con número en el nombre ("Kaiju Nº8") no contaminan el vol (#74).
   - `Ediciones Especiales` → kind `especial`; `Portadas alternativas` → `alternativa`;
-    `Packs` → sólo si la línea trae keywords de extras.
+    `Packs` → sólo si la línea trae keywords de extras (aplica igual a la variante
+    "en preparación (Packs)", que además marca `status:upcoming`; #73).
 - **Layout B** (`<table width="920">`): Cofres / Regalos / Extras. Vincula el extra a su
   tomo. Cofre de 1ª edición de "tomos X a Y" → marca esos tomos `regular` (#53).
 - Kanzenban se detecta por el literal en título/formato, NO por tamaño A5 (#51). "doble
@@ -218,6 +223,13 @@ re-aplica EN ORDEN todas las reglas duras, sobreescribiendo al LLM. **Es idempot
 3. **Auditoría de red** (`scripts/audit_lista_full_bidir.py`): re-fetchea las 3436
    colecciones y compara (kind,vol) parser vs DB → **FALTANTES** + **SOBRANTES**. Objetivo
    0/0. Limpieza de sobrantes: `reconcile_lista_stale.py`.
+4. **Errores de red durante el bootstrap** (2026-06-10): `fetch_collection` ya NO traga
+   los fallos de red en silencio. La sesión reintenta sola los transitorios (retry adapter
+   en `make_session`, 429/5xx/reset con backoff); si aun así falla, la colección se loguea
+   (`[WARN] coleccion N: error de red`), se acumula en `NETWORK_ERROR_LOG` y al final del
+   bootstrap se vuelca un resumen `[NETWORK-ERROR]` + `logs/listadomanga_network_errors.txt`
+   (un id por línea, re-procesable directo con `--coleccion-ids-file`). Antes un blip de
+   red era indistinguible de "colección vacía" y el id se perdía del run sin rastro.
 
 **Regla de proceso**: cuando el owner reporta una CLASE de error que el validador no veía,
 se AGREGA como invariante nueva (no sólo se parchea el caso). Antes de "arreglar" lo que
@@ -228,7 +240,7 @@ válidos que faltaban en el allowlist — el bug era del validador).
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
-Resumen de gotchas #43-#57 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
+Resumen de gotchas #43-#60 y #73-#75 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
 recuperar requiere re-scrape + enforcer.
 
 **Captura / parser:**
@@ -238,6 +250,12 @@ recuperar requiere re-scrape + enforcer.
 - #53: **cofre de 1ª edición común no se capturaba** (kind destino vacío) — afectaba TODO
   el catálogo (Medaka Box, Aoha Ride, Cells at Work…). ✅ (default a `regular` si hay
   descriptor de cofre/extra; un marker de edición DESCONOCIDO NO defaultea — no inventamos).
+- #74: **número embebido en el nombre de la serie contaminaba el volumen** ("Kaiju Nº8
+  nº16" → vol 8; el pack heredaba vol 8 fantasma). ✅ `_strip_series_prefix` antes de
+  buscar el nº + reparación de las 2 keys stale del corpus + backfill_cluster_key.
+- #75: **cofres inline en "Números editados" no-premium se perdían** ("Cofre de 2 tomos",
+  Boichi cole 6240 — solo lo había capturado el calendario legacy). ✅ excepción al gate:
+  emite SOLO los items con `\bcofres?\b` en el desc_extra como kind `box`.
 
 **Agrupación / dedup (la raíz de casi todos los duplicados):**
 - #46 país=edición, #48 coleccion=edición, #49 edition_display oficial, #52 cluster_key
@@ -256,6 +274,27 @@ recuperar requiere re-scrape + enforcer.
 - #58: **box set = edición APARTE** (no parte de la edición de los tomos). unify
   colapsaba box + tomos a un solo `edition_key`. ✅ unify separa: tomos → base,
   box sets → su propia edición (slug `boxset`). COLED no dispara por el box.
+- #59: **extra de "Edición Especial" en Layout B mal clasificado como tomo regular**
+  cuando el nombre de serie se parte en 2 líneas (el `nº` cae en la línea 2 →
+  fallback Grimorio → regular). Creaba un tomo regular FANTASMA que duplicaba al
+  especial real (reportado en Promised Neverland 13). ✅ si la celda dice "Edición
+  Especial/Limitada", el kind es `especial` (no un cofre regular). El cofre legítimo
+  ("(1ª Edición) Cofre para tomos X a Y") sí va al tomo regular (#53).
+- #60: **`volume` vacío en ediciones especiales/limitadas/variantes** — el parser extraía
+  el volumen correctamente del `alt` ("nº13") pero NO lo propagaba al `Candidate.volume`;
+  `_extract_volume` sólo capturaba trailing numbers y fallaba en "Title 13 Edición
+  Especial" (número antes del calificador). Fix: (a) `cand.volume = parsed["volume"]` en
+  `listadomanga_collections.py`; (b) nuevo patrón en `_extract_volume` para números
+  antes de calificadores; (c) retrofit `backfill_volume_from_cluster.py` para los 9
+  items ya existentes. Afectaba: Promised Neverland 13, Berserk 21/41/42, Seven
+  Deadly Sins 41, Twilight Outfocus 1/2, A Miyoshi 1/2. ✅
+
+- #73: **"Números en preparación (Packs)" no reconocido** — SECTION_RULES cubría las
+  variantes "en preparación" de Especiales/Limitadas/Alternativas + el base, pero NO
+  `(Packs)` → el h2 caía a unknown (id=5584 en `logs/listadomanga_unknown_h2.txt`) y los
+  packs anunciados se perdían en silencio. ✅ regla nueva ANTES del entry base, mismo
+  tratamiento que editados: kind `pack` + filtro de keywords de extras (pack pelado tipo
+  "Pack tomos 4 y 5" se sigue descartando) + `status:upcoming` por prefijo.
 
 **Decisiones (lo que NO se hace):** omnibus pelado no califica (#18); no se mergea
 cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
@@ -277,6 +316,23 @@ cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
   desincronizarse; el validador + enforcer lo detectan y auto-corrigen (por eso el gate [5]).
 - **Casos ambiguos que se SALTAN**: `dedup_synthetic_source` loguea (no auto-fusiona)
   componentes multi-hash sospechosos (packs especial+variant). Revisar a mano si aparecen.
+- **Label `Edición original:` no aprovechado** (auditoría Chrome 2026-06-11): la cabecera
+  trae `<b>Edición original:</b> Kanzenban (完全版)` / `Wideban (ワイド版)` — es la señal
+  ESTRUCTURADA de la edición japonesa de origen. En las kanzenban españolas inspeccionadas
+  (id=4753, id=2661) el `Formato:` NO contiene "kanzenban" (dice "Tomo A5 … rústica con
+  sobrecubierta"); hoy la detección depende del título "(Kanzenban)" (P0-A), que en esos
+  casos alcanza. NO se agregó como heurístico premium a propósito: describe la edición
+  JAPONESA, no la española, y el historial de sobre-marcado premium (heurístico A5
+  eliminado, gotcha #41/#51) pide evidencia de misses en corpus antes de sumarlo. Candidato
+  si aparecen kanzenban sin "(Kanzenban)" en el título.
+- **`Nota:` con señales premium en prosa** ("incluye las páginas a color originales",
+  id=2661): texto libre, no extraído. Mismo criterio: no sumar heurístico sin evidencia.
+- **`Color:` es crédito de COLORISTA** (persona, ej. "Color: Yoko Kamio" id=2661), NO
+  atributo "a todo color". Si alguna vez se agrega heurístico de full-color, NO matchear
+  este label (falso positivo garantizado). Hoy no hay heurístico que lo mire (verificado).
+- **`Títulos de <colección>`** (H2, visto en tomo doble id=3000): mapeo `nºN - Incluye
+  <serie> X-Y JAP`. Hoy se DESCARTA (correcto, no son items); oportunidad futura: extraer
+  el mapeo tomo-doble → tomos japoneses como metadato.
 
 ---
 
@@ -301,6 +357,10 @@ scripts/scrape_full.sh           # catálogo completo (lista.php)
 echo "1606 2857" > /tmp/ids.txt
 .venv/bin/python scripts/manga_watch.py --bootstrap-wiki listadomanga-collections \
     --coleccion-ids-file /tmp/ids.txt --workers 6
+
+# Re-procesar colecciones perdidas por error de red en el último bootstrap:
+.venv/bin/python scripts/manga_watch.py --bootstrap-wiki listadomanga-collections \
+    --coleccion-ids-file logs/listadomanga_network_errors.txt --workers 6
 
 # Ver qué emite el parser para una coleccion (debug):
 .venv/bin/python -c "import sys; sys.path.insert(0,'scripts'); import requests, wikis.listadomanga_collections as L; \
