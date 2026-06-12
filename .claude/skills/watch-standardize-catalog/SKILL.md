@@ -178,8 +178,14 @@ Standardize manga catalog entries. Read `/tmp/manga-standardize-run/chunk_<NN>.j
 
 ## OUTPUT FIELDS:
 ```json
-{"url":"","is_manga":true,"non_manga_reason":"","series_key":"","series_display":"","edition_key":"","edition_display":"","volume":"","title_standardized":""}
+{"url":"","is_manga":true,"non_manga_reason":"","series_key":"","series_display":"","edition_key":"","edition_display":"","volume":""}
 ```
+
+**POLÍTICA DE TÍTULOS (dura, 2026-06-12): el `title` NO se toca.** Es el nombre
+OFICIAL con que la fuente/editorial publica el producto. NO lo traduzcas, NO lo
+renombres a la serie canónica, NO le agregues tipo de edición (Kanzenban/Deluxe/…).
+El nombre reconocible vive en `series_display` (canónico) y la búsqueda resuelve
+aliases multilingües. NO emitas ningún campo de título.
 
 ## TIER-SPECIFIC INSTRUCTIONS
 
@@ -208,14 +214,17 @@ to VALIDATE and optionally CORRECT:
 
 ### series_key
 Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized name.
+Pure ASCII (`[a-z0-9-]`) — no raw CJK and no Cyrillic/Greek homoglyphs copied from
+sources (gotcha #81); transliterate to romaji. The pipeline re-sanitizes with
+`sanitize_key_ascii()`, so non-ASCII keys never reach the corpus anyway.
 
 ### edition_key — `{series}-{publisher_slug}-{edition_slug}-{country_slug}`
 
 **NO RE-DERIVES la edición si el item YA tiene `edition_key` asignado** (viene como
 `existing_edition_key` en el input). El scraper ya aplicó las reglas duras de agrupación
 (coleccion=edición, país, nombre oficial) — está bien. Para esos items tu trabajo es
-SOLO: serie canónica + traducir el título del TOMO + detectar non-manga. El apply del
-skill conserva el `edition_key`/`edition_display` existentes. Sólo derivá la edición
+SOLO: serie canónica + detectar non-manga. El apply del
+skill conserva el `edition_key`/`edition_display` existentes (y el `title` SIEMPRE). Sólo derivá la edición
 desde cero para items SIN `edition_key` (ej. algunas fuentes que no son listadomanga).
 Las reglas de abajo aplican a esos casos.
 
@@ -235,10 +244,7 @@ re-aplica esta tabla; no la contradigas):
   término de tipo: "One Piece Maximum 限定版" → `maximum`.
 - **GUARD de nombre de serie**: si la palabra "de edición" es parte del NOMBRE de la
   serie ("Trigun Maximum", "Ultimate Muscle"), NO es tipo de edición — usá la evidencia
-  real de edición (o `regular`) y NUNCA repitas la palabra en el título ("Trigun
-  Maximum Maximum 2" está mal → "Trigun Maximum 2").
-- Ediciones `regular`: el título NO lleva palabra de edición ("Noragami 27", nunca
-  "Noragami Regular 27").
+  real de edición (o `regular`) para el SLUG. El título no se toca.
 
 **REGLA DE NEGOCIO DURA (gotcha #46): país distinto = edición distinta, SIEMPRE.**
 El `edition_key` TERMINA con el código de país de la EDICIÓN (derivado de
@@ -299,8 +305,8 @@ tomos REGULARES con cofre/extras de 1ª edición (description con "regalos / bri
 o tag `from_extras`) son edición `regular`, el cofre es un bonus.
 
 **`edition_display` = NOMBRE OFICIAL de la edición, SIN traducir (gotcha #49).** NO un
-slug genérico traducido ("Special (Norma Editorial)", "Regular"). Sólo el `title`
-(nombre del TOMO) se traduce; el nombre de la EDICIÓN va tal cual. Para items de
+slug genérico traducido ("Special (Norma Editorial)", "Regular"). Nada se traduce:
+ni el nombre de la EDICIÓN ni el `title` del tomo — ambos van tal cual. Para items de
 listadomanga, el item YA trae el `edition_display` correcto (= título de la coleccion,
 ej. "Ataque a los Titanes", "Guardianes de la Noche (Kimetsu no Yaiba)", "Berserk
 (Maximum) (Castellano)"): **CONSÉRVALO, no lo regeneres ni lo traduzcas.** Para otras
@@ -312,9 +318,9 @@ is a regular VOLUME (note the number) that ships WITH a mini art booklet. It is 
 artbook. Rule:
 - 画集/イラスト集/アートワーク immediately followed by 付き/付/つき/同梱 (= "with/included")
   → the artbook is a BONUS → edition = `special` (特装版/同梱版) or `limited` (限定版),
-  product_type = `manga`, and DO NOT put "Artbook" in the title.
-  e.g. "宇宙兄弟(39) 画集付き特装版" → title "Uchuu Kyoudai Special 39",
-  edition_key `space-brothers-kodansha-special`.
+  product_type = `manga`.
+  e.g. "宇宙兄弟(39) 画集付き特装版" → edition_key `space-brothers-kodansha-special`
+  (el title queda tal cual, en japonés).
 - 画集/イラスト集 as the standalone product, NO 付き (e.g. "笠井あゆみ画集 麗人") → real
   `artbook`. Same logic for "ファンブック付き" (fanbook bonus) vs a standalone "Visual Fanbook".
 (detect_signals/derive_product_type now demote this automatically, but assign the
@@ -322,13 +328,6 @@ edition_key/title correctly here too — those are curated fields.)
 
 ### volume
 String. Digits only. "1", "100", "1-3" for sets, "" if absent.
-
-### title_standardized
-`{Series Display} {Edition Suffix} {Volume}`. Short, clean.
-**EXCEPCIÓN edición ESPECIAL (gotcha #52):** `{Series Display} {Volume} Edición Especial`
-— el volumen ANTES del calificador, sin paréntesis (ej. "Witch Hat Atelier 5 Edición
-Especial", NO "… Edición Especial 5"). El enforcer (`fix_especial_title_order.py`) lo
-normaliza igual, pero generá ya ese orden.
 
 ## EXECUTION
 1. Read input. 2. Process EVERY item. 3. Output line count MUST equal input. 4. Report totals.

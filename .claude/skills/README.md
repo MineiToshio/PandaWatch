@@ -17,12 +17,58 @@ inmediatamente disponibles.
 
 ## Skills disponibles
 
+Dos familias: **proceso de desarrollo** (cómo implementamos código con IA —
+ver [docs/process/AI-WORKFLOW.md](../../docs/process/AI-WORKFLOW.md)) y
+**curación de datos** (el corpus). Todos son manuales: solo a pedido
+explícito del owner.
+
+### `/feature-spec` (proceso)
+
+**Propósito**: arrancar una épica (Vía C del AI-WORKFLOW). Entrevista al
+owner (AskUserQuestion), explora el código con un subagente y escribe un
+spec autocontenido en `docs/specs/SPEC-<slug>.md` (o FRD de web-next si
+aplica) con unidades de trabajo y criterios de verificación ejecutables.
+**No implementa** — el spec se ejecuta en una sesión fresca.
+
+**Cuándo invocarlo**: feature grande, área nueva, o decisiones de producto
+abiertas. Para fixes y features acotadas NO (vía directa / plan mode).
+
+### `/ship-check` (proceso)
+
+**Propósito**: gate determinístico pre-commit. Detecta áreas tocadas en el
+diff, corre los checks correspondientes (pytest, dry-runs de retrofits,
+vitest + build de web-next, validate_corpus si aplica) y audita que los
+docs exigidos por la policy de CLAUDE.md estén en el mismo diff (fichas de
+fuente, PIPELINE-WALKTHROUGH, registry…). Reporta checklist PASS/FAIL con
+evidencia.
+
+**Cuándo invocarlo**: antes de CADA commit meaningful. Costo casi nulo
+(comandos + exit codes, casi sin LLM).
+
+### `/product-pulse` (proceso, post-lanzamiento)
+
+**Propósito**: loop de iteración por tracción. Lee PostHog (tráfico,
+contenido top, eventos, errores) + `data/feedback.jsonl` y produce un
+backlog priorizado de 3–5 oportunidades (impacto × esfuerzo) con la vía
+recomendada para cada una. Guarda el reporte en `data/diagnostics/`.
+**No implementa.**
+
+**Cuándo invocarlo**: semanal/quincenal después del lanzamiento público.
+Antes del lanzamiento solo reporta el gap de instrumentación.
+
+---
+
 ### `/watch-standardize-catalog`
 
 **Propósito**: pasada 2 de la estandarización de schema. Procesa items
 de `data/items.jsonl` que NO tienen el campo `standardized_at` —
 típicamente items recién scrapeados que llegaron con asignación
 heurística cruda (o sin asignación) del pipeline.
+
+> **Política de títulos (2026-06-12, gotcha #92)**: el skill NO toca el `title`
+> — es el nombre OFICIAL scrapeado; no se traduce, no se renombra a la serie
+> canónica, no se le inyecta tipo de edición. `title_standardized` quedó
+> RETIRADO del schema (el LLM ya no lo emite y el apply lo ignora).
 
 **Cómo funciona** — el audit y el merge son scripts **COMPARTIDOS** con el
 workflow (`scripts/standardize_audit.py` / `scripts/standardize_apply.py`,
@@ -39,8 +85,8 @@ copias de la lógica.
 2. **Tier 1** (`standardize_apply.py tier1`): aplica la propuesta
    determinística (0 tokens LLM) y marca `standardized_at`.
 3. **Tier 2/3**: subagentes paralelos en chunks chicos validan (T2) o
-   derivan desde cero (T3) series_key/edition_key/volume/title_standardized
-   via LLM; cada chunk escribe su propio `result_*.jsonl`. **Modelos del
+   derivan desde cero (T3) series_key/edition_key/volume
+   via LLM (nunca títulos); cada chunk escribe su propio `result_*.jsonl`. **Modelos del
    workflow**: los agentes mecánicos (audit, tier1, chunkers, checkpoints,
    merge, cleanup) y la validación Tier 2 usan `haiku`; SOLO la derivación
    Tier 3 usa `sonnet`. Costo fijo ~200k tokens/corrida → conviene lotes
@@ -79,8 +125,7 @@ de estandarización mayor).
   "series_display": "Berserk",
   "edition_key": "berserk-darkhorse-deluxe",
   "edition_display": "Deluxe (Dark Horse)",
-  "volume": "1",
-  "title_standardized": "Berserk Deluxe 1"
+  "volume": "1"
 }
 ```
 

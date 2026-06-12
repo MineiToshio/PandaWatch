@@ -52,6 +52,11 @@ When the candidate is a real new series not yet in the YAML (e.g., a recent rele
 
 2. If Anilist returns a match:
    - Choose canonical key = slug of `title.english` (preferred) or `title.romaji`. Avoid subtitles ("Frieren: Beyond Journey's End" → just "frieren").
+   - The canonical key MUST be pure ASCII kebab-case (`[a-z0-9-]` only) — never raw CJK
+     and never Cyrillic/Greek homoglyphs copied from a source ("taihо-to-stamp" with
+     Cyrillic о, "maku-ga-oriru-to-bokura-wa-番" — real bugs, gotcha #81). Transliterate
+     to romaji instead. The pipeline now sanitizes keys with `sanitize_key_ascii()`, so a
+     non-ASCII key will silently diverge from what items actually get — don't coin one.
    - Display = `title.english` cleaned, or romaji if no english.
    - Aliases = romaji, native, and synonyms — **filter out** synonyms in non-target alphabets (cyrillic, arabic, hebrew, hangul, thai) and single-word generic aliases that could collide ("Monster", "Real", "Blue Period" when those refer to other series).
 

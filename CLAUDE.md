@@ -74,6 +74,7 @@ comportamiento (probado por la suite), typos.
 | Admin — Panel de Control | `docs/admin/README.md` |
 | Next.js | `docs/web-next/{FRD,blueprints,work-orders}/` |
 | Env var / dependencia nueva | `.env.example` + el doc del componente |
+| Cambio al proceso de implementación con IA (vías, verificación, skills de proceso) | `docs/process/AI-WORKFLOW.md` |
 
 `CLAUDE.md` (este archivo) sólo lleva el núcleo: policies, orientación, el índice de
 referencias y los gists de las 7 decisiones. Si tocás un gist, sincronizá el detalle
@@ -83,8 +84,9 @@ NO a CLAUDE.md — mantenelo chico.
 ## What this project is
 
 **PandaWatch** (repo: `MineiToshio/PandaWatch`, internamente `manga-watch`) es
-un **tracker personal** que scrapea ~67 fuentes habilitadas (de 138 en
-`sources.yml`) en 13 países y 6 idiomas (ES, EN, FR, IT, JP, PT-BR) buscando
+un **tracker personal** que scrapea ~63 fuentes habilitadas (de 151 en
+`sources.yml`; 16 podadas 2026-06-12 por 0 items netos) + 26 wikis, en 20 países y
+14 idiomas (ES, EN, FR, IT, JP, PT-BR, DE, PL, KO, ZH, VI, TH, TR, CS) buscando
 **ediciones especiales físicas de manga**: limited editions, deluxe hardcovers,
 box sets, slipcase, artbooks, kanzenban, light novels con bonus, etc.
 
@@ -140,7 +142,8 @@ chico. ANTES de tocar código de un área, leé su doc:
 
 | Vas a… | Leé primero |
 |---|---|
-| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 73 gotchas) |
+| **Implementar cualquier feature o fix** (elegir vía A/B/C, plan mode, verificación, eficiencia de tokens; skills de proceso `/feature-spec`, `/ship-check`, `/product-pulse`) | [docs/process/AI-WORKFLOW.md](docs/process/AI-WORKFLOW.md) |
+| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 92 gotchas) |
 | Cambiar storage, cluster_key, el pipeline, o entender el modelo de datos | [docs/reference/architecture.md](docs/reference/architecture.md) (pipeline + corpus state + las 7 decisiones) |
 | Escribir/modificar un retrofit, fuente, wiki, o script del registry | [docs/reference/conventions.md](docs/reference/conventions.md) (filtros, backup/flush/nohup, registry, playbooks) |
 | Ubicar un archivo o entender qué hace cada módulo | [docs/reference/file-map.md](docs/reference/file-map.md) |
@@ -173,6 +176,12 @@ cambio estructural, leé esa doc.
    + Playwright worker thread dedicado, gotcha #12).
 7. **Pipeline canónico + observabilidad**: scrape_delta/full encadenan todo; no comandos
    ad-hoc. `source_health.py` clasifica fuentes desde los logs.
+
+Además, **política de títulos (2026-06-12)**: `title` = nombre OFICIAL con que la
+editorial publica el producto — NUNCA se traduce, NUNCA se renombra a la serie canónica,
+NUNCA se le inyecta tipo de edición. La serie reconocible va en `series_display`, el tipo
+como badge en las UIs, y la búsqueda resuelve aliases (`data/series_aliases.json`).
+Detalle en architecture.md → "Política de títulos"; consecuencia en filtros: gotcha #92.
 
 ## Quick sanity check before committing
 
@@ -248,7 +257,7 @@ strictly to prevent autocompact thrashing.
 
 Last updated: 2026-06-12. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 73 gotchas, convenciones, dashboard,
+referencia (file map, las 7 decisiones, las 92 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,

@@ -26,11 +26,10 @@ const TIER2_ITEM_SCHEMA = {
     edition_key: { type: 'string', description: 'FINAL edition_key (copy proposed_edition_key when accepting, else corrected)' },
     edition_display: { type: 'string', description: 'FINAL edition_display' },
     volume: { type: 'string', description: 'FINAL volume (digits only or empty)' },
-    title_standardized: { type: 'string', description: 'FINAL clean title: Series Edition Volume' },
     is_manga: { type: 'boolean', description: 'Whether this is manga (not figure/LN/comic)' },
     non_manga_reason: { type: 'string', description: 'Reason if is_manga=false' },
   },
-  required: ['url', 'accept_proposal', 'is_manga', 'series_key', 'edition_key', 'volume', 'title_standardized'],
+  required: ['url', 'accept_proposal', 'is_manga', 'series_key', 'edition_key', 'volume'],
 }
 
 const TIER2_BATCH_SCHEMA = {
@@ -56,9 +55,8 @@ const TIER3_ITEM_SCHEMA = {
     edition_key: { type: 'string', description: 'Format: {series}-{publisher_slug}-{edition_slug}-{country_slug}' },
     edition_display: { type: 'string', description: 'Display name for the edition' },
     volume: { type: 'string', description: 'Volume number as string, or empty' },
-    title_standardized: { type: 'string', description: 'Clean title: Series Edition Volume' },
   },
-  required: ['url', 'is_manga', 'series_key', 'edition_key', 'volume', 'title_standardized'],
+  required: ['url', 'is_manga', 'series_key', 'edition_key', 'volume'],
 }
 
 const TIER3_BATCH_SCHEMA = {
@@ -145,9 +143,12 @@ function tier2Prompt(itemsJson) {
 ${itemsJson}
 
 ## RULES
-- Each item has proposed_series_key, proposed_edition_key, proposed_volume, proposed_title.
-- ALWAYS output the FINAL series_key, series_display, edition_key, edition_display, volume,
-  and title_standardized for EVERY item — never leave them empty.
+- Each item has proposed_series_key, proposed_edition_key, proposed_volume.
+- ALWAYS output the FINAL series_key, series_display, edition_key, edition_display and
+  volume for EVERY item — never leave them empty.
+- TITLE POLICY (hard): the item's \`title\` is the OFFICIAL name as published by the
+  source. It is NEVER translated, renamed to the canonical series, or modified — do NOT
+  output any title field.
 - If the proposal looks correct → set accept_proposal=true AND copy the proposed_* values
   verbatim into the output fields.
 - If something is wrong → set accept_proposal=false and put your corrected values in the fields.
@@ -165,7 +166,7 @@ Process ALL items. Output count MUST equal input count.`
 }
 
 function tier3Prompt(itemsJson) {
-  return `You are standardizing manga catalog entries from scratch. Derive series_key, edition_key, volume, and title for each item.
+  return `You are standardizing manga catalog entries from scratch. Derive series_key, edition_key and volume for each item. The item's \`title\` is the OFFICIAL name as published by the source — it is NEVER translated, renamed or modified; do NOT output any title field.
 
 ## INPUT (JSON array)
 ${itemsJson}
@@ -200,9 +201,6 @@ ${EDITION_TYPE_RULES}
 
 ### volume
 Digits only. "1", "100", "1-3" for sets, "" if absent.
-
-### title_standardized
-"{Series Display} {Edition Suffix} {Volume}". Short, clean. No year, no retailer.
 
 Process ALL items. Same series/publisher → same keys consistently. Output count MUST equal input count.`
 }
@@ -353,7 +351,7 @@ These are Tier 2 items — the scraper already proposed series_key/edition_key/v
 Validate each proposal. ${tier2Prompt('(see the file contents)')}
 
 Read the file, then:
-1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t2_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume, title_standardized.
+1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t2_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume.
 2. Then return structured output with the same results for ALL items in the file.`,
           {
             label: `validate-t2-${idx}`,
@@ -412,7 +410,7 @@ These are Tier 3 items — derive everything from scratch.
 ${tier3Prompt('(see the file contents)')}
 
 Read the file, then:
-1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t3_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume, title_standardized.
+1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t3_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume.
 2. Then return structured output for ALL items.`,
           {
             label: `derive-t3-${idx}`,
@@ -460,7 +458,6 @@ for (const r of tier2Results) {
     edition_key: r.edition_key || '',
     edition_display: r.edition_display || '',
     volume: r.volume || '',
-    title_standardized: r.title_standardized || '',
   })
 }
 
@@ -475,7 +472,6 @@ for (const r of tier3Results) {
     edition_key: r.edition_key || '',
     edition_display: r.edition_display || '',
     volume: r.volume || '',
-    title_standardized: r.title_standardized || '',
   })
 }
 
