@@ -30,6 +30,8 @@ Invariantes (cada una con su id corto):
          lo corrige merge_duplicate_series.py / curación del YAML]
   PUBMIX >1 string de publisher dentro de una misma edition_key. [warning —
          lo corrige normalize_edition_publishers.py]
+  ISBNDUP el mismo ISBN-13 en >1 fila con cluster distinto (mismo producto
+         físico duplicado). [warning — lo corrige merge_isbn_duplicates.py]
   EKPREFIX el edition_key empieza con el series_key del item (formato
          `{series}-{pub}-{slug}-{pais}`). [warning — lo corrige
          fix_edition_key_prefix.py; excluye approved]
@@ -286,10 +288,23 @@ def main():
         if len(pubs) > 1:
             flag("PUBMIX", f"{ek}: {sorted(pubs)[:4]}")
 
+    # ISBNDUP — el mismo ISBN-13 en >1 fila con cluster distinto = el mismo
+    # producto físico duplicado (lo corrige merge_isbn_duplicates.py; los
+    # cruces con listadomanga los maneja merge_crosssource_into_lmc).
+    isbn_owner = defaultdict(list)
+    for it in items:
+        raw = (it.get("isbn") or "").strip()
+        if raw:
+            isbn_owner[mw.isbn13(raw) or raw].append(it)
+    for isbn, group in isbn_owner.items():
+        if len(group) > 1 and len({g.get("cluster_key", "") for g in group}) > 1:
+            flag("ISBNDUP", f"{isbn} ×{len(group)}: "
+                 f"{[g.get('edition_key') or g.get('cluster_key','')[:40] for g in group][:3]}")
+
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
     order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
-             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX"]
+             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP"]
     hard_fail = 0
     for k in order:
         n = counts[k]

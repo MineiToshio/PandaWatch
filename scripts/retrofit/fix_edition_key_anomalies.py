@@ -10,10 +10,18 @@ violan invariantes del corpus (validate_corpus: COLED / PAIS):
 
   (B) **país `xx` (desconocido) inferible** → país real, SÓLO cuando es seguro:
       1) algún source trae country explícito (`españa`→es, etc.), o
-      2) la EDITORIAL del edition_key es de UN solo país (norma/planeta/milkyway→es,
+      2) el GRUPO DE REGISTRO del ISBN identifica el país de publicación
+         (978-84→es, 978-3→de, 978-612→pe, 607→mx, …) — es el país de la
+         editorial que registró el libro, exactamente la semántica de la regla
+         país=edición. Grupos anglófonos (0/1) NO se mapean (US/UK ambiguo).
+      3) la EDITORIAL del edition_key es de UN solo país (norma/planeta/milkyway→es,
          pika/kana/glenat→fr, star/jpop→it, viz/yenpress→us, …).
-      Editoriales multi-país (panini, kodansha) o `unknown` se quedan en `xx`
-      (honesto: no inventamos país, regla país=edición es dura).
+      4) otro item de la MISMA edición (mismo edition_key) ya resolvió país —
+         por la regla coleccion=edición, hermanos comparten país por definición.
+      Editoriales multi-país (panini, kodansha) o `unknown` sin ISBN se quedan
+      en `xx` (honesto: no inventamos país, regla país=edición es dura).
+      Si el item tenía `country` top-level vacío, se rellena con el nombre
+      display del país inferido (consistencia con el filtro de país de la UI).
 
 Reescribe edition_key + re-deriva cluster_key y consolida (los que ahora matchean
 una edición con país real se fusionan). Idempotente. Respeta `approved_at`.
@@ -47,6 +55,51 @@ _PUB_COUNTRY = {
 }
 
 
+# Grupo de registro ISBN → país. Sólo grupos inequívocos de UN país; los
+# anglófonos (0/1 y 979-8 cubre US pero editoriales UK usan 978-1 también…
+# en realidad 979-8 es exclusivo US, se incluye). Longest-prefix match.
+_ISBN_GROUP_COUNTRY = {
+    "2": "fr", "3": "de", "4": "jp", "84": "es", "85": "br", "88": "it",
+    "89": "kr", "956": "cl", "957": "tw", "968": "mx", "970": "mx",
+    "972": "pt", "974": "th", "986": "tw", "989": "pt",
+    "604": "vn", "607": "mx", "612": "pe", "616": "th", "950": "ar",
+}
+_ISBN979_GROUP_COUNTRY = {"10": "fr", "11": "kr", "12": "it", "8": "us"}
+
+# slug → nombre display (como aparece en `country` top-level / filtro de la UI).
+_SLUG_DISPLAY = {
+    "jp": "Japón", "it": "Italia", "es": "España", "fr": "Francia",
+    "de": "Alemania", "us": "Estados Unidos", "vn": "Vietnam", "mx": "México",
+    "br": "Brasil", "th": "Tailandia", "ar": "Argentina", "tw": "Taiwán",
+    "gb": "Reino Unido", "pt": "Portugal", "pe": "Perú", "cl": "Chile",
+    "kr": "Corea",
+}
+
+
+def _isbn_country(isbn: str) -> str:
+    """País del grupo de registro del ISBN ('' si no se puede inferir)."""
+    digits = "".join(ch for ch in (isbn or "") if ch.isdigit() or ch in "Xx")
+    if len(digits) == 13:
+        if digits.startswith("978"):
+            group = digits[3:]
+        elif digits.startswith("979"):
+            g = digits[3:]
+            for ln in (2, 1):
+                if g[:ln] in _ISBN979_GROUP_COUNTRY:
+                    return _ISBN979_GROUP_COUNTRY[g[:ln]]
+            return ""
+        else:
+            return ""
+    elif len(digits) == 10:
+        group = digits
+    else:
+        return ""
+    for ln in (3, 2, 1):
+        if group[:ln] in _ISBN_GROUP_COUNTRY:
+            return _ISBN_GROUP_COUNTRY[group[:ln]]
+    return ""
+
+
 def _publisher_slug(ek: str) -> str:
     """editorial del edition_key `{serie}-{pub}-{slug}-{pais}` → parts[-3]."""
     parts = ek.split("-")
@@ -63,20 +116,30 @@ def _src_country(it: dict) -> str:
     return ""
 
 
-def _fix_ek(it: dict) -> str | None:
+def _infer_country(it: dict, ek: str) -> str:
+    """Tier de inferencia de país: source explícito → ISBN → editorial mono-país."""
+    return (
+        _src_country(it)
+        or _isbn_country(it.get("isbn", "") or "")
+        or _PUB_COUNTRY.get(_publisher_slug(ek), "")
+    )
+
+
+def _fix_ek(it: dict) -> tuple[str | None, str]:
+    """→ (nuevo edition_key o None si no cambia, slug de país inferido o '')."""
     ek = it.get("edition_key", "") or ""
     if not ek:
-        return None
-    new = ek
+        return None, ""
+    new, country = ek, ""
     # (A) panini-es → panini
     if "-panini-es-" in new:
         new = new.replace("-panini-es-", "-panini-")
     # (B) xx → país inferido
     if new.endswith("-xx"):
-        country = _src_country(it) or _PUB_COUNTRY.get(_publisher_slug(new), "")
+        country = _infer_country(it, new)
         if country:
             new = new[:-3] + f"-{country}"
-    return new if new != ek else None
+    return (new if new != ek else None), country
 
 
 def main() -> int:
@@ -85,15 +148,38 @@ def main() -> int:
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
     changed, ex = 0, []
+    # ek original -xx → país resuelto (para propagar a hermanos sin evidencia
+    # propia: misma edición ⇒ mismo país por definición).
+    resolved_xx: dict[str, str] = {}
     for it in items:
         if it.get("approved_at"):
             continue
-        new = _fix_ek(it)
+        old_ek = it.get("edition_key", "") or ""
+        new, country = _fix_ek(it)
         if new:
             if len(ex) < 30:
-                ex.append((it.get("edition_key"), new))
+                ex.append((old_ek, new))
             it["edition_key"] = new
             it["cluster_key"] = mw.derive_cluster_key(it)
+            if country:
+                resolved_xx[old_ek] = country
+                if not (it.get("country") or "").strip():
+                    it["country"] = _SLUG_DISPLAY.get(country, "")
+            changed += 1
+    # Segunda pasada: hermanos de una edición resuelta heredan su país.
+    for it in items:
+        if it.get("approved_at"):
+            continue
+        ek = it.get("edition_key", "") or ""
+        country = resolved_xx.get(ek, "")
+        if ek.endswith("-xx") and country:
+            new = ek[:-3] + f"-{country}"
+            if len(ex) < 30:
+                ex.append((ek + " (hermano)", new))
+            it["edition_key"] = new
+            it["cluster_key"] = mw.derive_cluster_key(it)
+            if not (it.get("country") or "").strip():
+                it["country"] = _SLUG_DISPLAY.get(country, "")
             changed += 1
     print(f"[ek-anomalies] edition_key normalizados: {changed}")
     for o, n in ex:

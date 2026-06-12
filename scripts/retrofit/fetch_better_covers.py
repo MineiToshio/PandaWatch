@@ -204,7 +204,7 @@ def _ahash(data: bytes, hash_size: int = 8) -> Optional[int]:
         img = Image.open(io.BytesIO(data)).convert("L").resize(
             (hash_size, hash_size), Image.LANCZOS
         )
-        pixels = list(img.getdata())
+        pixels = list(img.tobytes())
         avg = sum(pixels) / len(pixels)
         return sum(1 << i for i, px in enumerate(pixels) if px >= avg)
     except Exception:
@@ -223,7 +223,9 @@ def _gray_pixels(data: bytes, size: int) -> Optional[list]:
         img = Image.open(io.BytesIO(data)).convert("L").resize(
             (size, size), Image.LANCZOS
         )
-        return list(img.getdata())
+        # tobytes() en modo "L" = secuencia plana de píxeles (getdata está
+        # deprecado y se elimina en Pillow 14).
+        return list(img.tobytes())
     except Exception:
         return None
 
@@ -236,7 +238,7 @@ def _dhash(data: bytes, hash_size: int = 8) -> Optional[int]:
         img = Image.open(io.BytesIO(data)).convert("L").resize(
             (hash_size + 1, hash_size), Image.LANCZOS
         )
-        px = list(img.getdata())
+        px = list(img.tobytes())
         bits = 0
         bit = 0
         for row in range(hash_size):

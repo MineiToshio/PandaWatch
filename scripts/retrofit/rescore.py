@@ -11,7 +11,14 @@ Lo que SE recomputa (con el código actual):
 
 Lo que NO se toca:
     title, url, source, publisher, country, language, image_url, isbn,
-    price, release_date, author, tags, status, detected_at, *_at fields.
+    release_date, author, tags, status, detected_at, *_at fields.
+
+GUARD (gotcha #61): los items con `standardized_at` NO se re-scorean por
+defecto — la estandarización reescribe title/description a etiquetas limpias
+("Yawara! Ultimate 18") donde detect_signals no encuentra nada, así que
+recomputar signal_types desde ese texto LAVA las señales. La verdad
+post-estandarización vive en la etiqueta de edición, no en el texto.
+`--include-standardized` fuerza incluirlos (sólo para reparaciones puntuales).
 
 Uso:
     python scripts/retrofit/rescore.py                    # ejecuta
@@ -59,7 +66,6 @@ def _item_to_candidate(item: dict) -> Candidate:
         image_url=image_store.cover_url(item),
         image_local=image_store.cover_local(item),
         images=list(item.get("images") or []),
-        price=item.get("price", "") or "",
         release_date=item.get("release_date", "") or "",
         author=item.get("author", "") or "",
         isbn=item.get("isbn", "") or "",
@@ -77,6 +83,10 @@ def main() -> int:
     p.add_argument("--include-approved", action="store_true",
                    help="Procesar también items aprobados (golden records). Por "
                         "defecto se saltean para no pisar metadata aprobada.")
+    p.add_argument("--include-standardized", action="store_true",
+                   help="Procesar también items estandarizados. Por defecto se "
+                        "saltean: re-scorear texto estandarizado lava las "
+                        "señales (gotcha #61).")
     args = p.parse_args()
 
     src = Path(args.input)
@@ -91,6 +101,7 @@ def main() -> int:
     drift_pt = 0
     drift_score = 0
     skipped_approved = 0
+    skipped_standardized = 0
     pt_changes: Counter[tuple[str, str]] = Counter()
     for line in lines:
         line = line.strip()
@@ -105,6 +116,13 @@ def main() -> int:
         # Golden records: el owner aprobó esta card; no la re-scoreamos.
         if is_approved(item) and not args.include_approved:
             skipped_approved += 1
+            out_lines.append(json.dumps(item, ensure_ascii=False))
+            continue
+
+        # Items estandarizados: re-scorear su texto limpio lava las señales
+        # (gotcha #61) — se saltean salvo override explícito.
+        if item.get("standardized_at") and not args.include_standardized:
+            skipped_standardized += 1
             out_lines.append(json.dumps(item, ensure_ascii=False))
             continue
 
@@ -139,6 +157,9 @@ def main() -> int:
     print(f"[INFO] {total} items procesados")
     if skipped_approved:
         print(f"[INFO] {skipped_approved} aprobados saltados (usa --include-approved para incluirlos)")
+    if skipped_standardized:
+        print(f"[INFO] {skipped_standardized} estandarizados saltados — gotcha #61 "
+              "(usa --include-standardized para incluirlos)")
     print(f"[INFO] signal_types cambió:  {drift_st} ({drift_st*100//max(total,1)}%)")
     print(f"[INFO] product_type cambió:  {drift_pt} ({drift_pt*100//max(total,1)}%)")
     print(f"[INFO] score cambió:         {drift_score} ({drift_score*100//max(total,1)}%)")

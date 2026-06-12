@@ -14,7 +14,8 @@ duras y determinísticas. Este enforcer es la ÚNICA fuente de verdad de:
   - **#69 slug de TIPO de edición por término** (canonicalize_edition_slugs:
     限定版→limited, 特装版→special… — aplica a TODAS las fuentes no-lmc).
   - **#70 series_key sin variantes mecánicas** (merge_duplicate_series) +
-    publisher unificado por edición (normalize_edition_publishers).
+    publisher unificado por edición (normalize_edition_publishers) +
+    un ISBN-13 = un producto (merge_isbn_duplicates, invariante ISBNDUP).
   - cluster_key tier-0 lmc, consolidate, dedup de portadas, slugs.
 
 Corré esto SIEMPRE DESPUÉS del skill de standardize (y el pipeline lo corre solo).
@@ -24,7 +25,7 @@ Uso:
   .venv/bin/python scripts/retrofit/enforce_listadomanga_rules.py
 """
 from __future__ import annotations
-import json, sys, subprocess
+import argparse, json, sys, subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,6 +63,12 @@ def _run(script: str, *args: str) -> None:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fast", action="store_true",
+                    help="Salta el dedup de portadas del carrusel (network-heavy). "
+                         "Para el pipeline delta/full, que ya corre su propio "
+                         "dedup_carousel_images en [4h].")
+    args = ap.parse_args()
     print("[enforce] 1) edition_display oficial (desde description, sin red)")
     n = _recover_edition_display()
     print(f"    edition_display recuperados: {n}")
@@ -87,6 +94,8 @@ def main() -> int:
     _run("canonicalize_edition_slugs.py")
     print("[enforce] 3c2) fusionar series_keys mecánicamente duplicadas (#70)")
     _run("merge_duplicate_series.py")
+    print("[enforce] 3c2b) fusionar filas que comparten ISBN-13 (mismo producto)")
+    _run("merge_isbn_duplicates.py")
     print("[enforce] 3c3) unificar publisher dentro de cada edición")
     _run("normalize_edition_publishers.py")
     print("[enforce] 3c4) re-alinear prefijo del edition_key con el series_key")
@@ -105,8 +114,11 @@ def main() -> int:
           "sin esto el enforcer necesitaba 2 pasadas para converger)")
     _run("fix_lmc_display_titles.py")
     _run("fix_especial_title_order.py")
-    print("[enforce] 5) dedup de portadas del carrusel")
-    _run("dedup_carousel_images.py", "--all")
+    if args.fast:
+        print("[enforce] 5) dedup de portadas del carrusel — SALTADO (--fast)")
+    else:
+        print("[enforce] 5) dedup de portadas del carrusel")
+        _run("dedup_carousel_images.py", "--all")
     print("[enforce] 6) slugs")
     _run("generate_slugs.py")
     print("[enforce] LISTO — reglas de agrupación re-aplicadas.")
