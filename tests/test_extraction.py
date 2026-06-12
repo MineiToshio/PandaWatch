@@ -6945,6 +6945,34 @@ def test_lmc_en_preparacion_limitada_captured_as_upcoming():
     assert "limited" in c.signal_types or "special_edition" in c.signal_types
 
 
+def test_lmc_en_preparacion_packs_captured_as_upcoming():
+    """'Números en preparación (Packs)' se clasifica como pack marcado
+    upcoming (antes el h2 era unknown y la sección se perdía en silencio).
+    Caso real id=5584 (logs/listadomanga_unknown_h2.txt). Aplica el mismo
+    filtro PACK_EXTRAS_KEYWORDS que 'Números editados (Packs)'."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros en preparaci&oacute;n (Packs)",
+            _lmc_item(0, "The Legend of Zelda",
+                      desc_extra="Pack especial tomos 1 a 5 + cofre de regalo",
+                      price="37,50 €", image_id="packup1"),
+        ),
+        title="The Legend of Zelda",
+        publisher="Norma Editorial",
+    )
+    cands = lmc.parse_collection_page(html, 5584)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1, f"expected 1 pack upcoming, got {len(cands)}"
+    c = cands[0]
+    assert "status:upcoming" in c.tags
+    assert "edition:pack" in c.tags
+    # El keyword hint "Pack" (inyectado por signal_inject=["bundle"]) se
+    # detecta como box_set en detect_signals.
+    assert "box_set" in c.signal_types
+
+
 def test_lmc_en_preparacion_regular_dropped_when_not_premium():
     """P0-B guard: 'Números en preparación' (regular) en colección NO premium
     sigue descartándose (igual que 'Números editados' regular sin premium).
@@ -7318,6 +7346,95 @@ def test_lmc_pack_title_enriched_with_description_for_gate_approval():
         tags=c.tags, isbn=c.isbn, url=c.url,
     )
     assert is_coll, f"pack debería pasar el gate, got reason={reason!r}"
+
+
+def test_lmc_volume_ignores_number_embedded_in_series_name():
+    """Series con número EMBEBIDO en el nombre ('Kaiju Nº8'): el volumen
+    debe salir del nº del TOMO, no del de la serie. Caso real cole 4139
+    (prueba 2026-06-11): 'Kaiju Nº8 nº16' daba vol 8 (primer match) y el
+    pack cuyo alt es solo 'Kaiju Nº8' heredaba un vol 8 fantasma."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(16, "Kaiju Nº8",
+                      desc_extra="Edición Especial + Libreta + Llavero",
+                      price="19,50 €", image_id="kaiju16esp"),
+        ),
+        _lmc_section(
+            "N&uacute;meros editados (Packs)",
+            # Pack: alt/título = SOLO el nombre de la serie (sin nº de tomo),
+            # fiel al HTML real (alt="Kaiju Nº8", sin marcador de volumen).
+            '<td><table class="ventana_id1" style="width: 184px;"><tr><td class="cen">'
+            '<img class="portada" src="https://static.listadomanga.com/kaijupack.jpg" alt="Kaiju Nº8"/>'
+            '<div style="height: 8px"></div>'
+            'Kaiju Nº8<br/>'
+            'Cofre especial tomos 1 a 3 + 3 postales exclusivas<br/>'
+            '608 p&aacute;ginas en B/N<br/>'
+            '25,50 €<br/>'
+            '29 <a href="novedades.php">Noviembre 2023</a>'
+            '</td></tr></table></td><td class="separacion"></td>',
+        ),
+        title="Kaiju Nº8",
+        publisher="Planeta Cómic",
+    )
+    cands = lmc.parse_collection_page(html, 4139)
+    assert len(cands) == 2
+    especial = next(c for c in cands if "especial-" in c.url)
+    pack = next(c for c in cands if "pack-" in c.url)
+    assert especial.volume == "16", f"vol del tomo, no de la serie: {especial.volume!r}"
+    assert "especial-16-" in especial.url
+    # El pack no tiene nº de tomo propio → SIN volumen (no el 8 de la serie).
+    assert getattr(pack, "volume", "") in ("", None)
+    assert "pack-0-" in pack.url
+
+
+def test_lmc_inline_cofre_in_regular_section_emitted_as_box():
+    """Cofre listado INLINE dentro de 'Números editados' de una colección
+    NO premium ('Cofre de 2 tomos', caso real Boichi cole 6240): antes la
+    sección entera se descartaba y el cofre solo existía vía el calendario
+    plano legacy. Ahora se emite SOLO el cofre (kind=box); los tomos
+    regulares siguen descartados (prueba 2026-06-11)."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Boichi: Historias cortas", image_id="tomo1"),
+            _lmc_item(2, "Boichi: Historias cortas", image_id="tomo2"),
+            _lmc_item(0, "Boichi: Historias cortas",
+                      desc_extra="Cofre de 2 tomos",
+                      price="20,00 €", image_id="boicofre"),
+        ),
+        # Formato NO premium (rústica estándar) → sección regular gateada.
+        formato="Tomo B6 (130x180) r&uacute;stica (tapa blanda) con sobrecubierta",
+        title="Boichi: Historias cortas de ciencia ficci&oacute;n",
+        publisher="Milky Way Ediciones",
+    )
+    cands = lmc.parse_collection_page(html, 6240)
+    assert len(cands) == 1, f"solo el cofre debe emitirse, got {[c.title for c in cands]}"
+    box = cands[0]
+    assert "Cofre de 2 tomos" in box.title
+    assert "edition:box" in box.tags
+    assert "&item=box-" in box.url
+    lmc.score_candidate(box)
+    assert "box_set" in box.signal_types
+
+
+def test_lmc_regular_section_without_premium_and_without_cofre_still_dropped():
+    """Anti-regresión del gate: la sección regular sin premium y SIN cofres
+    inline sigue descartada entera (no inundar con tomos estándar)."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            _lmc_item(1, "Serie Normal", image_id="t1"),
+            _lmc_item(2, "Serie Normal", image_id="t2"),
+        ),
+        formato="Tomo B6 (130x180) r&uacute;stica (tapa blanda) con sobrecubierta",
+        title="Serie Normal",
+        publisher="Editorial X",
+    )
+    assert lmc.parse_collection_page(html, 99010) == []
 
 
 def test_normalize_url_strips_amazon_affiliate_params():
@@ -10241,3 +10358,128 @@ def test_should_reject_title_junk_always_rejected():
         item_raw = {"title": "x"}
         assert _fc.should_reject(item_raw, is_coll=False, reason=reason) is True, \
             f"Hard gate {reason!r} debería rechazar siempre (sin estandarizar)"
+
+
+# --- Tabla determinística de edition_slug + series duplicadas (gotchas #69/#70) ---
+
+
+def test_edition_slug_from_text_jp_type_terms():
+    """限定版/特装版/同梱版/愛蔵版/完全版 mapean SIEMPRE al mismo slug (gotcha #69).
+
+    El LLM traducía 限定版 a veces como "limited" y a veces como "special",
+    partiendo la misma edición en dos edition_keys. La tabla es la autoridad.
+    """
+    assert mw.edition_slug_from_text("鬼滅の刃 23 限定版") == "limited"
+    assert mw.edition_slug_from_text("宇宙兄弟(39) 画集付き特装版") == "special"
+    assert mw.edition_slug_from_text("SPY×FAMILY 13巻 シール付き同梱版") == "special"
+    assert mw.edition_slug_from_text("AKIRA 愛蔵版 1") == "deluxe"
+    assert mw.edition_slug_from_text("ドラゴンボール完全版 5") == "kanzenban"
+    # 初回限定特装版: contiene 限定 pero NO 限定版 consecutivo → gana 特装版.
+    assert mw.edition_slug_from_text("ホリミヤ 6巻 初回限定特装版") == "special"
+
+
+def test_edition_slug_from_text_western_terms_and_named_priority():
+    """Términos occidentales + las ediciones NOMBRADAS ganan sobre el tipo."""
+    assert mw.edition_slug_from_text("Naruto Edición Limitada 12") == "limited"
+    assert mw.edition_slug_from_text("Berserk Deluxe Volume 1") == "deluxe"
+    assert mw.edition_slug_from_text("Slam Dunk édition limitée t.5") == "limited"
+    # Edición nombrada (Maximum/Ultimate/…) gana sobre el término de tipo.
+    assert mw.edition_slug_from_text("Berserk Maximum edición limitada 3") == "maximum"
+    # Sin término → "" (el caller decide el fallback).
+    assert mw.edition_slug_from_text("Naruto tomo 12") == ""
+    assert mw.edition_slug_from_text("") == ""
+
+
+def test_refine_edition_slug_title_term_wins_even_without_tier():
+    """El término del título manda aunque no haya signal_types (tier vacío)."""
+    assert mw._refine_edition_slug("", "ブルースカイコンプレックス10 初回限定小冊子付特装版", "ja", "") == "special"
+    assert mw._refine_edition_slug("limited", "Landreaall(31)特装版 小冊子付き", "ja", "ichijinsha") == "special"
+    # Sin término ni tier → regular (comportamiento previo preservado).
+    assert mw._refine_edition_slug("", "Naruto tomo 12", "es", "planeta") == "regular"
+
+
+def test_aggressive_series_norm_collapses_mechanical_variants():
+    """Variantes mecánicas del slug colapsan; series distintas NO (gotcha #70)."""
+    from series_aliases import aggressive_series_norm as agg
+
+    # Artículo "The" inicial
+    assert agg("the-apothecary-diaries") == agg("apothecary-diaries")
+    # Apóstrofe slugificado
+    assert agg("hell-s-paradise") == agg("hells-paradise")
+    assert agg("kuroko-s-basketball") == agg("kurokos-basketball")
+    # Vocales largas del romaji
+    assert agg("kumichou-musume-to-sewagakari") == agg("kumicho-musume-to-sewagakari")
+    assert agg("senryu-shoujo") == agg("senryu-shojo")
+    # NO fuzzy: series genuinamente distintas no colisionan
+    assert agg("demon-slave") != agg("demon-slayer")
+    assert agg("naruto-gaiden") != agg("naruto")
+    assert agg("one-piece-red") != agg("one-piece")
+    # "the" solo como artículo INICIAL, no como prefijo de palabra
+    assert agg("theo-the-cat") != agg("o-the-cat")
+
+
+def test_canonical_series_key_aggressive_fallback():
+    """El fallback agresivo resuelve variantes mecánicas hacia la canónica."""
+    from series_aliases import canonical_series_key
+
+    # "the-" + canónica real del YAML
+    key, display = canonical_series_key("", "the-demon-slayer", "")
+    assert key == "demon-slayer"
+    assert display == "Demon Slayer"
+    # Sin match → intacto
+    key, _ = canonical_series_key("", "serie-totalmente-inventada-xyz", "")
+    assert key == "serie-totalmente-inventada-xyz"
+
+
+def test_rebuild_edition_key_prefix_realigns_stale_series():
+    """El prefijo del edition_key se re-arma con el series_key actual (gotcha #71)."""
+    # serie traducida/alias en la key vieja → re-alinear
+    assert mw.rebuild_edition_key_prefix(
+        "pokemon-sol-luna-norma-special-es", "pokemon-sun-moon"
+    ) == "pokemon-sun-moon-norma-special-es"
+    # key MENOS específica que el series_key → refinar (dirección segura)
+    assert mw.rebuild_edition_key_prefix(
+        "hakuoki-kadokawa-fanbook-jp", "hakuoki-shinkai"
+    ) == "hakuoki-shinkai-kadokawa-fanbook-jp"
+    # repetición mecánica del final del series_key → colapsar
+    assert mw.rebuild_edition_key_prefix(
+        "takumi-kun-series-series-kadokawa-anniversary-jp", "takumi-kun-series"
+    ) == "takumi-kun-series-kadokawa-anniversary-jp"
+    # publisher de dos tokens (ivrea-ar) se preserva entero
+    assert mw.rebuild_edition_key_prefix(
+        "old-series-name-ivrea-ar-special-ar", "new-series"
+    ) == "new-series-ivrea-ar-special-ar"
+    # sufijo -cN de colisión de coleccion se preserva
+    assert mw.rebuild_edition_key_prefix(
+        "vieja-serie-norma-special-es-c123", "serie-nueva"
+    ) == "serie-nueva-norma-special-es-c123"
+    # ya alineado → None (no tocar)
+    assert mw.rebuild_edition_key_prefix("berserk-panini-deluxe-it", "berserk") is None
+    # slug fuera del allowlist → None (no parseable, mejor no tocar)
+    assert mw.rebuild_edition_key_prefix(
+        "the-book-of-wind-panini-taniguchi-it", "jiro-taniguchi-collection"
+    ) is None
+    # publisher NO reconocido → None (mutilaría "panini-standard" → "standard")
+    assert mw.rebuild_edition_key_prefix(
+        "death-note-panini-standard-variant-it", "death-note"
+    ) is None
+    # extra que es un DISTINGUIDOR legítimo (obra distinta de la franquicia,
+    # sin volumen) → None: fusionarlo mezclaría productos distintos
+    assert mw.rebuild_edition_key_prefix(
+        "danganronpa-1-2-reload-kadokawa-artbook-jp", "danganronpa"
+    ) is None
+
+
+def test_fix_title_edition_words():
+    """Colapsa SOLO palabras de edición duplicadas y saca 'Regular' en regulares."""
+    from scripts.retrofit.fix_title_edition_words import fix_title
+
+    assert fix_title("5 Elementos Artbook Artbook", "artbook") == "5 Elementos Artbook"
+    assert fix_title("Trigun Maximum Maximum 2", "maximum") == "Trigun Maximum 2"
+    # título legítimo con palabra repetida NO-de-edición → intacto
+    assert (fix_title("Dead Dead Demon's Dededede Destruction 1", "regular")
+            == "Dead Dead Demon's Dededede Destruction 1")
+    # 'Regular' sobra en ediciones regular
+    assert fix_title("Noragami Regular 27", "regular") == "Noragami 27"
+    # ...pero se conserva si la edición NO es regular
+    assert fix_title("Foo Regular Edition 3", "special") == "Foo Regular Edition 3"
