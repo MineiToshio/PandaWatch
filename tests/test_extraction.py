@@ -745,7 +745,6 @@ def test_schema_extracts_basic_product():
     assert s["image_url"] == "https://cdn.example.com/cover.jpg"
     assert s["isbn"] == "9781506702216"
     assert s["author"] == "Kentaro Miura"
-    assert s["price"] == "$ 49.99"
     assert s["release_date"] == "2024-06-15"
     assert "Tapa dura" in s["description"]
 
@@ -767,7 +766,7 @@ def test_schema_handles_offers_list():
     ]}
     </script></body></html>"""
     s = mw.extract_schema_org_product(make_soup(html), "https://example.com/")
-    assert s["price"] == "€ 19.99"
+    assert s["name"] == "x"
 
 
 def test_schema_handles_graph_wrapper():
@@ -1050,7 +1049,6 @@ def test_listadomanga_detail_extracts_image_and_price():
 
     meta = lm.fetch_detail_metadata("https://www.listadomanga.es/coleccion.php?id=1", FakeSession())
     assert meta["image_url"] == "https://static.listadomanga.com/abc123.jpg"
-    assert "9,95" in meta["price"]
     assert "Formato" in meta["description_extra"]
 
 
@@ -1084,8 +1082,6 @@ def test_listadomanga_detail_skips_image_when_multi_volume():
     meta = lm.fetch_detail_metadata("https://www.listadomanga.es/coleccion.php?id=1", FakeSession())
     # NO debería devolver imagen — la colección tiene 2 tomos y no sabemos cuál.
     assert meta["image_url"] == ""
-    # Pero precio sí (es info de la página, no de un item específico).
-    assert "9,95" in meta["price"]
 
 
 def test_listadomanga_detail_empty_when_no_data():
@@ -1099,7 +1095,6 @@ def test_listadomanga_detail_empty_when_no_data():
         def get(self, url, **kw): return FakeResponse()
     meta = lm.fetch_detail_metadata("https://x.com/x", FakeSession())
     assert meta["image_url"] == ""
-    assert meta["price"] == ""
 
 
 # --- Search discovery (Google CSE + DDG) ------------------------------------
@@ -2499,7 +2494,6 @@ def test_extract_label_value_pairs_li_span_structure():
     assert pairs.get("author") == "Koyoharu GOTŌGE"
     assert pairs.get("publisher") == "Panini manga"
     assert pairs.get("release_date") == "mer. 30 mars 2022"
-    assert pairs.get("price") == "15,58 EUR"
     assert pairs.get("isbn") == "9791039105101"
 
 
@@ -4003,19 +3997,17 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
         "edition_key": "berserk-darkhorse-deluxe",
         "edition_display": "Deluxe Edition (Dark Horse)",
         "volume": "1",
-        "price": "USD 39.99",
         "standardized_at": "2026-05-22T10:00:00+00:00",
         "detected_at": "2026-05-22",
     }])
 
-    # Re-scrape: title scrapeado raw + price actualizado + image nueva
+    # Re-scrape: title scrapeado raw
     mw.append_jsonl(path, [{
         "url": "https://example.com/a",
         "title": "Berserk Vol. 1 Deluxe Hardcover Edition",
         "series_key": "berserk-1",  # heurístico crudo del scraper, peor que el canónico
         "edition_key": "berserk-1-darkhorse-special",
         "volume": "",  # scraper no detecta vol
-        "price": "USD 44.99",  # subió
         "detected_at": "2026-06-01",
     }])
 
@@ -4029,8 +4021,6 @@ def test_append_jsonl_preserves_curated_fields_on_standardized_items(tmp_path):
     assert it["edition_key"] == "berserk-darkhorse-deluxe"
     assert it["volume"] == "1"
     assert it["standardized_at"] == "2026-05-22T10:00:00+00:00"
-    # Scrapeados refrescados:
-    assert it["price"] == "USD 44.99"
     # detected_at es la PRIMERA detección: el re-scrape NO la resetea (gotcha #65).
     assert it["detected_at"] == "2026-05-22"
     # cluster_key se re-deriva con los campos curados restaurados → tier edition:
@@ -4069,7 +4059,6 @@ def test_append_jsonl_rescrape_does_not_degrade_standardized_rows(tmp_path):
         "score": 40,
         "signals": [],
         "signal_types": ["manga"],
-        "price": "USD 49.99",
     }])
 
     items = [json.loads(l) for l in path.open()]
@@ -4083,8 +4072,6 @@ def test_append_jsonl_rescrape_does_not_degrade_standardized_rows(tmp_path):
     # Invariante CLKEY: stored == derive_cluster_key(item), en tier edition:
     assert it["cluster_key"] == "edition:berserk-darkhorse-deluxe-us|1"
     assert it["cluster_key"] == mw.derive_cluster_key(it)
-    # Lo volátil sí refresca:
-    assert it["price"] == "USD 49.99"
 
 
 def test_append_jsonl_slug_sticky_on_raw_rows(tmp_path):
@@ -4165,7 +4152,7 @@ def test_is_approved_helper():
 
 def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
     """Un item aprobado (golden record) congela TODA la metadata descriptiva
-    en re-scrapes; sólo los campos volátiles de mercado (price, stock_type,
+    en re-scrapes; sólo los campos volátiles de mercado (stock_type,
     sources, detected_at) se refrescan. No depende de standardized_at."""
     path = tmp_path / "items.jsonl"
     mw.append_jsonl(path, [{
@@ -4174,21 +4161,19 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
         "series_key": "berserk",
         "edition_key": "berserk-darkhorse-deluxe",
         "volume": "1",
-        "price": "USD 39.99",
         "stock_type": "in_stock",
         "approved_at": "2026-06-01T10:00:00+00:00",
         "approved_by": "owner",
         "detected_at": "2026-06-01",
     }])
 
-    # Re-scrape trae metadata "peor" + precio/stock nuevos.
+    # Re-scrape trae metadata "peor" + stock nuevo.
     mw.append_jsonl(path, [{
         "url": "https://example.com/a",
         "title": "Berserk Vol 1 raw scraped junk",
         "series_key": "berserk-1",
         "edition_key": "berserk-1-special",
         "volume": "",
-        "price": "USD 49.99",
         "stock_type": "limited",
         "detected_at": "2026-07-01",
     }])
@@ -4201,7 +4186,6 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
     assert it["volume"] == "1"
     assert it["approved_at"] == "2026-06-01T10:00:00+00:00"
     # Info de mercado REFRESCADA:
-    assert it["price"] == "USD 49.99"
     assert it["stock_type"] == "limited"
     assert it["detected_at"] == "2026-07-01"
 
@@ -4564,11 +4548,8 @@ def test_manga_mexico_parse_catalog_extracts_items():
     # Cada item tiene URL única para no colapsar en dedup.
     urls = [i.url for i in items]
     assert len(set(urls)) == len(urls)
-    # Precios
-    by_title = {i.title: i for i in items}
-    assert by_title["Chainsaw Man"].price == "$169 MXN"
-    assert by_title["Akame Ga Kill"].price == ""  # finalizado, no precio actual
     # Tags con metadata extraída
+    by_title = {i.title: i for i in items}
     cm = by_title["Chainsaw Man"]
     assert any(t.startswith("status:") for t in cm.tags)
     assert any(t.startswith("periodicity:") for t in cm.tags)
@@ -5076,7 +5057,6 @@ def test_socialanime_parse_variant_item_basic():
     assert cand.url == "https://www.amazon.it/dp/8822607155?tag=socianim0c-21"
     assert cand.publisher == "Star Comics"
     assert cand.author == "One"
-    assert cand.price == "4.9"
     assert cand.country == "Italia"
     assert cand.language == "Italiano"
     assert cand.source == "IT - SocialAnime Variant"
@@ -5222,7 +5202,6 @@ def test_blogbbm_parses_layout_a_capas_variantes():
     # Genshiken
     assert "Genshiken" in g.title
     assert g.publisher == "JBC"
-    assert g.price.startswith("R$11,90")  # tolera punto final del prose
     assert g.release_date == "2014-01"
     assert "genshiken06b" in g.image_url  # variant cover preferida sobre normal
     assert "variant_cover" in g.signal_types
@@ -5819,8 +5798,6 @@ def test_lmc_parses_ediciones_especiales_section():
     assert "especial-41" in cands[0].url
     assert "especial-42" in cands[1].url
     assert all("special_edition" in c.signal_types for c in cands)
-    assert cands[0].price == "€ 25.00"
-    assert cands[1].price == "€ 35.00"
     assert cands[0].release_date == "2023-03-23"
 
 
@@ -6224,25 +6201,59 @@ def test_dedup_synthetic_source_is_cole_qualified():
 def test_fix_edition_key_anomalies():
     """Normaliza dos anomalías del edition_key (validate_corpus COLED/PAIS):
     (A) `panini-es`→`panini` (país no va en el slug de editorial, sino en el sufijo);
-    (B) `-xx` (país desconocido) → país inferido SÓLO de editoriales mono-país
-    (norma→es, pika→fr, star→it, viz→us); ambiguas (panini/kodansha/unknown)→xx."""
+    (B) `-xx` (país desconocido) → país inferido por tier: source country →
+    grupo de registro ISBN → editorial mono-país (norma→es, pika→fr, star→it,
+    viz→us); sin evidencia (panini/kodansha/unknown sin ISBN) → xx."""
     from retrofit.fix_edition_key_anomalies import _fix_ek, _publisher_slug
+
+    def ek(it):
+        return _fix_ek(it)[0]
+
     assert _publisher_slug("fruits-basket-norma-collector-xx") == "norma"
     # (A) panini-es bug
-    assert _fix_ek({"edition_key": "berserk-panini-es-special-es"}) == "berserk-panini-special-es"
-    assert _fix_ek({"edition_key": "marvel-miau-panini-es-deluxe-es"}) == "marvel-miau-panini-deluxe-es"
+    assert ek({"edition_key": "berserk-panini-es-special-es"}) == "berserk-panini-special-es"
+    assert ek({"edition_key": "marvel-miau-panini-es-deluxe-es"}) == "marvel-miau-panini-deluxe-es"
     # (B) xx inferible por editorial mono-país
-    assert _fix_ek({"edition_key": "i-am-a-hero-norma-collector-xx"}) == "i-am-a-hero-norma-collector-es"
-    assert _fix_ek({"edition_key": "nodame-cantabile-pika-deluxe-xx"}) == "nodame-cantabile-pika-deluxe-fr"
-    assert _fix_ek({"edition_key": "vinland-saga-star-variant-xx"}) == "vinland-saga-star-variant-it"
-    # (B) xx ambiguo / unknown → NO se toca (no inventamos país)
-    assert _fix_ek({"edition_key": "berserk-panini-master-xx"}) is None
-    assert _fix_ek({"edition_key": "black-clover-unknown-variant-xx"}) is None
+    assert ek({"edition_key": "i-am-a-hero-norma-collector-xx"}) == "i-am-a-hero-norma-collector-es"
+    assert ek({"edition_key": "nodame-cantabile-pika-deluxe-xx"}) == "nodame-cantabile-pika-deluxe-fr"
+    assert ek({"edition_key": "vinland-saga-star-variant-xx"}) == "vinland-saga-star-variant-it"
+    # (B) xx ambiguo / unknown SIN ISBN → NO se toca (no inventamos país)
+    assert ek({"edition_key": "berserk-panini-master-xx"}) is None
+    assert ek({"edition_key": "black-clover-unknown-variant-xx"}) is None
     # (B) source con country explícito gana sobre la editorial
-    assert _fix_ek({"edition_key": "x-panini-special-xx",
-                    "sources": [{"country": "España"}]}) == "x-panini-special-es"
+    assert ek({"edition_key": "x-panini-special-xx",
+               "sources": [{"country": "España"}]}) == "x-panini-special-es"
     # idempotente: ya correcto → None
-    assert _fix_ek({"edition_key": "berserk-panini-special-es"}) is None
+    assert ek({"edition_key": "berserk-panini-special-es"}) is None
+
+
+def test_fix_edition_key_isbn_country_tier():
+    """Tier ISBN→país: el grupo de registro del ISBN identifica el país de la
+    edición (978-84=es, 978-3=de, 978-612=pe, 607 ISBN-10=mx). Grupos
+    anglófonos (978-0/1) NO se mapean (US/UK ambiguo)."""
+    from retrofit.fix_edition_key_anomalies import _fix_ek, _isbn_country
+
+    assert _isbn_country("9788467961171") == "es"
+    assert _isbn_country("9783741648014") == "de"
+    assert _isbn_country("9786124854439") == "pe"
+    assert _isbn_country("6075785124") == "mx"       # ISBN-10
+    assert _isbn_country("978-88-345-2342-1") == "it"  # con guiones
+    assert _isbn_country("9791032710561") == "fr"      # 979-10
+    assert _isbn_country("9780123456789") == ""        # anglófono: ambiguo
+    assert _isbn_country("9781974736811") == ""
+    assert _isbn_country("") == ""
+    assert _isbn_country("no-isbn") == ""
+
+    # Integración: panini multi-país se resuelve vía ISBN alemán
+    new, country = _fix_ek({"edition_key": "berserk-panini-master-xx",
+                            "isbn": "9783741648014"})
+    assert new == "berserk-panini-master-de"
+    assert country == "de"
+    # source country explícito le gana al ISBN
+    new, _ = _fix_ek({"edition_key": "x-panini-special-xx",
+                      "isbn": "9783741648014",
+                      "sources": [{"country": "Italia"}]})
+    assert new == "x-panini-special-it"
 
 
 def test_unify_coleccion_cross_source_cole():
@@ -7525,7 +7536,6 @@ def test_mangapassion_parse_volume_basic():
     assert cand is not None
     assert cand.title == "My Tiny Senpai Band 1 – Limited Edition"
     assert cand.publisher == "Dokico"
-    assert cand.price == "19.00 €"
     assert cand.release_date == "2025-01-07"
     assert cand.isbn == "9783987450440"
     assert cand.image_url == "https://media.manga-passion.de/volume/cover/test.jpg"
@@ -7732,7 +7742,6 @@ def test_animeclick_parse_detail_page_extracts_all_fields():
     assert result["title"] == "100 Metres - Hyakuemu Variant MangaYo! 1"
     assert result["release_date"] == "2025-05-14"
     assert result["publisher"] == "MangaYo!"
-    assert "5,99" in result["price"]
     assert "velocista" in result["description"]
 
 
@@ -8260,7 +8269,6 @@ def test_prhcomics_parse_hardcover_collector():
     assert cand is not None
     assert "Mushishi" in cand.title
     assert cand.isbn == "9798888776346"
-    assert cand.price == "$34.99 US"
     assert cand.author == "Yuki Urushibara"
     assert cand.release_date == "2026-05-19"
     assert cand.image_url == "https://images.penguinrandomhouse.com/cover/9798888776346"
@@ -8278,7 +8286,6 @@ def test_prhcomics_parse_boxset_injects_box_set_hint():
     assert "Box Set" in cand.description
     assert cand.isbn == "9798888774359"
     assert cand.release_date == "2024-11-05"
-    assert cand.price == "$249.99 US"
 
 
 def test_prhcomics_parse_regular_paperback_returns_none():
@@ -9729,7 +9736,6 @@ def test_viz_parse_product_page():
     assert meta is not None
     assert meta["title"] == "Vagabond Definitive Edition, Vol. 5"
     assert meta["isbn"] == "9781974761920"
-    assert meta["price"] == "$55.00"
     # Cover is the real product image, not the placeholder
     assert meta["cover_url"].endswith("/products/1974761924.png")
 
@@ -10483,3 +10489,87 @@ def test_fix_title_edition_words():
     assert fix_title("Noragami Regular 27", "regular") == "Noragami 27"
     # ...pero se conserva si la edición NO es regular
     assert fix_title("Foo Regular Edition 3", "special") == "Foo Regular Edition 3"
+
+
+def test_rescore_skips_standardized_items(tmp_path):
+    """Gotcha #61: rescore NO recomputa señales de items con `standardized_at`
+    (el texto estandarizado ya no contiene los keywords → lavaría señales).
+    El pipeline canónico corre rescore blanket, así que el guard es estructural."""
+    import subprocess, sys as _sys
+    std = {
+        "title": "Yawara! Ultimate 18", "url": "https://x.test/yawara-18",
+        "description": "", "signal_types": ["deluxe"], "score": 60,
+        "product_type": "manga", "standardized_at": "2026-06-01T00:00:00Z",
+        "slug": "yawara-ultimate-18",
+    }
+    raw = {
+        "title": "Berserk Deluxe Edition Vol 1", "url": "https://x.test/berserk-1",
+        "description": "oversized deluxe hardcover", "signal_types": [],
+        "score": 0, "product_type": "", "slug": "berserk-deluxe-1",
+    }
+    src = tmp_path / "items.jsonl"
+    src.write_text("\n".join(json.dumps(x) for x in (std, raw)) + "\n")
+    out = tmp_path / "out.jsonl"
+    res = subprocess.run(
+        [_sys.executable, "scripts/retrofit/rescore.py",
+         "--input", str(src), "--output", str(out)],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[1]))
+    assert res.returncode == 0, res.stderr
+    rows = {json.loads(l)["url"]: json.loads(l) for l in out.read_text().splitlines()}
+    # el estandarizado conserva sus señales intactas (no se recomputó)
+    assert rows["https://x.test/yawara-18"]["signal_types"] == ["deluxe"]
+    assert rows["https://x.test/yawara-18"]["score"] == 60
+    # el item raw SÍ se re-scoreó (detect_signals ve 'deluxe' en su texto)
+    assert "deluxe" in (rows["https://x.test/berserk-1"]["signal_types"] or [])
+
+
+def test_clean_author_strips_baked_labels():
+    """El campo author no debe traer el label de la fuente horneado
+    ('Autori: Kentaro Miura' → 'Kentaro Miura'). candidate_to_json lo aplica
+    siempre; nombres que EMPIEZAN como un label ('Byron', 'Diana') no se tocan."""
+    assert mw.clean_author("Autori: Kentaro Miura") == "Kentaro Miura"
+    assert mw.clean_author("Autor: Eiichiro Oda") == "Eiichiro Oda"
+    assert mw.clean_author("Author: Naoki Urasawa") == "Naoki Urasawa"
+    assert mw.clean_author("by: CLAMP") == "CLAMP"
+    assert mw.clean_author("著者：尾田栄一郎") == "尾田栄一郎"
+    # doble label anidado
+    assert mw.clean_author("Author: Autori: Kentaro Miura") == "Kentaro Miura"
+    # nombres legítimos que empiezan con palabras tipo label, SIN dos puntos
+    assert mw.clean_author("Byron Smith") == "Byron Smith"
+    assert mw.clean_author("Diana Gabaldon") == "Diana Gabaldon"
+    assert mw.clean_author("Kentaro Miura") == "Kentaro Miura"
+    assert mw.clean_author("") == ""
+
+
+def test_extract_squareenix_rsc_payload():
+    """Square Enix US release-calendar es una app Next.js RSC: el catálogo vive
+    en el payload __next_f dentro de <script>, no en el DOM (que solo muestra el
+    mes actual). El extractor dedicado parsea el payload completo y NO depende
+    de Playwright. Registrado en _SITE_EXTRACTORS por dominio."""
+    products = json.dumps([
+        {"slug": "9781646090266", "title": "Soul Eater: The Perfect Edition, Volume 1",
+         "releaseMonth": "July 2026", "coverArt": {"image": "manga-books/abc/soul1.jpg"}},
+        {"slug": "9781646090274", "title": "A Man and His Cat, Volume 1",
+         "releaseMonth": "February 2020", "coverArt": {"image": ""}},
+        {"slug": "", "title": "sin slug — se descarta"},
+    ])
+    inner = json.dumps('x:"products":' + products + ',"other":1')
+    html = f'<html><body><script>self.__next_f.push([1,{inner}])</script></body></html>'
+    src = mw.Source(name="US - Square Enix Manga Coming Soon",
+                    url="https://squareenixmangaandbooks.square-enix-games.com/en-us/release-calendar",
+                    country="Estados Unidos", language="Inglés",
+                    publisher="Square Enix Manga & Books", source_class="official",
+                    kind="html")
+    info = {}
+    cands = mw.extract_squareenix_rsc(src, html, 50, info)
+    assert info["extraction_method"] == "sqex-rsc"
+    assert len(cands) == 2
+    assert cands[0].title.startswith("Soul Eater: The Perfect Edition")
+    assert cands[0].url.endswith("/en-us/product/9781646090266")
+    assert cands[0].release_date == "2026-07-01"
+    assert cands[0].image_url.startswith("https://fyre.cdn.sewest.net/manga-books/")
+    # el flujo genérico despacha al dedicado por dominio
+    via_generic = mw.extract_generic_html(src, html, 50, {})
+    assert len(via_generic) == 2
+    # HTML sin payload → [] silencioso (no crash)
+    assert mw.extract_squareenix_rsc(src, "<html><body>nada</body></html>", 50, {}) == []
