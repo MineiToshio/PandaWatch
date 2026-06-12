@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-12.
 >
 > ⚠️ NO confundir con **JP - Square Enix Comics** (Japón, `magazine.jp.square-enix.com`),
 > que se documenta aparte. Esta ficha es la fuente de **Estados Unidos**.
@@ -22,8 +22,8 @@
 | **País** | Estados Unidos |
 | **Idioma** | Inglés (EN) |
 | **Cobertura** | Calendario de próximos lanzamientos (coming soon) de Square Enix Manga & Books en EE. UU. |
-| **Aporte al corpus** | 0 items (al 2026-06-08) |
-| **Parser / módulo** | Entrada en `sources.yml` (sin parser propio; extractor genérico de HTML) |
+| **Aporte al corpus** | 0 items históricos; el extractor RSC nuevo (2026-06-12) ve ~488 productos (~32-36 especiales: Perfect Editions, artbooks FF, Material Ultimania, picture books) |
+| **Parser / módulo** | `extract_squareenix_rsc` en `manga_watch.py` (extractor DEDICADO, registrado en `_SITE_EXTRACTORS` por dominio) |
 
 **Editoriales que abarca**: Square Enix Manga & Books (sello propio de Square Enix en EE. UU.).
 
@@ -101,3 +101,23 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **0 candidatos con el extractor genérico (detectado 2026-06-12)**: la página es una
+  app **Next.js App Router (RSC)**. El DOM solo renderiza ~10 items del mes visible;
+  el catálogo COMPLETO (~488 productos, todos los meses) viene embebido en el payload
+  `__next_f` (React Server Components wire format) dentro de `<script>` sin `type` —
+  exactamente lo que `extract_generic_html` descarta al decomponer scripts. Ni
+  `selectors:` ni `kind: js` sirven (Playwright también vería solo el mes visible).
+- **FIX (2026-06-12)**: extractor dedicado `extract_squareenix_rsc` — concatena los
+  `self.__next_f.push([1,"…"])`, localiza el array `"products":`, y emite candidatos
+  con title/url (`/en-us/product/<slug>` — el slug ES el ISBN-13)/cover (CDN
+  `fyre.cdn.sewest.net`)/release_date ("July 2026" → `2026-07-01`). SIN Playwright.
+  Falla silenciosa a `[]` si Square Enix cambia el build (cae al flujo genérico).
+  Registrado en `_SITE_EXTRACTORS` (hook por dominio en `extract_generic_html`).
+  Test: `test_extract_squareenix_rsc_payload`. `purity: manga_only` agregado (sello
+  100% manga/artbooks — los artbooks sin la palabra "manga" pasan igual).
+- **Riesgos**: estructura del payload puede cambiar con un rebuild de Next.js
+  (mitigado: 0 items + extraction_method `sqex-rsc-no-products` en el diagnóstico);
+  CDN de portadas puede cambiar (solo rompería imágenes, no títulos/URLs).

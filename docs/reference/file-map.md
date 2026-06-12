@@ -55,7 +55,8 @@ scripts/
   script_registry.py         — fuente única del Panel de Control. Agregás un script
                                acá, aparece en la UI.
   run_local.sh / serve.sh    — lanzan serve.py en :8000.
-  scrape_delta.sh            — ⭐ CANÓNICO INCREMENTAL (~30-60 min, diaria/semanal).
+  scrape_delta.sh            — ⭐ CANÓNICO INCREMENTAL (~30-60 min, diaria/semanal). Lock global + [4g2] merge ISBN + PHASE 6 source_health.
+  com.pandawatch.scrape-delta.plist — LaunchAgent macOS para delta diario 3:30 AM (instrucciones dentro; NO instalado por defecto).
   scrape_full.sh             — ⭐ CANÓNICO FULL (~2-4 h, mensual/trimestral).
   overnight_run.sh           — DEPRECATED (alias de scrape_delta.sh).
   retry_failed.sh            — re-corre solo las fuentes que erraron en el último log.
@@ -96,13 +97,14 @@ scripts/
     animeclick.py              IT — edizioni speciali (AJAX semanal). Complementa socialanime.
     shueisha_books.py          JP — One Piece artbooks/databooks. Fetcher HARDCODEADO por seeds.
     viz_artbooks.py            US — ediciones especiales EN VIZ. Discovery por calendario.
+    sevenseas.py               wiki US Seven Seas: listing API WP (books) + enrich por item (media?parent + ISBN/fecha del HTML). Filtro is_special_title (sin omnibus a secas ni Mature Hardcover).
   retrofit/                  — utilidades sobre data histórica. README.md + reglas
                                de backup/flush/nohup en "Conventions" abajo.
-    rescore.py                 refresca score/signal_types/product_type (tras cambiar detectores).
+    rescore.py                 refresca score/signal_types/product_type (tras cambiar detectores). Salta approved y standardized (gotcha #61) salvo --include-*.
     clean_titles.py            re-limpia títulos.
     filter_non_manga.py        re-filtra (is_likely_manga / is_comic_not_manga / is_pure_novel).
     filter_collectible.py      2º gate: descarta tomos regulares.
-    backfill_metadata.py       re-fetch cover/author/ISBN/price (--only X). --only images = carrusel.
+    backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.
     backfill_cluster_key.py    backfill cluster_key tras cambiar derive_cluster_key.
     consolidate_sources.py     colapsa filas del mismo cluster en 1 con sources[] (paso [4g]).
     search_discovery.py        discovery multi-engine (Gemini + Tavily + DDG).
@@ -125,12 +127,13 @@ scripts/
     generate_slugs.py          genera slug (último paso de /watch-standardize-catalog).
     set_rarity.py              aplica rarity vía derive_rarity_tier().
     apply_approvals.py         re-materializa approvals.jsonl tras reconstruir el catálogo.
-    fix_edition_key_anomalies.py  normaliza edition_key: panini-es→panini + xx→país (editorial mono-país). Enforcer 2b.
+    fix_edition_key_anomalies.py  normaliza edition_key: panini-es→panini + xx→país (tier: source country → grupo ISBN → editorial mono-país → hermano de la misma edición). Enforcer 2b.
     disambiguate_coleccion_editions.py  coleccion distinta=edición distinta: -c{cole} si edition_key colisiona (#57). Enforcer 3-0.
     collapse_baseurl_tomos.py     fusiona fila base-url phantom en su tomo sintético del mismo (cole,vol) (#56). Enforcer 3-1.
     merge_crosssource_into_lmc.py fusiona ficha de tienda (edition:) en su tomo lmc por edition_key+vol+título (#56). Enforcer 3-2.
     canonicalize_edition_slugs.py re-aplica la tabla término→slug de tipo de edición post-LLM (no-lmc) + absorbe hermanas confundibles (#69). Enforcer 3c1.
     merge_duplicate_series.py     fusiona series_keys/canónicas del YAML partidas por variantes mecánicas del slug (#70). Enforcer 3c2.
+    merge_isbn_duplicates.py   fusiona filas que comparten ISBN-13 (mismo producto físico partido por drift de edition_key o volumen vacío); ganador por approved>publisher-real>evidencia-serie-en-URL>popularidad-ek. Salta lmc/conflicto país/volumen. Invariante ISBNDUP.
     normalize_edition_publishers.py unifica por mayoría el publisher dentro de cada edition_key. Enforcer 3c3.
     fix_edition_key_prefix.py     re-alinea el prefijo de serie del edition_key con el series_key
                                vía rebuild_edition_key_prefix() (#71). Enforcer 3c4.

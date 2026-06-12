@@ -130,11 +130,11 @@ Se activa con `--bootstrap-wiki shueisha` (bypassea el loop de fuentes del YAML,
   `next_isbn` de `nav.item-btn-zenkan`); aplica el `date_cutoff` del modo delta.
 - `fetch_standalone(isbn, …)` trae cada libro suelto (sin navegación).
 - `parse_book_page(html, isbn)` arma el dict de metadata (título, autor, ISBN, fecha,
-  precio, formato, páginas, portada, next_isbn, imprint).
+  formato, páginas, portada, next_isbn, imprint).
 - `_meta_to_candidate()` construye el `Candidate`: inyecta hints en la descripción según
   `signals` (`artbook` → "Artbook."; `fanbook` → "Fanbook / Databook.") para que
   `score_candidate`/`detect_signals` deriven los `signal_types` aguas abajo, y setea
-  `image_url`, `release_date`, `price`, `author`, `isbn`.
+  `image_url`, `release_date`, `author`, `isbn`.
 - `signal_types`/`product_type` predefinidos por entrada de `SERIES`/`STANDALONE_ISBNS`:
   `artbook`, `fanbook` (databook), `magazine`, `special_edition`.
 - Gate de entrada: `score ≥ --min-score` (20) en el `flush_fn` genérico de `manga_watch.py`.

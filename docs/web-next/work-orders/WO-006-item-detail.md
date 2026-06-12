@@ -101,7 +101,6 @@ function buildItemDescription(item: Item): string {
     item.edition_display,
     item.publisher,
     item.country,
-    item.price && `${item.price}`,
     item.release_date && `Lanzamiento: ${formatDate(item.release_date)}`,
   ].filter(Boolean)
   return parts.join(' · ')
@@ -174,9 +173,6 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
         
         {/* Key purchase info */}
         <div className="space-y-1 pt-2">
-          {canonical.price && (
-            <p className="text-2xl font-bold text-[var(--accent)]">{canonical.price}</p>
-          )}
           {canonical.release_date && (
             <Typography variant="body-sm">
               Lanzamiento: {formatDate(canonical.release_date)}
@@ -335,7 +331,6 @@ const PRODUCT_TYPE_LABELS: Record<string, string> = {
 export function MetaTable({ item }: { item: Item }) {
   const rows = [
     { label: 'ISBN',            value: item.isbn && formatISBN(item.isbn) },
-    { label: 'Precio',          value: item.price },
     { label: 'Lanzamiento',     value: item.release_date && formatDate(item.release_date) },
     { label: 'Autor',           value: item.author },
     { label: 'Editorial',       value: item.publisher },
@@ -421,7 +416,6 @@ export function SourcesList({ items }: { items: Item[] }) {
           <thead>
             <tr className="text-xs text-[var(--text-tertiary)] border-b border-[var(--border)]">
               <th className="text-left py-2 pr-4">Fuente</th>
-              <th className="text-left py-2 pr-4">Precio</th>
               <th className="text-left py-2 pr-4">Fecha</th>
               <th className="text-left py-2">Stock</th>
             </tr>
@@ -439,9 +433,6 @@ export function SourcesList({ items }: { items: Item[] }) {
                     {item.source || new URL(item.url).hostname}
                     <ExternalLink size={12} />
                   </a>
-                </td>
-                <td className="py-2 pr-4 text-[var(--text-secondary)]">
-                  {item.price || '—'}
                 </td>
                 <td className="py-2 pr-4 text-[var(--text-secondary)]">
                   {item.release_date ? formatDate(item.release_date) : '—'}

@@ -27,7 +27,7 @@ configured site URL. This FRD closes those gaps.
 1. **No crawl entry points.** Without `sitemap.xml` + `robots.txt`, the ~10k item /
    edition / series pages depend entirely on incidental link discovery.
 2. **Thin content.** Only ~30% of items have a `description`; series and edition pages
-   have none. Pages that are mostly an image + a price are "thin content" — poorly
+   have none. Pages that are mostly an image + metadata are "thin content" — poorly
    ranked and useless as an LLM source.
 3. **No structured data.** Search engines and LLMs can't reliably extract the
    product/book facts (ISBN, author, publisher, price, edition type) that this catalog
@@ -100,7 +100,7 @@ configured site URL. This FRD closes those gaps.
 ### FR-6: Per-entity descriptions (content)
 - **`lib/descriptions.ts`** — deterministic template builders (D2):
   - `itemDescription(cluster)` → composed from `series_display`, `edition_display`,
-    `volume`, `publisher`, `country`, `language`, `signal_types`, `extras[]`, `price`,
+    `volume`, `publisher`, `country`, `language`, `signal_types`, `extras[]`,
     `release_date`. Prefer the stored `description` / `description_es` when present;
     fall back to the template otherwise (never empty).
   - `editionDescription(clusters)` → aggregate (volume count, publisher, country,
@@ -188,6 +188,6 @@ configured site URL. This FRD closes those gaps.
 - `lib/data.ts` — `allSeriesKeys()`, `allEditionKeys()`, `allSlugs()`,
   `clusterBySlug()`, `loadEditionClusters()`, `seriesByKey()` (all exist).
 - `items.jsonl` fields — `slug`, `series_display`, `edition_display`, `publisher`,
-  `country`, `language`, `isbn`, `author`, `price`, `release_date`, `rarity`,
+  `country`, `language`, `isbn`, `author`, `release_date`, `rarity`,
   `stock_type`, `signal_types`, `extras[]`, `image_url`/`image_local`.
 - Final production domain (D1) before go-live.

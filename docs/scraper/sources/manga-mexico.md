@@ -18,7 +18,7 @@
 | **`source_class`** | `trusted_media` |
 | **País(es)** | México (`México`) — fuente mono-país |
 | **Idioma(s)** | ES (español) |
-| **Cobertura** | Manga publicado en México por Panini México, Editorial Kamite y Editorial Vid; un `<li>` por obra con volúmenes, estado, periodicidad y precio |
+| **Cobertura** | Manga publicado en México por Panini México, Editorial Kamite y Editorial Vid; un `<li>` por obra con volúmenes, estado y periodicidad |
 | **Aporte al corpus** | ~17 items |
 | **Parser / módulo** | `scripts/wikis/manga_mexico.py` (entrada puntero en `sources.yml`) |
 
@@ -34,7 +34,7 @@ Panini México (≈16) · "Varias editoriales" (1).
 
 **Por qué importa / qué aporta de único**: es una de las pocas fuentes de
 **catálogo del mercado mexicano** con metadata estructurada por obra (volúmenes
-editados vs. abiertos en JP, estado, periodicidad, precio en MXN). Aporta
+editados vs. abiertos en JP, estado, periodicidad). Aporta
 descubrimiento de obras publicadas en México que no aparecen en fuentes ES/EU.
 
 ---
@@ -71,8 +71,8 @@ descubrimiento de obras publicadas en México que no aparecen en fuentes ES/EU.
 1. Para cada editorial habilitada, **abrir su página de catálogo** (Panini,
    Kamite, Vid).
 2. **Tomar cada `<li>`** de la lista de obras.
-3. Separar **título** y **metadata**; extraer volúmenes, estado, periodicidad,
-   precio. Saltar líneas vacías, demasiado cortas (`< 4` chars) o con título
+3. Separar **título** y **metadata**; extraer volúmenes, estado, periodicidad.
+   Saltar líneas vacías, demasiado cortas (`< 4` chars) o con título
    fuera de rango (`< 2` o `> 200` chars), y duplicados dentro de la página.
 4. Pasar el candidate por `is_likely_manga()` (rescata art books / packs,
    descarta merch); puntuar con `score_candidate()`.
@@ -80,7 +80,7 @@ descubrimiento de obras publicadas en México que no aparecen en fuentes ES/EU.
 6. **Repetir** con la siguiente editorial.
 
 **Reglas de producto que nunca se rompen:** país = México (es el de la
-editorial, no de una tienda, #46). El precio se guarda como `$X MXN`. Estos
+editorial, no de una tienda, #46). Estos
 items son de **referencia** (sin URL de compra) y eso es válido — el objetivo es
 descubrimiento, no siempre compra.
 
@@ -126,7 +126,7 @@ Parser: [`scripts/wikis/manga_mexico.py`](../../../scripts/wikis/manga_mexico.py
 ### 5.2 Qué captura el parser
 
 - `parse_catalog_page(html_text, source_url, publisher_slug)` → un `Candidate`
-  por `<li>` que pase los filtros. Le setea `publisher`, `price` y `tags`
+  por `<li>` que pase los filtros. Le setea `publisher` y `tags`
   (`status:…`, `volumes:…`, `periodicity:…`, `next_month:…`); la `description` es
   el texto completo del `<li>` (también alimenta el scoring por señales).
 - `fetch_catalog(slug, session)` baja una página de editorial y delega en
@@ -151,7 +151,7 @@ Parser: [`scripts/wikis/manga_mexico.py`](../../../scripts/wikis/manga_mexico.py
 - **`scripts/validate_corpus.py`** — gate estructural, aplica a TODO el corpus
   (sin red).
 - **Smoke test del parser** (sin tocar items.jsonl): correr el módulo
-  directamente (ver §10) y revisar que emita los `<li>` con título y precio.
+  directamente (ver §10) y revisar que emita los `<li>` con título y metadata.
 - No tiene enforcer ni retrofits dedicados (a diferencia de listadomanga), así
   que no hay prueba de idempotencia propia.
 

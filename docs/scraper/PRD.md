@@ -27,7 +27,6 @@
 | Países representados | **13** (JP, IT, FR, ES, DE, US, VN, MX, BR, TH, AR, TW, LatAm) |
 | Top países | Japón 3.758, Italia 2.182, Francia 1.295, España 1.279, Alemania 841 |
 | Cobertura ISBN | ~48% |
-| Cobertura precio | ~51% |
 | Cobertura imagen local | ~99.8% |
 | `series_aliases.yml` | 2.844 canonicals |
 | `standardized_at` | ~99.6% |
@@ -68,6 +67,7 @@ independientemente de si está disponible hoy para comprar. Las URLs de referenc
 | kinokuniya | US | Exclusivos Kinokuniya USA |
 | yenpress | US | Calendario mensual Yen Press collector's + deluxe |
 | viz | US | Catálogo completo de ediciones especiales EN vía calendario (box sets, deluxe, definitive, artbooks; cubre franquicias Shueisha en inglés) |
+| sevenseas | US | Deluxe hardcovers, box sets, collector's y LN deluxe de Seven Seas vía API WordPress (alta 2026-06-12; el mayor gap de cobertura US) |
 | shueisha | JP | Suplemento JP-native de One Piece (artbooks/databooks; el catálogo JP no es generalizable — ver SOURCES.md) |
 | whakoom | ES/LatAm | Spider 3-nivel (opt-in, Cloudflare-throttled) |
 
@@ -122,7 +122,7 @@ Mantenido vía skill `/watch-enrich-series-aliases`.
 |---|---|---|
 | **Migrate a SQLite** | Pendiente — trigger: deploy multi-usuario | Media |
 | **Image storage Fase 2** — subir espejo local a Cloudflare R2 | Pendiente — trigger: deploy | Media |
-| **Enrichment pass para items de referencia** — buscar URL de tienda para items Mangavariant/wiki sin precio | Pendiente | Baja |
+| **Enrichment pass para items de referencia** — buscar URL de tienda para items Mangavariant/wiki sin URL de compra | Pendiente | Baja |
 | **Full backfill booksprivilege** 2020–2026 (~30-40 min) | Pendiente | Baja |
 | **Translation layer** — `description_es` vía Google Translate + DeepL opcional | Implementado en `translate_descriptions.py`, no integrado al pipeline canónico aún | — |
 

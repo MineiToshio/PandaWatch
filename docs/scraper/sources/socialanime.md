@@ -137,8 +137,9 @@ API paralela a `mangavariant.py` / `otaku_calendar.py`:
 
 ### 5.2 Qué captura el parser (mapea el §3 al código)
 - `fetch_feed_pages(type)` → itera `group_no` hasta página vacía o parcial.
-- `parse_feed_item(item, type_label)` → `Candidate`; mapea `nome`/`link`/`img`/`prezzo`/
-  `editore`/`autore`/`trama`; arma la descripción con `trama` + hints de `extra_class`
+- `parse_feed_item(item, type_label)` → `Candidate`; mapea `nome`/`link`/`img`/
+  `editore`/`autore`/`trama` (`prezzo` NO — precios fuera del pipeline);
+  arma la descripción con `trama` + hints de `extra_class`
   (`variant`→"Edizione variant cover", `ristampa`, `volume_unico`) + hint de `box`
   (`"Cofanetto / box set."`). Tags: `wiki`, `socialanime`, `italia`, el `type`, y
   `sa-class:<extra_class>`.
@@ -172,12 +173,9 @@ API paralela a `mangavariant.py` / `otaku_calendar.py`:
   se descarta en `_parse_pub_date` (no se setea release_date). ✅
 - **Entries sin `link` (~10%)**: delisteadas, sin URL no se pueden dedupar → se descartan
   en `parse_feed_item`. ✅ (decisión: precisión sobre recall).
-- **Placeholder de precio `"0"` (audit 2026-06-10)**: el feed manda `prezzo: "0"` (y
-  variantes `0.00`/`0,00`/`€0`) cuando el precio es desconocido; el parser lo tomaba
-  verbatim → 238 precios corruptos en el corpus. ✅ Fix: `_normalize_price()` en
-  `socialanime.py` — cualquier valor numéricamente 0 (con o sin `€`/`EUR`, coma o
-  punto decimal) se trata como vacío; los precios reales pasan verbatim. Tests en
-  `tests/test_wiki_parser_fixes.py` (`test_sa_*`).
+- **Campo `prezzo` del feed NO se captura**: precios eliminados del pipeline
+  (decisión 2026-06-11, ver architecture.md — catálogo de descubrimiento, no
+  tracker de precios). Guard: `test_sa_parse_feed_item_never_captures_price`. ✅
 - **`box_set` sin keyword en el título**: para `type=box` se inyecta `"Cofanetto / box
   set."` en la descripción para que `detect_signals` levante la señal. ✅ (no inventa
   señales: sólo garantiza que la palabra aparezca).

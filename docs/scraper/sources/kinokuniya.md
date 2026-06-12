@@ -197,8 +197,7 @@ Parser: [`scripts/wikis/kinokuniya.py`](../../../scripts/wikis/kinokuniya.py). S
 
 ## 9. Pendientes / limitaciones conocidas
 
-- **Sin precio**: el listing no expone precio de forma estable; los items entran sin precio
-  desde esta fuente (lo puede aportar otra fuente vía merge por ISBN).
+- **Sin precio en el listing**: el precio no se extrae (PandaWatch no captura precios).
 - **Cobertura = snapshot del catálogo activo**: la página sólo muestra los exclusivos
   vigentes hoy; los exclusivos descontinuados desaparecen del listing (no hay histórico). Lo
   que ya entró al corpus persiste, pero no se descubren exclusivos pasados.

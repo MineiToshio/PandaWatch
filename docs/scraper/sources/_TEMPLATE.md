@@ -48,7 +48,7 @@ ver el snippet de §10). Recuerda: `publisher` = editorial real, NO la tienda (#
 _Cómo está armada la fuente (sin el proceso de scraping todavía):_
 
 - **Estructura de URLs / páginas**: _índice, página de producto, paginación, sitemap…_
-- **Estructura del HTML/feed**: _selectores clave, secciones, dónde está título/precio/
+- **Estructura del HTML/feed**: _selectores clave, secciones, dónde está título/
   imagen/ISBN. Si hay variantes de layout, lístalas._
 - **Identificador de producto**: _SKU, ISBN, URL canónica, o URL sintética (`?item=`, #27)._
 - **Anti-bot / quirks**: _Cloudflare, JS-rendered (#12), Brotli (#15), tracking params

@@ -42,7 +42,7 @@ oficial**, además del catálogo editorial de manga.
   - `store.kadokawa.co.jp/shop/` — tienda oficial; `c/c109050/` es la categoría de
     artbooks/fanbooks dentro de la tienda.
 - **Selectores**: ninguno definido en `sources.yml` para las 3 entradas → la captura va por
-  **auto-detección del extractor genérico** (detección de producto/precio/imagen por
+  **auto-detección del extractor genérico** (detección de producto/imagen por
   heurística, no por selectores propios).
 - **Identificador de producto**: URL canónica de la página de producto de la tienda/catálogo.
 - **Idioma / encoding**: contenido japonés (CJK). Si aparece mojibake mixto en JP, decodificar
@@ -58,7 +58,7 @@ oficial**, además del catálogo editorial de manga.
   cualquier fuente del YAML.
 - **Sin parser propio**: usan el **extractor genérico** del pipeline (label/value +
   auto-detección). NO hay módulo dedicado en `scripts/wikis/` ni retrofit específico.
-- **Sin selectores en el YAML** → la extracción de título/precio/imagen es por heurística del
+- **Sin selectores en el YAML** → la extracción de título/imagen es por heurística del
   extractor genérico.
 - **Filtros estándar**: pasan por la cascada `is_likely_manga()` y los filtros del pipeline
   (`filter_non_manga`, `filter_collectible`) como toda fuente. Al ser `official` japonesa, el

@@ -246,7 +246,7 @@ strictly to prevent autocompact thrashing.
 
 ---
 
-Last updated: 2026-06-11. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
+Last updated: 2026-06-12. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
 referencia (file map, las 7 decisiones, las 73 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.

@@ -40,7 +40,7 @@ catálogo español de Planeta llega vía ListadoManga.
   listado de productos paginado; cada producto tiene su página de detalle. El scrape
   recorre hasta `--max-pages 5` desde la URL de entrada.
 - **Estructura del HTML/feed**: sin selectores explícitos en `sources.yml` → el extractor
-  genérico usa **auto-detección de cards** (título / precio / imagen / enlace de producto).
+  genérico usa **auto-detección de cards** (título / imagen / enlace de producto).
   Layout concreto: {{pendiente: confirmar selectores reales de card y de detalle}}.
 - **Identificador de producto**: URL canónica del producto en `planetadelibros.com`
   ({{pendiente: confirmar si expone ISBN/SKU en el detalle}}).

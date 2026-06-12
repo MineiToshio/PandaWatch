@@ -160,7 +160,7 @@ antes de los wikis.
     `art-book` → `artbook` (`artbook`)
   - `fanbook` / `recipes` / `cookbook` → `fanbook` (`fanbook`)
   - sufijo `/hardcover` → `hardcover` (`special` si no había otro)
-- `fetch_product` + `parse_product_page` arman el dict (title, isbn, price, format,
+- `fetch_product` + `parse_product_page` arman el dict (title, isbn, format,
   cover_url, description); `_meta_to_candidate` lo convierte en `Candidate`, inyectando
   hints en la descripción (`hint_map`: "Box Set.", "Deluxe edition.", "Hardcover."…) para
   que `detect_signals` levante las señales aguas abajo (#10 — las señales salen del item,

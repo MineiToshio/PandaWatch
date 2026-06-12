@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-12.
 
 ---
 
@@ -101,3 +101,22 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Verificación 2026-06-12 — falsa alarma del run de mayo
+
+- El "0 candidatos / error" del run 2026-05-24 fue el fallo transitorio de greenlet
+  (`Cannot switch to a different thread`) del worker Playwright compartido (gotcha #12)
+  — NO un cambio del sitio. Verificado en vivo: 14 cards, 9 candidatos (coffrets
+  intégrale: Madoka Magica, Lodoss, Higurashi Gô…), 5 tomos regulares bien skippeados.
+  Regla: si Meian da 0 en un run full con muchas fuentes js, sospechar del worker
+  Playwright antes que del sitio.
+- **Hallazgo técnico**: el sitio es una SPA Angular que consume la API JSON
+  `https://www.anime-store.fr/api-meian/v5/` (exige header `Referer:
+  https://www.meian-editions.fr/`, si no → 403). Endpoints útiles:
+  `/v5/produits/news/` (los ~14 recientes), `/v5/licences/?cat=0&q=` (catálogo
+  completo, 161 series), `/v5/planning/` (lanzamientos futuros). Hoy Playwright
+  resuelve todo; si algún día se quiere bajar el costo de JS o ampliar cobertura
+  (la homepage solo muestra ~14 recientes), migrar a la API con ese Referer es el
+  camino — sin Playwright.
+- Selectores confirmados del DOM renderizado (no necesarios hoy, el método clusters
+  funciona): item `div.swiper-news`, title `h3`, link `a[href*='/produit/']`.

@@ -36,7 +36,7 @@ Soleil Manga (≈11) · Vega-Dupuis (≈11), entre otras.
 especiales y coleccionables del mercado francés** (coffret / collector / édition limitée /
 édition deluxe), un mercado y un idioma que ninguna otra fuente del catálogo cubre con esta
 profundidad. El planning es un calendario de salidas: trae fecha de publicación, editorial,
-tipo de edición, precio en euros, EAN (ISBN-13) e imagen de portada.
+tipo de edición, EAN (ISBN-13) e imagen de portada.
 
 ---
 
@@ -138,7 +138,7 @@ Se activa con `--bootstrap-wiki manga-sanctuary` (bypassea el loop de fuentes de
 - `parse_planning_page()` recorre los `<div>` del mes: detecta encabezados de fecha
   (`sortie-date`) y posts de producto (`post sortie`).
 - `_parse_post()` arma cada `Candidate`: título, publisher, tipo de edición (tag
-  `edition:…`), categoría (tag `type:…`), EAN→ISBN, precio (€) e imagen.
+  `edition:…`), categoría (tag `type:…`), EAN→ISBN e imagen.
 - `signal_types`/`product_type` se derivan aguas abajo (`score_candidate`, `detect_signals`)
   a partir de `title + description` (la descripción combina publisher · edición · tipo ·
   título para dar contexto coleccionable). Los tags `type:…`/`edition:…` también alimentan

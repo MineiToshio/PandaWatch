@@ -36,7 +36,7 @@ la tienda (#44).
 **mercado alemán (DACH)** y la fuente principal de **ediciones especiales alemanas** —
 Limited / Collector / Premium Editions, Sammelschuber (estuches/box sets) y Variant-Covers
 de muchas editoriales locales (altraverse, Carlsen, Egmont, Manga Cult…) que ninguna otra
-fuente del catálogo cubre. Aporta metadata muy limpia: ISBN, precio, fecha de lanzamiento
+fuente del catálogo cubre. Aporta metadata muy limpia: ISBN, fecha de lanzamiento
 y portada, todo desde una API pública.
 
 ---
@@ -58,7 +58,7 @@ y portada, todo desde una API pública.
 - **Schema de un volumen** (campos que se usan): `id`, `type`, `specialType`
   (`0`=limited/collector, `1`=Sammelschuber/box), `title` (qualifier de la edición, p. ej.
   "Limited Edition" — NO es el título de la serie), `numberDisplay` (número de tomo),
-  `price` (en **centavos** → `1900` = `19.00 €`), `year`/`month`/`day`, `isbn13`/`isbn10`,
+  `year`/`month`/`day`, `isbn13`/`isbn10`,
   `cover`, `tags[]`, `contributors[]`, y `edition{title, publishers[], sources[]}` con el
   título de la serie y la editorial.
 - **Identificador de producto**: URL canónica `https://api.manga-passion.de/volumes/{id}`,
@@ -75,7 +75,7 @@ y portada, todo desde una API pública.
    y Variant-Covers (`type=0` + tag `200`).
 2. **Paginar** cada query hasta agotar resultados (Hydra `hydra:next`).
 3. **Por cada volumen** se arma un item con: título completo (`{serie} Band {n} – {qualifier}`),
-   editorial, precio (centavos → euros), fecha, ISBN, portada y autor. Se descarta el
+   editorial, fecha, ISBN, portada y autor. Se descarta el
    volumen si no tiene `id` o si no trae título de serie (`edition.title`).
 4. Los `id` ya vistos se deduplican entre las dos queries (un volumen no entra dos veces).
 5. Se aplica el gate de score (`--min-score 20` en el pipeline): los items por debajo del
@@ -124,7 +124,7 @@ Parser: [`scripts/wikis/mangapassion.py`](../../../scripts/wikis/mangapassion.py
 
 ### 5.2 Qué captura el parser (mapea el §3 al código)
 - `parse_volume(item, type_label)` → mapea un volumen de la API a un `Candidate`. Compone
-  título, precio (centavos→€), fecha, ISBN (prefiere ISBN-13 limpio), portada y autor.
+  título, fecha, ISBN (prefiere ISBN-13 limpio), portada y autor.
 - **Señales (signal_types)** vía `detect_signals`, alimentadas con hints en alemán→inglés:
   - `specialType=1` (Sammelschuber) → inyecta `"Sammelschuber Box Set"` para levantar
     `box_set`.
@@ -166,8 +166,7 @@ Parser: [`scripts/wikis/mangapassion.py`](../../../scripts/wikis/mangapassion.py
 - **Términos en alemán fuera de los patterns de señal** — `Sammelschuber`, tags físicos
   del catálogo, no los entiende `detect_signals`. → ✅ se inyectan hints en inglés
   (`_TAG_ID_TO_HINT`, `specialType=1` → "Box Set", query variant → "Variant Cover").
-- **Precio en centavos** — `price` viene como entero de centavos (`1900` = `19.00 €`); se
-  divide entre 100. ✅
+- **Campo `price` en centavos en la API** — el API expone `price` como entero de centavos (`1900` = `19.00 €`); ya no se captura (PandaWatch no extrae precios).
 - **`title` del volumen ≠ título de serie** — el campo `title` es el qualifier de la edición
   ("Limited Edition"); la serie sale de `edition.title`. ✅
 - **`day=null` con year/month válidos (audit 2026-06-10)** — la API manda `day: null`
@@ -186,7 +185,7 @@ las dos queries se deduplican por `id` para no duplicar un volumen que matchee a
 - **Sólo dos queries** (`type=3` y `type=0`+tag `200`): captura Sonderausgaben y
   Variant-Covers, pero NO tomos regulares sin variante (por diseño — sólo interesan
   ediciones coleccionables).
-- **Sin URL de tienda**: el item de referencia trae serie/volumen/editorial/precio/ISBN
+- **Sin URL de tienda**: el item de referencia trae serie/volumen/editorial/ISBN
   pero su URL canónica es la de la API, no una tienda donde comprar. Encaja en el pendiente
   global de "enrichment pass para items de referencia".
 - {{pendiente: confirmar si los slugs de publishers nuevos/desconocidos —fallback

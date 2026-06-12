@@ -60,15 +60,6 @@ export function itemJsonLd(cluster: Cluster, slug: string) {
     ...(c.publisher && { publisher: { '@type': 'Organization', name: c.publisher } }),
     ...(c.release_date && { datePublished: c.release_date }),
     ...(c.language && { inLanguage: c.language }),
-    ...(c.price && {
-      offers: {
-        '@type': 'Offer',
-        price: String(c.price).replace(/[^\d.]/g, ''),
-        priceCurrency: 'USD', // derive from source/country where possible
-        availability: availability(c),
-        url: c.url,
-      },
-    }),
   }
 }
 
@@ -119,12 +110,6 @@ export function websiteJsonLd() {
 - **`/edition`** → `itemListJsonLd(editionName, volumes→/item/slug)` + breadcrumb.
 - **`/series`** → `itemListJsonLd(seriesName, editions→/edition/key)` + breadcrumb.
 
-### Task 4: Currency derivation (best-effort)
-
-Map `country` / source domain → currency (USA→USD, Japan→JPY, ES→EUR, etc.) in a small
-lookup; default USD with a TODO. Keep it simple — wrong-currency offers are worse than a
-documented default, so log unmapped countries.
-
 ---
 
 ## Files Created/Modified
@@ -140,8 +125,6 @@ documented default, so log unmapped countries.
 - `<JsonLd data={[...]}>` emits one `<script>` per route containing an **array** of
   schema objects. Each route inherits the layout's `[WebSite, Organization]` plus its own.
 - Item is `['Product','Book']` only when it has an ISBN; otherwise plain `Product`.
-  `Offer` is emitted only when a positive price parses (box sets without price omit it).
-- Currency derived from `country` via a lookup (Italy→EUR verified); defaults to USD.
 - **Known data artifact:** the `author` field can carry an "Autori:/Autores:" prefix from
   scraping (surfaces in the Person name). Same class as the read-more boilerplate — fix
   belongs in the Python extractor/retrofit (tracked alongside the description cleanup task).
@@ -149,8 +132,8 @@ documented default, so log unmapped countries.
 ## Acceptance Criteria
 
 - [x] Each route emits valid JSON-LD (all blocks `JSON.parse` clean; `<` escaped).
-- [x] Item with ISBN+price → `Product+Book` with full `Offer` (price/currency/availability/url).
-      Verified on `/item/jiro-taniguchi-collection-panini-deluxe-2` (94.00 EUR, InStock).
+- [x] Item with ISBN → `Product+Book` with availability/url.
+      Verified on `/item/jiro-taniguchi-collection-panini-deluxe-2`.
 - [x] Edition and series emit `CollectionPage` + `ItemList`.
 - [x] `BreadcrumbList` present on item, edition, series.
 - [x] `WebSite` (+ `SearchAction`) and `Organization` present site-wide.

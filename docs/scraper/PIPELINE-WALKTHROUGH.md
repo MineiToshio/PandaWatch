@@ -169,7 +169,7 @@ flowchart TD
     NOVEL -->|no| COMIC{"3d· is_comic_not_manga()?"}
     COMIC -->|comic occidental| D3((drop))
     COMIC -->|no| SCORE["3e· score_candidate / detect_signals"]
-    SCORE --> DETAIL["4· fetch_metadata_from_detail<br/>ISBN/precio/autor/imagen"]
+    SCORE --> DETAIL["4· fetch_metadata_from_detail<br/>ISBN/autor/imagen"]
     DETAIL --> GATE{"5· is_collectible_edition()"}
     GATE -->|tomo regular| D4((drop))
     GATE -->|sí| STATE["6· process_state (new/changed/seen)"]
@@ -228,6 +228,21 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
 - Skippeable por env var: `SKIP_SCRAPE` / `SKIP_WIKIS` / `SKIP_CLEANUP` / `SKIP_BUILD`.
 - `_run_timed` (timeout portable) por fuente — una colgada no bloquea el resto.
 - Backup de `items.jsonl` antes de tocar (`backup_and_rotate`, 3 copias).
+- **Lock global `data/.scrape.lock`** (2026-06-12): mkdir atómico + PID; una segunda
+  corrida (delta o full) aborta sola en vez de corromper items.jsonl. Lock stale
+  (PID muerto) se recupera automáticamente.
+- **[4f3] `enforce_listadomanga_rules.py --fast`** corre en la FASE 3 de ambos
+  (cadena completa de agrupación, incluye merge ISBN/series, dedup sintético,
+  consolidate y slugs — invariantes DUPSYN/TITLE/DUPVOL/ISBNDUP).
+- **PHASE 6 `source_health.py --last-n 1`** al cierre de ambos: el resumen de fuentes
+  con errores/0-candidatos de ESTE run queda en `logs/scrape-*/06-source-health.md`.
+
+#### Delta diario (programación)
+`scripts/com.pandawatch.scrape-delta.plist` — LaunchAgent de macOS listo para correr
+el delta todos los días a las 3:30 AM (instrucciones de instalación dentro del archivo;
+NO está instalado por defecto — decisión del owner). Si la Mac duerme a esa hora,
+launchd lo dispara al despertar. Con el lock global, un delta diario nunca pisa un
+full manual en curso.
 
 #### FASE 1 — sources del YAML
 ```bash
@@ -265,7 +280,7 @@ Detalle de los 10 pasos por cada candidato (vale para sources y wikis):
    - `is_comic_not_manga()` — blacklist Marvel/DC (`comics_blacklist.yml`); bypass si el título dice "manga".
    - `score_candidate()` → `detect_signals()` (~70 keywords, **word-boundary regex no substring**, clamp [0,300]) → `signals`, `signal_types`, `product_type`, `stock_type`.
    - ⚠️ Invariante: `detect_signals` corre **solo sobre title+description**, nunca fuente/tags/keywords.
-4. **Detail enrichment** (`--fetch-details`) — HTTP por item: JSON-LD → OpenGraph → `_extract_label_value_pairs` (FR/ES/EN/IT/JP) → fallbacks → name/author/image/isbn/price/release_date/publisher/description.
+4. **Detail enrichment** (`--fetch-details`) — HTTP por item: JSON-LD → OpenGraph → `_extract_label_value_pairs` (FR/ES/EN/IT/JP) → fallbacks → name/author/image/isbn/release_date/publisher/description.
 5. **Collectible gate** `is_collectible_edition()` — solo ediciones especiales/variants/deluxe/limited/boxsets/artbooks/fanbooks/magazines. Signals **recomputados desde el título** dentro del gate.
 6. **State diff** `process_state()` — `content_hash` vs `state.json`: new/changed/seen.
 7. **Flush incremental** — escribe tras CADA fuente (resiliencia).
@@ -287,19 +302,16 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 
 | Paso | Script | Qué hace |
 |---|---|---|
-| 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. |
+| 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. **Guard gotcha #61 (2026-06-11)**: items con `standardized_at` se saltean por defecto (`--include-standardized` para override) — el paso es seguro sobre corpus estandarizado. |
 | 4b | `filter_non_manga.py` | Re-aplica `is_likely_manga`+`is_pure_novel`+`is_comic_not_manga`; expulsa rechazados. |
-| 4c | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. **Consecuencia: NO correr `rescore.py` blanket sobre corpus estandarizado** (dry-run 2026-06-10: cambiaría señales de 1393 items con 87 transiciones special→manga). |
+| 4c | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. `rescore.py` tiene el mismo guard desde 2026-06-11 (salta `standardized_at` por defecto). |
 | 4d | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). |
 | 4e | `backfill_metadata.py --only image_url` | Rellena portadas faltantes (HTTP por item). |
 | 4e2 | `backfill_metadata.py --only images` | **[full]** galería multi-imagen (carrusel). |
 | 4e3 | `mirror_images.py --no-gc` | **[full]** descarga galería al espejo local. |
 | 4f | `wayback_recover.py` | **opt-in** — rescata items 404 vía archive.org. |
-| 4f2 | `align_raw_to_std_coleccion.py` | Alinea items raw a la edición estandarizada de su MISMA coleccion (regla coleccion=edición). Evita el dup raw-vs-std al re-scrapear una colección ya conocida (ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1"). Corre ANTES de 4g para que el merge los fusione. |
-| 4f4 | `dedup_synthetic_source.py` | **Dedup por fuente sintética compartida (gotcha #54)**. Un `item=<kind>-<vol>-<hash>` de listadomanga identifica UN producto: si aparece en >1 fila (cross-source tienda+listadomanga, o representante base-url), las fusiona. Identidad cualificada por cole id (el hash NO es único entre colecciones). Corre vía el enforcer (paso 3c). |
-| 4f5 | `backfill_cluster_key.py` | Re-deriva `cluster_key` de TODAS las filas (4f1-4f3 mutan edition_keys → claves stale). Mantiene la invariante CLKEY (`stored == derive_cluster_key(item)`) y devuelve las filas refrescadas por el upsert al tier `edition:` (gotcha #65). Idempotente. |
-| 4f6 | `generate_slugs.py --only-missing` | Slugs para items nuevos del scrape (nunca toca slugs existentes). Sin esto un item nuevo viola SLUG hasta pasar por curación (gotcha #65). |
-| 4g | `consolidate_sources.py` | **1 fila/producto**: re-consolida por `cluster_key`, fusiona `sources[]`. |
+| 4f2 | `align_raw_to_std_coleccion.py` | Alinea items raw a la edición estandarizada de su MISMA coleccion (regla coleccion=edición). Evita el dup raw-vs-std al re-scrapear una colección ya conocida (ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1"). Corre ANTES del enforcer para que el merge los fusione. |
+| 4f3 | `enforce_listadomanga_rules.py --fast` | **Cadena COMPLETA de agrupación (2026-06-12)** — reemplaza a los pasos sueltos fix_edition_country / unify_coleccion / backfill_cluster_key / generate_slugs / consolidate / merge_isbn que el pipeline corría antes: el re-scrape del calendario sobre colecciones YA estandarizadas deja duplicados raw-vs-std (DUPSYN/DUPVOL/TITLE) que solo la cadena completa repara (la corrida real del delta del 2026-06-12 dejaba **53 violaciones duras** con la cadena vieja; con el enforcer → 0). `--fast` salta el dedup de carrusel (corre aparte en 4h). Incluye: edition_display, país=edición, anomalías ek, unify/disambiguate/collapse/merge_crosssource, títulos lmc, canonicalize slugs, merge series/ISBN dups, publishers, cluster_key, dedup sintético, consolidate, slugs. Idempotente. |
 | 4g2 | `upgrade_image_resolution.py` | **[full only]** Re-descarga portadas en resolución completa: quita segmentos/params CDN de resize (Buscalibre `fit-in/`, Cultura `cdn-cgi/image/`, Whakoom `small→large`, Magento cache path, WP -NxM, Shopify _Nx, Rakuten `?_ex=`). Pasa Referer del item para evitar 403 anti-hotlink. Compara píxeles (`--min-gain 0.10`). Corre DESPUÉS de `consolidate_sources` (la portada canónica final ya está en su lugar) y ANTES de `dedup_carousel` (que puede necesitar la versión hi-res). |
 | 4h | `dedup_carousel_images.py` | Quita la MISMA portada repetida en baja resolución del carrusel (hash perceptual; solo `kind=gallery`). Corre acá porque 4g une imágenes de fuentes hermanas → crea el dup. |
 
@@ -421,7 +433,7 @@ Procesa `data/feedback.jsonl` (los 👎 que el owner dejó en el modal del dashb
 ### 3.9 ETAPA 9 — Aprobación humana (golden records)
 El owner aprueba cards correctas desde el dashboard (botón aprobar):
 - `POST /api/approve` (por cluster) / `POST /api/approve-edition` (por edición) → setea `approved_at`/`approved_by` en `items.jsonl` **y** registra en `data/approvals.jsonl` (log durable).
-- Un item `approved_at` queda **congelado**: el re-scrape solo refresca `_VOLATILE_FIELDS` (precio/stock/sources/detected_at); retrofits y skills lo saltan.
+- Un item `approved_at` queda **congelado**: el re-scrape solo refresca `_VOLATILE_FIELDS` (stock/sources/detected_at); retrofits y skills lo saltan.
 - **`apply_approvals.py`** — tras **reconstruir `items.jsonl` de cero** (re-scrape/import), re-materializa `approvals.jsonl` (reduce a estado final por `cluster_key`, re-aplica `approved_at`). Idempotente.
 
 ---

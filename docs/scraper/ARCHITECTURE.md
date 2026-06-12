@@ -212,7 +212,7 @@ Per-source pipeline:
      `ThreadPoolExecutor` with the same per-host semaphore; metadata
      application back to the candidates is serialized after the pool
      drains so state mutations stay race-free.
-   - Extracts `name`, `author`, `image_url`, `isbn`, `price`,
+   - Extracts `name`, `author`, `image_url`, `isbn`,
      `release_date`, `publisher`, `description` via:
        1. JSON-LD `<script type="application/ld+json">`
        2. OpenGraph / Twitter meta tags
@@ -462,7 +462,6 @@ Row schema (the fields written by `candidate_to_json`):
                    // empty string when description is already ES or translation failed.
                    // Frontend shows description_es when non-empty, falls back to description.
   "content_hash":  "sha256 for state-diff",
-  "price":         "e.g. '19,99 €' or empty",
   // Portada = images[0] (única fuente de verdad, 2026-06-09). NO hay campos
   // top-level image_url/image_local en el item. Cada entry de images[] lleva
   // url (remota, provenance+fallback) + local (filename en data/images/).
@@ -489,7 +488,7 @@ Row schema (the fields written by `candidate_to_json`):
                     correct from the dashboard. Empty/absent = unreviewed.
                     Sticky (part of _CURATED_FIELDS). When set, append_jsonl
                     FREEZES all descriptive metadata on re-scrape and only
-                    refreshes _VOLATILE_FIELDS (price/stock_type/sources/
+                    refreshes _VOLATILE_FIELDS (stock_type/sources/
                     detected_at). Retrofits + skills skip approved items by
                     default. Set per-CLUSTER by POST /api/approve and per-EDITION
                     by POST /api/approve-edition. Also logged to approvals.jsonl
@@ -966,7 +965,7 @@ history without reload.
 Built from `selectedItem`. Shows cover, badges (multi-source, limited
 stock), tag list, signals, fragment of description, and a **`sources[]`
 list** if available (each row clickable to the external URL, with its
-own price/country/stock).
+own country/stock).
 
 **Feedback de "mala elección" (botón 👎).** El footer del modal expone
 un botón pulgar-abajo que despliega un textarea + "Enviar"/"Cancelar".
@@ -1016,7 +1015,7 @@ right module based on the CLI arg.
 - **listadomanga.py** (ES). URL: `calendario.php?mes=N&ano=YYYY`.
   Structure: `<h2>Editorial</h2>` / `<h2>Date</h2>` / `<table>` of items
   with `<a>title</a> / `<a>author</a>`. Has detail-fetch for
-  cover/price.
+  cover.
 - **listadomanga_blog.py** (ES — archivo histórico del blog).
   URL: `blog/YYYY/MM/page/N/`. Structure: `div.post.hentry` con
   `<h3><a>title</a></h3>`, `<small>fecha</small>`, `<div class="entry">
@@ -1090,8 +1089,8 @@ right module based on the CLI arg.
   — el feed no particiona por fecha; el control temporal es el
   `macro_filter` (`best_of_all` baja todo, `next_from_now` solo upcoming,
   default = últimos 8 meses). Por cada item del JSON construye un
-  Candidate con `editore` → publisher, `autore` → author, `prezzo` →
-  price EUR, `PublicationDate` (formato "DD MMM YYYY" en inglés) →
+  Candidate con `editore` → publisher, `autore` → author,
+  `PublicationDate` (formato "DD MMM YYYY" en inglés) →
   release_date. **El link es un Amazon affiliate** (`amazon.it/dp/<ASIN>?tag=socianim0c-21`)
   que se canonicaliza vía `normalize_url_for_dedup` (strip `tag/linkCode/
   th/psc/ref=...` — ver gotcha #26). El ASIN de libros italianos legacy
@@ -1133,7 +1132,7 @@ right module based on the CLI arg.
   Two queries against `api.manga-passion.de`: `type[]=3` (Sonderausgaben)
   + `type[]=0&tags.tag.id=200` (Variant-Covers). `specialType=1` →
   Sammelschuber (Schuber/estuche); hint "Box Set" injected so
-  `detect_signals` fires `box_set`. Price in cents (1900 → "19.00 €").
+  `detect_signals` fires `box_set`.
   Delta mode uses `date[after]` filter; full mode downloads complete
   historical catalog.
 - **animeclick.py** (IT — calendario semanal edizioni speciali).
@@ -1141,8 +1140,8 @@ right module based on the CLI arg.
   with `X-Requested-With: XMLHttpRequest` header. Keyword filter
   `_COLLECTOR_RE` on calendar cards before fetching detail pages
   (~20% hit rate). Detail pages use schema.org Book markup
-  (`itemprop name/image/description/datePublished`) + `Editore:`/
-  `Prezzo:` labels in `<strong>`. No ISBN available. Hints injected
+  (`itemprop name/image/description/datePublished`) + `Editore:`
+  labels in `<strong>`. No ISBN available. Hints injected
   for IT terms (`Cofanetto` → `box_set`, `Integrale` → omnibus).
   Covers Star Comics, Panini Comics, J-POP, MangaYo!, Crunchyroll IT.
 - **prhcomics.py** (US/CA — prhcomics.com/manga/, PRH catalog).

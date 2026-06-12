@@ -92,7 +92,7 @@ publishers que de otro modo quedarían sin señal de coleccionable.
    - post de **capas variantes** → variant cover;
    - post de **volúmenes especiais** → edición especial con brinde (bonus);
    - post de **box de mangá** → box set / cofre.
-4. Del texto de la entrada se extrae editorial, precio (R$), volumen y fecha de
+4. Del texto de la entrada se extrae editorial, volumen y fecha de
    lanzamiento; del bloque de imágenes, la portada (preferentemente la variante) y el
    carrusel.
 5. **Repetir** hasta agotar las entradas de los 3 posts.
@@ -154,7 +154,7 @@ Parser: [`scripts/wikis/blogbbm.py`](../../../scripts/wikis/blogbbm.py).
 - **`_parse_layout_c`** (post box): cada `<tr>` de las tablas supsystic = un box;
   `signal_inject` = "Cofre / box set / boxset.". Descarta el placeholder `Sem-Imagem.png`;
   "Em breve"/sin fecha → preventa.
-- **Extractores comunes**: volumen (`_VOL_RE`, del título o prose), precio R$ (`_PRICE_RE`),
+- **Extractores comunes**: volumen (`_VOL_RE`, del título o prose),
   fecha → `YYYY-MM` (`_extract_date`, meses PT-BR largos o `MM/YYYY`).
 
 ### 5.3 Flujo end-to-end
@@ -209,8 +209,7 @@ edición; el blog no se usa como `publisher` (la editorial real sale del texto).
 - **Conjunto de posts fijo**: si BBM publica un nuevo post-guía (otra categoría de
   coleccionable), hay que agregarlo a mano a `BBM_POSTS` con su `layout`. No hay discovery
   automático de posts nuevos.
-- **Items de referencia, sin precio/URL de tienda confiables**: muchos entries no traen
-  precio (sobre todo el box); son válidos para descubrimiento pero no para compra directa
+- **Items de referencia, sin URL de tienda confiable**: los entries son válidos para descubrimiento pero no siempre para compra directa
   (ver "URL como referencia" en CLAUDE.md).
 - **Detección de editorial por regex**: limitada a las editoras conocidas en
   `_EDITORA_PATTERNS`; una editora no listada queda con `publisher` vacío hasta agregar el

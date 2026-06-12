@@ -26,6 +26,7 @@ ingestión de esa fuente. Para documentar una fuente nueva, copiá la plantilla
 - [yenpress](sources/yenpress.md) — US · calendario Yen Press collector's/deluxe
 - [shueisha](sources/shueisha.md) — JP · artbooks/databooks One Piece
 - [viz](sources/viz.md) — US · artbooks VIZ + búsqueda de ediciones especiales
+- [us-sevenseas](sources/us-sevenseas.md) — US · Seven Seas: deluxe hardcovers + box sets + collector's vía API WordPress (alta 2026-06-12)
 - [whakoom](sources/whakoom.md) — ES/LatAm · novedades + spider opt-in
 
 **Tiendas / editoriales / feeds del YAML** (fuentes simples, sin parser propio):

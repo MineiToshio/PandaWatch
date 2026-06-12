@@ -55,7 +55,7 @@ por costo de JS — ver `sources.yml`, `enabled: false`). `publisher` = la divis
   - Título: `carousel-meta-title a`.
   - Autor: `carousel-meta-author a`.
   - ISBN-13: `carousel-meta-isbn` (se le quitan guiones; **requerido**).
-  - Precio: `carousel-meta-price span.price-usa` (USD).
+  - Precio en HTML (no extraído): `carousel-meta-price span.price-usa` (USD).
   - Formato del binding: `carousel-meta-format` (`Hardcover`, `Boxed Set`, …).
   - División/editorial: `carousel-meta-division`.
   - Fecha de salida: `carousel-meta-on-sale-date` (`"On sale May 19, 2026"`).
@@ -138,7 +138,7 @@ Parser: [`scripts/wikis/prhcomics.py`](../../../scripts/wikis/prhcomics.py). Se 
 
 ### 5.2 Qué captura el parser (mapea el §3 al código)
 - `fetch_manga_page()` descarga `/manga/` y devuelve los `<li class="toast-anchor">`.
-- `parse_item()` arma cada `Candidate`: título, autor, ISBN, precio (USD), formato, división
+- `parse_item()` arma cada `Candidate`: título, autor, ISBN, formato, división
   (publisher), fecha de salida (`_parse_release_date`), URL e imagen determinísticas.
 - `_is_collectible(title, fmt)` es el gate de edición especial (formato coleccionable o
   keyword en el título). `_NON_MANGA_PUBLISHERS` rechaza divisiones no-manga.
@@ -211,8 +211,7 @@ Parser: [`scripts/wikis/prhcomics.py`](../../../scripts/wikis/prhcomics.py). Se 
   salen de catálogo dejan de aparecer. No hay forma de recuperar salidas históricas que ya no
   estén listadas (el `--wiki-from 2010-01` del full no trae histórico, sólo desactiva el
   filtro de fecha sobre el catálogo actual).
-- **Precio sólo en USD**: se captura `span.price-usa`; no se guarda el precio canadiense aunque
-  exista en el HTML.
+- **Precio en HTML pero no extraído**: el sitio muestra precio en `span.price-usa`; ya no se captura (PandaWatch no extrae precios).
 - **Gate por formato/keyword, no por allowlist**: ver §8 — pueden colarse divisiones fuera del
   scope objetivo (DC, VIZ) si el formato es coleccionable.
 

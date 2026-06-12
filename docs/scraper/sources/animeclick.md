@@ -38,7 +38,7 @@ del propio detalle de la edición (campo "Editore:").
 italiano de ediciones especiales**. Complementa a SocialAnime (que trae ISBN al
 ~95% pero sólo cubre ~7 editoriales menores): AnimeClick da cobertura mucho más
 ancha (todas las editoriales IT grandes) **a cambio de no tener ISBN**, pero sí
-precio y fecha de salida. Es la vía principal para captar variant/limitata/
+fecha de salida. Es la vía principal para captar variant/limitata/
 cofanetto de Panini, Star Comics, J-POP y MangaYo! en Italia.
 
 ---
@@ -63,7 +63,7 @@ cofanetto de Panini, Star Comics, J-POP y MangaYo! en Italia.
   - **Detalle** (schema.org `Book`): `h1[itemprop="name"]` (título),
     `img[itemprop="image"]` (portada), `p[itemprop="description"]` (sinopsis),
     `meta[itemprop="datePublished"]` (fecha de salida), y `<strong>` con etiquetas
-    `Editore:` y `Prezzo:` (editorial y precio italiano "15,00 €").
+    `Editore:` (editorial).
 - **Identificador de producto**: el `id` de edición del path `/edizione/<id>/…`
   (regex `/edizione/(\d+)/`). Se usa para deduplicar entre semanas (`seen_ids`).
 - **Anti-bot / quirks**:
@@ -94,7 +94,7 @@ cofanetto de Panini, Star Comics, J-POP y MangaYo! en Italia.
    especial** (variant, limitata/limited, special, deluxe, ultimate, cofanetto,
    collector, esclusiva, premium, artbook, kanzenban, completa/integrale, box set),
    el item **entra**; si no, se **descarta**.
-4. **Abrir la página de detalle** del item que entró: de ahí salen precio, fecha de
+4. **Abrir la página de detalle** del item que entró: de ahí salen fecha de
    salida, sinopsis, editorial y la portada de mejor calidad.
 5. **Repetir** hasta agotar las semanas dentro del cutoff.
 
@@ -124,8 +124,8 @@ sólo cambia **hasta dónde retroceden** (el cutoff `--wiki-from`) y el timeout:
   (~10 años).
 - **Costo del FULL**: navegar ~500 semanas + un **fetch de detail page por cada item
   collector** que pasa el filtro puede ser miles de requests HTTP; por eso el timeout
-  largo. Cada item que entra **siempre** hace fetch de su detalle (precio/fecha/
-  sinopsis/editorial sólo viven ahí — ver §5.2). El delta lo acota a ~3 meses.
+  largo. Cada item que entra **siempre** hace fetch de su detalle (fecha/
+  sinopsis/editorial/portada sólo viven ahí — ver §5.2). El delta lo acota a ~3 meses.
 - Ambos pasos corren con `--sleep-seconds 0.5` y `--min-score 20`.
 
 ---
@@ -159,7 +159,7 @@ tiene entrada en `sources.yml`; se invoca con `--bootstrap-wiki animeclick`
 - `parse_detail_page(html, url)` — del detalle (schema.org `Book`): título,
   imagen, descripción, `release_date` (`datePublished`), `publisher` (parsea el
   texto tras "Editore:" y corta antes de la siguiente etiqueta, ej. "Nazionalità:")
-  y `price` (regex `_PRICE_RE` sobre "Prezzo: …€").
+  (el campo `price` de la página ya no se captura).
 - `_inject_collector_hints(title, description)` — inyecta hints en la descripción
   ("Cofanetto Box Set", "Complete edition integral") para que `detect_signals`/
   `score_candidate` los reconozca como señal de coleccionable.
@@ -177,7 +177,7 @@ tiene entrada en `sources.yml`; se invoca con `--bootstrap-wiki animeclick`
   retrofits** de la fase 3 (rescore → filtros → clean_titles → backfill metadata/
   imágenes → consolidate) como cualquier otra fuente, y luego build + validate.
 - `fetch_details=True` se **fuerza** para animeclick en `manga_watch.py` (el
-  calendario sólo da título + publisher + imagen; precio/fecha/sinopsis/editorial
+  calendario sólo da título + publisher + imagen; fecha/sinopsis/editorial/portada
   están sólo en el detail page). El flag CLI `--fetch-details` es para el source
   loop principal, otro propósito.
 
@@ -227,8 +227,8 @@ tiene entrada en `sources.yml`; se invoca con `--bootstrap-wiki animeclick`
   nombres atípicos podrían perderse (falso negativo). No medido sistemáticamente.
 - **Costo del FULL**: navegar ~500 semanas + 1 fetch de detalle por item collector es
   caro (miles de requests, timeout de 4 h). El delta lo acota a ~3 meses.
-- **Calidad de fecha/precio**: dependen del formato del detail page; si AnimeClick
-  cambia las etiquetas "Editore:"/"Prezzo:" o el schema.org, el parser deja esos
+- **Calidad de fecha**: depende del formato del detail page; si AnimeClick
+  cambia la etiqueta "Editore:" o el schema.org, el parser deja esos
   campos vacíos en silencio.
 
 ---

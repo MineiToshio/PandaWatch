@@ -71,8 +71,8 @@ y filtros generales (`is_likely_manga()`, scoring, dedup por `cluster_key`).
 - **Aporte mínimo**: hoy ~1 item en el corpus. {{pendiente: confirmar si la
   auto-detección captura bien el listado de comics o si rinde poco por falta de
   selectors dedicados}}.
-- **Items de referencia sin precio/URL de tienda**: al ser sitio editorial (no tienda),
-  puede faltar precio/compra; aplica el enrichment pass diferido (`enrich_references.py`).
+- **Items de referencia sin URL de tienda**: al ser sitio editorial (no tienda),
+  puede faltar URL de compra directa; aplica el enrichment pass diferido (`enrich_references.py`).
 - {{pendiente: estado de salud de la fuente según `source_health.py` (activa / 0 items)}}.
 
 ---

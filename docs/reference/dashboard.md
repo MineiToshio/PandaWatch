@@ -52,7 +52,7 @@ de referencia. Equivalente humano de `standardized_at`. Schema (sticky, en
 Granularidad = por cluster (marca todas las filas del cluster_key).
 
 Congelado (`is_approved()` en manga_watch.py): `append_jsonl` congela toda la metadata
-descriptiva y sólo refresca `_VOLATILE_FIELDS` (price, stock_type, sources, detected_at).
+descriptiva y sólo refresca `_VOLATILE_FIELDS` (stock_type, sources, detected_at).
 Retrofits saltean aprobados por defecto (`--include-approved` para forzar; los filtros
 SIEMPRE los conservan). Skills los excluyen del set a modificar (pueden leerlos como
 referencia, nunca sobreescribirlos).
@@ -115,3 +115,11 @@ Un hint `A aprobar · R rechazar · N/P producto` aparece en el footer del modal
 a la derecha, muted). `jumpToNextEntry(dir)` en Alpine navega a la primera candidata
 pendiente del entry siguiente/anterior (sin wrap si no hay).
 
+## Carga de datos del catálogo — vivo primero, embebido como fallback
+
+`loadItems()` en `web/index.html` prioriza **items.jsonl EN VIVO** (decisión #5):
+servido vía `serve.py`, el dashboard refleja siempre el estado actual tras cualquier
+retrofit/curación sin re-correr `build_web.py`. La copia embebida
+(`<script id="manga-data">`, generada por build_web) es SOLO fallback: `file://`
+(doble-click) o fetch fallido. Antes era al revés (embebido primero) y el dashboard
+servido mostraba datos stale hasta el próximo build — corregido 2026-06-12.

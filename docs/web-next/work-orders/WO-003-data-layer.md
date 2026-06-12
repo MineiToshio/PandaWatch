@@ -54,16 +54,6 @@ function compareVolumes(a?: string, b?: string): number {
   return a.localeCompare(b)
 }
 
-function resolveMinPrice(items: Item[]): string | undefined {
-  const prices = items
-    .map(i => i.price)
-    .filter((p): p is string => Boolean(p))
-    .map(p => parseFloat(p.replace(/[^0-9.,]/g, '').replace(',', '.')))
-    .filter(n => !isNaN(n))
-  if (!prices.length) return undefined
-  return String(Math.min(...prices))
-}
-
 function buildCluster(items: Item[]): Cluster {
   const sorted = [...items].sort((a, b) => (b.score || 0) - (a.score || 0))
   const canonical = sorted[0]
@@ -83,7 +73,6 @@ function buildCluster(items: Item[]): Cluster {
     countries: [...new Set(items.map(i => i.country).filter((c): c is string => Boolean(c)))],
     publishers: [...new Set(items.map(i => i.publisher).filter((p): p is string => Boolean(p)))],
     languages: [...new Set(items.map(i => i.language).filter((l): l is string => Boolean(l)))],
-    minPrice: resolveMinPrice(items),
   }
 }
 

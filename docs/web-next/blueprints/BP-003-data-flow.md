@@ -88,7 +88,6 @@ function buildCluster(items: Item[]): Cluster {
     countries: [...new Set(items.map(i => i.country).filter(Boolean))],
     publishers: [...new Set(items.map(i => i.publisher).filter(Boolean))],
     languages: [...new Set(items.map(i => i.language).filter(Boolean))],
-    minPrice: resolveMinPrice(items),
   }
 }
 ```
@@ -255,7 +254,6 @@ export type Item = {
   language?: string
   product_type?: string
   source_class?: string
-  price?: string
   isbn?: string
   author?: string
   release_date?: string
@@ -296,7 +294,6 @@ export type Cluster = {
   countries: string[]
   publishers: string[]
   languages: string[]
-  minPrice?: string
 }
 
 export type Facets = {

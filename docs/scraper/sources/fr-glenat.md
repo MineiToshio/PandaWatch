@@ -43,7 +43,7 @@ fuentes no siempre capturan.
   `max_pages: 15`); art books es un listado por keyword. Cada producto enlaza a su ficha en
   `glenat.com`.
 - **Estructura del HTML/feed**: listado HTML estático servido por la editorial; el
-  extractor genérico saca título / precio / imagen / URL de cada ficha del listado.
+  extractor genérico saca título / imagen / URL de cada ficha del listado.
   {{pendiente: selectores específicos — las entradas del YAML no declaran `selectors`,
   los maneja el extractor genérico}}.
 - **Identificador de producto**: URL canónica de la ficha en `glenat.com`.

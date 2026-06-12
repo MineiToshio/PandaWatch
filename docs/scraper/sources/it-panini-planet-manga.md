@@ -46,7 +46,7 @@ de producto que busca PandaWatch, sin tener que filtrar el catálogo general.
   producto del catálogo.
 - **Selectores**: las tres entradas **no declaran selectores** en `sources.yml` → se
   apoyan en la **auto-detección genérica del extractor** (layout Magento estándar:
-  título, precio, imagen de producto).
+  título, imagen de producto).
 - **Identificador de producto**: URL canónica del producto Magento.
 - **`publisher` = Panini / Planet Manga** es editorial real; #44 (tienda≠editorial) no
   aplica.

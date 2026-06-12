@@ -19,7 +19,7 @@ manga_watch.py (scraper)  ←─── ThreadPoolExecutor(--workers N)
   • is_comic_not_manga() — comics blacklist with "manga" bypass
   • clean_title() — strips e-commerce junk, mojibake, news prefixes
   • fetch_metadata_from_detail() — opt-in HTTP per item for cover/
-    author/price/ISBN via JSON-LD + label/value pairs (also
+    author/ISBN via JSON-LD + label/value pairs (also
     parallelized in the --fetch-details stage)
   • mirror_candidate_images() — descarga la portada de cada item
     nuevo/cambiado a data/images/ (espejo local, campo image_local).
@@ -67,32 +67,48 @@ Observability: scripts/audit/source_health.py parses N recent overnight
 
 ## Current corpus state
 
-Baseline para sanity-check (medido 2026-06-11 tras la auditoría de ListadoManga +
-fixes de parser #73-#75). Si un retrofit tira la image coverage de 98% a 60%, algo
+Baseline para sanity-check (medido 2026-06-12 tras el merge de duplicados ISBN +
+curación SERIESDUP/PAIS; antes 2026-06-11, auditoría ListadoManga #73-#75). Si un retrofit tira la image coverage de 98% a 60%, algo
 se rompió. Números aproximados; se vuelven stale — re-medí con un snippet sobre
 items.jsonl si necesitás precisión.
 
 | Métrica | Valor aprox. |
 |---|---|
-| Total items (1 fila por producto) | **10 793** |
+| Total items (1 fila por producto) | **11 456** (delta real 2026-06-12: +727 netos de 3 semanas de novedades; antes 10 730 tras merge ISBN) |
 | Movidos a non_manga_blacklist.jsonl (acum.) | ~684 |
 | Removidos por umbrella URL-gate (ATOM FR) | 21 (revista Manga-Sanctuary; ver gotcha #62) |
 | Removidos quirúrgicamente (junk confirmado) | 5 (respaldados en `data/diagnostics/items.audit_fp_removed-20260610.jsonl`) |
 | series_aliases.yml | ~3394 canónicos |
 | Sources en YAML / enabled | 138 / 67 (17 mixed, 15 bluesky todas off) |
-| Wikis (`--bootstrap-wiki`) | 19 |
+| Wikis (`--bootstrap-wiki`) | 20 (alta sevenseas 2026-06-12) |
 | Top sources | Sumikko ~2678, **ListadoManga colecciones ~1918**, Mangavariant ~1531, Manga-Sanctuary ~1144, AnimeClick IT ~1024, Manga-Passion DE ~808 |
 | Image / image_local coverage | ~98.1% / ~98.0% (items nuevos del último delta aún sin pasada de imágenes) |
 | series_key / edition_key / standardized_at | 100% / 100% / 100% |
 | slug | 100% |
-| volume / release_date / ISBN / price / author | ~85% / ~92% / ~47% / ~53% / ~57% |
+| volume / release_date / ISBN / author | ~85% / ~92% / ~47% / ~57% |
 | cluster_key populado | 100% |
 | carrusel real (images.length > 1) | ~2249 (21%) |
-| Países | 13 (top: Japón ~3739, Italia ~2073, España ~1924, Francia ~1457, Alemania ~829, EEUU ~325) |
-| validate_corpus | 0 violaciones duras; warnings: 7 PAIS (país `xx` sin resolver), 15 SERIESDUP (canonicals casi-duplicados por transliteración — candidatos al skill de aliases), 11 EKPREFIX (antologías multi-obra, curación manual) |
+| Países | 14 (top: Japón ~3739, Italia ~2054, España ~1930, Francia ~1456, Alemania ~831, EEUU ~325; nuevo: Perú vía ISBN 978-612) |
+| validate_corpus | 0 violaciones duras; warnings: 1 PAIS (eBay sin ISBN, sin evidencia), 1 SERIESDUP (loosers/losers — encolado en unmapped_series.jsonl), 11 EKPREFIX (antologías multi-obra, curación manual), 4 ISBNDUP (conflictos país/volumen/lmc — visibles a propósito, invariante nueva) |
 
-ISBN/price/author bajos NO son regresión: muchas filas curadas (Mangavariant,
+ISBN/author bajos NO son regresión: muchas filas curadas (Mangavariant,
 wikis) catalogan "qué variant existe", no "dónde comprarlo" (ver "URL como referencia").
+**Precios eliminados del pipeline (2026-06-11)**: PandaWatch es un catálogo de
+descubrimiento, no un tracker de precios. Los precios se vuelven obsoletos
+inmediatamente y no ayudan a identificar ediciones especiales.
+
+**Cambios 2026-06-12 (sesión de mejoras integral)**: (a) `merge_isbn_duplicates.py`
+nuevo (enforcer 3c2b) — un ISBN-13 = un producto; 63 grupos fusionados (10793→10730),
+invariante **ISBNDUP** agregada a validate_corpus; (b) tier **grupo de registro
+ISBN→país** + herencia entre hermanos en `fix_edition_key_anomalies.py` (PAIS 7→1);
+(c) 14 grupos SERIESDUP curados vía fusión de canónicas en series_aliases.yml
+(loosers/losers encolado como incierto); (d) **guard gotcha #61 en rescore.py**
+(salta `standardized_at` por defecto — el paso [4a] del pipeline ya no puede lavar
+señales); (e) `clean_author()` (gotcha #76, 196 items); (f) dashboard: items.jsonl
+en vivo con prioridad sobre la copia embebida + header responsive; (g) web-next
+reparado (callsite huérfano de la remoción de precios) — los precios SIGUEN fuera
+del pipeline. Verificado: 748 tests Python + 14 vitest + tsc, corpus válido,
+retrofits idempotentes.
 
 **Cambios 2026-06-11 (auditoría ListadoManga)**: 3 fixes de parser en
 `listadomanga_collections.py` — sección "Números en preparación (Packs)" reconocida
@@ -187,7 +203,7 @@ El piloto de `/watch-validate-rarity` (2026-06-11) verificó 12 ediciones italia
 
 `items.jsonl` guarda **una línea por PRODUCTO físico** (cluster), no por URL. Cada
 fila lleva `sources[]` con todas las fuentes donde se encontró (cada entrada:
-name/url/price/country/stock_type/image_url… vía `source_entry()`). Cuando el
+name/url/country/stock_type/image_url… vía `source_entry()`). Cuando el
 scraper re-encuentra un producto existente, suma la fuente a `sources[]` en vez de
 agregar fila. `append_jsonl()`: (1) upsert por URL normalizada; (2) `sources[]`
 sticky+merge (un re-scrape de una fuente no borra las hermanas); (3) consolidación
@@ -201,7 +217,7 @@ TODOS los items.
 `manga_watch.py` son la FUENTE ÚNICA del merge.** Las usan `append_jsonl`,
 `build_web` y `consolidate_sources.py`. NUNCA reimplementar el merge en otro lado
 (la divergencia causó bugs de fotos). `merge_cluster` elige la canónica
-(aprobada > estandarizada > ISBN > imagen > precio), rellena faltantes, une
+(aprobada > estandarizada > ISBN > imagen), rellena faltantes, une
 `sources[]` (dedup por URL), une `images[]` con **portada canónica primera**
 (carrusel[0] == card) y une `extras[]`.
 

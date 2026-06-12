@@ -41,7 +41,7 @@ fichas de la editorial oficial, útil para descubrir ediciones especiales del me
   limited-edition" (`/news/bks_new_comic_limited-edition`). Cada entrada apunta a un
   producto de edición limitada.
 - **Estructura del HTML**: HTML estático; el extractor genérico de FASE 1 toma título /
-  precio / imagen del layout de la tienda (sin selectores dedicados).
+  imagen del layout de la tienda (sin selectores dedicados).
 - **Identificador de producto**: URL del producto en `sanyodo.co.jp`.
 - **Quirks**: contenido en **japonés (CJK)** — el matching de keywords usa substring CJK,
   no boundary ASCII (#29). Las ediciones limitadas se reconocen por el literal 限定版.

@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-12.
 
 ---
 
@@ -14,13 +14,13 @@
 | **URL base** | `https://www.penguinlibros.com/es/221600-distrito-manga` |
 | **Índice / punto de entrada** | La misma URL (página de catálogo del sello en penguinlibros.com) |
 | **Tipo de fuente** | Editorial (sello oficial) |
-| **`kind` en sources.yml** | `js` (renderizada con Playwright, requiere `--enable-js`) |
+| **`kind` en sources.yml** | `html` + `selectors:` PrestaShop (era `js` hasta 2026-06-12 — ver §8) |
 | **`source_class`** | `official` |
 | **País** | España (`es`) — mono-país |
 | **Idioma** | Español |
 | **Cobertura** | Catálogo del sello Distrito Manga (sello de manga de Penguin Random House) |
 | **Aporte al corpus** | ~0 items por scrape directo de esta fuente (ver §8). Los 25 items con `publisher` "Distrito Manga" en el corpus llegan vía ListadoManga, no por esta entrada. |
-| **Parser / módulo** | Sin parser propio — entrada del YAML, auto-detección de selectores |
+| **Parser / módulo** | Entrada del YAML con `selectors:` explícitos (item `article.product-miniature`, title `[itemprop=name]`, link `a.thumbnail.product-thumbnail`) |
 
 **Por qué importa / qué aporta de único**: es la página oficial del sello Distrito
 Manga (manga de Penguin Random House en España). Como fuente oficial debería capturar
@@ -107,3 +107,19 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Fix 2026-06-12 — de `js` (0 cards) a `html` + selectores (36 cards)
+
+- **ROOT CAUSE del 0 permanente**: el listado principal de la categoría carga por
+  AJAX con estado de sesión — ni requests ni Playwright lo ven ("Sin resultados");
+  Playwright además seguía paginación hacia fichas de producto (pages_visited=4,
+  0 cards). El HTML ESTÁTICO sí trae 3 carruseles PrestaShop (Novedades / Más
+  vendidos / Descubre el catálogo) con ~36 artículos (~27 únicos).
+- **FIX**: `kind: html` + `selectors:` PrestaShop estándar. Verificado en vivo:
+  `extraction_method=yaml-selectors`, 36 cards. Sin anti-bot (responde sin UA).
+- "Leviatán (edición integral)" se descarta por el gate: CORRECTO por diseño —
+  `integral` → señal `omnibus`, y omnibus solo no califica (gotcha #18); la fuente
+  dispara cuando el carrusel de novedades traiga un especial con qualifier premium.
+- Cobertura = novedades/bestsellers (~27 únicos), no el catálogo histórico (~200):
+  suficiente para detectar especiales al salir. Catálogo completo requeriría
+  Playwright con espera explícita del AJAX (no soportado; no vale el costo).

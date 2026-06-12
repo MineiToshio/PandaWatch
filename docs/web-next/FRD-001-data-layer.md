@@ -87,7 +87,6 @@ type Cluster = {
   countries: string[]         // distinct countries
   publishers: string[]        // distinct publishers
   languages: string[]         // distinct languages
-  minPrice?: string           // lowest price across sources
 }
 ```
 
