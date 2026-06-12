@@ -85,6 +85,7 @@ try:
         _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
+        normalize_release_date,
         score_candidate,
     )
 except ImportError:
@@ -94,6 +95,7 @@ except ImportError:
         _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
+        normalize_release_date,
         score_candidate,
     )
 
@@ -232,7 +234,7 @@ def parse_detail_page(html: str, detail_url: str) -> dict:
     # Data di uscita (meta itemprop="datePublished")
     date_meta = soup.find("meta", itemprop="datePublished")
     if date_meta and date_meta.get("content"):
-        result["release_date"] = date_meta["content"].strip()
+        result["release_date"] = normalize_release_date(date_meta["content"].strip())
 
     # Editore e Prezzo: cerca <strong> con "Editore:" / "Prezzo:"
     for strong in soup.find_all("strong"):

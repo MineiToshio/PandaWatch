@@ -35,6 +35,18 @@ La serie va aparte en el tag Manga — la concatenamos con el título para
 que el item.title tenga forma "<Serie> — <Edición>" y los filtros / cluster_key
 / búsqueda del dashboard funcionen como en cualquier otra fuente.
 
+Challenge sgcaptcha (SiteGround, 2026-06):
+    El sitio entero (sitemaps incluidos) responde HTTP 202 con meta-refresh a
+    /.well-known/sgcaptcha/ ante requests sin la cookie del challenge. La
+    estrategia acá es resolverlo UNA vez con Playwright (headless Chromium,
+    ~4-8s) y exportar las cookies del contexto + el User-Agent real a la
+    requests.Session — el fetch concurrente con ThreadPoolExecutor queda
+    intacto. Si la cookie expira a mitad del run, cualquier worker re-resuelve
+    bajo lock (los demás reusan la generación nueva). Playwright se lanza y se
+    cierra COMPLETO dentro del thread que lo invoca, así que no pisa la
+    gotcha #12 (el worker dedicado de manga_watch.py es para fetches
+    repetidos; acá es un one-shot autocontenido).
+
 API pública (paralela a otaku_calendar.py / whakoom.py):
     parse_variant_detail(html_text, url) -> Candidate | None
     fetch_variant_urls(session, timeout) -> list[str]
@@ -117,6 +129,87 @@ _DATE_PUBLISHED_RE = re.compile(r'"datePublished":"([^"]+)"')
 _OG_TITLE_RE = re.compile(r'<meta property="og:title" content="([^"]+)"')
 _OG_IMAGE_RE = re.compile(r'<meta property="og:image" content="([^"]+)"')
 _OG_TYPE_RE = re.compile(r'<meta property="og:type" content="([^"]+)"')
+
+
+# --- Challenge sgcaptcha (SiteGround) ---------------------------------------
+# Marker del meta-refresh que devuelve el challenge (HTTP 202 en todo el sitio).
+_SGCAPTCHA_MARKER = "/.well-known/sgcaptcha/"
+
+# Generación de cookies del challenge: cada solve exitoso la incrementa. Un
+# worker que detecta challenge captura la generación vigente y pide re-solve;
+# si otro worker ya lo resolvió (generación avanzó), reusa esas cookies.
+_CHALLENGE_LOCK = threading.Lock()
+_challenge_generation = 0
+
+
+def _looks_like_challenge(resp: requests.Response) -> bool:
+    """True si la respuesta es el challenge sgcaptcha y no la página real."""
+    if resp.status_code == 202:
+        return True
+    return _SGCAPTCHA_MARKER in (resp.text or "")[:3000]
+
+
+def _solve_challenge_into_session(session: requests.Session) -> bool:
+    """Resuelve el challenge con Playwright y exporta cookies + UA a la session.
+
+    Lanza y cierra Playwright COMPLETO dentro de este thread (one-shot), así
+    que es seguro llamarlo desde el main thread o desde un worker del pool
+    (gotcha #12 aplica al worker dedicado de manga_watch.py, no a esto).
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("[mangavariant][WARN] sgcaptcha activo y Playwright no está "
+              "instalado — instalar con: pip install playwright && "
+              "playwright install chromium")
+        return False
+    print("[mangavariant] resolviendo challenge sgcaptcha con Playwright…")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(BASE_URL, timeout=45000, wait_until="domcontentloaded")
+            for _ in range(15):  # challenge → meta-refresh → página real
+                t = page.title()
+                if t and not t.startswith("Loading") and "captcha" not in t.lower():
+                    break
+                page.wait_for_timeout(2000)
+            ua = page.evaluate("navigator.userAgent")
+            cookies = context.cookies()
+            browser.close()
+    except Exception as exc:  # noqa: BLE001 — red/launch: degradar con warning
+        print(f"[mangavariant][WARN] Playwright no pudo resolver el challenge: {exc}")
+        return False
+    # La cookie del challenge va atada al User-Agent: la session tiene que
+    # presentar el MISMO UA que el browser que la obtuvo.
+    if ua:
+        session.headers["User-Agent"] = ua
+    exported = 0
+    for ck in cookies:
+        session.cookies.set(
+            ck["name"], ck["value"],
+            domain=ck.get("domain") or "mangavariant.com",
+            path=ck.get("path") or "/",
+        )
+        exported += 1
+    print(f"[mangavariant] challenge resuelto: {exported} cookies exportadas a la session")
+    return exported > 0
+
+
+def _resolve_challenge(session: requests.Session, seen_generation: int) -> None:
+    """Re-resuelve el challenge salvo que otro thread ya lo haya hecho.
+
+    `seen_generation` es la generación que el caller vio ANTES de su request
+    fallida; si al tomar el lock la generación ya avanzó, las cookies frescas
+    de otro worker ya están en la session y no hay nada que hacer.
+    """
+    global _challenge_generation
+    with _CHALLENGE_LOCK:
+        if _challenge_generation > seen_generation:
+            return
+        if _solve_challenge_into_session(session):
+            _challenge_generation += 1
 
 
 def _virtual_source() -> Source:
@@ -364,7 +457,11 @@ def fetch_variant_urls(
     seen: set[str] = set()
     for sm_url in sitemaps:
         try:
+            gen = _challenge_generation
             resp = session.get(sm_url, timeout=timeout)
+            if _looks_like_challenge(resp):
+                _resolve_challenge(session, gen)
+                resp = session.get(sm_url, timeout=timeout)
             resp.raise_for_status()
             xml_text = resp.text
         except requests.RequestException as exc:
@@ -393,7 +490,13 @@ def _fetch_one(
     url: str, session: requests.Session, timeout: tuple[int, int],
 ) -> Candidate | None:
     try:
+        # Snapshot ANTES del request: si el challenge salta y otro worker ya
+        # resolvió mientras tanto (generación avanzó), reusamos sus cookies.
+        gen = _challenge_generation
         resp = session.get(url, timeout=timeout)
+        if _looks_like_challenge(resp):
+            _resolve_challenge(session, gen)
+            resp = session.get(url, timeout=timeout)
         if resp.status_code != 200:
             return None
         if not resp.encoding:

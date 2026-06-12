@@ -33,7 +33,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.ivreality.com.ar/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 0 items netos en todo el histórico (25 candidatos/run, el gate descarta todo — blog de noticias). Ivrea AR cubierta por la fuente de catálogo.
     tags: ["manga", "news", "official"]
     selectors:
       item_selector: "div.td_module_flex"
@@ -128,7 +128,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://tiendapanini.com.mx/coleccionables/item-3"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 2 candidatos/run → 0 netos; Panini México Boxsets (31) + búsquedas (36+4) cubren la editorial.
     tags: ["manga", "official", "store"]
     purity: "mixed"  # url '/coleccionables' incluye cromos, no solo manga
     max_pages: 15
@@ -185,7 +185,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://panini.com.br/planet-manga"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 39 candidatos/run → 0 netos; las búsquedas Panini BR (search) aportan 21 items — el catálogo es redundante.
     tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "li.product-item"
@@ -220,7 +220,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://editorajbc.com.br/titulos/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 80 candidatos/run → 1 neto; JBC Checklist (9 items) cubre la editorial mejor.
     tags: ["manga", "official", "new-source"]
     selectors:
       item_selector: "div.card.item-mangas"
@@ -268,7 +268,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.lojanewpop.com.br/mangas"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 400 candidatos/run → 0 items netos (catálogo de tankobon regulares, el gate descarta todo). Lançamentos queda como fuente delta de NewPOP.
     tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "li[class*='categoria-id-']"
@@ -286,7 +286,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.lojanewpop.com.br/one-shots"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 240 candidatos/run → 0 items netos (one-shots regulares).
     tags: ["manga", "official", "store", "new-source"]
     selectors:
       item_selector: "li[class*='categoria-id-']"
@@ -303,7 +303,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.lojanewpop.com.br/pacotes"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 80 candidatos/run → 0-1 items netos (pacotes = bundles de tomos regulares, no box sets premium).
     tags: ["manga", "boxset", "official", "store", "new-source"]
     selectors:
       item_selector: "li[class*='categoria-id-']"
@@ -520,7 +520,7 @@ sources:
     # y estable que JS.
     kind: "html"
     url: "https://www.penguinlibros.com/es/221600-distrito-manga"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 0 items netos en todo el histórico (61 candidatos tras el fix de selectores 2026-06-12, todo gateado: integrales/regulares sin línea coleccionista). ListadoManga cubre TODAS las ediciones ES de todos modos.
     tags: ["manga", "official"]
     selectors:
       item_selector: "article.product-miniature"
@@ -993,7 +993,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.pika.fr/planning-sorties/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 2 items, 0 únicos (Pika Édition y Pika Livres/Artbooks cubren lo mismo).
     tags: ["manga", "planning", "official"]
 
   - name: "FR - Pika Livres / Artbooks"
@@ -1013,7 +1013,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.ki-oon.com/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 0 items netos en todo el histórico (catálogo sin señales de edición en listing; Manga-Sanctuary captura las collector de Ki-oon).
     tags: ["manga", "collector", "official"]
     selectors:
       item_selector: "article.new"
@@ -1088,7 +1088,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.akata.fr/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 0 items netos en todo el histórico; FR cubierta por Manga-Sanctuary + fuentes Pika/Glénat/Kurokawa/Meian.
     tags: ["manga", "official"]
     selectors:
       item_selector: "div.views-field-view-comment"
@@ -1359,7 +1359,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.kadokawa.co.jp/category/comic/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 1 item compartido, 0 únicos; KADOKAWA Store (6) + Store Artbooks/Fanbooks (89) cubren la editorial.
     tags: ["manga", "official", "japan"]
 
   - name: "JP - KADOKAWA Store Artbooks Fanbooks"
@@ -1389,7 +1389,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://magazine.jp.square-enix.com/top/comics/"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 1 item compartido, 0 únicos; el catálogo JP de SQEX no expone especiales scrapeables (las 限定版 llegan vía Sumikko/Rakuten).
     tags: ["manga", "official", "japan"]
 
   - name: "JP - Hakusensha"
@@ -1550,7 +1550,7 @@ sources:
     publisher: "Norma Editorial"
     source_class: "official"
     kind: "html"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 7 búsquedas/run → 0 items netos; Norma está íntegramente cubierta por ListadoManga (colecciones) y la fuente de catálogo Norma (3 items).
     tags: ["manga", "official"]
     purity: "mixed"  # search devuelve episodios de podcast + posts del blog además de mangas.
     search_template: "https://www.normaeditorial.com/?s={query}"
@@ -1610,15 +1610,25 @@ sources:
     kind: "html"
     enabled: true
     tags: ["manga", "official"]
-    search_template: "https://www.viz.com/search?search={query}"
+    purity: "manga_only"
+    # Fix 2026-06-12: añadir &category=Manga para que la búsqueda devuelva
+    # productos (article.g-3) en vez de la vista de series sin productos.
+    search_template: "https://www.viz.com/search?search={query}&category=Manga"
+    selectors:
+      item_selector: "article.g-3"
+      title_selector: "a.color-off-black.hover-red"
+      link_selector: "a.color-off-black.hover-red"
+    # "omnibus" y "3-in-1" removidos 2026-06-12: VIZ omnibus/3-in-1 son
+    # rústica regular — el gate los descartaba todos (gotcha #18); requests
+    # desperdiciados. Los omnibus premium entran por deluxe/VIZBIG/hardcover.
     keywords:
+      - "box set"
+      - "VIZBIG"
       - "deluxe"
-      - "limited edition"
-      - "hardcover"
-      - "boxset"
-      - "omnibus"
       - "collector"
-      - "exclusive"
+      - "hardcover"
+      - "definitive"
+      - "complete edition"
 
   - name: "US - Kodansha USA (search)"
     country: "Estados Unidos"
@@ -1626,7 +1636,10 @@ sources:
     publisher: "Kodansha USA"
     source_class: "official"
     kind: "html"
-    enabled: true
+    # Deshabilitada 2026-06-12: kodansha.us/?s= devuelve artículos de blog,
+    # no páginas de producto. La cobertura la asume el wiki kodansha-us (API
+    # /wp-json/kodansha/v1/search-series + scrape de páginas de volumen).
+    enabled: false
     tags: ["manga", "official"]
     search_template: "https://kodansha.us/?s={query}"
     keywords:
@@ -1733,7 +1746,7 @@ sources:
     publisher: "Honto / 丸善ジュンク堂"
     source_class: "retailer"
     kind: "html"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): 9 búsquedas/run → 0 items netos (resultados dominados por ebooks, ver gotcha de honto.jp/ebook/). Rakuten Books (search) cubre JP retail con 179 items.
     tags: ["manga", "retailer", "japan"]
     search_template: "https://honto.jp/netstore/search.html?cidGnrNm=comic&srchTrm={query}"
     selectors:
@@ -1851,7 +1864,7 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://www.whakoom.com/newtitles"
-    enabled: true
+    enabled: false  # disabled 2026-06-12 (poda de fuentes muertas): kind js (costo Playwright) → 1 item neto histórico. El spider whakoom opt-in sigue disponible para corridas dedicadas.
     tags: ["manga", "news", "novedades", "spain", "argentina", "mexico", "new-source"]
     purity: "mixed"   # mezcla manga + cómic occidental + BD; blacklist filtra Marvel/DC/etc.
     selectors:
@@ -1969,3 +1982,313 @@ sources:
       en 3 páginas. `/collections/all` no llegaba a todos (paginación
       Shopify) — por eso esta colección apunta como fuente directa.
       Mismo Shopify, mismos selectors, slug bajo /products/.
+
+  # ============================================================
+  # Fuentes nuevas 2026-06-12 — gaps de país (PL, KR, DE directas)
+  # Evaluadas con /watch-evaluate-sources (8 auditores, 0% overlap ISBN).
+  # ============================================================
+
+  - name: "PL - Mangarden (JPF tapa dura)"
+    country: "Polonia"
+    language: "Polaco"
+    publisher: "J.P.Fantastica"
+    source_class: "official"
+    kind: "html"
+    url: "https://mangarden.pl/pl/menu/j-p-f-twarda-oprawa-2044.html"
+    enabled: true
+    tags: ["manga", "official", "poland", "new-source"]
+    selectors:
+      item_selector: "div.product"
+      title_selector: "a.product__name"
+      link_selector: "a.product__name"
+    max_pages: 5
+    notes: |
+      Tienda oficial de JPF. La línea "twarda oprawa" NO es el formato
+      estándar: JPF publica en rústica y la tapa dura es línea premium
+      limitada solo-preorder (FMA Deluxe, Akira edycja specjalna, Sailor
+      Moon Eternal, Dragon Ball Full Color). ~156 productos en 4-5 págs
+      (?counter=N). Sin ISBN expuesto (JSON-LD con mpn vacío) → dedup
+      fuzzy. Sufijos de estado en título: "- OSTATNIE" (último stock),
+      "(II Gatunek)" (segunda calidad, MISMO producto — se dedup por
+      título normalizado). Evaluación 2026-06-12: pass, Polonia desde 0.
+
+  - name: "PL - Mangarden (JPF preorders)"
+    country: "Polonia"
+    language: "Polaco"
+    publisher: "J.P.Fantastica"
+    source_class: "official"
+    kind: "html"
+    url: "https://mangarden.pl/pl/menu/j-p-f-twarda-oprawa-preorder-2349.html"
+    enabled: true
+    tags: ["manga", "official", "poland", "new-source"]
+    selectors:
+      item_selector: "div.product"
+      title_selector: "a.product__name"
+      link_selector: "a.product__name"
+    max_pages: 2
+    notes: |
+      Preorders vigentes de la línea twarda oprawa (~38; "Nowość").
+      Es donde aparecen las novedades ANTES de pasar al listing
+      principal — el valor delta de Mangarden.
+
+  - name: "PL - Mangastore (twarda)"
+    country: "Polonia"
+    language: "Polaco"
+    # Agregador multi-editorial (Kotori, Hanami, Czarna Owca, JPF…):
+    # publisher VACÍO (gotcha #44) — el real sale de la ficha.
+    publisher: ""
+    source_class: "retailer"
+    kind: "html"
+    url: "https://mangastore.pl/szukaj.html?szukaj=twarda&postget=tak"
+    enabled: true
+    tags: ["manga", "retailer", "poland", "new-source"]
+    selectors:
+      # El extractor genérico truncaba el título perdiendo "(twarda
+      # okładka)" → el gate rechazaba todo. El <a> sin clase dentro del
+      # card lleva el título completo (a.Zoom es el thumbnail).
+      item_selector: "div.Okno.OknoRwd"
+      title_selector: "a[href*='-p-']:not(.Zoom)"
+      link_selector: "a[href*='-p-']:not(.Zoom)"
+    max_pages: 4
+    notes: |
+      Búsqueda "twarda" (tapa dura) vía GET (~70 hits, ~80% especiales).
+      Aporte neto vs Mangarden: Kotori sin tienda propia (HC de Atelier
+      of Witch Hat, DDDD 2-in-1, Punpun), Hanami, danmei HC de Czarna
+      Owca con cantos teñidos. ~15% ruido por matches de descripción
+      (el gate downstream filtra). ISBN presente en ficha de detalle.
+      Muchos agotados (fichas persisten — útil como referencia).
+      Evaluación 2026-06-12: viable complementaria. NO scrapear la
+      categoría Kotori completa (498 items, mayoría regulares).
+
+  - name: "KR - Aladin (만화 한정판)"
+    country: "Corea del Sur"
+    language: "Coreano"
+    # Librería multi-editorial (Haksan, Daewon, Seoul Media, D&C…):
+    # publisher VACÍO (gotcha #44).
+    publisher: ""
+    source_class: "retailer"
+    kind: "html"
+    # &page=1 explícito: la paginación del sitio es JS, pero el paginador
+    # genérico incrementa ?page=N si el param ya está en la URL (estrategia 4).
+    url: "https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=Book&SearchWord=%EB%A7%8C%ED%99%94+%ED%95%9C%EC%A0%95%ED%8C%90&page=1"
+    enabled: true
+    tags: ["manga", "retailer", "korea", "new-source"]
+    selectors:
+      item_selector: "div.ss_book_box"
+    max_pages: 18
+    notes: |
+      Búsqueda 만화 한정판 (~428 resultados, 26/pág, &page=N). Las 한정판
+      son ediciones limitadas DE FÁBRICA con ISBN/precio propios (2-3x
+      el tomo regular) — NO el patrón BooksPrivilege de tomo+regalo de
+      tienda. Cubre manga japonés licenciado (Frieren, Spy×Family) +
+      webtoons coreanos en print (Solo Leveling, 화산귀환) que ninguna
+      otra fuente tiene. ISBN 979-11 en detalle. Sin foto del extra
+      (solo portada). Títulos coreanos → requiere aliases KO en
+      series_aliases.yml para mapear series. Existe Aladin OpenAPI
+      (TTB key gratuita) como upgrade futuro. Evaluación 2026-06-12:
+      pass, Corea desde 0.
+
+  - name: "DE - altraverse Collectors Edition"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "altraverse"
+    source_class: "official"
+    kind: "html"
+    url: "https://altraverse.de/manga/?f=135"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    max_pages: 4
+    notes: |
+      Filtro de categoría "Collectors Edition" (~70 productos, Shopware 5,
+      ?p=N&f=135). Overlap de títulos ~100% con el wiki Manga-Passion
+      PERO aporta lo que el wiki no tiene: ISBN en cada producto (0/162
+      items altraverse del corpus tenían ISBN), fecha exacta, fotos de
+      extras y resiliencia first-party. NO usar f=491 (Leerschuber =
+      estuches vacíos sin tomos). Evaluación 2026-06-12: borderline-add.
+
+  - name: "DE - altraverse Manga mit Box"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "altraverse"
+    source_class: "official"
+    kind: "html"
+    url: "https://altraverse.de/manga/?f=64"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    max_pages: 2
+    notes: |
+      Filtro "Manga mit Box" (~13: GACHIAKUTA Schuber, Barakamon mit
+      Box, FMA Metal Edition Box). Ver entrada Collectors Edition.
+
+  - name: "DE - Egmont Luxusausgaben"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "Egmont Manga"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.egmont-shop.de/manga/luxusausgaben/"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    selectors:
+      # El card entero es un <a class="c-product-card"> — usamos el <li>
+      # contenedor como item y el anchor como link.
+      item_selector: "li.o-grid__cell"
+      title_selector: "a.c-product-card div.u-paragraph-2"
+      link_selector: "a.c-product-card"
+    max_pages: 1
+    notes: |
+      Categoría dedicada de Luxury Editions (~12, HC gran formato tipo
+      kanzenban: Wedding Peach, Mermaid Saga, your name., No. 6).
+      0% overlap verificado: Manga-Passion cubre la línea Limited de
+      Egmont pero NO la línea Luxusausgaben — todo alta neta. Línea
+      lenta (~2-4/año). Evaluación 2026-06-12: pass (prioridad baja).
+
+  - name: "DE - TOKYOPOP Jubiläumseditionen"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "TOKYOPOP"
+    source_class: "official"
+    kind: "html"
+    url: "https://tokyopop.de/buecher/jubilaeumseditionen/"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    selectors:
+      item_selector: "div.product-box"
+      title_selector: ".product-name"
+      link_selector: "a.product-name, a[href*='tokyopop.de/']"
+    max_pages: 1
+    notes: |
+      Hardcovers aniversario "streng limitiert" del 20º aniversario
+      (~12, campaña en curso). Solo ~2-3 estaban en el corpus vía
+      Manga-Passion. Shopware 6 server-rendered. Evaluación 2026-06-12.
+
+  - name: "DE - TOKYOPOP (search limited)"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "TOKYOPOP"
+    source_class: "official"
+    kind: "html"
+    url: "https://tokyopop.de/search?search=limited"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    selectors:
+      item_selector: "div.product-box"
+      title_selector: ".product-name"
+      link_selector: "a.product-name, a[href*='tokyopop.de/']"
+    max_pages: 3
+    notes: |
+      Búsqueda "limited" (~66 productos, 46/46 sampleados eran LEs
+      reales con extras). Overlap alto con Manga-Passion (84 LEs
+      TOKYOPOP ya en corpus, p.ej. toda la línea Yona LE) — el valor
+      es enriquecimiento: URL de compra, stock, fotos de extras, ISBN.
+      Más frágil que una categoría (full-text). Evaluación 2026-06-12:
+      borderline-add.
+
+  - name: "DE - Carlsen Manga Novedades"
+    country: "Alemania"
+    language: "Alemán"
+    publisher: "Carlsen"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.carlsen.de/manga/monatsuebersicht"
+    enabled: true
+    tags: ["manga", "official", "germany", "new-source"]
+    selectors:
+      # El card es <a class="pondus-product__link"> con el título dentro
+      # (.field--name-title). El link es el card mismo → sin link_selector
+      # (el extractor usa el href del propio item si es <a>).
+      item_selector: "a.pondus-product__link"
+      title_selector: ".field--name-title"
+    max_pages: 1
+    notes: |
+      Novedades manga del mes (Drupal server-rendered, ~15-20 items/mes,
+      ~90% tomos regulares — el gate downstream filtra; ~1-2 especiales/
+      mes: World's End Blue Bird LE, Sammelschuber AoT/One Piece).
+      Incluye el sello Hayabusa. El ISBN viene en la URL del producto
+      (/{formato}/{slug}/{isbn}) SALVO legacy items con ID numérico.
+      Como catálogo completo NO es viable (>90% regulares, overlap total
+      con Manga-Passion); como delta mensual first-party aporta ISBN/
+      precio/fotos oficiales a costo de 1 página/mes. Evaluación
+      2026-06-12: borderline-add.
+
+  # ============================================================
+  # Fuentes nuevas 2026-06-12 (pasada mundial 2) — TW/CZ/TR
+  # Evaluadas con /watch-evaluate-sources. Las fuentes API (HK Jade
+  # Dynasty, TW SPP, VN Kim Đồng/IPM, TH yaakz) van como wikis
+  # (storefront_json.py), no acá.
+  # ============================================================
+
+  - name: "TW - Kadokawa Taiwan (特裝/限定)"
+    country: "Taiwán"
+    language: "Chino"
+    publisher: "Kadokawa Taiwan"
+    source_class: "official"
+    kind: "html"
+    enabled: true
+    tags: ["manga", "official", "taiwan", "new-source"]
+    search_template: "https://www.kadokawa.com.tw/products?query={query}&page=1"
+    selectors:
+      item_selector: "product-item"
+      title_selector: "div.title"
+      link_selector: "a[href*='/products/']"
+    keywords:
+      - "特裝"
+      - "限定"
+      - "典藏"
+    notes: |
+      SHOPLINE server-rendered con JSON-LD Product; el slug de la URL de
+      producto ES el barcode (EAN 4711… bundles / ISBN 978… libros).
+      ~150-250 especiales únicos entre las 3 queries (overlap alto).
+      ~35-40% del listing es merch propio (複製原畫, 加購特典 acrílicos)
+      — lo excluye el filtro non-manga + el gate. Fotos de extras
+      verificadas en ficha. Evaluación 2026-06-12: viable.
+
+  - name: "CZ - Crew Manga"
+    country: "Chequia"
+    language: "Checo"
+    publisher: "CREW"
+    source_class: "official"
+    kind: "html"
+    url: "https://www.obchod.crew.cz/kategorie-21646/komiks/crew-manga?page=1"
+    enabled: true
+    tags: ["manga", "official", "czechia", "new-source"]
+    selectors:
+      item_selector: "article.item"
+      title_selector: "h3.item__tit a"
+      link_selector: "h3.item__tit a"
+    max_pages: 27
+    notes: |
+      Editorial #1 checa (tienda propia). Catálogo completo (~440
+      productos, 27 págs) con ~1% de especiales (limitovaná verze,
+      Sběratelský box, Speciální balíček) — fuente MIXTA de bajo costo:
+      el qualifier va siempre en el título y el gate filtra el resto
+      determinísticamente. EAN checo 859… en boxes (no ISBN). Señal de
+      rareza: Vyprodáno (Kagurabači limitovaná ya agotada). Balíček =
+      bundle de tomos regulares sin cofre → el gate lo excluye (regla
+      "pack 1ª ed. = regular"). Evaluación 2026-06-12: borderline-add
+      (abre Chequia de 0 a costo de 27 requests).
+
+  - name: "TR - Gerekli Şeyler (varyant)"
+    country: "Turquía"
+    language: "Turco"
+    # Retailer del grupo; la editorial real de los libros es Komik
+    # Şeyler y sale de la ficha (gotcha #44).
+    publisher: ""
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.gerekliseyler.com.tr/arama/varyant"
+    enabled: true
+    tags: ["manga", "retailer", "turkey", "new-source"]
+    selectors:
+      item_selector: "div.showcase"
+      title_selector: ".showcase-title a"
+      link_selector: ".showcase-title a"
+    max_pages: 2
+    notes: |
+      Búsqueda "varyant" (~13 hits, 10 manga/manhwa reales: Solo
+      Leveling Kuşe Kağıt Varyant Kapak, Madoka ×3, ORV). Ficha
+      estructurada label:value con Barkod=ISBN-13, editorial (Komik
+      Şeyler), año. La comics blacklist filtra los 3 hits western.
+      NO scrapear /arama/özel (todo Batman/Marvel) ni /kategori/manga
+      (8714 regulares). Evaluación 2026-06-12: borderline-add (micro-
+      fuente, abre Turquía de 0 a costo de ~14 requests).
