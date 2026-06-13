@@ -3,6 +3,9 @@ export type Item = {
   url: string
   title: string
   title_original?: string
+  // Bonus de compra de UN retailer (店舗特典) separado del título oficial
+  // (gotcha #93). Va en el detalle, NO en el grid.
+  store_bonus?: string
   description?: string
   description_es?: string
   // Portada = images[0] (única fuente de verdad, 2026-06-09). Los campos

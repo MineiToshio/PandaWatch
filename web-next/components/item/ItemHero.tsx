@@ -85,6 +85,23 @@ export function ItemHero({ cluster }: { cluster: Cluster }) {
             </p>
           )}
 
+          {/* Bonus de tienda (店舗特典) — perk de compra de un retailer, separado
+              del título oficial (gotcha #93). Se muestra acá en el detalle. */}
+          {canonical.store_bonus && (
+            <p style={{
+              fontSize: 13, color: '#92600A', margin: 0,
+              display: 'flex', alignItems: 'flex-start', gap: 6,
+            }}>
+              <span aria-hidden="true">🎁</span>
+              <span>
+                <span style={{ fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 6 }}>
+                  Bonus de tienda:
+                </span>
+                {canonical.store_bonus}
+              </span>
+            </p>
+          )}
+
           {/* Publisher + country + language */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {canonical.country && (
