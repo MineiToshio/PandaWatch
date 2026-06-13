@@ -2309,6 +2309,38 @@ def test_clean_title_empty_input():
     assert mw.clean_title(None) is None
 
 
+# --- split_store_bonus: separa el 店舗特典 del título oficial (gotcha #93) ---
+
+def test_split_store_bonus_strips_rakuten_perk():
+    # Bracket 【…特典…】 = perk de compra de un retailer → fuera del título.
+    clean, bonus = mw.split_store_bonus("数学ゴールデン 2(描き下ろしイラストカード)【楽天ブックス限定特典】")
+    assert clean == "数学ゴールデン 2"
+    assert "楽天ブックス限定特典" in bonus
+
+
+def test_split_store_bonus_preserves_volume_paren():
+    # El paréntesis adjacente que es SÓLO el volumen NO se consume.
+    clean, bonus = mw.split_store_bonus("年の差婚(3)【楽天ブックス限定特典付き】")
+    assert clean == "年の差婚(3)"
+    assert "特典" in bonus
+
+
+def test_split_store_bonus_keeps_edition_name():
+    # 【…特装版】 nombra la EDICIÓN (no un bonus de tienda) → NO se toca.
+    clean, bonus = mw.split_store_bonus("SUPER LOVERS 第14巻 小冊子付き特装版【楽天ブックス限定特典付き】")
+    assert clean == "SUPER LOVERS 第14巻 小冊子付き特装版"
+    assert "特典" in bonus
+
+
+def test_split_store_bonus_noop_without_perk():
+    # Sin 特典 → intacto, sin bonus. Idempotente.
+    for t in ("鬼滅の刃 23 特装版", "Berserk Deluxe 1", ""):
+        clean, bonus = mw.split_store_bonus(t)
+        assert clean == t and bonus == ""
+        # idempotencia: re-aplicar no cambia
+        assert mw.split_store_bonus(clean)[0] == clean
+
+
 def test_clean_title_strips_announcement_prefix():
     # Los 6 ejemplos exactos que el usuario pasó.
     cases = [
@@ -6347,6 +6379,13 @@ def test_lmc_normalize_display_title():
     assert n("Berserk Variant 41", "variant") == "Berserk Variant 41"           # ya presente
     assert n("Berserk Kanzenban 1", "limited") == "Berserk Kanzenban 1 Edición Limitada"
     assert n("Kagurabachi Edición Especial Metalizada 1", "variant") == "Kagurabachi Metalizada 1 Variant"
+    # Gotcha #93: un título que llega decorado con "Special Edition" (EN) NO debe
+    # duplicar el marcador al re-apendar el español. Caso real (legacy, corrompido
+    # por el skill viejo de standardize que tradujo la edición a inglés).
+    assert n("Pájaro que trina no vuela nº9 Special Edition", "special") == "Pájaro que trina no vuela 9 Edición Especial"
+    assert n("Crush of Lifetime nº6 Special Edition", "especial") == "Crush of Lifetime 6 Edición Especial"
+    # …y un tomo regular nunca conserva el qualifier en inglés.
+    assert n("Scarlet Secret Special Edition", "regular") == "Scarlet Secret"
 
 
 def test_dedup_synthetic_source_is_cole_qualified():
