@@ -740,6 +740,57 @@ def clean_title(title: str) -> str:
     return cleaned
 
 
+# Bonus de TIENDA (店舗特典) embebido en el título oficial JP — NO es el nombre
+# del producto sino un perk de compra de UN retailer ("si compras en Rakuten te
+# llevas una postal"). Va al campo `store_bonus` (visible en el detalle), NO en
+# el `title` del grid (gotcha #93). Señal de ALTA precisión: el bracket japonés
+# 【…特典…】 (特典 = "perk/bonus de compra"); 222 en el corpus, CERO con marcador
+# de edición dentro. NO tocar 【…限定版/特装版/初回限定…】 (eso ES la edición), ni
+# las colas de tienda en inglés de Mangavariant ("- Animate cover") que SÍ son
+# la identidad de la variante.
+_STORE_BONUS_EDITION_GUARD = re.compile(r"特装版|限定版|初回限定版|愛蔵版|完全版|通常版|特裝版|限定盤")
+# Paréntesis que es SÓLO un marcador de volumen ("(3)", "(完)", "(上)", "(1-5巻)")
+# — NO es descripción de bonus, no se consume aunque preceda al bracket 特典.
+_VOLUME_PAREN_RE = re.compile(r"^[（(]\s*[\d０-９]+(?:\s*[-〜~]\s*[\d０-９]+)?\s*巻?\s*[）)]$"
+                              r"|^[（(]\s*[完上中下前後初終]\s*[）)]$")
+# Un bracket 【…特典…】, opcionalmente con su descripción adjacente entre
+# paréntesis (full-width o half-width) inmediatamente ANTES que describe el
+# contenido del bonus: "数学ゴールデン 2(描き下ろしイラストカード)【楽天ブックス限定特典】".
+_STORE_BONUS_RE = re.compile(
+    r"\s*(?P<paren>[（(][^）)]*[）)])?\s*【[^】]*特典[^】]*】"
+)
+
+
+def split_store_bonus(title: str) -> tuple[str, str]:
+    """Devuelve (título sin el bonus de tienda, texto del bonus extraído).
+
+    Sólo separa brackets 【…特典…】 (perk de compra de un retailer japonés), que
+    no son parte del nombre oficial del producto. Conserva intactos los brackets
+    que nombran la EDICIÓN (特装版/限定版/初回限定…) y los paréntesis que son sólo
+    el volumen ("(3)"). Idempotente. Ver gotcha #93."""
+    if not title or "特典" not in title:
+        return title, ""
+    bonuses: list[str] = []
+
+    def _take(m: re.Match) -> str:
+        frag = m.group(0)
+        if _STORE_BONUS_EDITION_GUARD.search(frag):
+            return frag  # el bracket nombra la edición → NO tocar
+        paren = m.group("paren")
+        if paren and _VOLUME_PAREN_RE.match(paren):
+            # el paréntesis es el volumen, no la descripción del bonus: quitar
+            # sólo el bracket 【…特典…】, conservar el volumen en el título.
+            bracket = frag[frag.rindex("【"):]
+            bonuses.append(bracket.strip())
+            return paren
+        bonuses.append(frag.strip())
+        return " "
+
+    cleaned = _STORE_BONUS_RE.sub(_take, title)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return (cleaned or title), " ".join(bonuses).strip()
+
+
 def clean_description(desc: str) -> str:
     """Quita prefijos de botón 'leer más' capturados por el scraper (gotcha #37)."""
     if not desc:
@@ -6819,19 +6870,25 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
 
 
 def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
+    # El title es el nombre OFICIAL, pero los retailers JP le pegan su perk de
+    # compra (店舗特典) — "(…ポストカード)【楽天ブックス限定特典】". Eso NO es el nombre
+    # del producto: se separa al campo store_bonus (visible en el detalle, no en
+    # el grid). title_original conserva el nombre oficial COMPLETO (con el bonus),
+    # para no perder el dato. Ver gotcha #93.
+    official_title = candidate.title
+    grid_title, store_bonus = split_store_bonus(official_title)
     row = {
         "detected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": candidate.status,
         "score": candidate.score,
         "signals": candidate.signals,
         "signal_types": candidate.signal_types,
-        "title": candidate.title,
+        "title": grid_title,
+        "store_bonus": store_bonus,
         # title_original preserva el título scrapeado tal como vino de la
-        # fuente (con clean_title aplicado: mojibake fixed, junk removido).
-        # NO se sobrescribe cuando el skill /watch-standardize-catalog estandariza
-        # `title` a la forma international ("Demon Slayer Limited 23") — el
-        # original "鬼滅の刃 23 特装版" queda preservado acá. Ver gotcha #22.
-        "title_original": candidate.title,
+        # fuente (con clean_title aplicado: mojibake fixed, junk removido), INCL.
+        # el store_bonus. NO se sobrescribe cuando el skill estandariza. Ver #22.
+        "title_original": official_title,
         "url": candidate.url,
         "source": candidate.source,
         "source_url": candidate.source_url,

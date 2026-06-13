@@ -992,6 +992,88 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "extract_store_bonus",
+        "category": "Mantenimiento",
+        "icon": "🎁",
+        "name": "Separar bonus de tienda",
+        "tagline": "Mueve el 店舗特典 del título al campo store_bonus.",
+        "what": (
+            "Los retailers japoneses pegan su bonus de compra en el título "
+            "oficial — '(…ポストカード)【楽天ブックス限定特典】'. Eso no es el nombre "
+            "del producto: lo separa al campo store_bonus (visible solo en el "
+            "detalle, no en el grid). Conserva intacta la edición real "
+            "(特装版/限定版) y el volumen. El scraper ya lo aplica a items nuevos; "
+            "este script es para el corpus histórico. Idempotente."
+        ),
+        "when": (
+            "Ya se corrió (2026-06-12, 221 separados). Solo re-correr si "
+            "cambia el helper split_store_bonus."
+        ),
+        "command": [PYTHON, "scripts/retrofit/extract_store_bonus.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Muestra qué separaría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Separar",
+                "desc": "Aplica con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Muestra los títulos que separaría sin guardar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "fix_corrupted_lm_special_titles",
+        "category": "Mantenimiento",
+        "icon": "🩹",
+        "name": "Arreglar títulos LM corruptos (edición duplicada)",
+        "tagline": "Reconstruye desde description los títulos con edición EN+ES duplicada.",
+        "what": (
+            "Gotcha #93: el skill viejo de standardize tradujo la edición a "
+            "inglés y perdió el volumen en algunos tomos de listadomanga "
+            "('Pájaro que trina no vuela no Special Edition Edición Especial'). "
+            "Reconstruye el título desde el description (collection_title "
+            "scrapeado con su nº y la edición en español) reusando "
+            "normalize_display_title — restaura el volumen y deja un solo "
+            "marcador. Idempotente (tras correrlo el título ya no matchea)."
+        ),
+        "when": (
+            "Ya se corrió sobre todo el corpus (2026-06-13, 18 items). Solo "
+            "volver a correrla si reaparecen items con edición en inglés en el "
+            "título (ej. restaurados de un backup viejo)."
+        ),
+        "command": [PYTHON, "scripts/retrofit/fix_corrupted_lm_special_titles.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Muestra los títulos que reconstruiría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Reconstruir",
+                "desc": "Aplica con backup y consolida.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Muestra los cambios sin guardar nada.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "clean_titles",
         "category": "Mantenimiento",
         "icon": "🧼",

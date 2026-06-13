@@ -275,11 +275,15 @@ def _strip_series_prefix(text: str, series_title: str) -> str:
 # Marcador de volumen "nº"/"n°" a quitar del título de display (gotcha #52):
 # "Atelier of Witch Hat nº5" → "Atelier of Witch Hat 5".
 _VOL_MARKER_RE = re.compile(r"\s*n[º°]\s*(\d+)", re.IGNORECASE)
-# "Edición Especial" en CUALQUIER posición del título (con o sin paréntesis). Se
-# remueve siempre y, si el tomo es especial, se re-apenda UNA sola vez al final —
-# así un "Edición Especial" embebido (contaminación) no queda en el medio (gotcha
-# #54/#56). Caso real: "The Promised Neverland Edición Especial 13".
-_ESP_ANY_RE = re.compile(r"\s*\(?\s*Edici[óo]n\s+Especial\s*\)?\s*", re.IGNORECASE)
+# "Edición Especial" (ES) o "Special Edition" (EN) en CUALQUIER posición del título
+# (con o sin paréntesis). Se remueve siempre y, si el tomo es especial, se re-apenda
+# UNA sola vez al final en español — así un qualifier embebido (contaminación) no
+# queda en el medio (gotcha #54/#56) y un título que llega ya decorado en inglés no
+# duplica el marcador ("X no Special Edition" + "Edición Especial" → un solo marcador,
+# gotcha #93). Caso real: "The Promised Neverland Edición Especial 13"; "Pájaro que
+# trina no vuela no Special Edition" (título corrompido por el skill viejo).
+_ESP_ANY_RE = re.compile(
+    r"\s*\(?\s*(?:Edici[óo]n\s+Especial|Special\s+Edition)\s*\)?\s*", re.IGNORECASE)
 
 
 # Marcador de display por kind: distingue variantes del MISMO volumen que conviven
@@ -289,11 +293,13 @@ _KIND_MARKER = {
     "especial": "Edición Especial", "special": "Edición Especial",
     "variant": "Variant", "alternativa": "Variant",
     "limited": "Edición Limitada", "limitada": "Edición Limitada",
+    "collector": "Edición Coleccionista",
 }
 _MARKER_PRESENT = {
     "Edición Especial": r"especial|special",
     "Variant": r"variant|alternativa",
     "Edición Limitada": r"limitad|limited",
+    "Edición Coleccionista": r"coleccionista|collector",
 }
 
 
