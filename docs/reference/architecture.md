@@ -383,6 +383,9 @@ absorbe el overlap entre corridas.
 
 ## Política de títulos (decisión owner, 2026-06-12)
 
+> Gist abajo; el **runbook completo + checklist para agentes** está en
+> [title-policy.md](title-policy.md) (léelo antes de tocar títulos).
+
 **`title` = nombre OFICIAL con que la editorial/fuente publica el producto. Es un
 DATO, no una traducción.** Tres reglas duras:
 

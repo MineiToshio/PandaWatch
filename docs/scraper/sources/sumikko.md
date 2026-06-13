@@ -218,3 +218,13 @@ genérico en `is_likely_manga`: tier `_NON_MANGA_HARD_UNLESS_BONUS` + marcador d
 inclusión POSICIONAL (付/同梱 pegado al match, 特装版 en cualquier parte — NO 限定版 a
 secas). Tests: `test_is_likely_manga_bonus_context_*`. Verificado: 0 rechazos del
 corpus Sumikko tras el fix.
+
+## 2026-06-12 — store_bonus separado del título (gotcha #93)
+
+Sumikko (y Rakuten Books JP) traen el 店舗特典 pegado al título oficial:
+"数学ゴールデン 2(描き下ろしイラストカード)【楽天ブックス限定特典】". Eso es el perk de compra
+de Rakuten, no el nombre del producto. El scraper (`candidate_to_json` →
+`mw.split_store_bonus`) lo separa al campo `store_bonus` (visible solo en el detalle,
+no en el grid del catálogo). 221 items afectados en el corpus, casi todos de Sumikko.
+La edición real (特装版/限定版 con figura/booklet) SÍ queda en el título — solo se quita
+el bracket 【…特典…】 del retailer. Ver docs/reference/title-policy.md.

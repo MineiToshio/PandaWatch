@@ -359,7 +359,7 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 > ignoraban y caía al default `limit=2000`). Verificado: `limit: 8` procesó exactamente
 > 8 y dejó el resto pendiente para la siguiente corrida incremental.
 
-**Output:** `series_key`, `series_display`, `edition_key`, `edition_display`, `volume`, `standardized_at` (`title` queda INTACTO = nombre oficial; `title_original` preservado).
+**Output:** `series_key`, `series_display`, `edition_key`, `edition_display`, `volume`, `standardized_at` (`title` queda INTACTO = nombre oficial; `title_original` preservado). El `store_bonus` (perk de compra de un retailer JP, 店舗特典) lo separa el SCRAPER del título oficial (`mw.split_store_bonus`, gotcha #93), no esta etapa.
 
 > Si aparecen `series_key` nuevos no canónicos → correr **ETAPA 3**.
 

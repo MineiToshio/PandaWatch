@@ -50,6 +50,14 @@ que usa `scripts/audit/data_quality.py` para marcar imágenes como "pixelada" en
 No es un parámetro configurable — si el panel de calidad lo marca como problema, este skill
 lo intenta resolver.
 
+**Referencia degenerada (`< MIN_REF_PX`, 2 500 px)**: una imagen actual por debajo de ese
+mínimo (típicamente un GIF de 1×1 px = placeholder "imagen no disponible" de Amazon) NO sirve
+como referencia para `_same_cover` — rechazaría toda candidata (0 matches garantizados). Esos
+targets se tratan como **"sin imagen"**: se saltan salvo `--include-no-image`, y ahí van
+`verified:false` y sin variante reverse. Sin este guard los ~46 placeholders de 1px copaban el
+`--limit` en cada corrida (ordenan primero por px) y nunca se llegaba a las portadas reales de
+baja resolución (fix estructural 2026-06-12).
+
 **La regla de oro de relevancia** (lo que arregla el problema histórico de "me manda otros
 volúmenes / ediciones / cosas no relacionadas"): una candidata SOLO se acepta si pasa DOS
 verificaciones: (1) `fetch_better_covers._same_cover(actual, candidata, MAX_HASH_DIST)` — el
@@ -124,6 +132,16 @@ import fetch_better_covers as fbc
 
 # Umbral de "baja calidad": mismo valor que data_quality.py --px (default 90 000).
 LOW_QUALITY_PX = 90_000
+
+# Umbral de "referencia usable": por debajo de esto la imagen actual es un
+# placeholder roto (típico: GIF de 1×1 px de Amazon "imagen no disponible") y NO
+# sirve como referencia para _same_cover — el gate de aspect ratio y los hashes
+# rechazarían toda candidata (0 matches garantizados). Estos targets se tratan
+# como "sin imagen": se saltan salvo --include-no-image (y ahí van verified:false,
+# sin variante reverse, porque no hay con qué hacer búsqueda por foto). Sin este
+# guard los ~46 placeholders de 1px copan el --limit en cada corrida y nunca se
+# llega a las portadas reales de baja resolución (causa estructural, 2026-06-12).
+MIN_REF_PX = 2_500
 
 # Ajustar según los parámetros recibidos al invocar el skill
 LIMIT            = 20        # --limit N
@@ -318,9 +336,17 @@ for item in items:
             # Portada: saltar si --gallery-only está activo
             if GALLERY_ONLY:
                 continue
-            if px <= 0:
+            if px < MIN_REF_PX:
+                # Referencia ausente o placeholder roto (1×1 px): no sirve para
+                # _same_cover. Se trata como "sin imagen" → skip salvo
+                # --include-no-image, y en ese caso se blanquea la referencia
+                # (local + ref_url) para que la candidata quede verified:false y
+                # NO se construya variante reverse sobre un placeholder degenerado.
                 if not INCLUDE_NO_IMAGE:
                     continue
+                local   = ''
+                ref_url = ''
+                px      = 0
             elif px >= LOW_QUALITY_PX:
                 continue
         else:
@@ -330,9 +356,10 @@ for item in items:
             # real 2026-06-11, 12/25 targets eran galería con 0 matches posibles.
             if not GALLERY_ONLY and not INCLUDE_GALLERY:
                 continue
-            # Galería: solo procesar si existe local y es baja calidad
-            # (necesitamos _same_cover → skip si no hay archivo de referencia)
-            if px <= 0 or px >= LOW_QUALITY_PX:
+            # Galería: solo procesar si existe local usable y es baja calidad
+            # (necesitamos _same_cover → skip si no hay referencia usable o es
+            # un placeholder roto por debajo de MIN_REF_PX)
+            if px < MIN_REF_PX or px >= LOW_QUALITY_PX:
                 continue
 
         action     = 'replace_cover' if img_idx == 0 else 'replace_image'

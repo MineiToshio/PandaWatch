@@ -107,6 +107,8 @@ scripts/
     recover_lost_jp_titles.py  recupera nombres oficiales de items JP cuyo
                                title_original fue pisado (openBD por ISBN +
                                re-fetch Playwright de mangavariant). One-shot.
+    extract_store_bonus.py     separa el bonus de TIENDA (店舗特典) del title al
+                               campo store_bonus (gotcha #93). mw.split_store_bonus.
     restore_official_titles.py migración one-shot por item (2026-06-12, gotcha #92):
                                title = clean_title(title_original) — nombre OFICIAL,
                                sin traducir ni renombrar — y retira title_standardized.

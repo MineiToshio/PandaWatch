@@ -58,7 +58,9 @@ If a slug is not found, the page returns 404 via `notFound()`.
 [  IMAGE CAROUSEL  ]   [  METADATA  ]
 
                         Series Display
-                        Edition Display — Vol. N
+                        Título OFICIAL (no se renombra/traduce)
+                        Título original: … (si difiere)
+                        🎁 Bonus de tienda: … (si store_bonus)
                         Publisher · Country · Language
 
                         [Signal chips]
@@ -72,6 +74,13 @@ If a slug is not found, the page returns 404 via `notFound()`.
 
 On mobile: carousel on top, metadata below (stacked layout).
 On desktop: carousel on left (40%), metadata on right (60%).
+
+**Título + bonus de tienda (política de títulos 2026-06-12):** el `title` es el
+nombre OFICIAL del producto (no se traduce ni renombra; ver
+[title-policy.md](../../reference/title-policy.md)). `title_original` se muestra
+debajo si difiere. **`store_bonus`** (perk de compra de un retailer JP, 店舗特典,
+separado del título por gotcha #93) se muestra como línea ámbar "🎁 Bonus de
+tienda: …" cuando está presente — NO va en el grid, solo acá en el detalle.
 
 **Rarity badge (glassy mode):** rendered as an inline pill below the signal chips using
 the glassy display mode (dark background `rgba(20,17,14,0.82)` + `backdrop-filter: blur(6px)`,

@@ -240,7 +240,7 @@ válidos que faltaban en el allowlist — el bug era del validador).
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
-Resumen de gotchas #43-#60 y #73-#75 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
+Resumen de gotchas #43-#60, #73-#75 y #93 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
 recuperar requiere re-scrape + enforcer.
 
 **Captura / parser:**
@@ -295,6 +295,21 @@ recuperar requiere re-scrape + enforcer.
   packs anunciados se perdían en silencio. ✅ regla nueva ANTES del entry base, mismo
   tratamiento que editados: kind `pack` + filtro de keywords de extras (pack pelado tipo
   "Pack tomos 4 y 5" se sigue descartando) + `status:upcoming` por prefijo.
+
+- #93: **título con la edición DUPLICADA en dos idiomas + volumen perdido** ("Pájaro que
+  trina no vuela no Special Edition Edición Especial", reportado por el owner). NO es un bug
+  del parser: el skill VIEJO de standardize tradujo la edición a inglés y destruyó el "nº9"
+  (→ "no"); ese título mangleado quedó como `title_original` y `restore_official_titles` lo
+  propagó a `title`; después `normalize_display_title` re-apendaba "Edición Especial" sin
+  remover el "Special Edition" inglés → duplicación. ✅ (a) mecanismo: `_ESP_ANY_RE` ahora
+  matchea también "Special Edition" (EN) + `_KIND_MARKER` completado con `collector`; (b)
+  datos legacy: `fix_corrupted_lm_special_titles.py` reconstruye el título desde el
+  `description` — **el `description` preserva el `collection_title` scrapeado intacto** (con
+  `nº{vol}` y la edición en español), así que es la fuente CONFIABLE cuando `title_original`
+  quedó corrupto. Cuando el `description` también quedó contaminado por un merge cross-source
+  (metadata de tienda, caso "Fruits Basket Collector's Edition" con paginación de fnac), el
+  fallback toma el STEM de un tomo hermano limpio de la misma colección + el volumen propio.
+  18 items en total (16 desde description + 2 vía fallback).
 
 **Decisiones (lo que NO se hace):** omnibus pelado no califica (#18); no se mergea
 cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).

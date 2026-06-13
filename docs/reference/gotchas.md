@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 92 known gotchas
+## The 93 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -612,3 +612,50 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     re-fetch Playwright de mangavariant — el sitio quedó tras sgcaptcha, ver su ficha);
     marcadores agregados tras esa pasada: `w/` (= with, listings EN) y excepción
     "Gangan Joker" en comics_blacklist (revista, contiene "Joker").
+
+93. **Título de edición DUPLICADO en dos idiomas + volumen perdido (skill viejo de standardize, 2026-06-13).**
+    Síntoma reportado por el owner: "Pájaro que trina no vuela no Special Edition Edición Especial"
+    — sin el número de volumen y con el tipo de edición repetido en inglés y español.
+    CAUSA (dos bugs encadenados): (a) el skill VIEJO de standardize (pre-política de títulos
+    #92, 2026-06-12) reescribía `title` traduciendo la edición a inglés ("Edición Especial" →
+    "Special Edition") y destruía el marcador de volumen ("nº9" → "no", perdiendo el 9); ese
+    título mangleado quedó guardado como `title_original`, y `restore_official_titles.py` lo
+    propagó de vuelta a `title`. (b) `normalize_display_title` (el normalizador de display de
+    listadomanga) solo removía "Edición Especial" en ESPAÑOL antes de re-apendar el marcador,
+    NO la frase en inglés → "…Special Edition" + "Edición Especial" = marcador duplicado.
+    FIX DE MECANISMO (durable): `_ESP_ANY_RE` ahora también matchea "Special Edition" (EN), así
+    el marcador nunca se duplica venga de donde venga; además se completó `_KIND_MARKER` con
+    `collector` → "Edición Coleccionista". FIX DE DATOS LEGACY (one-shot):
+    `fix_corrupted_lm_special_titles.py` reconstruye el título de los tomos de listadomanga
+    cuyo `title` arrastra un qualifier de edición en inglés, leyéndolo de la fuente CONFIABLE
+    — el `description`, que preserva el `collection_title` scrapeado con su `nº{vol}` y la
+    edición en español — reusando `normalize_display_title` (única fuente de verdad). Restaura
+    el volumen y deja un solo marcador. Estos títulos violaban la invariante DURA `TITLE` de
+    `validate_corpus.py`. La duplicación EN+ES era una firma confiable porque los títulos
+    limpios de listadomanga llevan el marcador en español, nunca en inglés. Tests:
+    `test_lmc_normalize_display_title` (casos EN). FALLBACK por hermano: cuando el
+    `description` quedó contaminado por un merge cross-source (metadata de tienda en vez del
+    `collection_title`, caso "Fruits Basket Collector's Edition" — su `description` traía la
+    paginación de fnac), el título se reconstruye tomando el STEM de un tomo HERMANO limpio de
+    la misma colección (su nombre scrapeado, no el canónico) + el volumen propio →
+    "Fruits Basket 1"/"Fruits Basket 3", consistente con los hermanos vol 2-12 (en esa
+    colección TODOS los tomos son kind=regular: la edición coleccionista es la colección
+    entera, no hay regular vs especial coexistiendo, así que el tomo NO lleva marcador). Total:
+    18 items (16 desde description + 2 vía fallback).
+
+93. **Bonus de TIENDA (店舗特典) embebido en el título oficial → campo `store_bonus` (2026-06-12).**
+    Corolario de la política de títulos (#92): el `title` es el nombre OFICIAL, pero los
+    retailers japoneses le pegan SU perk de compra entre brackets —
+    "数学ゴールデン 2(描き下ろしイラストカード)【楽天ブックス限定特典】" = "si compras en Rakuten
+    te llevas una postal". Eso NO es el nombre del producto (otro retailer da otro bonus);
+    no debe ocupar el título en el GRID. Se separa al campo `store_bonus`, visible solo en
+    el DETALLE ("🎁 Bonus de tienda"). Helper `mw.split_store_bonus(title) → (clean, bonus)`
+    (fuente única: scraper en `candidate_to_json` + retrofit `extract_store_bonus.py`).
+    Señal de ALTA precisión: el bracket japonés 【…特典…】 (特典 = "perk de compra"); 222 en
+    el corpus, CERO con marcador de edición dentro. Guards: (a) NO tocar
+    【…特装版/限定版/初回限定…】 (eso ES la edición, no un bonus — `_STORE_BONUS_EDITION_GUARD`);
+    (b) el paréntesis adjacente sólo se consume si describe el bonus, NO si es el volumen
+    ("年の差婚(3)【…特典】" conserva el "(3)" — `_VOLUME_PAREN_RE`). `title_original` conserva
+    el nombre oficial COMPLETO (con el bonus). Idempotente. NO aplica a las colas de tienda
+    en inglés de Mangavariant ("- Animate cover") que SÍ son la identidad de la variante.
+    Tests: `test_split_store_bonus_*`.
