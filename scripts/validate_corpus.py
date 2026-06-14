@@ -35,6 +35,9 @@ Invariantes (cada una con su id corto):
   EKPREFIX el edition_key empieza con el series_key del item (formato
          `{series}-{pub}-{slug}-{pais}`). [warning — lo corrige
          fix_edition_key_prefix.py; excluye approved]
+  STOLENIMG la portada de un tomo NORMAL es la foto de un extra/bonus de OTRA
+         fila (cofre/posavasos/miniartbook de otro volumen; gotcha #99). [warning
+         — lo corrige remove_phantom_calendar_editions.py]
 
 Exit code != 0 si hay violaciones DURAS (warnings no fallan).
 
@@ -301,10 +304,32 @@ def main():
             flag("ISBNDUP", f"{isbn} ×{len(group)}: "
                  f"{[g.get('edition_key') or g.get('cluster_key','')[:40] for g in group][:3]}")
 
+    # STOLENIMG (gotcha #99) — la portada de un TOMO normal es, en realidad, la foto
+    # de un extra/bonus (cofre, posavasos, miniartbook) de OTRA fila. Síntoma del bug
+    # del calendario+estandarización que inventaba especiales y les pegaba el regalo de
+    # otro volumen (caso Edens Zero "Especial 23"). Sólo se mira el tomo NORMAL: un
+    # artbook/cofre/fanbook standalone comparte legítimamente la foto con el bonus que
+    # ES (Witch Hat ArtWorks, Promised Neverland Escape…), eso NO es robo. Warning.
+    extra_owner = defaultdict(set)
+    for it in items:
+        for img in (it.get("images") or []):
+            if isinstance(img, dict) and img.get("kind") in ("extra", "bonus") and img.get("url"):
+                extra_owner[img["url"]].add(it.get("slug"))
+    for it in items:
+        if _edition_slug(it) != "regular" and (it.get("product_type") or "") != "manga":
+            continue
+        imgs = it.get("images") or []
+        if not imgs or not isinstance(imgs[0], dict):
+            continue
+        url = imgs[0].get("url")
+        owners = extra_owner.get(url, set()) - {it.get("slug")}
+        if url and owners:
+            flag("STOLENIMG", f"{it.get('slug')} portada = extra de {sorted(owners)} | {(it.get('title') or '')[:50]!r}")
+
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
     order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
-             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP"]
+             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG"]
     hard_fail = 0
     for k in order:
         n = counts[k]

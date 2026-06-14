@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""build_web.py — embebe data/items.jsonl dentro de web/index.html.
+"""build_web.py — refresca el índice de aliases y (opcional) embebe el catálogo.
 
-Lee data/items.jsonl (modelo 1-fila-por-producto con sources[]), agrupa por
-cluster_key vía manga_watch.consolidate_by_cluster (red de seguridad, idempotente)
-y reemplaza el contenido del <script id="manga-data"> en web/index.html
-con un array JSON inline. Después de correrlo, podés abrir
-web/index.html directamente con doble-click sin necesidad de servidor.
+Por DEFECTO **ya no embebe** el catálogo en web/index.html: deja el
+<script id="manga-data"> vacío. El dashboard servido por serve.py usa el
+fetch EN VIVO de data/items.jsonl (decisión #5), así que el embed sólo servía
+de fallback para abrir el HTML con doble-click (file://) — y costaba ~30 MB
+en una sola línea, que el navegador descargaba y parseaba en cada carga ADEMÁS
+del fetch en vivo (trabajo doble). Con el embed vacío, index.html pesa ~130 KB.
+
+Lo que SIEMPRE hace: exporta data/series_aliases.json (índice de búsqueda
+multilingüe que consumen el dashboard y web-next).
+
+Con --embed: además embebe data/items.jsonl (modelo 1-fila-por-producto con
+sources[], agrupado por cluster_key vía manga_watch.consolidate_by_cluster) en
+el <script id="manga-data">, para poder abrir web/index.html con doble-click
+sin servidor. Más pesado; usar sólo si necesitás el fallback file://.
 
 Uso:
-    python scripts/build_web.py
-    python scripts/build_web.py --input data/items.jsonl --output web/index.html
-    python scripts/build_web.py --clear   # vacía la data embebida
+    python scripts/build_web.py            # embed vacío + aliases (default)
+    python scripts/build_web.py --embed    # + catálogo embebido (fallback file://)
+    python scripts/build_web.py --clear     # sólo vacía el embed (sin tocar aliases)
 """
 
 from __future__ import annotations
@@ -146,7 +155,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", default="data/items.jsonl", help="JSONL fuente (default: data/items.jsonl)")
     parser.add_argument("--output", default="web/index.html", help="HTML target (default: web/index.html)")
-    parser.add_argument("--clear", action="store_true", help="Vacía la data embebida (deja [] en el script)")
+    parser.add_argument("--embed", action="store_true",
+                        help="Embebe el catálogo completo en el HTML (fallback file://). "
+                             "Por defecto el embed queda vacío y la página usa el fetch en vivo.")
+    parser.add_argument("--clear", action="store_true",
+                        help="Sólo vacía el embed (deja [] en el script) sin tocar los aliases.")
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -165,10 +178,21 @@ def main() -> int:
     # Vista de búsqueda de aliases (data/series_aliases.json) — la consumen
     # el dashboard y web-next para que la búsqueda resuelva nombres
     # multilingües de serie (el title es el nombre oficial, no se renombra).
+    # SIEMPRE se exporta (con o sin --embed).
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from export_series_aliases import export as export_aliases
     n_aliases = export_aliases()
     print(f"[INFO] {n_aliases} series en data/series_aliases.json")
+
+    if not args.embed:
+        # Default: embed vacío. La página usa el fetch en vivo de items.jsonl
+        # (decisión #5); el HTML queda en ~130 KB en vez de ~30 MB.
+        new_html = inject(html, [])
+        output.write_text(new_html, encoding="utf-8")
+        print(f"[OK] embed vacío en {output} (~{output.stat().st_size // 1024} KB). "
+              f"La página usa el fetch en vivo de data/items.jsonl.")
+        print("     Para embeber el catálogo (fallback file://) corré con --embed.")
+        return 0
 
     input_path = Path(args.input)
     items = load_items(input_path)

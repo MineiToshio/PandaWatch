@@ -495,6 +495,15 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04h-dedup-carousel.log" 2>&1
     echo "    duración: $(($(date +%s) - P4H_START))s — items: $(count_lines)"
 
+    # [4i] purga de placeholders: algunas fuentes sirven una imagen genérica
+    # ("no disponible"/"coming soon"), un pixel 1×1 o un blanco cuando no tienen
+    # portada. Se quitan de images[] para que la card caiga al 📚 (no a un
+    # placeholder remoto). Sin red — lee el espejo local. Idempotente.
+    echo ">>> [4i] purge_placeholder_images (1×1 / blancos / 'no disponible')"
+    "$VENV_PY" scripts/retrofit/purge_placeholder_images.py \
+        > "$LOG_DIR/04i-purge-placeholders.log" 2>&1
+    echo "    items: $(count_lines)"
+
     echo " ✓ PHASE 3 cleanup done"
 else
     echo "[SKIP] PHASE 3 (cleanup) saltada por SKIP_CLEANUP=1"
@@ -517,8 +526,14 @@ fi
 # ============================================================
 echo
 echo ">>> [5] validate_corpus (invariantes estructurales — gotcha #54)"
-"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log" || \
+CORPUS_INVALID=0
+"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log"
+# Sin `set -o pipefail`, $? sería el de `tee` (siempre 0) → el `|| echo` viejo era
+# código muerto. El exit real de validate_corpus está en PIPESTATUS[0] (bash).
+if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+    CORPUS_INVALID=1
     echo " ⚠ validate_corpus reportó violaciones DURAS — revisar $LOG_DIR/05-validate-corpus.log"
+fi
 
 # ============================================================
 # PHASE 6: Salud de fuentes de ESTE run (observabilidad)
@@ -547,6 +562,11 @@ echo
 printf " %-30s %s\n" "items.jsonl antes:"   "$BEFORE_COUNT"
 printf " %-30s %s\n" "items.jsonl después:" "$AFTER_COUNT"
 printf " %-30s %s\n" "delta:" "$((AFTER_COUNT - BEFORE_COUNT))"
+if [ "${CORPUS_INVALID:-0}" -ne 0 ]; then
+    printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — violaciones DURAS (ver $LOG_DIR/05-validate-corpus.log)"
+else
+    printf " %-30s %s\n" "corpus:" "✓ válido"
+fi
 echo
 echo "Logs por fase: $LOG_DIR/"
 ls -la "$LOG_DIR/"
