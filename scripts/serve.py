@@ -43,9 +43,11 @@ from __future__ import annotations
 
 import argparse
 import functools
+import gzip
 import http.server
 import json
 import os
+import posixpath
 import shlex
 import socketserver
 import subprocess
@@ -397,6 +399,33 @@ def _mtime_matches(expected: object, current_token: str) -> bool:
         except (TypeError, ValueError, OverflowError):
             return False
     return False
+
+
+# ---------------------------------------------------------------------------
+# Compresión gzip on-the-fly de estáticos grandes (items.jsonl ~31 MB →
+# ~3-5 MB). Cache por mtime_ns: re-comprimir 31 MB en cada carga sería CPU
+# desperdiciado; mientras el archivo no cambie reusamos los bytes comprimidos.
+# ---------------------------------------------------------------------------
+# Extensiones que vale la pena comprimir (texto). Binarios (imágenes) ya están
+# comprimidos: gzip sólo agregaría CPU sin ganancia.
+_GZIP_EXTS = {".jsonl", ".json", ".html", ".js", ".css", ".svg", ".csv", ".txt", ".map"}
+_GZIP_MIN_BYTES = 1024  # respuestas chiquitas no justifican el overhead
+_GZIP_CACHE: dict[str, tuple[int, bytes]] = {}
+
+
+def _gzip_file(filepath: Path) -> bytes:
+    """Bytes gzip del archivo, cacheados por (ruta, mtime_ns)."""
+    key = str(filepath)
+    try:
+        mtime = filepath.stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    hit = _GZIP_CACHE.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    body = gzip.compress(filepath.read_bytes(), compresslevel=6)
+    _GZIP_CACHE[key] = (mtime, body)
+    return body
 
 
 def _load_items() -> list[dict]:
@@ -1190,8 +1219,10 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- helpers ----------
 
-    def _serve_file(self, filepath: Path) -> None:
-        """Sirve un archivo directamente con el content-type correcto."""
+    def _serve_file(self, filepath: Path, head_only: bool = False) -> None:
+        """Sirve un archivo directamente con el content-type correcto.
+
+        `head_only=True` escribe sólo los headers (para do_HEAD)."""
         import mimetypes
         if not filepath.exists():
             self.send_error(404, "Not Found")
@@ -1202,6 +1233,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type", ctype or "application/octet-stream")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
+        if head_only:
+            return
         try:
             self.wfile.write(content)
         except BrokenPipeError:
@@ -1225,6 +1258,102 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             raise ValueError("body vacío u oversized")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    # Prefijos top-level servibles como estáticos. Todo lo demás → 403.
+    _STATIC_ALLOW_TOP = {"web", "data", "reports"}
+
+    def _static_path_allowed(self, path_only: str) -> bool:
+        """Allowlist del fallthrough estático: sólo web/, data/, reports/.
+
+        `os.chdir(ROOT)` + `SimpleHTTPRequestHandler` servían CUALQUIER archivo
+        bajo la raíz: `/.env` (con las 5 API keys), `/.git/config`, `/scripts/`,
+        `/.venv/` resolvían a archivos reales. Esta allowlist bloquea todo lo que
+        no sea web/data/reports, cualquier dotfile/dotdir y los intentos de
+        traversal (`..`), incluso sobre loopback — defensa en profundidad por si
+        `--bind` se abre a la red por error.
+        """
+        from urllib.parse import unquote
+        p = unquote(path_only or "")
+        if "\x00" in p:
+            return False
+        norm = posixpath.normpath(p)
+        parts = [seg for seg in norm.split("/") if seg and seg != "."]
+        if not parts:
+            return False  # "/" lo cubren los _HTML_ALIASES, no el estático
+        if any(seg == ".." or seg.startswith(".") for seg in parts):
+            return False
+        return parts[0] in self._STATIC_ALLOW_TOP
+
+    def _resolve_static(self, path_only: str) -> Path | None:
+        """Ruta FS de un estático permitido y existente (o None).
+
+        Reusa la MISMA normalización/allowlist que _static_path_allowed (la
+        seguridad sigue siendo ese gate; esto sólo resuelve la ruta para el
+        gzip on-the-fly). Devuelve None si no aplica → el caller cae al
+        super().do_GET() normal."""
+        from urllib.parse import unquote
+        p = unquote(path_only or "")
+        if "\x00" in p:
+            return None
+        norm = posixpath.normpath(p)
+        parts = [seg for seg in norm.split("/") if seg and seg != "."]
+        if not parts or any(seg == ".." or seg.startswith(".") for seg in parts):
+            return None
+        if parts[0] not in self._STATIC_ALLOW_TOP:
+            return None
+        fp = ROOT.joinpath(*parts)
+        return fp if fp.is_file() else None
+
+    def _client_accepts_gzip(self) -> bool:
+        return "gzip" in (self.headers.get("Accept-Encoding", "") or "").lower()
+
+    def _maybe_serve_gzip(self, path_only: str) -> bool:
+        """Sirve el estático comprimido si aplica. Devuelve True si lo manejó.
+
+        Aplica cuando: el cliente acepta gzip, el archivo es de un tipo texto
+        de la allowlist y supera el umbral mínimo. items.jsonl (~31 MB) baja a
+        ~3-5 MB de transferencia; el navegador lo descomprime solo."""
+        if not self._client_accepts_gzip():
+            return False
+        fp = self._resolve_static(path_only)
+        if fp is None or fp.suffix.lower() not in _GZIP_EXTS:
+            return False
+        try:
+            if fp.stat().st_size < _GZIP_MIN_BYTES:
+                return False
+            body = _gzip_file(fp)
+        except OSError:
+            return False
+        import mimetypes
+        ctype, _ = mimetypes.guess_type(str(fp))
+        self.send_response(200)
+        self.send_header("Content-Type", ctype or "application/octet-stream")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command == "HEAD":
+            return True
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+        return True
+
+    # Assets servidos también en la raíz (favicon de la app HTML). El navegador
+    # los puede pedir con GET o con HEAD; ambos deben resolver (do_HEAD heredado
+    # traduciría contra ROOT/ y devolvería 404).
+    _ROOT_ASSETS = ("/favicon.ico", "/apple-touch-icon.png")
+
+    # ---------- HEAD ----------
+
+    def do_HEAD(self) -> None:
+        _path_only = self.path.split("?", 1)[0]
+        if _path_only in self._ROOT_ASSETS:
+            self._serve_file(ROOT / "web" / _path_only.lstrip("/"), head_only=True)
+            return
+        super().do_HEAD()
+
     # ---------- GET ----------
 
     def do_GET(self) -> None:
@@ -1243,6 +1372,13 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         _path_only = self.path.split("?", 1)[0]
         if _path_only in _HTML_ALIASES:
             self._serve_file(_HTML_ALIASES[_path_only])
+            return
+
+        # Favicon de la app HTML, servido también en la raíz: el navegador pide
+        # /favicon.ico por defecto y las páginas se sirven en URLs de raíz
+        # (/, /panel.html). El asset vive en web/ (gen: scripts/gen_html_favicon.py).
+        if _path_only in self._ROOT_ASSETS:
+            self._serve_file(ROOT / "web" / _path_only.lstrip("/"))
             return
 
         # Curation API (GET)
@@ -1296,7 +1432,15 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(404, {"error": "endpoint desconocido"})
             return
 
-        # Archivos estáticos (web/, data/, reports/, etc.)
+        # Archivos estáticos (web/, data/, reports/) — con allowlist estricta.
+        # Deniega /.env, /.git, /scripts, /.venv, dotfiles y traversal.
+        if not self._static_path_allowed(_path_only):
+            self.send_error(403, "Forbidden")
+            return
+        # Compresión gzip on-the-fly para estáticos de texto grandes (items.jsonl,
+        # series_aliases.json). Si no aplica, cae al servido normal sin comprimir.
+        if self._maybe_serve_gzip(_path_only):
+            return
         return super().do_GET()
 
     # ---------- POST ----------
@@ -1976,7 +2120,13 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
-    parser.add_argument("--bind", default="0.0.0.0")
+    parser.add_argument(
+        "--bind",
+        default=os.environ.get("BIND", "127.0.0.1"),
+        help="Interfaz de escucha. Default 127.0.0.1 (solo loopback). Usa "
+             "0.0.0.0 SÓLO en una red de confianza: este server sirve data/ y "
+             "expone /api/run (ejecuta scripts del registry).",
+    )
     args = parser.parse_args()
 
     os.chdir(ROOT)
@@ -1985,6 +2135,10 @@ def main() -> int:
     print(f"    Raíz:    {ROOT}")
     print(f"    URL:     http://localhost:{args.port}/")
     print(f"    Panel:   http://localhost:{args.port}/web/panel.html")
+    if args.bind not in ("127.0.0.1", "localhost", "::1"):
+        print(f"    ⚠️  ESCUCHANDO EN {args.bind} — accesible desde la red local. "
+              f"Este server sirve data/ y /api/run EJECUTA scripts. Usa 127.0.0.1 "
+              f"salvo que confíes en TODA la red.")
     if not _REGISTRY_OK:
         print("    ⚠️  script_registry no encontrado — /api/run deshabilitado")
     print()
