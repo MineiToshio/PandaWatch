@@ -466,6 +466,8 @@ def clean_text(value: Any) -> str:
 # Prefijos de "announcement" o etiqueta de editorial que se pegan al inicio.
 TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^New\s+Product\s+Announcement\s*[:\-–—]\s*", re.IGNORECASE),
+    # Status de tienda como prefijo: "(PRE-ORDER) …", "(พรีออเดอร์) …" (IPM/Siam TH).
+    re.compile(r"^\s*\(\s*(?:PRE-?ORDER|พรีออเดอร์)\s*\)\s*", re.IGNORECASE),
     # Panini genérico: "Panini: <cualquier categoría>_" → "<resto>"
     # Captura Fumetti_, Libri_, Manga_, Comics_, Productos de colección_, etc.
     re.compile(r"^Panini\s*:\s*[^_]{1,40}_\s*", re.IGNORECASE),
@@ -574,10 +576,13 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s+Aggiungi\s+al\s+(?:carrello|confronto|lista).*$", re.IGNORECASE),
     re.compile(r"\s+Aggiungi\s+alla\s+lista.*$", re.IGNORECASE),
     re.compile(r"\s+Rimuovi\s+questo.*$", re.IGNORECASE),
-    # Funside.it y similares italianos: botones "Aggiungi al carrello Confrontare"
+    # Funside.it y similares italianos: botones "Aggiungi al carrello [Confrontare]"
     # capturados como PREFIX del título por el listing extractor genérico.
-    re.compile(r"^Aggiungi\s+al\s+carrello\s+Confrontare\s+", re.IGNORECASE),
+    re.compile(r"^Aggiungi\s+al\s+carrello\s+(?:Confrontare\s+)?", re.IGNORECASE),
     re.compile(r"^Confrontare\s+", re.IGNORECASE),
+    # Funside: nombre de la tienda pegado como SUFIJO ("… VARIANT GAMES ACADEMY
+    # FUNSIDE", "… VARIANT FUNSIDE/ POPSTORE"). No es parte del nombre oficial.
+    re.compile(r"\s+(?:GAMES\s+ACADEMY\s+)?FUNSIDE(?:\s*/\s*POPSTORE)?\s*$", re.IGNORECASE),
     # E-commerce japonés
     re.compile(r"\s+カートに入れる.*$"),
     re.compile(r"\s+ほしい本に追加.*$"),
@@ -614,6 +619,15 @@ TITLE_JUNK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\s+(?:C[óo]mic|Manga)\s+\d{1,2}/\d{1,2}/\d{2,4}\s+Regular\s+Price\b.*$",
         re.IGNORECASE,
     ),
+    # E-commerce italiano (Funside/Shopify): "<title> Prezzo normale €X Prezzo
+    # di vendita €X Prezzo unitario / per Aggiungi al carrello". El selector
+    # genérico captura toda la tarjeta; cortamos desde el bloque de precio.
+    re.compile(r"\s+Prezzo\s+(?:normale|di\s+vendita|unitario|scontato)\b.*$", re.IGNORECASE),
+    # Dynit y similares: "<title> #03 Disponibile dal: DD/MM/YYYY Dynit".
+    re.compile(r"\s+Disponibile\s+dal\s*:.*$", re.IGNORECASE),
+    # Badge "[NEW]" embebido (IPM/Siam TH): consume el espacio que lo PRECEDE y
+    # deja el de después, para no pegar las palabras vecinas.
+    re.compile(r"\s*\[\s*NEW\s*\]", re.IGNORECASE),
 )
 
 
@@ -700,6 +714,34 @@ def _fix_mojibake(text: str) -> str:
     return current
 
 
+_HANGUL_RE = re.compile(r"[가-힣]")
+# Retailers coreanos (Aladin/Hansan vía búsqueda "만화 한정판"): el selector
+# captura la tarjeta entera — "{título} {vol} (한정판) - {bonus} {autor}(지은이) |
+# {editorial}(만화) | {fecha} {precio} → {oferta} (할인), 마일리지 {x} 원 …
+# 세일즈포인트 : …". El nombre OFICIAL termina en el marcador de edición
+# "(…한정판)" / "한정판 [박스] [세트]"; todo lo demás es bonus + metadata de tienda.
+_KR_EDITION_CUT = re.compile(r"(한정판\s*\)?(?:\s*박스)?(?:\s*세트)?).*$")
+# Fallback (títulos coreanos SIN marcador de edición): cortar desde el primer
+# marcador de rol de autor, el pipe de editorial "(만화) |", el precio "N원" o
+# "세일즈포인트" — todo metadata inequívoca de la tienda.
+_KR_META_TAIL = re.compile(
+    r"\s*(?:\([^)]*?(?:지은이|옮긴이|원작|그림|감수|각색|글|엮은이)\)"
+    r"|\|\s*[^|]+\(만화\)"
+    r"|\d[\d,]*\s*원"
+    r"|세일즈포인트).*$"
+)
+
+
+def _strip_korean_retailer_tail(title: str) -> str:
+    """Quita la cola de tienda coreana (bonus + autor + editorial + precio +
+    millas + sales-point) dejando el nombre oficial. Idempotente."""
+    if "한정판" in title:
+        cut = _KR_EDITION_CUT.sub(r"\1", title)
+        if cut != title:
+            return cut.strip()
+    return _KR_META_TAIL.sub("", title).strip()
+
+
 def clean_title(title: str) -> str:
     """Strippea basura de e-commerce y prefijos de announcement del título.
 
@@ -720,6 +762,9 @@ def clean_title(title: str) -> str:
     if not title:
         return title
     cleaned = _fix_mojibake(title)
+    # Decodificar entidades HTML que el scraper no resolvió ("Collector&#039;s box",
+    # "Girls &amp; Weapons" → "'", "&"). Idempotente.
+    cleaned = html.unescape(cleaned)
     for _ in range(5):
         prev = cleaned
         # Prefijos
@@ -733,6 +778,9 @@ def clean_title(title: str) -> str:
         # de un dígito (con o sin espacio). Conservamos los que sí tienen
         # número porque ahí denotan volumen legítimo ("Vol. 5", "nº 12").
         cleaned = _ORPHAN_VOL_MARKER_RE.sub(" ", cleaned)
+        # Cola de tienda coreana (Aladin/Hansan): solo si hay Hangul.
+        if _HANGUL_RE.search(cleaned):
+            cleaned = _strip_korean_retailer_tail(cleaned)
         # Collapse whitespace tras posibles strips
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if cleaned == prev:
@@ -3719,6 +3767,35 @@ _UMBRELLA_MAGAZINE_URL_PATTERN = re.compile(
 )
 
 
+def _is_umbrella_magazine_title(title: str, signal_types: list[str] | None) -> bool:
+    """True sólo si el TÍTULO *es* una revista-paraguas (antología multi-serie),
+    no si meramente la menciona como descriptor.
+
+    Gotcha #95: `_UMBRELLA_JP_MAGAZINE_PATTERN.search(title)` a secas producía
+    falsos positivos sobre productos legítimos cuyo título lleva el nombre de la
+    revista como SUFIJO descriptivo:
+      - portadas variantes ("Sakamoto Days — The Order - Shonen Jump"),
+      - revistas de UNA serie ("ONE PIECE magazine ... 週刊少年ジャンプと...").
+    Esos items se rechazaban como `umbrella_magazine` (HARD_REASON en
+    filter_collectible, ignora `standardized_at`) y se borraban del corpus pese a
+    estar estandarizados — destrucción de datos en el cleanup del pipeline.
+
+    Discriminadores (la antología real lleva su nombre como SUJETO inicial):
+      1. `variant_cover` en signal_types ⇒ es una portada variante de una serie;
+         el nombre de la revista es descriptivo ⇒ NO es la antología.
+      2. El match de la revista debe arrancar al INICIO del título (con un margen
+         corto para prefijos tipo "週刊"/"月刊"/store). "Weekly Shōnen Jump 2023
+         No.42" o "週刊少年ジャンプ ..." matchean al inicio; los descriptores
+         que aparecen tras "<Serie> — Vol.N - ..." no.
+    """
+    if "variant_cover" in set(signal_types or []):
+        return False
+    m = _UMBRELLA_JP_MAGAZINE_PATTERN.search(title)
+    if not m:
+        return False
+    return m.start() <= 3
+
+
 _PRODUCT_URL_SHAPE = re.compile(
     # Patrones de URL canónica de catálogo manga/cómic. Una URL con shape
     # de producto cuenta como prueba de que es un item real.
@@ -4081,7 +4158,7 @@ def is_collectible_edition(
     #   - Por título: antologías JP + revistas occidentales inequívocas.
     #   - Por URL: casos donde el título colisiona con series reales (p.ej.
     #     revista ATOM de Custom Publishing FR vs. tomos Planeta deluxe ES).
-    if _UMBRELLA_JP_MAGAZINE_PATTERN.search(title):
+    if _is_umbrella_magazine_title(title, signal_types):
         return False, "umbrella_magazine"
     if url and _UMBRELLA_MAGAZINE_URL_PATTERN.search(url):
         return False, "umbrella_magazine"
@@ -6476,18 +6553,25 @@ def _country_slug(country: str) -> str:
 
 
 _ESPECIAL_PARENS_RE = re.compile(r"^(.*\d)\s*\((?:Edici[óo]n\s+)?Especial\)\s*$", re.IGNORECASE)
+# SÓLO frases de edición en ESPAÑOL: reordenar/expandir el español NO traduce (política
+# de títulos). El inglés "Special Edition" se dejaba caer aquí y se convertía en "Edición
+# Especial" → traducción prohibida (gotcha #94): un título japonés/italiano/inglés terminaba
+# con la marca española ("葬送のフリーレン 15 Edición Especial"). El inglés ya NO matchea.
 _ESPECIAL_REORDER_RE = re.compile(
-    r"^(.*?)\s+(?:Edici[óo]n\s+Especial|Especial|Special(?:\s+Edition)?)\s+(\d+(?:[.\-]\d+)?)\s*$",
+    r"^(.*?)\s+(?:Edici[óo]n\s+Especial|Especial)\s+(\d+(?:[.\-]\d+)?)\s*$",
     re.IGNORECASE,
 )
 
 
 def format_especial_title(title: str) -> str:
-    """Normaliza el título de una EDICIÓN ESPECIAL a "{serie} {vol} Edición Especial"
-    (gotcha #52). Idempotente. Sólo cambia títulos que ya tienen el patrón especial
-    (un regular como "Atelier of Witch Hat 5" no matchea → queda igual).
-      - "X N (Edición Especial)"        → "X N Edición Especial"
-      - "X Edición Especial N" / "X Especial N" / "X Special Edition N" → "X N Edición Especial"
+    """Normaliza el título de una EDICIÓN ESPECIAL **en español** a "{serie} {vol}
+    Edición Especial" (gotcha #52). Idempotente. Sólo cambia títulos que ya tienen el
+    patrón especial EN ESPAÑOL (un regular como "Atelier of Witch Hat 5" no matchea →
+    queda igual). NO traduce: un título en inglés "X Special Edition N" se deja intacto
+    (gotcha #94 — traducir violaba la política de títulos).
+      - "X N (Edición Especial)"                 → "X N Edición Especial"
+      - "X Edición Especial N" / "X Especial N"  → "X N Edición Especial"
+      - "X Special Edition N" (inglés)           → SIN CAMBIO
     """
     t = (title or "").strip()
     t = _ESPECIAL_PARENS_RE.sub(r"\1 Edición Especial", t)   # quitar paréntesis
