@@ -153,6 +153,47 @@ perceptual (aHash 8×8, Hamming ≤6 + aspect ±12%), conservando la de MAYOR
 resolución. Solo toca `kind=gallery` (los `extra` —cofres/tomos del box— son
 contenido curado y nunca se tocan) y exige dims válidas. Ver retrofit README.
 
+## Purga de placeholders / 1×1 / rotas — `purge_placeholder_images.py`
+
+Varias fuentes, cuando NO tienen la carátula de un producto, en vez de 404 sirven una
+imagen genérica que el mirror baja como si fuera la portada (pasa el chequeo de magic
+bytes: ES una imagen válida). Casos verificados (2026-06-13): Amazon devuelve un **GIF
+1×1** para ISBN sin foto (`images-na.../P/<ISBN>...jpg`), listadomanga/otros CDNs un
+**blanco**, Penguin Random House **"Cover Coming Soon"**, Funside **"Immagine non
+disponibile"** (logo MD), SocialAnime **"Image coming soon"** (robot EPM). Resultado: la
+card muestra el placeholder de la fuente en vez del 📚 por defecto.
+
+**Detector — fuente ÚNICA `image_store.placeholder_reason(source)`** (úsalo, no
+reimplementes). `source` = bytes o path; devuelve `""` (real) o la razón:
+- `tiny:WxH` — algún lado ≤ 8 px (tracking pixel / 1×1).
+- `solid:STD` — std global de luminancia < 3 ⇒ imagen casi de un solo color (el blanco
+  "sin portada"). Una portada de manga real tiene std ≫ 20 — cero zona gris.
+- `broken` — 0 bytes / no abre con PIL / truncado.
+- `signature:LABEL` — el sha1 del CONTENIDO está en `data/placeholder_signatures.json`.
+  Ahí van SOLO los placeholders **con texto/logo** (no caen por baja entropía). Para
+  agregar uno: pegá su sha1 en ese JSON — **no toca código**.
+
+**⚠️ "Contenido idéntico repetido" NO es señal de placeholder.** La portada real de *BECK
+16* aparecía idéntica en 3 items (eso es cross-cover, otro bug). El detector la deja
+intacta (std 66) porque borra solo por reglas estructurales/firma, nunca por repetición.
+
+**Retrofit `scripts/retrofit/purge_placeholder_images.py`** (sin red, lee el espejo local):
+- Quita la ENTRY completa de `images[]` (no solo `local`: si quedara la `url` remota, la
+  card cargaría el placeholder remoto igual) en TODAS las filas.
+- Limpia `sources[].image_local`/`image_url` que apunten al mismo archivo/URL.
+- Re-marca la portada por posición (la primera foto que queda pasa a `images[0]`); un item
+  sin fotos muestra el 📚.
+- GC: los archivos que quedan huérfanos van a cuarentena `data/images/_orphans/`
+  (reversible; protege los referenciados por `cover_preview.json`). `--keep-files` lo evita.
+- Optimización: solo evalúa archivos ≤ 200 KB (un placeholder pesa pocos KB; una portada
+  real > 200 KB jamás es casi-sólida ni matchea firma) → no decodifica los 14 GB de espejo.
+- Idempotente. Flags: `--dry-run`, `--keep-files`. Tests: `tests/test_purge_placeholder_images.py`.
+
+Corre como paso **[4i]** del pipeline canónico (delta y full), después de
+`dedup_carousel_images` y antes de `build_web`, así un placeholder que reentre durante un
+scrape no llega al build. Corrida inicial 2026-06-13: 165 entries quitadas (87 sólidos, 63
+pixeles 1×1, 15 con firma), 138 items pasaron a mostrar el 📚.
+
 ## Búsqueda de portadas hi-res — skill `/watch-search-covers`
 
 > **listadomanga es la causa raíz de la mayoría de portadas de baja calidad.** Verificado
@@ -193,6 +234,16 @@ vive en el SKILL.md; el gist:
    difiere del item ⇒ hard reject. Otro volumen / otra edición / arte distinto → descarta.
    Precisión > recall: mejor 0 candidatas que una no relacionada. (Imagen corrupta →
    hash no computable → rechazar.)
+4b. **Gate de calidad de display (gotcha #94)**: la identidad NO garantiza calidad — un
+   escaneo blando o upscale de la MISMA portada pasa el AND-gate pero se ve pixelado. El
+   px count engaña (la casadellibro 80k mala y una whakoom 637k buena miden el mismo
+   `_detail_ratio` ≈ 0.10); lo que distingue es el TAMAÑO. Una candidata se rechaza si es
+   **CHICA** (`< SOFT_GUARD_PX` = 150k px → se muestra agrandada, la blandura se nota) **Y
+   BLANDA** (`fetch_better_covers._detail_ratio < DETAIL_RATIO_MIN` = 0.115 → poca energía
+   en la octava superior medida a 384px). Las grandes-pero-blandas pasan (se muestran
+   reducidas → nítidas). Mismo gate (`_is_soft_image`) en el script de producción
+   (`_try_candidates`) y en `sc_validate.py` — fuente única. La cola ya armada se limpia con
+   `prune_soft_cover_candidates.py`. Tests: `tests/test_detail_ratio.py`.
 5. Guarda imágenes válidas en `data/images/` (nombre sha256) y flushea **atómico** a
    `data/cover_preview.json` después de cada item.
 

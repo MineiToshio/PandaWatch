@@ -47,10 +47,13 @@ scripts/
   manga_watch.py             — módulo principal (~7k líneas): filtros, scoring, IO,
                                loop paralelo, dispatchers Bluesky/Playwright/HTTP,
                                derive_cluster_key, merge_cluster/consolidate_by_cluster.
-  build_web.py               — lee items.jsonl, agrupa por cluster_key, embebe en
-                               web/index.html (o deja [] → fetch live).
+  build_web.py               — exporta series_aliases.json y deja el embed VACÍO por
+                               default (fetch live; ~139 KB). --embed para poblarlo
+                               (fallback file://). --clear sólo vacía el embed.
   serve.py                   — SERVIDOR ÚNICO (threaded). Sirve web/ + data/ + todos
-                               los /api/*. Bind 0.0.0.0:8000. Ver gotcha #34 (@_serialized).
+                               los /api/*. Bind 127.0.0.1:8000. Ver gotcha #34 (@_serialized).
+  gen_html_favicon.py        — genera web/favicon.ico + web/apple-touch-icon.png desde
+                               web-next/app/icon.png (panda sobre fondo rosa de acento).
   admin_serve.py             — DEPRECATED (absorbido por serve.py).
   script_registry.py         — fuente única del Panel de Control. Agregás un script
                                acá, aparece en la UI.
@@ -125,6 +128,9 @@ scripts/
     strip_legacy_cover_fields.py  migración one-shot (2026-06-09): elimina image_url/
                                image_local top-level del item; portada = images[0].
     mirror_images.py           backfill espejo local (todas las images[]) + GC mark-and-sweep.
+    purge_placeholder_images.py  quita de images[] las fotos placeholder (1×1, blanco,
+                               "no disponible"), via image_store.placeholder_reason() +
+                               data/placeholder_signatures.json. Paso [4i] del pipeline (#97).
     upgrade_image_resolution.py / promote_hires_cover.py / backfill_prh_covers.py /
     upscale_images.py / fetch_better_covers.py / sync_cover_preview.py
                                — mejora de portadas (CDN full-res, hi-res intra-cluster,
@@ -151,13 +157,22 @@ scripts/
                                vía rebuild_edition_key_prefix() (#71). Enforcer 3c4.
     fix_title_edition_words.py    colapsa palabra de edición duplicada en el título + quita
                                "Regular" sobrante en ediciones regulares (#72). Enforcer 3c5.
+    remove_phantom_calendar_editions.py  borra ediciones especiales/artbook FANTASMA del
+                               calendario+estandarización (no existen en la página real) y quita
+                               portadas que son el bonus de otro tomo (#99). Listas explícitas
+                               verificadas a mano. Guarda durable: invariante STOLENIMG. One-shot.
+    remove_free_preview_editions.py  borra folletos promocionales GRATUITOS de ListadoManga
+                               ("Número Gratuito", preview del 1er cap/mini-artbook) colados como
+                               edición especial (#103). Prevención durable: FREE_PRICE_PATTERN en
+                               listadomanga_collections.py (delta+full). One-shot (13 borrados).
   export_series_aliases.py     series_aliases.yml → data/series_aliases.json (vista de
                                búsqueda por alias para ambas UIs; lo invoca build_web.py).
   validate_corpus.py           VALIDADOR ESTRUCTURAL (sin red, gate de salud del pipeline, paso [5]
                                de scrape_*.sh). Chequea en UNA pasada TODAS las invariantes duras:
                                SLUG, CLKEY (cluster_key auto-consistente), DUPCL, DUPSYN (#54),
                                LMCKIND, TITLE, ONECOLE, DUPVOL (tomo duplicado en una edición, #56/#57)
-                               + warnings COLED/PAIS/EDSLUG (#69)/SERIESDUP (#70)/EKPREFIX (#71)/PUBMIX.
+                               + warnings COLED/PAIS/EDSLUG (#69)/SERIESDUP (#70)/EKPREFIX (#71)/PUBMIX/
+                               STOLENIMG (portada de tomo normal = extra de otra fila, #99).
                                Exit≠0 si hay violación dura.
   audit_lista_full_bidir.py    auditoría de RED bidireccional: re-fetchea las 3436 colecciones de
                                lista.php y compara (kind,vol) parser vs DB → FALTANTES + SOBRANTES.
@@ -185,6 +200,9 @@ web/  (dashboard HTML público + paneles)
   image-manager.html         — gestor de imágenes (cluster-level). Deep-link ?item=&return=.
                                "🔍 Buscar portada en Google" (abre Google Imágenes).
   panel.html                 — Panel de Control (lee script_registry.py).
+  favicon.ico / apple-touch-icon.png — favicon de la app HTML (panda sobre fondo rosa
+                               de acento; diferencia de la app pública Next.js). Generados
+                               por scripts/gen_html_favicon.py. serve.py los sirve en raíz.
 admin/index.html             — redirect → web/panel.html.
 web-next/                    — app Next.js 16 + Tailwind v4 (reemplazo del dashboard).
   app/                         App Router. Rutas: / /series/[k] /edition/[k] /item/[slug]

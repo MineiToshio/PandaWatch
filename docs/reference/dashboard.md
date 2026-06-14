@@ -131,25 +131,46 @@ Un hint `A aprobar · R rechazar · N/P producto` aparece en el footer del modal
 a la derecha, muted). `jumpToNextEntry(dir)` en Alpine navega a la primera candidata
 pendiente del entry siguiente/anterior (sin wrap si no hay).
 
-## Carga de datos del catálogo — vivo primero, embebido como fallback
+## Carga de datos del catálogo — vivo primero, embed VACÍO por default (2026-06-14)
 
 `loadItems()` en `web/index.html` prioriza **items.jsonl EN VIVO** (decisión #5):
 servido vía `serve.py`, el dashboard refleja siempre el estado actual tras cualquier
 retrofit/curación sin re-correr `build_web.py`. La copia embebida
-(`<script id="manga-data">`, generada por build_web) es SOLO fallback: `file://`
-(doble-click) o fetch fallido. Antes era al revés (embebido primero) y el dashboard
-servido mostraba datos stale hasta el próximo build — corregido 2026-06-12.
+(`<script id="manga-data">`) es SOLO fallback: `file://` (doble-click) o fetch fallido.
+
+**Optimización 2026-06-14 (peso de carga)**: `build_web.py` **ya NO embebe el catálogo
+por defecto** — deja el embed vacío (`[]`). Antes lo poblaba con los ~13k items (~30 MB
+en una sola línea) que el navegador descargaba y parseaba en cada carga **además** del
+fetch en vivo → trabajo doble. Ahora `index.html` pesa **~139 KB** (era ~30 MB). El embed
+sólo se llena con `python scripts/build_web.py --embed` (para el fallback `file://`); el
+default exporta `series_aliases.json` y vacía el embed. Como el owner siempre usa `serve.py`,
+no se pierde nada en la práctica. Ver gotcha #100.
+
+**Servido gzip (`serve.py`, 2026-06-14)**: el fallthrough estático comprime al vuelo los
+estáticos de TEXTO grandes (`.jsonl`/`.json`/`.html`/`.js`/`.css`/… > 1 KB) cuando el cliente
+manda `Accept-Encoding: gzip`. `items.jsonl` baja de ~31 MB a **~4 MB** de transferencia
+(7.8×). Cache por `mtime_ns` (`_gzip_file()`) para no re-comprimir en cada carga. La allowlist
+de seguridad sigue siendo el gate (`_resolve_static` reusa la misma normalización; `/.env` →
+403). En localhost el ahorro de transferencia es chico (el cuello es el parseo del JSON, igual
+con o sin gzip); el valor real aparece al servir remoto.
 
 ## Búsqueda y badge de tipo de edición (2026-06-12)
 
+**Búsqueda por BOTÓN/Enter (NO en vivo, 2026-06-14)**: con ~13k items, filtrar en cada
+tecla trababa la UI (recomputaba todo el pipeline por pulsación). Ahora el input edita
+`searchInput` y sólo `applySearch()` (botón "Buscar" o Enter) commitea a `filters.search`,
+que es lo que el pipeline observa. La "×" / "limpiar" resetean. Detalle de rendimiento
+(haystack precomputado + memoización del pipeline + contrato `_dataVersion`): gotcha #100.
+
 **Búsqueda con aliases**: el buscador del grid matchea `title` + `title_original` +
-`series_display` + los **aliases del `series_key`** (`this.aliasIndex`, cargado en
-`init()` desde `../data/series_aliases.json` — lo regenera `export_series_aliases.py`
-en cada `build_web.py`). Razón: política de títulos 2026-06-12 — el `title` es el
-nombre OFICIAL de cada edición y no se renombra/traduce, así que "demon slayer",
+`series_display` + los **aliases del `series_key`** — precomputados en `i._search`
+(`_indexSearch()`) desde `this.aliasIndex`, cargado en `init()` vía
+`../data/series_aliases.json` (lo regenera `export_series_aliases.py` en cada
+`build_web.py`, con o sin `--embed`). Razón: política de títulos 2026-06-12 — el `title`
+es el nombre OFICIAL de cada edición y no se renombra/traduce, así que "demon slayer",
 "kimetsu no yaiba" y "guardianes de la noche" tienen que devolver lo mismo vía alias.
-En modo `file://` (embebido) el JSON no se puede fetchear: la búsqueda funciona igual
-pero sin aliases.
+En modo `file://` (embebido, sólo con `--embed`) el JSON no se puede fetchear: la
+búsqueda funciona igual pero sin aliases.
 
 **Badge de tipo de edición**: la tarjeta muestra un chip púrpura con el tipo derivado
 del slug del `edition_key` (`editionTypeLabel(item)`; omitido para `regular`). El
@@ -157,3 +178,38 @@ title oficial ya no lleva "Kanzenban"/"Deluxe" inyectado — el chip lo comunica
 Mantener `_editionTypeLabels`/`_editionCountries` en sync con
 `web-next/lib/format.ts` (`EDITION_TYPE_LABELS`) y `_VALID_COUNTRY`
 (fix_lmc_display_titles.py).
+
+## Seguridad del server local (2026-06-13)
+
+`serve.py` corre `os.chdir(ROOT)` y servía estáticos con `SimpleHTTPRequestHandler`
+sin restricción: `/.env` (con las 5 API keys), `/.git/config`, `/scripts/`, `/.venv/`
+resolvían a archivos reales, y `/api/run` ejecuta scripts del registry. Antes el
+`--bind` por defecto era `0.0.0.0` → todo eso accesible desde CUALQUIER dispositivo
+de la red. Endurecido:
+
+- **`--bind` default = `127.0.0.1`** (solo loopback; antes `0.0.0.0`). Override con
+  `--bind 0.0.0.0` o `BIND=0.0.0.0` **sólo en red de confianza** — imprime un warning
+  explícito al arrancar. `admin_serve.py` ya bindeaba a loopback; ahora hay paridad.
+- **Allowlist del fallthrough estático** (`_static_path_allowed`): sólo se sirven
+  rutas bajo `web/`, `data/`, `reports/`. Todo lo demás (dotfiles/dotdirs `.env`/
+  `.git`, `scripts/`, `.venv/`, traversal `..`) devuelve **403**, incluso sobre
+  loopback (defensa en profundidad por si `--bind` se abre). Las páginas HTML de la
+  raíz siguen vía `_HTML_ALIASES`. Test: `test_serve_static_allowlist_blocks_secrets`.
+
+Si agregás un directorio nuevo que el dashboard deba fetchear como estático, sumalo a
+`MangaWatchHandler._STATIC_ALLOW_TOP`.
+
+## Favicon (2026-06-14)
+
+Todas las páginas HTML (`index`, `panel`, `quality`, `cover-preview`, `image-manager`)
+declaran `<link rel="icon" href="/favicon.ico">` + `<link rel="apple-touch-icon">`.
+Como las páginas se sirven en URLs de raíz (`/`, `/panel.html`) y el navegador pide
+`/favicon.ico` por defecto, **tanto `do_GET` como `do_HEAD`** resuelven `/favicon.ico` y
+`/apple-touch-icon.png` (set `_ROOT_ASSETS`) hacia `web/<archivo>` — fuera del allowlist
+estático, que sólo cubre `/web/...`. `do_HEAD` es necesario porque el heredado de
+`SimpleHTTPRequestHandler` traduce contra `ROOT/` y devolvía **404** en HEAD (varios
+navegadores sondean el favicon con HEAD antes del GET). Los `<link>` usan `?v=N` como
+cache-bust: el favicon se cachea por origen de forma muy agresiva y un refresh normal no
+lo vuelve a pedir; bumpeá `v` si cambia el ícono. Los assets se generan con
+`scripts/gen_html_favicon.py` (panda sobre fondo rosa de acento para diferenciar de la app
+pública Next.js).

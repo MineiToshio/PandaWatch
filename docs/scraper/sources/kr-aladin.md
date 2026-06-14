@@ -54,6 +54,15 @@ en ninguna otra fuente del corpus.
 - **Títulos en coreano**: la serie requiere aliases KO en `series_aliases.yml`
   (장송의 프리렌 → frieren, 스파이 패밀리 → spy-x-family…). Hasta correr
   `/watch-enrich-series-aliases`, muchos items quedarán en unmapped_series.
+- **El selector de título capturaba la tarjeta ENTERA** (gotcha #94, 2026-06-13):
+  `title` quedaba como "{título} {vol} (한정판) - {bonus} {autor}(지은이) |
+  {editorial}(만화) | {fecha} {precio} → {oferta} (할인), 마일리지 … 세일즈포인트"
+  (367 items). El nombre oficial termina en el marcador de edición "(…한정판)" /
+  "한정판 [박스] [세트]". Fix: `clean_title` ahora corta la cola de tienda coreana
+  (`_strip_korean_retailer_tail`, sólo si hay Hangul) — aplica a items nuevos y se
+  limpió el histórico con `clean_titles.py`. **Pendiente**: afinar el
+  `title_selector` del YAML para capturar sólo el link del producto (evitar la
+  tarjeta entera) — hoy el saneo depende de `clean_title`.
 
 ## 9. Pendientes
 

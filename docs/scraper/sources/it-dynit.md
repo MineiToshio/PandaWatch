@@ -58,6 +58,9 @@ junto con las otras fuentes de Italia. Aporte actual muy bajo (1 item).
 - **Fechas DD/MM/YYYY crudas en `release_date`** — la ficha técnica del sitio entrega la fecha día-primero y los extractores la guardaban sin normalizar; desde 2026-06-12 `normalize_release_date()` la convierte a ISO en la ingestión y el corpus legacy se reparó con `normalize_release_dates.py` (gotcha #80). ✅
 - **Aporte mínimo** (1 item). {{pendiente: confirmar si los selectores capturan todo el
   catálogo o sólo una fracción de la home — posible cobertura incompleta}}.
+- **Cola "Disponibile dal: DD/MM/YYYY Dynit" pegada al título** (gotcha #94,
+  2026-06-13): `title` quedaba "Isekai Editor (The) #03 Disponibile dal: 05/06/2026
+  Dynit". Fix: `clean_title` corta desde "Disponibile dal:". 2 items.
 - **Anti-bot y calidad de imágenes** sin verificar para esta fuente.
 
 ---

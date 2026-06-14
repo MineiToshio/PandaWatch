@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 93 known gotchas
+## The 103 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -613,7 +613,7 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     marcadores agregados tras esa pasada: `w/` (= with, listings EN) y excepción
     "Gangan Joker" en comics_blacklist (revista, contiene "Joker").
 
-93. **Título de edición DUPLICADO en dos idiomas + volumen perdido (skill viejo de standardize, 2026-06-13).**
+95. **Título de edición DUPLICADO en dos idiomas + volumen perdido (skill viejo de standardize, 2026-06-13).** _(renumerado de #93 → #95 el 2026-06-13: colisionaba con el #93 de store_bonus, que es el referenciado en git/commits.)_
     Síntoma reportado por el owner: "Pájaro que trina no vuela no Special Edition Edición Especial"
     — sin el número de volumen y con el tipo de edición repetido en inglés y español.
     CAUSA (dos bugs encadenados): (a) el skill VIEJO de standardize (pre-política de títulos
@@ -659,3 +659,204 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     el nombre oficial COMPLETO (con el bonus). Idempotente. NO aplica a las colas de tienda
     en inglés de Mangavariant ("- Animate cover") que SÍ son la identidad de la variante.
     Tests: `test_split_store_bonus_*`.
+
+94. **Selector genérico que captura la TARJETA entera → título con cola de e-commerce (2026-06-13).**
+    Auditoría de calidad de títulos: 3 fuentes config-by-YAML (selector genérico) guardaban en
+    `title` toda la tarjeta del producto, no sólo el nombre. **KR - Aladin** (367 items):
+    "{título} {vol} (한정판) - {bonus} {autor}(지은이) | {editorial}(만화) | {fecha} {precio} →
+    {oferta} (할인), 마일리지 … 세일즈포인트". **IT - Funside** (~58): "… - VARIANT Prezzo normale
+    €X Prezzo di vendita €X … Aggiungi al carrello", a veces con prefijo "Aggiungi al carrello
+    [Confrontare]" y sufijo de tienda "GAMES ACADEMY FUNSIDE / POPSTORE". **IT - Dynit** (2):
+    "… #03 Disponibile dal: DD/MM/YYYY Dynit". Fix de mecanismo en `clean_title` (única fuente
+    de verdad, beneficia scrape nuevo + retrofit): cortes IT (Prezzo/Disponibile dal/sufijo
+    FUNSIDE) en `TITLE_JUNK_PATTERNS`, y `_strip_korean_retailer_tail` para la cola coreana
+    (corta en el marcador de edición "(…한정판)"/"한정판 [박스] [세트]" o, si no hay, en el
+    autor-rol/pipe-editorial/precio/세일즈포인트; sólo corre si hay Hangul). Limpieza del
+    histórico: `clean_titles.py` (433 títulos). Tests: `test_clean_title_strips_korean_retailer_tail`,
+    `test_clean_title_strips_italian_price_block`, `test_clean_title_strips_funside_cart_prefix`.
+    Una segunda pasada de la auditoría sumó dos catches genéricos a `clean_title` (25 items):
+    **entidades HTML sin decodificar** ("Collector&#039;s box", "Girls &amp; Weapons" →
+    `html.unescape`) y **badges de estado de tienda TH** (IPM/Siam: "(PRE-ORDER)" como prefijo
+    y "[NEW]" embebido — el `[NEW]` consume el espacio que lo precede para no pegar palabras).
+    Tests: `test_clean_title_decodes_html_entities`, `test_clean_title_strips_thai_status_badges`.
+    **Pendiente** (no bloqueante): afinar los `title_selector` del YAML para capturar sólo el
+    link del producto — hoy el saneo depende de `clean_title` como red de seguridad.
+    La misma auditoría destapó otros dos defectos de título, ambos arreglados de raíz:
+    (b) **Traducción prohibida del tipo de edición**: `format_especial_title` (en
+    `fix_especial_title_order.py`, paso del enforcer) matcheaba el inglés "Special Edition"/
+    "Special" y SIEMPRE emitía la forma española "Edición Especial" → un título japonés/
+    italiano/inglés terminaba mezclado ("葬送のフリーレン 15 Edición Especial"), violando la
+    política de títulos (NO traducir). Fix: `_ESPECIAL_REORDER_RE` ahora sólo matchea español;
+    el inglés se deja intacto. Limpieza del histórico: `restore_mistranslated_especial.py`
+    restaura `title = clean_title(title_original)` para los 85 items traducidos (excluye
+    listadomanga, cuyo title_original está corrupto — gotcha #95). (c) **Duplicación de frase
+    de edición**: `fix_title_edition_words.py` ahora colapsa también frases de edición CJK
+    repetidas verbatim ("特装版 特装版", "オリジナルバッジ付き限定版 ×2") gateadas por marcador de
+    edición —para NO tocar nombres de obra con repetición legítima (デッドデッド…, Kuma Kuma
+    Kuma Bear, New York New York)— y ordinales repetidos ("30TH 30th" → "30th"). Tests:
+    `test_format_especial_title_order`, `test_fix_title_edition_words_collapses_real_dups`.
+
+96. **Revista-paraguas como SUFIJO descriptivo → 9 productos legítimos borrados en el cleanup (2026-06-13).**
+    Síntoma (auditoría): `filter_collectible.py` (fase cleanup del pipeline canónico) borraría
+    9 items estandarizados — 8 portadas variantes de Mangavariant ("Sakamoto Days — The Order -
+    Shonen Jump", "Silver Spoon — Vol.1 - Shonen Sunday", …) y 1 revista de UNA serie
+    ("ONE PIECE magazine … 週刊少年ジャンプとONE PIECE 020"). CAUSA: `is_collectible_edition` hacía
+    `_UMBRELLA_JP_MAGAZINE_PATTERN.search(title)` a secas (regla 0b, ANTES de mirar
+    `signal_types`), así que el nombre de la revista como SUFIJO descriptivo daba
+    `(False, "umbrella_magazine")`. Como `umbrella_magazine` es HARD_REASON en
+    `filter_collectible.should_reject`, IGNORA `standardized_at` → destrucción de datos en el
+    camino más frecuente. FIX DE MECANISMO (durable): nuevo helper
+    `_is_umbrella_magazine_title(title, signal_types)` que distingue "ES la antología" de "la
+    menciona": (a) si `variant_cover` ∈ signal_types ⇒ es portada variante de una serie, la
+    revista es descriptiva ⇒ NO umbrella; (b) el match de la revista debe arrancar al INICIO
+    del título (`m.start() <= 3`, con margen para prefijos "週刊"/"月刊") — la antología real
+    lleva su nombre como sujeto inicial ("Weekly Shōnen Jump 2023 No.42", "週刊少年ジャンプ …"),
+    los descriptores-sufijo tras "<Serie> — Vol.N - …" no. La defensa por URL
+    (`_UMBRELLA_MAGAZINE_URL_PATTERN`, revista ATOM) queda intacta. Tras el fix, el dry-run de
+    `filter_collectible` pasa de 10 a 1 rechazo (el residuo es el bug de Aladin KR `한정판`,
+    aparte). Test: `test_is_collectible_edition_keeps_variant_cover_with_magazine_suffix` (los 9
+    títulos reales + antología real que sigue rechazándose).
+
+97. **Fuentes sirven un PLACEHOLDER cuando no tienen portada → se espeja como si fuera la cover (2026-06-13).**
+    Síntoma: cards con un pixel 1×1, un cuadro blanco o una imagen "no disponible" en vez del 📚.
+    CAUSA: cuando una fuente no tiene la carátula de un ISBN/producto, en vez de 404 devuelve una
+    imagen genérica — Amazon un GIF 1×1 (`images-na.../P/<ISBN>...jpg`), listadomanga/otros CDNs un
+    blanco, Penguin Random House "Cover Coming Soon", Funside "Immagine non disponibile", SocialAnime
+    "Image coming soon". El mirror la baja igual (pasa el chequeo de magic bytes: ES una imagen
+    válida) y queda como `images[0]`. Rechazarla solo en `download_image` NO alcanza: la `url` remota
+    seguiría como fallback y la card cargaría el placeholder remoto igual. FIX: detector de fuente
+    única `image_store.placeholder_reason()` — estructural (lado ≤ 8 px ⇒ `tiny`; std global de
+    luminancia < 3 ⇒ `solid`; no-abre/0 bytes ⇒ `broken`) + firmas de contenido
+    (`data/placeholder_signatures.json`, sha1) para los que llevan texto/logo y no caen por baja
+    entropía. El retrofit `purge_placeholder_images.py` quita la ENTRY completa de `images[]` (y las
+    refs en `sources[]`), re-marca la portada por posición y manda el archivo a cuarentena
+    `_orphans/`. Corre como paso **[4i]** del pipeline (delta y full), así no reentra al build.
+    SUTILEZA: "contenido idéntico repetido" NO es señal suficiente — la portada real de *BECK 16*
+    aparecía idéntica en 3 items (cross-cover, otro bug); el detector la deja intacta (std 66 ≫ 3)
+    porque solo borra por las reglas estructurales/firma, nunca por repetición. Para agregar un
+    placeholder con texto nuevo: pegá su sha1 en `placeholder_signatures.json` (no toca código).
+    Tests: `tests/test_purge_placeholder_images.py`.
+
+98. **El px count sobreestima la calidad → se propone una portada CHICA y BLANDA que se ve pixelada (2026-06-13).**
+    Síntoma: el panel de portadas propone reemplazar una portada chica pero limpia (ej. listadomanga
+    14k px) por una candidata de "mejor resolución" (ej. casadellibro 80k px, ×5.7) que se ve FEA y
+    pixelada. CAUSA: tanto el script (`fetch_better_covers._try_candidates`) como el skill
+    (`sc_validate.py`) elegían "mejor" por ÁREA EN PÍXELES (más px = mejor) y validaban identidad con
+    `_same_cover` (que confirma que es la MISMA portada, NO su calidad). Un escaneo sobre-comprimido o
+    upscale de la misma portada tiene más px pero menos detalle real, pasa el AND-gate de identidad y
+    gana por px. SUTILEZA CLAVE: la nitidez sola NO distingue el caso malo — la casadellibro 80k mala
+    (`_detail_ratio` ≈ 0.10) y una whakoom 637k buena miden el MISMO ratio; hasta una planeta de 6M px
+    puede medir ~0.10 (escaneo borroso). Lo que cambia es el TAMAÑO: la chica se muestra AGRANDADA
+    (modal/tarjeta la upscalean) y ahí la blandura salta a la vista; la grande se muestra REDUCIDA y se
+    ve nítida. FIX (fuente única, gate en `fetch_better_covers`, lo llaman los dos caminos): una
+    candidata se rechaza si es CHICA (`< SOFT_GUARD_PX` = 150k px) **Y** BLANDA
+    (`_detail_ratio < DETAIL_RATIO_MIN` = 0.115). `_detail_ratio` = fracción de energía en la octava
+    superior, medida a un tamaño de display común (lado largo 384px): residual del roundtrip
+    downscale½→upscale normalizado por la stddev de grises; una portada nítida concentra mucho detalle
+    al reducir a 384, un escaneo blando casi nada. Un umbral de ratio aplicado a CUALQUIER tamaño daba
+    falsos positivos en escaneos grandes legítimos (por eso el guard de px). Calibrado con casos reales:
+    casadellibro 78-90k ratio 0.05-0.10 → rechazadas; whakoom/norma/buscalibre buenas ≥150k px o ratio
+    ≥0.12 → pasan. Retrofit de limpieza de la cola ya armada: `prune_soft_cover_candidates.py`
+    (re-aplica el MISMO gate a `cover_preview.json`, idempotente; quitó 56 candidatas chicas+blandas de
+    569 entries). Tests: `tests/test_detail_ratio.py`.
+
+99. **El calendario plano + estandarización inventaban una EDICIÓN ESPECIAL que no existe, con la foto del bonus de OTRO tomo (2026-06-14).**
+    Síntoma (caso semilla): el item "Edens Zero Especial 23 Edición Especial" (artbook) — la página
+    real `coleccion.php?id=3094` NO tiene especial del tomo 23 (es un tomo REGULAR), y la foto que
+    arrastraba era el "Posavasos imantado" que es el regalo de 1ª edición de los tomos 2 y 3. Dos errores
+    en un solo item: edición inventada + foto del bono de otro volumen. CAUSA: el módulo plano del
+    calendario (`scripts/wikis/listadomanga.py`) sólo conoce el texto del enlace del día (era literal
+    "Edens Zero nº23"); NO conoce ediciones — por eso su `fetch_detail_metadata` deja la imagen vacía en
+    páginas multi-tomo (gotcha #28). Pero al pasar esos items legacy por la estandarización (LLM,
+    `standardized_at`), algunos se "derivaron" como Edición Especial / Artbook inexistente y se les pegó
+    la foto de un extra (cofre/posavasos/miniartbook) de otro tomo de la misma colección. El parser de
+    colecciones (`listadomanga_collections.py`) es la AUTORIDAD de cada `/coleccion?id=N`: si ahí no hay
+    tal especial, era fantasma. SUTILEZA CLAVE — el cruce calendario-vs-colecciones NO es autoridad para
+    borrar: tiene **falsos positivos en ambos sentidos**. (a) Ediciones especiales REALES (orange nº7,
+    "El chico que me gusta no es un chico" nº3, Hosaka nº1, Vanitas nº11…) — el item del calendario es
+    correcto, NO se borra. (⚠️ Acá se creyó ver un bug aparte de "under-capture del parser de
+    colecciones"; **era falsa alarma de medición** — el parser SÍ las captura y `consolidate` las fusiona
+    con el item del calendario; ver gotcha #101.) (b) Artbooks/cofres/fanbooks standalone cuya portada ES legítimamente el
+    bonus que regalan (Witch Hat ArtWorks/Illustrations, Promised Neverland Escape, Princess Jellyfish,
+    Réquiem fanbook, Quintillizas mini-artbook) — mismo objeto físico, misma imagen, NO es robo. Por eso
+    cada candidato se VERIFICÓ a mano contra la página viva antes de tocarlo. FIX: limpieza con
+    `scripts/retrofit/remove_phantom_calendar_editions.py` (listas explícitas verificadas: 5 fantasmas
+    borrados + 2 fotos robadas quitadas). GUARDA durable: invariante **STOLENIMG** en `validate_corpus.py`
+    — warning si la portada (`images[0]`) de un tomo NORMAL es un `extra`/`bonus` de otra fila (excluye
+    artbook/cofre standalone, que comparten foto legítimamente). Probada contra el backup pre-fix (marcaba
+    los 2 casos) y en 0 post-fix.
+
+100. **La búsqueda del grid ya NO es en vivo + el pipeline está MEMOIZADO → toda mutación in-place de
+    `items[]` DEBE bumpear `_dataVersion` (2026-06-14).** El dashboard (`web/index.html`) cargaba ~13k items
+    y filtraba en CADA tecla, recomputando `filtered→sorted→editions` (que Alpine, al no memoizar getters,
+    corría varias veces por render — el template referencia `editions`/`sorted`/`totalPages` decenas de veces).
+    Tipear era casi imposible. FIX en 3 partes: (a) **búsqueda por botón/Enter**: el input edita `searchInput`,
+    sólo `applySearch()` commitea a `filters.search`; (b) **haystack precomputado** por item (`i._search`,
+    `_indexSearch()`) en vez de armar la cadena en cada item en cada tecla; (c) **memoización** de
+    `filtered/sorted/editions` (cache `_pipeCache` por firma de filtros+sort+`_dataVersion`) y de `unique/stats`
+    (por `_dataVersion`), en caches **closure NO reactivos** (Alpine no los observa → sin loops). FOOTGUN: la
+    cache se invalida por el contador `_dataVersion`; **cualquier código que reasigne o mute `items[]` in-place
+    DEBE llamar `_bumpData()`** (y `_indexSearch()` si tocó campos de búsqueda), o el grid queda stale hasta el
+    próximo cambio de filtro. Sitios que ya lo hacen: `loadItems`, `loadAliases`, las 3 aprobaciones in-place y
+    `saveEdit`. Las acciones que recargan vía `loadItems()` (curación move/merge/remove) quedan cubiertas.
+    Medido: pipeline completo ~11 ms (miss) vs ~0.1 ms (hit). Verificado en preview.
+
+101. **"El parser de colecciones se PIERDE especiales" era FALSA ALARMA de medición — el especial está
+    en `sources[]`, no en los tags (2026-06-14).** El §9 de la ficha de listadomanga (y el inciso (a) de
+    la gotcha #99) reportaban un "under-capture": especiales reales (orange nº7 id=1970, "El chico que me
+    gusta no es un chico" nº3 id=5641, A Miyoshi/Hosaka nº1 id=5050, Vanitas nº11) que supuestamente
+    `listadomanga_collections.py` "sólo emitía como regular". MEDICIÓN CORRECTA: el parser SÍ los emite
+    (reproducido con el debug de §10: id=5050→`especial-1`+`especial-2` en `ventana_id9`; id=5641→
+    `especial-3` en `ventana_id14`; id=1970→`especial-7` vía Layout B), y los 3 YA ESTÁN en el corpus con
+    DOS fuentes `['ListadoManga (calendario)', 'ListadoManga (colecciones)']` — el item del calendario y el
+    especial del parser se FUSIONARON por `cluster_key` (mismo producto, correcto). CAUSA del falso
+    positivo: el item fusionado conserva los **tags del calendario** (`category:Manga`), NO `edition:especial`
+    ni `coleccion:N`, y su URL **primaria** es la del calendario (el synthetic `item=especial-N` vive en
+    `sources[]`). Una consulta que filtra por tag o por la url primaria "no ve" el origen colecciones y
+    concluye, falsamente, que el especial no se capturó. REGLA: para preguntar "¿esta /coleccion tiene su
+    especial?" hay que escanear `sources[]` (las URLs sintéticas `item=<kind>-<vol>`), NUNCA los tags —
+    exactamente como hace `scripts/audit_lista_full_bidir.py` (autoridad de faltantes globales, ya robusto).
+    Aplicación del principio del owner: *medir la composición antes de "arreglar"* (cf. §7 de la ficha:
+    PAIS marcaba 226 pero 203 eran válidos). NO hubo bug de parser ni se necesitó retrofit. Guarda durable:
+    tests `test_lmc_especial_in_non_id1_ventana_is_captured` (#41: especiales en `ventana_id9`/`id14`) y
+    `test_lmc_two_especiales_same_section_get_distinct_clusters` (#60: volumen propagado → cluster_keys
+    distintos → consolidate NO los fusiona) lockean los mecanismos que SÍ causarían under-capture si
+    regresaran.
+
+102. **Edición especial CON cofre listada inline en "Números editados" → mal clasificada como `box` →
+    edición box-set fantasma + DUPLICADO del especial (2026-06-14).** El gate de la sección regular no
+    premium descarta los tomos sueltos pero deja pasar los cofres listados inline como `box` (gotcha #75,
+    "Cofre de 2 tomos"). PROBLEMA: cuando el item inline trae un marcador de edición ADEMÁS del cofre
+    ("orange nº7 -queridos amigos- **Edición Especial + Cofre** + Set 4 postales", id=1970), no es un box
+    set — es la edición ESPECIAL que incluye un cofre. Clasificarlo como box (a) inventa una edición
+    box-set que no existe y (b) DUPLICA el especial del MISMO vol que la sección "Regalos/Cofres"
+    (Layout B) emite ("Cofre para tomos 1 a 7", marker "Edición Especial") → dos items (`box-7` +
+    `especial-7`, cluster_keys distintos `lmc:N:box:7` vs `lmc:N:special:7` → consolidate NO los fusiona).
+    No estalló en el corpus sólo porque orange se scrapeó ANTES de #75; el próximo full re-scrape habría
+    metido el duplicado. FIX en la fuente: `_match_inline_edition()` — si la desc del item inline-cofre
+    trae "Edición Especial/Limitada" o "Portada/Sobrecubierta Alternativa", se clasifica por ESA edición
+    (no como box). Entonces el merge tomo↔extra fusiona el cofre de Layout B (mismo kind+vol) como imagen
+    extra → UN solo `especial-N` con la portada de la especial + el cofre en el carrusel. El cofre inline
+    SIN marcador de edición ("Cofre de N tomos") sigue siendo box (#75 intacto). Auditado: 0 box fantasma
+    en el corpus actual (15 box, ninguno con marcador de edición). Test:
+    `test_lmc_inline_edicion_especial_con_cofre_is_especial_not_box`.
+
+103. **Folleto promocional GRATUITO de ListadoManga ("Número Gratuito") colado como edición especial
+    (2026-06-14, caso owner Edens Zero id=3112).** ListadoManga titula "(Especial)" a números que en
+    realidad son material de marketing que la editorial REGALA: el preview del primer capítulo de una obra
+    (Nota: "Preview gratuito de … que incluye el primer capítulo"), un mini-artbook de regalo, un avance
+    bundleado con un videojuego (id=2534 Dragon Quest). No son ediciones comprables ni coleccionables, pero
+    el título "(Especial)" disparaba `special_edition` y entraban al catálogo. La señal estructural es la
+    **línea de PRECIO**: donde un tomo de pago muestra "9,98 €", el folleto muestra "Número Gratuito"
+    (univers­al — verificada contra TODA la categoría editorial "Previews" id=332 + promos sueltas: 25
+    colecciones, todas con esa línea). El parser (`_parse_item_table`) no la reconocía como precio (sólo
+    matcheaba `€|EUR`) y caía en `description_extra`. FIX en la fuente: `FREE_PRICE_PATTERN`
+    (`^(?:n[úu]mero\s+)?gratuito$`) — si una línea del item la matchea, `_parse_item_table` devuelve `None`
+    y el item se descarta (POR ITEM: una colección con un número gratuito Y números de pago conserva los de
+    pago). Delta y full comparten el parser → prevención única. Limpieza del corpus (13 borrados):
+    `scripts/retrofit/remove_free_preview_editions.py` (regla A: "Número Gratuito" en `description`; regla
+    B: legacy `ListadoManga (calendario)` en colección free-preview verificada por fetch — su description
+    quedó malformada y no trae la frase). Caveat: el módulo plano del calendario (`wikis/listadomanga.py`,
+    fuera del pipeline canónico) sólo ve el texto del enlace del día, no la línea de precio; si se invoca a
+    mano puede re-meter un free preview vía estandarización (mismo origen que gotcha #99). Tests:
+    `test_lmc_free_preview_number_is_skipped`, `test_lmc_free_preview_skipped_but_paid_items_kept`.

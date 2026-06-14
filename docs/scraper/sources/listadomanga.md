@@ -3,7 +3,7 @@
 > Catálogo de fuentes de PandaWatch. Esta es la ficha de **ListadoManga** — la fuente
 > más importante y delicada del proyecto. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-06-14.
 
 ---
 
@@ -152,12 +152,20 @@ Parser: [`scripts/wikis/listadomanga_collections.py`](../../../scripts/wikis/lis
 - **Layout A** (`<table class="ventana_id1">`): items numerados.
   - `Números editados` → SÓLO si el `Formato:` es premium (kanzenban/cartoné/A5/tomo
     doble/libro de ilustraciones). Edición normal → no se capturan los tomos regulares,
-    SALVO cofres listados inline ("Cofre de 2 tomos") que se emiten como `box` (#75).
+    SALVO cofres listados inline ("Cofre de 2 tomos") que se emiten como `box` (#75). Si
+    el cofre inline trae ADEMÁS un marcador de edición ("Edición Especial/Limitada",
+    "Portada/Sobrecubierta Alternativa"), se clasifica por ESA edición (no como box) —
+    así no se inventa un box-set fantasma ni se duplica el especial del mismo vol que
+    "Regalos/Cofres" (Layout B) emite (`_match_inline_edition`, #102; caso orange nº7).
   - El volumen del tomo se extrae tras quitar el prefijo del nombre de la colección —
     series con número en el nombre ("Kaiju Nº8") no contaminan el vol (#74).
   - `Ediciones Especiales` → kind `especial`; `Portadas alternativas` → `alternativa`;
     `Packs` → sólo si la línea trae keywords de extras (aplica igual a la variante
     "en preparación (Packs)", que además marca `status:upcoming`; #73).
+  - **Número GRATUITO descartado**: si la línea de precio es "Número Gratuito" (folleto
+    promocional regalado: preview del 1er cap, mini-artbook, avance bundleado) el item se
+    descarta (`FREE_PRICE_PATTERN` → `_parse_item_table` devuelve `None`). No es comprable
+    aunque listadomanga lo titule "(Especial)". Por ítem: conserva números de pago (#103).
 - **Layout B** (`<table width="920">`): Cofres / Regalos / Extras. Vincula el extra a su
   tomo. Cofre de 1ª edición de "tomos X a Y" → marca esos tomos `regular` (#53).
 - Kanzenban se detecta por el literal en título/formato, NO por tamaño A5 (#51). "doble
@@ -240,7 +248,7 @@ válidos que faltaban en el allowlist — el bug era del validador).
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
-Resumen de gotchas #43-#60, #73-#75 y #93 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
+Resumen de gotchas #43-#60, #73-#75 y #95 (detalle en gotchas.md). Casi todas afectan a TODO el catálogo;
 recuperar requiere re-scrape + enforcer.
 
 **Captura / parser:**
@@ -256,6 +264,20 @@ recuperar requiere re-scrape + enforcer.
 - #75: **cofres inline en "Números editados" no-premium se perdían** ("Cofre de 2 tomos",
   Boichi cole 6240 — solo lo había capturado el calendario legacy). ✅ excepción al gate:
   emite SOLO los items con `\bcofres?\b` en el desc_extra como kind `box`.
+- #102: **edición especial CON cofre inline se clasificaba como `box`** → box-set fantasma +
+  duplicado del especial del mismo vol que Layout B emite ("orange nº7 Edición Especial +
+  Cofre", id=1970). ✅ `_match_inline_edition`: si el cofre inline trae marcador de edición,
+  va por esa edición (el merge fusiona el cofre de Layout B como extra). 0 fantasmas en el
+  corpus (era preventivo: orange se scrapeó antes de #75).
+- #103: **folleto promocional GRATUITO titulado "(Especial)" se colaba como edición especial**
+  (Edens Zero id=3112, owner 2026-06-14). El preview del 1er capítulo / mini-artbook de regalo /
+  avance bundleado con un videojuego que la editorial REGALA muestra "Número Gratuito" en la línea
+  de precio (vs "9,98 €"); el título "(Especial)" disparaba `special_edition`. Señal universal:
+  verificada contra TODA la categoría editorial "Previews" (`coleccion_editorial.php?id=332`) +
+  promos sueltas = 25 colecciones, todas con esa línea. ✅ `FREE_PRICE_PATTERN` en
+  `_parse_item_table` → devuelve `None` (descarta POR ITEM; conserva números de pago de la misma
+  colección). Limpieza: `remove_free_preview_editions.py` (13 borrados, regla A description +
+  regla B legacy calendario verificado por fetch).
 
 **Agrupación / dedup (la raíz de casi todos los duplicados):**
 - #46 país=edición, #48 coleccion=edición, #49 edition_display oficial, #52 cluster_key
@@ -296,7 +318,7 @@ recuperar requiere re-scrape + enforcer.
   tratamiento que editados: kind `pack` + filtro de keywords de extras (pack pelado tipo
   "Pack tomos 4 y 5" se sigue descartando) + `status:upcoming` por prefijo.
 
-- #93: **título con la edición DUPLICADA en dos idiomas + volumen perdido** ("Pájaro que
+- #95: **título con la edición DUPLICADA en dos idiomas + volumen perdido** ("Pájaro que
   trina no vuela no Special Edition Edición Especial", reportado por el owner). NO es un bug
   del parser: el skill VIEJO de standardize tradujo la edición a inglés y destruyó el "nº9"
   (→ "no"); ese título mangleado quedó como `title_original` y `restore_official_titles` lo
@@ -310,6 +332,19 @@ recuperar requiere re-scrape + enforcer.
   (metadata de tienda, caso "Fruits Basket Collector's Edition" con paginación de fnac), el
   fallback toma el STEM de un tomo hermano limpio de la misma colección + el volumen propio.
   18 items en total (16 desde description + 2 vía fallback).
+
+- #99: **edición especial FANTASMA + foto del bonus de OTRO tomo** (reportado por el owner,
+  caso "Edens Zero Especial 23"). El módulo plano del calendario (`scripts/wikis/listadomanga.py`)
+  sólo conoce el texto del enlace del día (era literal "Edens Zero nº23") y deja la imagen
+  vacía en páginas multi-tomo (#28); pero al pasar esos items legacy por la estandarización
+  (LLM) algunos se "derivaron" como Edición Especial/Artbook que NO existe en la página real, y
+  se les pegó la foto de un extra (cofre/posavasos/miniartbook) de otro volumen. El parser de
+  colecciones es la AUTORIDAD: si ahí no hay tal especial, era fantasma. ⚠️ El cruce
+  calendario-vs-colecciones NO basta para borrar (falsos positivos en ambos sentidos — ver §9):
+  cada candidato se VERIFICÓ a mano contra la página viva. ✅ limpieza
+  `remove_phantom_calendar_editions.py` (5 fantasmas borrados + 2 fotos robadas quitadas, 2026-06-14)
+  + guarda durable invariante **STOLENIMG** en `validate_corpus.py` (warning si la portada de un
+  tomo NORMAL es el `extra`/`bonus` de otra fila).
 
 **Decisiones (lo que NO se hace):** omnibus pelado no califica (#18); no se mergea
 cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
@@ -329,6 +364,21 @@ cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
   con el corpus). Si se regenera todo desde cero, incluir el cole id en el hash.
 - **Drift entre sesiones**: si alguien corre standardize entre tareas, el corpus puede
   desincronizarse; el validador + enforcer lo detectan y auto-corrigen (por eso el gate [5]).
+- **~~El parser de colecciones se PIERDE ediciones especiales reales~~ → FALSA ALARMA de medición,
+  RESUELTO (2026-06-14, gotcha #101).** Al verificar los fantasmas de #99 se creyó que el parser
+  "sólo emitía `regular`" para orange nº7 (id=1970), "El chico que me gusta no es un chico" nº3
+  (id=5641) y Hosaka nº1/2 (id=5050). **No es así**: el parser SÍ los emite (reproducir con el debug
+  de §10 — id=5050→`especial-1`+`especial-2` en `ventana_id9`; id=5641→`especial-3` en `ventana_id14`;
+  id=1970→`especial-7` vía Layout B), y los tres YA ESTÁN en el corpus con DOS fuentes
+  `['ListadoManga (calendario)', 'ListadoManga (colecciones)']` — el especial del parser se FUSIONÓ
+  con el item del calendario (mismo producto, correcto). El error de medición: el item fusionado
+  conserva los **tags del calendario** (`category:Manga`), NO `edition:especial`/`coleccion:N`, y su
+  URL primaria es la del calendario (el synthetic `item=especial-N` vive en `sources[]`) → una consulta
+  por tag/url-primaria "no lo ve". Para auditar captura por colección hay que escanear `sources[]`,
+  como hace `audit_lista_full_bidir.py` (autoridad de faltantes globales). No hubo bug de parser ni se
+  necesitó retrofit; los mecanismos que SÍ causarían under-capture (#41 leer cualquier `ventana_id<N>`,
+  #60 propagar el volumen) están corregidos y lockeados con tests (`test_lmc_especial_in_non_id1_ventana_is_captured`,
+  `test_lmc_two_especiales_same_section_get_distinct_clusters`).
 - **Casos ambiguos que se SALTAN**: `dedup_synthetic_source` loguea (no auto-fusiona)
   componentes multi-hash sospechosos (packs especial+variant). Revisar a mano si aparecen.
 - **Label `Edición original:` no aprovechado** (auditoría Chrome 2026-06-11): la cabecera

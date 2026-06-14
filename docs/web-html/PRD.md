@@ -31,7 +31,7 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 ### Exploración del catálogo
 
 - **Grilla de items** con foto, título, país, editorial, tipo de producto
-- **Búsqueda** por título (substring, case-insensitive, indexa `title` + `title_original` + `series_display`)
+- **Búsqueda** por título (substring, case-insensitive, indexa `title` + `title_original` + `series_display` + aliases multilingües de la serie). **Por botón "Buscar" o Enter — NO en vivo** (con ~13k items, filtrar en cada tecla trababa la UI; perf en gotcha #100). La "×" / "limpiar" resetean.
 - **Filtros combinados (AND)**: país, editorial, idioma, tipo de producto, clase de fuente, rareza, estado de revisión (Todos / Aprobados / Sin revisar), solo stock limitado, signal types (multi-select chips)
 - **Ordenamiento**: por fecha de detección (default), o título A-Z
 
@@ -335,6 +335,14 @@ Backwards-compat: las entries del schema viejo (campos planos `new_image`/`new_u
 - Cards con imagen aspect-ratio 3:4, badge ⚠️ para stock limitado (los badges de score se removieron 2026-06-01)
 - Sidebar de filtros sticky a 256px en desktop, full-width en mobile
 - Carrusel multi-imagen en modal con flechas + dots + descripción del extra
+- **Favicon** (todas las páginas): el panda logo sobre un cuadrado redondeado del
+  acento rosa `#d63384`. La app pública (Next.js) usa el mismo panda pero sobre
+  fondo transparente — el fondo rosa diferencia la app HTML local en la barra de
+  pestañas. Assets en `web/favicon.ico` (multi-size 16/32/48/64) +
+  `web/apple-touch-icon.png` (180×180), generados por `scripts/gen_html_favicon.py`
+  desde `web-next/app/icon.png` (fuente única del logo). `serve.py` los sirve también
+  en la raíz (`/favicon.ico`, `/apple-touch-icon.png`) porque las páginas viven en
+  URLs de raíz.
 
 ---
 

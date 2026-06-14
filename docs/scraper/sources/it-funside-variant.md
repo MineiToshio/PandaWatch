@@ -68,6 +68,13 @@ covers** de manga, un nicho de coleccionismo que otras fuentes IT no concentran.
 - **#16 (Shopify variants multi-tomo) NO aplica**: Funside modela 1 producto = 1 tomo (no
   un `<select>` de tomos). El helper de `shopify_variants.py` está restringido a dominios
   conocidos (hoy `darkhorsedirect.com`).
+- **El selector de título capturaba la tarjeta entera con el bloque de precio**
+  (gotcha #94, 2026-06-13): `title` quedaba como "{título} - VARIANT Prezzo normale
+  €X Prezzo di vendita €X … Aggiungi al carrello" o con prefijo "Aggiungi al carrello
+  [Confrontare] …" + sufijo de tienda "GAMES ACADEMY FUNSIDE / POPSTORE" (~58 items).
+  Fix: `clean_title` corta desde "Prezzo normale/di vendita/unitario", el prefijo del
+  botón y el sufijo "FUNSIDE". **Pendiente**: afinar `title_selector` (hoy
+  `a[href*='/products/']` arrastra toda la tarjeta en algunos productos).
 
 ---
 

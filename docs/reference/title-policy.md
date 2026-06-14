@@ -32,6 +32,19 @@ ni nombre de la obra — quitar basura de e-commerce (`clean_title`), el marcado
 "nº", reordenar "{serie} {vol} Edición Especial", desambiguar colisiones. Eso es
 todo.
 
+**Ejemplo del principio (misma obra, dos editoriales)** — la regla 3 NO es "quitar
+siempre el tipo de edición", es "respetar el nombre OFICIAL de cada editorial":
+
+| Edición | `title` correcto | Por qué |
+|---|---|---|
+| Yen Press (US) | `Fruits Basket Collector's Edition, Vol. 1` | Yen Press LITERALMENTE publica así → el tipo ES parte del nombre oficial, se conserva. |
+| Norma (ES) | `Fruits Basket 1` | Norma nombra cada tomo "Fruits Basket N"; la edición es "Edición Coleccionista" (va en `edition_key` → badge), no en el título. |
+
+Un "Fruits Basket Collector's Edition 1" en el item de **Norma** sería un error
+(es traducción al inglés inyectada por el skill viejo, gotcha #95), aunque el MISMO
+texto en el item de **Yen Press** es correcto. El título sigue a la fuente, no a una
+regla uniforme de strip.
+
 ## 2. El porqué (para no revertirlo por error)
 
 El owner detectó dos daños del renombre:

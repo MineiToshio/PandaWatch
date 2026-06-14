@@ -1,6 +1,6 @@
 ---
 name: watch-search-covers
-description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() para quedarse SOLO con la MISMA imagen en mejor resolución. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto".
+description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() (misma imagen) y _is_soft_image() (descarta escaneos chicos y blandos que se verían pixelados) para quedarse SOLO con la MISMA portada en mejor resolución y buena calidad. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto".
 argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-gallery] [--gallery-only] [--retry-failed] [--query-extra \"texto\"]"
 ---
 
@@ -59,16 +59,21 @@ targets se tratan como **"sin imagen"**: se saltan salvo `--include-no-image`, y
 baja resolución (fix estructural 2026-06-12).
 
 **La regla de oro de relevancia** (lo que arregla el problema histórico de "me manda otros
-volúmenes / ediciones / cosas no relacionadas"): una candidata SOLO se acepta si pasa DOS
+volúmenes / ediciones / cosas no relacionadas"): una candidata SOLO se acepta si pasa TRES
 verificaciones: (1) `fetch_better_covers._same_cover(actual, candidata, MAX_HASH_DIST)` — el
 AND-gate endurecido del audit 2026-06-10: **aspect ratio ±25% ∧ aHash ≤6 ∧ dHash ≤8 ∧
 pHash ≤8 ∧ NCC ≥0.90 + gate de entropía + denylist de placeholders** (capa incomputable =
-rechazo, default-deny); y (2) `fetch_better_covers.candidate_metadata_conflict(item, url,
+rechazo, default-deny); (2) `fetch_better_covers.candidate_metadata_conflict(item, url,
 page_title)` — si la URL/título de la candidata declara OTRO volumen u OTRO ISBN que el item,
-hard reject. Otro volumen / otra edición / arte distinto se descarta. Está bien que una
-candidata no sea pixel-idéntica (puede ser un escaneo mejor con el mismo arte), pero tiene
-que ser **visiblemente la misma portada**. Precisión > recall: mejor 0 candidatas que una
-no relacionada.
+hard reject; y (3) `fetch_better_covers._is_soft_image(candidata)` — **gate de calidad de
+display (gotcha #94)**: la identidad no garantiza calidad. Una candidata se rechaza si es
+CHICA (`< SOFT_GUARD_PX` = 150k px) Y BLANDA (`_detail_ratio < DETAIL_RATIO_MIN` = 0.115):
+un escaneo blando/upscale tiene más px pero, mostrado agrandado, se ve pixelado. Las grandes
+pero blandas pasan (se muestran reducidas → nítidas). Otro volumen / otra edición / arte
+distinto / escaneo blando chico → se descarta. Está bien que una candidata no sea
+pixel-idéntica (puede ser un escaneo mejor con el mismo arte), pero tiene que ser
+**visiblemente la misma portada Y verse bien**. Precisión > recall: mejor 0 candidatas que
+una no relacionada o fea. (Las tres viven en `sc_validate.py`, fuente única con producción.)
 
 **Regla absoluta**: NUNCA escribe ni modifica `data/items.jsonl`. Solo escribe a
 `data/cover_preview.json`. Todas las candidatas van con `confidence: "low"` y
@@ -84,7 +89,7 @@ no relacionada.
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--limit N` | `20` | Máximo de targets (imágenes) a procesar en esta sesión. |
+| `--limit N` | `0` (todas) | Máximo de targets (imágenes) a procesar. **Por defecto se procesan TODAS** las que falten; pasá `--limit N` solo si querés acotar a N en esta corrida. |
 | `--slug SLUG` | — | Procesa solo el item con ese slug exacto. |
 | `--gallery-only` | off | Salta las portadas (img_idx 0) y procesa solo imágenes de galería (img_idx ≥ 1). Útil para buscar mejoras de galería sin mezclar con portadas ya encoladas. |
 | `--include-gallery` | off | Procesa tanto portadas como imágenes de galería (img_idx 0 y ≥ 1). Sin este flag ni `--gallery-only`, solo se procesan portadas. |
@@ -144,7 +149,7 @@ LOW_QUALITY_PX = 90_000
 MIN_REF_PX = 2_500
 
 # Ajustar según los parámetros recibidos al invocar el skill
-LIMIT            = 20        # --limit N
+LIMIT            = 0         # --limit N  (0 = TODAS por defecto; solo acotar si el owner pasa --limit N)
 SLUG_FILTER      = None      # --slug SLUG  (o None)
 INCLUDE_NO_IMAGE = False     # --include-no-image
 QUERY_EXTRA      = ""        # --query-extra "texto"  (o "")
@@ -165,13 +170,26 @@ items      = [json.loads(l) for l in open('data/items.jsonl') if l.strip()]
 images_dir = Path('data/images')
 
 preview_path = Path('data/cover_preview.json')
-# Skip key = (slug, action, target_url) — así cubrimos portada y cada foto de galería por separado
+# Skip key = (slug, action, target_url) — así cubrimos portada y cada foto de galería por separado.
+# Excluimos SOLO los items que YA tienen una candidata DEL SKILL (las que produce
+# sc_validate.py, reconocibles por el campo 'match_dist'), y en CUALQUIER estado:
+#   • pending   → esperando adjudicación del owner
+#   • approved  → ya resuelto, pendiente de apply_preview (que recién ahí pisa items.jsonl
+#                 y saca el item del plan al volverse hi-res)
+#   • rejected  → el owner YA dijo que no; re-buscar el mismo índice (whakoom/Google/Yandex)
+#                 devolvería las MISMAS imágenes ya descartadas (el índice externo no cambia
+#                 entre corridas) → se re-procesaría en vano.
+# Antes se excluían SOLO los 'pending', así que un item adjudicado (approved/rejected)
+# RE-ENTRABA al plan en la siguiente corrida y se re-buscaba inútilmente hasta aplicar la
+# portada (verificado en vivo 2026-06-14: black-clover-norma-regular-es-1). Cubrir los 3
+# estados lo evita. Las candidatas del script python fetch_better_covers (SIN 'match_dist')
+# NO excluyen: el owner quiere que el skill TAMBIÉN corra sobre esos items.
 already_in_preview = set()
 if preview_path.exists():
     try:
         for e in json.loads(preview_path.read_text(encoding='utf-8')):
             for c in e.get('candidates', []):
-                if c.get('status') == 'pending':
+                if 'match_dist' in c:
                     already_in_preview.add((
                         e.get('slug', ''),
                         c.get('action', 'replace_cover'),
@@ -383,7 +401,7 @@ for item in items:
         })
 
 targets.sort(key=lambda x: (x['pixels'] > 0, x['pixels']))
-targets = targets[:LIMIT]
+targets = targets[:LIMIT] if LIMIT else targets   # LIMIT=0 => TODAS
 
 # Persistir el plan para el loop del Step 3
 Path('.tmp_sc_plan.json').write_text(json.dumps(targets, ensure_ascii=False), encoding='utf-8')
@@ -410,8 +428,9 @@ for t in targets:
 ## Step 2 — El validador de imágenes (permanente, NO se regenera)
 
 La validación vive en `scripts/retrofit/sc_validate.py` — un script PERMANENTE y
-testeado (`tests/test_sc_validate.py`) que delega todo el criterio de identidad en
-`fetch_better_covers` (`_same_cover` AND-gate + `candidate_metadata_conflict`).
+testeado (`tests/test_sc_validate.py`) que delega todo el criterio en
+`fetch_better_covers`: identidad (`_same_cover` AND-gate + `candidate_metadata_conflict`)
+y calidad de display (`_is_soft_image`: descarta candidatas chicas+blandas, gotcha #94).
 **No escribas ni copies código de validación en esta corrida**: las versiones
 anteriores de este skill regeneraban una copia embebida y esa copia drifteó de
 producción (umbral laxo, sin filtro de volumen/ISBN) — fue la causa de los falsos
@@ -682,5 +701,8 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
    otro ISBN declarado en la URL/título → hard reject). Sin imagen actual
    (`--include-no-image`) queda `verified: false` para revisión más estricta.
 6. Máximo 10 candidatas por item; máx 3 matches dispara el corte de iteración
-7. El skill es incremental: slugs con candidatas pendientes se saltan automáticamente
+7. El skill es incremental: un (slug, action, target) con candidata DEL SKILL (campo
+   `match_dist`) en CUALQUIER estado — pending, approved o rejected — se salta
+   automáticamente (no se re-busca lo ya adjudicado). Las candidatas del script python
+   `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual sobre esos items.
 8. Borrar los `.tmp_sc_*` al finalizar (son temporales). `scripts/retrofit/sc_validate.py` y `scripts/retrofit/sc_flush.py` son PERMANENTES — nunca borrarlos ni regenerar su lógica inline. `sc_flush.py` rechaza con exit 1 cualquier candidata sin `new_image` o `new_url` (guarda anti-drift).

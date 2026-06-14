@@ -98,6 +98,14 @@ incrementales: solo tocan lo que falta).
 
 🧠 = LLM-driven (skill). **Nunca corre solo** — el owner lo invoca por nombre (policy de tokens, CLAUDE.md).
 
+> **Gate de validación — exit real vía `PIPESTATUS` (fix 2026-06-13).** El paso [5]
+> de `scrape_delta.sh`/`scrape_full.sh` corría `validate_corpus.py | tee log || echo
+> "⚠ violaciones"`. Sin `set -o pipefail`, `$?` del pipe era el de `tee` (siempre 0),
+> así que el `|| echo` **nunca disparaba**: un run desatendido que rompiera invariantes
+> no dejaba señal visible. Ahora se captura `${PIPESTATUS[0]}` (exit real de
+> validate_corpus), se setea `CORPUS_INVALID=1` y se **surface en el FINAL SUMMARY**
+> (`corpus: ⚠ INVÁLIDO …` vs `✓ válido`). Crítico para el LaunchAgent nocturno.
+
 **Regla de oro del flujo.** El scrape (Etapa 0/1) deja `items.jsonl` **crudo**
 (sin `standardized_at`/`slug`/`description_es`/`rarity`). Todo lo demás es una
 pasada **post-scrape**, manual o semi-manual, que el owner dispara cuando quiere.
@@ -314,6 +322,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 | 4f3 | `enforce_listadomanga_rules.py --fast` | **Cadena COMPLETA de agrupación (2026-06-12)** — reemplaza a los pasos sueltos fix_edition_country / unify_coleccion / backfill_cluster_key / generate_slugs / consolidate / merge_isbn que el pipeline corría antes: el re-scrape del calendario sobre colecciones YA estandarizadas deja duplicados raw-vs-std (DUPSYN/DUPVOL/TITLE) que solo la cadena completa repara (la corrida real del delta del 2026-06-12 dejaba **53 violaciones duras** con la cadena vieja; con el enforcer → 0). `--fast` salta el dedup de carrusel (corre aparte en 4h). Incluye: edition_display, país=edición, anomalías ek, unify/disambiguate/collapse/merge_crosssource, títulos lmc, canonicalize slugs, merge series/ISBN dups, publishers, cluster_key, dedup sintético, consolidate, slugs. Idempotente. |
 | 4g2 | `upgrade_image_resolution.py` | **[full only]** Re-descarga portadas en resolución completa: quita segmentos/params CDN de resize (Buscalibre `fit-in/`, Cultura `cdn-cgi/image/`, Whakoom `small→large`, Magento cache path, WP -NxM, Shopify _Nx, Rakuten `?_ex=`). Pasa Referer del item para evitar 403 anti-hotlink. Compara píxeles (`--min-gain 0.10`). Corre DESPUÉS de `consolidate_sources` (la portada canónica final ya está en su lugar) y ANTES de `dedup_carousel` (que puede necesitar la versión hi-res). |
 | 4h | `dedup_carousel_images.py` | Quita la MISMA portada repetida en baja resolución del carrusel (hash perceptual; solo `kind=gallery`). Corre acá porque 4g une imágenes de fuentes hermanas → crea el dup. |
+| 4i | `purge_placeholder_images.py` | Quita de `images[]` las fotos que NO son portadas reales: placeholders que la fuente sirve sin tener carátula (1×1 de Amazon, blanco de listadomanga/CDNs, "Cover Coming Soon"/"Immagine non disponibile"/"Image coming soon"), pixeles 1×1 y archivos rotos → la card cae al 📚 por defecto. Detección via `image_store.placeholder_reason()` (estructural + firmas sha1 en `data/placeholder_signatures.json`). Quita la ENTRY completa y limpia `sources[]`; huérfanos a cuarentena `_orphans/`. Sin red, idempotente. Corre acá (último paso de imágenes, antes del build) para que un placeholder que reentre durante el scrape no llegue al build. Gotcha #97. |
 
 > Todos los retrofits que reescriben metadata descriptiva **saltean items `approved_at`** por defecto (guard `is_approved()`).
 
@@ -410,8 +419,9 @@ El scrape ya baja la portada de items nuevos (Fase 1 del espejo). Esta etapa **m
 4. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
 5. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
 6. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). Requiere `brew install waifu2x-ncnn-vulkan`.
-7. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida `_same_cover` (misma portada, mejor resolución), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`.
+7. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida identidad `_same_cover` (misma portada, mejor resolución) **+ calidad de display `_is_soft_image`** (descarta candidatas chicas+blandas que se verían pixeladas aunque tengan más px, gotcha #94), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`. La cola previa al gate se limpia 1× con `prune_soft_cover_candidates.py`.
 8. **`sync_cover_images.py`** — saneamiento integral: portadas placeholder/banner, `images[0]` desincronizado de la card, duplicados/junk (avatares, íconos, banners), galerías que son otros tomos. Idempotente, salta aprobados.
+9. **`purge_placeholder_images.py`** — **determinístico y automático ([4i] del pipeline)**: quita las imágenes-placeholder que las fuentes sirven sin tener carátula (1×1, blanco, "no disponible"/"coming soon") + 1×1 + rotas, vía `image_store.placeholder_reason()` (estructural: `tiny`/`solid`/`broken` + firmas sha1 en `data/placeholder_signatures.json`). Quita la ENTRY completa (incluida la `url`, si no la card cargaría el placeholder remoto), limpia `sources[]`, huérfanos a `_orphans/`. NO borra por imagen repetida (cross-cover queda intacto). Complementa a `sync_cover_images` (heurístico/manual) con reglas duras sin falsos positivos. Sin red. Gotcha #97.
 
 **Invariante de imágenes** (docs/reference/images.md): `images[0]` = SIEMPRE la portada (sincronizada con `image_url`/`image_local`). El carrusel es a nivel **cluster** (union dedupeada). El merge vive en TRES lugares que deben coincidir: `web/index.html` (`dedupByUrl`), `build_web.py` (`_merged_canonical`), `web-next/.../ItemHero.tsx`.
 
@@ -447,7 +457,7 @@ El owner aprueba cards correctas desde el dashboard (botón aprobar):
 
 ### 3.★ Build / publish
 1. **`consolidate_sources.py`** — re-consolida 1-fila-por-producto (necesario tras standardize, que reasigna `edition_key` → nuevos clusters).
-2. **`build_web.py`** — normaliza URLs, agrupa por `cluster_key`, construye `sources[]`, y deja el dashboard en modo **inline** (embebido, sirve desde `file://`) o **fetch** (default: JS hace `fetch(items.jsonl)`, requiere `serve.py`).
+2. **`build_web.py`** — por **default deja el embed VACÍO** (`web/index.html` ~139 KB; el JS hace `fetch(items.jsonl)` en vivo, requiere `serve.py`). Antes embebía el catálogo (~30 MB en el HTML) que el navegador parseaba ADEMÁS del fetch en vivo → trabajo doble; eso se quitó el 2026-06-14 (gotcha #100). Con `--embed` vuelve a poblar el `<script id="manga-data">` (normaliza URLs, agrupa por `cluster_key`, construye `sources[]`) para el fallback `file://`. `serve.py` además sirve el `items.jsonl` con **gzip** (~31 MB → ~4 MB) si el cliente lo acepta.
    También regenera **`data/series_aliases.json`** (`export_series_aliases.py`, vista
    de búsqueda del YAML de aliases): ambas UIs buscan también contra los aliases del
    `series_key`, así "demon slayer" / "kimetsu no yaiba" / "guardianes de la noche"
