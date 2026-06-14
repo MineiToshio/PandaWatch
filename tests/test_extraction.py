@@ -2180,6 +2180,60 @@ def test_clean_title_strips_funside_cart_prefix():
     assert mw.clean_title(
         "Aggiungi al carrello Confrontare AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
     ) == "AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
+    # Variante sin "Confrontare" + nombre de tienda como sufijo.
+    assert mw.clean_title(
+        "Aggiungi al carrello NON TORMENTARMI, NAGATORO! 1 - VARIANT GAMES ACADEMY FUNSIDE"
+    ) == "NON TORMENTARMI, NAGATORO! 1 - VARIANT"
+    assert mw.clean_title(
+        "Aggiungi al carrello L'EROE E' MORTO 1 - VARIANT GAMES ACADEMY FUNSIDE/ POPSTORE"
+    ) == "L'EROE E' MORTO 1 - VARIANT"
+
+
+def test_clean_title_strips_italian_price_block():
+    """Funside/Shopify italiano: el selector genérico captura la tarjeta entera
+    con el bloque de precio. Cortar desde 'Prezzo normale/di vendita/unitario'."""
+    assert mw.clean_title(
+        "AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT Prezzo normale €22,00 "
+        "Prezzo di vendita €22,00 Prezzo normale €22,00 Prezzo unitario / per Aggiungi"
+    ) == "AI TEMPI DI BOCCHAN PERFECT EDITION VOL.4 - VARIANT"
+    # Dynit: cola "Disponibile dal: DD/MM/YYYY Dynit".
+    assert mw.clean_title(
+        "Isekai Editor (The) #03 Disponibile dal: 05/06/2026 Dynit"
+    ) == "Isekai Editor (The) #03"
+
+
+def test_clean_title_decodes_html_entities():
+    """Entidades HTML sin decodificar del scraper (gotcha #94)."""
+    assert mw.clean_title("Fire Force — Vol.34 - Collector&#039;s box") == \
+        "Fire Force — Vol.34 - Collector's box"
+    assert mw.clean_title("Black Lagoon — Girls &amp; Weapons - Sunday GX") == \
+        "Black Lagoon — Girls & Weapons - Sunday GX"
+
+
+def test_clean_title_strips_thai_status_badges():
+    """IPM/Siam TH: '(PRE-ORDER)' como prefijo y '[NEW]' embebido son badges de
+    estado, no parte del título (gotcha #94). No deben pegar palabras vecinas."""
+    assert mw.clean_title("(PRE-ORDER) TOKYO GHOUL : RE เล่ม 16 (จบ) [NEW] (ชุดพิเศษ boxset)") == \
+        "TOKYO GHOUL : RE เล่ม 16 (จบ) (ชุดพิเศษ boxset)"
+    assert mw.clean_title("ไอส์ เล่ม 12 [NEW] + (ชุดพิเศษ Boxset)") == \
+        "ไอส์ เล่ม 12 + (ชุดพิเศษ Boxset)"
+
+
+def test_clean_title_strips_korean_retailer_tail():
+    """Aladin/Hansan KR ('만화 한정판'): el selector captura bonus + autor +
+    editorial + precio + millas + sales-point. El nombre oficial termina en el
+    marcador de edición '(…한정판)' / '한정판 [박스] [세트]'."""
+    assert mw.clean_title(
+        "블루 아카이브 오피셜 아트웍스 2 (한정판) - 글리터아크릴 4종 + 일러스트 카드 6매 "
+        "신민섭 (옮긴이), NEXON GAMES (감수) | 학산문화사(만화) | 2024년 9월 98,000 원 → 88,200원"
+    ) == "블루 아카이브 오피셜 아트웍스 2 (한정판)"
+    assert mw.clean_title(
+        "일립예고 학생들 1~2 한정판 박스 세트 - 아크릴 스탠드 + 엽서 8종 백본 (지은이) | 학산문화사(만화) | 2025년 3월"
+    ) == "일립예고 학생들 1~2 한정판 박스 세트"
+    # Idempotente: un título ya limpio no cambia.
+    assert mw.clean_title("승리의 여신: 니케 공식 아트북 (한정판)") == "승리의 여신: 니케 공식 아트북 (한정판)"
+    # No toca títulos no-coreanos (sin Hangul, el helper no corre).
+    assert mw.clean_title("Berserk Maximum 1") == "Berserk Maximum 1"
 
 
 def test_fetch_with_playwright_dispatches_to_worker_thread():
@@ -3653,6 +3707,47 @@ def test_is_collectible_edition_atom_magazine_url_discriminator():
     ok, reason = mw.is_collectible_edition("Weekly Shonen Jump 52", "", [], "magazine")
     assert not ok
     assert reason == "umbrella_magazine"
+
+
+def test_is_collectible_edition_keeps_variant_cover_with_magazine_suffix():
+    """Gotcha #95: los 9 items reales que `umbrella_magazine` borraba.
+
+    Mangavariant publica portadas variantes cuyo título lleva el nombre de la
+    revista como SUFIJO descriptivo ("Sakamoto Days — The Order - Shonen Jump").
+    `_UMBRELLA_JP_MAGAZINE_PATTERN.search(title)` a secas las marcaba como
+    umbrella_magazine (HARD_REASON en filter_collectible, ignora standardized_at)
+    y las borraba del corpus en el cleanup del pipeline. El discriminador: una
+    portada variante lleva signal `variant_cover`, y/o la revista no es el sujeto
+    inicial del título. Una antología real (sujeto inicial) sigue rechazándose.
+    """
+    # Los 8 variant_cover reales del corpus → NUNCA umbrella_magazine.
+    variant_cases = [
+        "Claymore — Green - Monthly Shonen Jump",
+        "20th Century Boys — Vol.16 - Big Comic Spirits",
+        "Silver Spoon — Vol.1 - Shonen Sunday",
+        "Silver Spoon — Vol.2 - Shonen Sunday",
+        "Real — Vol.6 - Young Jump",
+        "Gifu Doudou!! Naoe Kanetsugu – Maeda Keiji Tsukigatari — Young Jump",
+        "Sakamoto Days — The Order - Shonen Jump",
+        "Terra Formars — Vol.6 - Young Jump variant",
+    ]
+    for title in variant_cases:
+        ok, reason = mw.is_collectible_edition(title, "", ["variant_cover"], "manga")
+        assert reason != "umbrella_magazine", f"variant NO debe ser umbrella: {title!r} (reason={reason})"
+
+    # El 9º: revista de UNA serie (One Piece Magazine) que MENCIONA la antología
+    # en su título de feature → producto legítimo (product_type=magazine).
+    ok, reason = mw.is_collectible_edition(
+        "ONE PIECE magazine 特集 週刊少年ジャンプとONE PIECE 020", "",
+        ["fanbook", "special_edition"], "magazine",
+    )
+    assert ok, f"One Piece magazine debe conservarse (reason={reason})"
+    assert reason != "umbrella_magazine", reason
+
+    # Defensa: una antología real (revista como sujeto inicial) SIGUE rechazada
+    # aunque pasáramos otra signal — el sujeto inicial manda.
+    ok, reason = mw.is_collectible_edition("Weekly Shōnen Jump 2023 No.42", "", [], "magazine")
+    assert not ok and reason == "umbrella_magazine", reason
 
 
 def test_is_collectible_edition_keeps_series_with_umbrella_substring():
@@ -6004,6 +6099,121 @@ def test_lmc_parses_ediciones_especiales_section():
     assert cands[0].release_date == "2023-03-23"
 
 
+def test_lmc_especial_in_non_id1_ventana_is_captured():
+    """Regresión (gotcha #41 + #100; caso owner 2026-06-14): la sección
+    'Números editados (Ediciones Especiales)' suele renderizar sus tomos en una
+    tabla `ventana_id9`/`id14` (skin CSS de especiales), NO en `ventana_id1`.
+    El parser viejo solo leía `ventana_id1` → esos especiales daban 0 items y se
+    perdían del corpus aunque la sección existe en la página viva (caso real:
+    'El chico que me gusta no es un chico' nº3, id=5641, tabla `ventana_id14`,
+    edición NO premium). Las secciones especiales DEBEN aceptar cualquier
+    `ventana_id<N>` y emitir el item pese al gate de premium-format."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(3, "El chico que me gusta no es un chico",
+                      desc_extra="Edición Especial + Sobrecubierta Alternativa + Collar Púa de Guitarra",
+                      price="12,00 €", cls="ventana_id14"),
+        ),
+        title="El chico que me gusta no es un chico",
+        publisher="Editorial Hidra",
+        # Formato NO premium: el especial entra por la sección, no por el formato.
+        formato="Tomo (130x183) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 5641)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1, f"especial en ventana_id14 no capturado: {[c.url for c in cands]}"
+    c = cands[0]
+    assert "especial-3" in c.url
+    assert "special_edition" in c.signal_types
+    assert c.volume == "3"          # #60: volumen propagado al Candidate
+    assert c.score >= 30            # el gate no lo descarta
+
+
+def test_lmc_two_especiales_same_section_get_distinct_clusters():
+    """Regresión (gotcha #60 + #100; caso owner 'A Miyoshi le gusta Hosaka'
+    2026-06-14): dos ediciones especiales del MISMO título (vol 1 y vol 2) en la
+    misma sección deben (a) emitirse AMBAS, (b) propagar su volumen a
+    `Candidate.volume`, (c) derivar `cluster_key` DISTINTOS. El bug viejo dejaba
+    `volume=''` (no propagaba `parsed['volume']` a `cand.volume`) → ambos
+    especiales colapsaban al mismo cluster `lmc:N:special:` → `consolidate` los
+    fusionaba y UNO se perdía (especial-1 desapareció del corpus; sobrevivió solo
+    el 2). El caso real usa `ventana_id9`."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(1, "A Miyoshi le gusta Hosaka", desc_extra="Edición Especial + Stand Acrílico",
+                      price="13,00 €", image_id="miy1", cls="ventana_id9"),
+            _lmc_item(2, "A Miyoshi le gusta Hosaka", desc_extra="Edición Especial + Stand Acrílico",
+                      price="13,00 €", image_id="miy2", cls="ventana_id9"),
+        ),
+        title="A Miyoshi le gusta Hosaka",
+        publisher="Ediciones Tomodomo",
+        formato="Tomo (130x183) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 5050)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 2, f"se esperaban 2 especiales, hubo {len(cands)}: {[c.url for c in cands]}"
+    vols = sorted(c.volume for c in cands)
+    assert vols == ["1", "2"], f"volúmenes no propagados (#60): {vols}"
+    # Cada candidate → fila JSON → cluster_key. DISTINTOS para que consolidate NO
+    # los fusione (la causa raíz de la pérdida histórica del especial-1).
+    clusters = {mw.derive_cluster_key(mw.candidate_to_json(c)) for c in cands}
+    assert clusters == {"lmc:5050:special:1", "lmc:5050:special:2"}, clusters
+
+
+def test_lmc_free_preview_number_is_skipped():
+    """Regresión (gotcha #103, caso owner Edens Zero id=3112 2026-06-14): un
+    folleto promocional que la editorial REGALA (preview del 1er capítulo,
+    mini-artbook, avance bundleado con un videojuego) aparece en 'Números
+    editados' con la línea de precio "Número Gratuito" en lugar de "9,98 €".
+    Listadomanga lo titula "(Especial)", así que entraba como special_edition,
+    pero NO es una edición comprable ni coleccionable: hay que descartarlo en la
+    ingestión (delta y full comparten este parser). La señal "Número Gratuito"
+    es universal (verificada contra toda la categoría editorial 'Previews')."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            # Preview gratuito: misma sección regular, pero precio = Número Gratuito.
+            _lmc_item(0, "Edens Zero", desc_extra="", price="N&uacute;mero Gratuito",
+                      pages="84 páginas en B/N", image_id="free0"),
+        ),
+        title="Edens Zero (Especial)",
+        publisher="Norma Editorial",
+        # Formato no-premium: si NO fuera gratuito igual se descartaría por formato,
+        # así que forzamos premium para aislar que la causa del skip es el precio.
+        formato="Tomo (115x175) rústica (tapa blanda) con sobrecubierta",
+    )
+    cands = lmc.parse_collection_page(html, 3112)
+    assert cands == [], f"el preview gratuito no debió emitir items: {[c.url for c in cands]}"
+
+
+def test_lmc_free_preview_skipped_but_paid_items_kept():
+    """El skip de 'Número Gratuito' es POR ITEM: una colección con un número
+    gratuito Y números de pago conserva los de pago (no se descarta la colección
+    entera)."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(0, "Serie X", desc_extra="Edición Especial", price="N&uacute;mero Gratuito", image_id="freex"),
+            _lmc_item(1, "Serie X", desc_extra="Edición Especial con cofre", price="29,95 €", image_id="paidx"),
+        ),
+        title="Serie X",
+        publisher="Norma Editorial",
+    )
+    cands = lmc.parse_collection_page(html, 9911)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1, f"sólo el de pago debía sobrevivir: {[c.url for c in cands]}"
+    assert "especial-1" in cands[0].url
+
+
 def test_lmc_parses_portadas_alternativas_with_variant_cover_signal():
     """Sección Portadas alternativas → signal variant_cover."""
     from wikis import listadomanga_collections as lmc
@@ -6348,10 +6558,14 @@ def test_format_especial_title_order():
     f = mw.format_especial_title
     assert f("Witch Hat Atelier Edición Especial 5") == "Witch Hat Atelier 5 Edición Especial"
     assert f("Atelier of Witch Hat 5 (Edición Especial)") == "Atelier of Witch Hat 5 Edición Especial"
-    assert f("Attack on Titan Special 34") == "Attack on Titan 34 Edición Especial"
     assert f("Witch Hat Atelier 5 Edición Especial") == "Witch Hat Atelier 5 Edición Especial"  # idempotente
     assert f("Atelier of Witch Hat 5") == "Atelier of Witch Hat 5"  # regular intacto
     assert f("Berserk Deluxe 1") == "Berserk Deluxe 1"  # otra edición intacta
+    # Gotcha #94: NO traducir el inglés. "Special Edition"/"Special" en un título
+    # extranjero se deja intacto (antes se convertía en "Edición Especial").
+    assert f("Demon Slayer Special Edition 23") == "Demon Slayer Special Edition 23"
+    assert f("葬送のフリーレン Special Edition 15") == "葬送のフリーレン Special Edition 15"
+    assert f("Attack on Titan Special 34") == "Attack on Titan Special 34"
 
 
 def test_lmc_normalize_display_title():
@@ -6386,6 +6600,26 @@ def test_lmc_normalize_display_title():
     assert n("Crush of Lifetime nº6 Special Edition", "especial") == "Crush of Lifetime 6 Edición Especial"
     # …y un tomo regular nunca conserva el qualifier en inglés.
     assert n("Scarlet Secret Special Edition", "regular") == "Scarlet Secret"
+
+
+def test_fix_title_edition_words_collapses_real_dups():
+    """fix_title_edition_words colapsa duplicaciones REALES de edición sin tocar
+    nombres de obra con repetición legítima (gotcha #94)."""
+    from retrofit.fix_title_edition_words import fix_title
+    # CJK: descriptor de edición repetido verbatim → una sola copia.
+    assert fix_title("新 仮面ライダーSPIRITS(13)特装版 特装版 オールカラー別冊", "") == \
+        "新 仮面ライダーSPIRITS(13)特装版 オールカラー別冊"
+    assert fix_title("マギ 29 オリジナルバッジ付き限定版 オリジナルバッジ付き限定版！！！", "") == \
+        "マギ 29 オリジナルバッジ付き限定版！！！"
+    # Ordinal repetido (case-insensitive) → conserva el bien formateado.
+    assert fix_title("BERSERK 30TH 30th Anniversary Edition", "") == "BERSERK 30th Anniversary Edition"
+    # NO toca nombres de obra con repetición legítima.
+    assert fix_title("デッドデッドデーモンズデデデデデストラクション 11 限定版", "") == \
+        "デッドデッドデーモンズデデデデデストラクション 11 限定版"
+    assert fix_title("トロピカル〜ジュ!プリキュア プリキュアコレクション 特装版", "") == \
+        "トロピカル〜ジュ!プリキュア プリキュアコレクション 特装版"
+    assert fix_title("Kuma Kuma Kuma Bear Variant 1", "") == "Kuma Kuma Kuma Bear Variant 1"
+    assert fix_title("New York New York 1", "") == "New York New York 1"
 
 
 def test_dedup_synthetic_source_is_cole_qualified():
@@ -7639,6 +7873,51 @@ def test_lmc_inline_cofre_in_regular_section_emitted_as_box():
     assert "&item=box-" in box.url
     lmc.score_candidate(box)
     assert "box_set" in box.signal_types
+
+
+def test_lmc_inline_edicion_especial_con_cofre_is_especial_not_box():
+    """Regresión (gotcha #102; caso owner orange nº7 id=1970): un item inline de
+    'Números editados' (sección NO premium) que trae un CofRE *junto con* un
+    marcador de edición ('Edición Especial + Cofre + Set 4 postales') NO es un box
+    set — es la edición especial que incluye un cofre. El parser viejo lo
+    clasificaba como `box` (por el cofre) → (a) creaba una edición box-set fantasma
+    y (b) DUPLICABA el especial del mismo vol que la sección 'Regalos/Cofres'
+    (Layout B) emite. Debe emitirse UN solo `especial-N`, con el cofre de Layout B
+    fusionado como extra; cero items `box`."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados",
+            # tomo regular sin cofre → descartado (sección no premium)
+            _lmc_item(1, "orange", price="9,00 €", image_id="reg1"),
+            # edición especial CON cofre listada inline → debe ser especial, no box
+            _lmc_item(7, "orange", desc_extra="-queridos amigos- Edición Especial + Cofre + Set 4 postales",
+                      price="18,00 €", image_id="se7"),
+        ),
+        # cofre del especial listado en "Regalos" (Layout B), mismo vol 7 → merge
+        _lmc_layout_b_section(
+            "Regalos de orange",
+            _lmc_layout_b_cell("orange nº7", "Edición Especial",
+                               ["Cofre para tomos 1 a 7"], "31 Marzo 2024", image_id="cofre7"),
+        ),
+        formato="Tomo B6 (128x182) r&uacute;stica (tapa blanda) con sobrecubierta",
+        title="orange",
+        publisher="Ediciones Tomodomo",
+    )
+    cands = lmc.parse_collection_page(html, 1970)
+    for c in cands:
+        lmc.score_candidate(c)
+    assert len(cands) == 1, f"debe haber 1 especial (no box+especial): {[c.url for c in cands]}"
+    c = cands[0]
+    assert "edition:especial" in c.tags
+    assert "edition:box" not in c.tags
+    assert "especial-7" in c.url and "box-" not in c.url
+    assert c.volume == "7"
+    assert "special_edition" in c.signal_types
+    assert mw.derive_cluster_key(mw.candidate_to_json(c)) == "lmc:1970:special:7"
+    # El cofre de Layout B se fusionó como imagen extra del especial.
+    extra_descs = [im.get("description", "") for im in (c.images or []) if im.get("kind") == "extra"]
+    assert any("Cofre para tomos" in d for d in extra_descs), c.images
 
 
 def test_lmc_regular_section_without_premium_and_without_cofre_still_dropped():
@@ -10177,6 +10456,58 @@ def _load_serve():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_serve_static_allowlist_blocks_secrets():
+    """Seguridad: el fallthrough estático sólo sirve web/, data/, reports/.
+
+    `os.chdir(ROOT)` + SimpleHTTPRequestHandler servían /.env (con las 5 API
+    keys), /.git/config, /scripts/, /.venv/ — accesibles desde la red si
+    --bind=0.0.0.0. La allowlist los bloquea (403) incluso sobre loopback.
+    """
+    serve = _load_serve()
+    # Instancia sin socket (no invocar __init__, que requiere conexión).
+    h = object.__new__(serve.MangaWatchHandler)
+    allow = ["/web/panel.html", "/data/items.jsonl", "/data/images/x/y.jpg",
+             "/data/cover_preview.json", "/reports/r.json", "/web/js/app.js"]
+    deny = ["/.env", "/.git/config", "/scripts/serve.py", "/.venv/bin/python",
+            "/data/../.env", "/data/../../etc/passwd", "/", "/favicon.ico",
+            "/secret", "/data/.git/config", "//.env"]
+    for p in allow:
+        assert h._static_path_allowed(p) is True, f"debe servir: {p}"
+    for p in deny:
+        assert h._static_path_allowed(p) is False, f"debe bloquear (403): {p}"
+
+
+def test_serve_gzip_file_roundtrips_and_caches(tmp_path):
+    """gzip on-the-fly: comprime, descomprime al original y cachea por mtime."""
+    import gzip as _gzip
+    import os as _os
+    serve = _load_serve()
+    f = tmp_path / "big.jsonl"
+    payload = b'{"a":1}\n' * 5000
+    f.write_bytes(payload)
+    _os.utime(f, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    body = serve._gzip_file(f)
+    assert _gzip.decompress(body) == payload      # round-trip exacto
+    assert len(body) < len(payload)               # efectivamente comprimió
+    assert serve._gzip_file(f) is body            # mismo mtime → cache hit (mismos bytes)
+    payload2 = payload + b'{"b":2}\n'
+    f.write_bytes(payload2)
+    _os.utime(f, ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))
+    body3 = serve._gzip_file(f)
+    assert body3 is not body                       # mtime cambió → recomprime
+    assert _gzip.decompress(body3) == payload2
+
+
+def test_serve_resolve_static_matches_allowlist():
+    """_resolve_static resuelve estáticos permitidos+existentes y niega el resto
+    (misma normalización que la allowlist de seguridad)."""
+    serve = _load_serve()
+    h = object.__new__(serve.MangaWatchHandler)
+    assert h._resolve_static("/web/index.html") is not None
+    for p in ["/.env", "/scripts/serve.py", "/data/../.env", "/", "/secret"]:
+        assert h._resolve_static(p) is None, f"debe negar: {p}"
 
 
 def test_serve_merge_items_unions_sources(tmp_path):

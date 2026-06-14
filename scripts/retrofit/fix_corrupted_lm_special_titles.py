@@ -58,6 +58,11 @@ ITEMS = ROOT / "data" / "items.jsonl"
 # el marcador en español ("Edición Especial"/"Edición Limitada"), nunca en inglés.
 _EN_EDITION_RESIDUE = re.compile(
     r"\b(?:Special|Limited|Collector'?s|Deluxe)\s+Edition\b", re.IGNORECASE)
+# Mangle de la partícula de volumen: el skill viejo dejó "nº10" como "no" pegado
+# al tipo de edición traducido ("…amor no Fanbook"). Firma de alta precisión.
+_NO_PARTICLE_MANGLE = re.compile(
+    r"\bno\s+(?:Special|Limited|Collector|Deluxe|Fanbook|Artbook|Guidebook|"
+    r"Box|Coffret|Bonus)\b", re.IGNORECASE)
 _CL_KIND = re.compile(r"^lmc:\d+:([a-z]+):")
 _CL_COLE = re.compile(r"^(lmc:\d+):")
 # Cortes para aislar la serie cuando el collection_title no trae volumen.
@@ -144,7 +149,7 @@ def main() -> int:
         if it.get("approved_at"):
             continue
         old = it.get("title", "") or ""
-        if not _EN_EDITION_RESIDUE.search(old):
+        if not (_EN_EDITION_RESIDUE.search(old) or _NO_PARTICLE_MANGLE.search(old)):
             continue
         if not _is_lm_collection(it):
             continue

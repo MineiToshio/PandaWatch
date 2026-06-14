@@ -120,6 +120,13 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
         if curr_px > 0 and new_px < max(curr_px * fbc.DEFAULT_MIN_GAIN, 30_000):
             continue
 
+        # ─── Gate de detalle efectivo (gotcha #94) ───
+        # Aunque pase el px-gain, una candidata "blanda" (escaneo comprimido /
+        # upscale: muchos píxeles, poco detalle real) NO es upgrade. Misma
+        # función que producción (_try_candidates) → skill y pipeline no driftean.
+        if fbc._is_soft_image(img_bytes):
+            continue
+
         # ─── Verificación de identidad (el corazón del skill) ───
         match_dist = None
         if curr_bytes:

@@ -193,6 +193,12 @@ def sync_preview(
         updated["old_pixels"] = new_old_pixels
         updated["current_images"] = new_current_images
         updated["candidates"] = new_candidates
+        # Backfill publisher/country desde el item cuando la entry los tiene vacíos
+        # (entries creadas antes de que el skill empezara a escribir esos campos).
+        if not updated.get("publisher") and item:
+            updated["publisher"] = item.get("publisher", "")
+        if not updated.get("country") and item:
+            updated["country"] = item.get("country", "")
         result.append(updated)
 
     return result, stats

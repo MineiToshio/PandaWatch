@@ -43,8 +43,10 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from manga_watch import (  # type: ignore
+    backup_and_rotate,
     candidate_to_json,
     derive_cluster_key,
+    is_approved,
     is_collectible_edition,
     is_likely_manga,
     normalize_url_for_dedup,
@@ -109,11 +111,19 @@ def main() -> int:
 
     # Identificar filas con URL /ediciones/ de Whakoom.
     edition_indices: list[int] = []
+    skipped_approved = 0
     for idx, it in enumerate(items):
         if "_raw" in it:
             continue
+        # Golden records aprobados: NUNCA expandir (se borraría el parent al
+        # reemplazarlo por sus hijos).
+        if is_approved(it):
+            skipped_approved += 1
+            continue
         if is_whakoom_edition_url(it.get("url", "")):
             edition_indices.append(idx)
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} items aprobados saltados (no se tocan)")
     print(f"[INFO] {len(edition_indices)} filas con URL /ediciones/ de Whakoom")
     if not edition_indices:
         print("[OK] Nada que expandir.")
@@ -240,6 +250,9 @@ def main() -> int:
             print(f"\n[DRY-RUN] No se escribió {out}. Quitá --dry-run para aplicar.")
         return 0
 
+    # Backup antes de sobrescribir (este script ELIMINA filas padre).
+    if out.exists():
+        backup_and_rotate(out, "expand-whakoom")
     # Build new items list: drop parents marked for removal, append new rows.
     final_items = [it for i, it in enumerate(items) if i not in to_remove]
     final_items.extend(new_rows)

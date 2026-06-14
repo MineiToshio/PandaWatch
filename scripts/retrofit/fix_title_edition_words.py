@@ -44,6 +44,15 @@ _ED_WORDS = (
 )
 _DUP_RE = re.compile(rf"\b({_ED_WORDS})(?:\s+\1)+\b", re.IGNORECASE)
 _REGULAR_RE = re.compile(r"\s*\bRegular\b\s*", re.IGNORECASE)
+# Frase de edición CJK repetida verbatim ("…特装版 特装版", "オリジナルバッジ付き限定版
+# オリジナルバッジ付き限定版"): un descriptor de edición japonés repetido consecutivo
+# NUNCA es legítimo. Gateado por marcador de edición para no tocar nombres de obra
+# que repiten kana/kanji (デッドデッド…, プリキュア…). El grupo captura la corrida CJK
+# que termina en el marcador; se conserva una sola copia.
+_CJK_ED = r"特装版|特裝版|限定版|限定盤|愛蔵版|完全版|初回限定盤|初回限定版|豪華版"
+_CJK_ED_DUP = re.compile(rf"([぀-ヿ一-鿿々々]*(?:{_CJK_ED}))\s*\1")
+# Ordinal repetido consecutivo, case-insensitive ("30TH 30th" → "30th"): siempre bug.
+_ORDINAL_DUP = re.compile(r"\b(\d+(?:st|nd|rd|th))\s+(\d+(?:st|nd|rd|th))\b", re.IGNORECASE)
 
 
 def _edition_slug(ek: str) -> str:
@@ -57,6 +66,11 @@ def fix_title(title: str, edition_slug: str) -> str:
     """Devuelve el título corregido (igual si no hay nada que tocar)."""
     t = title or ""
     t = _DUP_RE.sub(r"\1", t)
+    t = _CJK_ED_DUP.sub(r"\1", t)
+    # Ordinal repetido: conservar el segundo (suele venir bien formateado, "30th").
+    t = _ORDINAL_DUP.sub(r"\2", t) if (
+        (m := _ORDINAL_DUP.search(t)) and m.group(1).lower() == m.group(2).lower()
+    ) else t
     if edition_slug == "regular":
         t = _REGULAR_RE.sub(" ", t)
     return re.sub(r"\s{2,}", " ", t).strip()

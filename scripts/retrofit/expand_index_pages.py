@@ -46,8 +46,10 @@ if str(_SCRIPTS) not in sys.path:
 
 from manga_watch import (  # type: ignore
     Source,
+    backup_and_rotate,
     candidate_from_source,
     candidate_to_json,
+    is_approved,
     is_collectible_edition,
     is_likely_manga,
     normalize_url_for_dedup,
@@ -254,14 +256,23 @@ def main() -> int:
         "blog_news": [],
         "shopify_collection": [],
     }
+    skipped_approved = 0
     for idx, it in enumerate(items):
         if "_raw" in it:
+            continue
+        # Golden records aprobados: NUNCA expandir ni eliminar. Sin este guard,
+        # un parent aprobado se perdía al expandirlo (se borra + se reemplaza) o
+        # al caer en blog_news/shopify_collection (se borra sin reemplazo).
+        if is_approved(it):
+            skipped_approved += 1
             continue
         category = classify_url(it.get("url", ""))
         if category in buckets:
             buckets[category].append(idx)
 
     print()
+    if skipped_approved:
+        print(f"[INFO] {skipped_approved} items aprobados saltados (no se tocan)")
     print(f"### Clasificación de items sospechosos:")
     for cat, idxs in buckets.items():
         print(f"  {cat:35s} {len(idxs)} items")
@@ -398,6 +409,8 @@ def main() -> int:
             print(f"\n[DRY-RUN] No se escribió {out}. Quitá --dry-run para aplicar.")
         return 0
 
+    if out.exists():
+        backup_and_rotate(out, "expand-index")
     final = [it for i, it in enumerate(items) if i not in to_remove]
     final.extend(new_rows)
     _write_items(out, final)

@@ -1,0 +1,33 @@
+{
+  "_README": "Firmas de imágenes-placeholder CON CONTENIDO (texto/logo 'no disponible', 'coming soon', etc.) que algunas fuentes sirven cuando NO tienen la portada real. Se identifican por sha1 del CONTENIDO del archivo (no del URL). El detector estructural de image_store.placeholder_reason() ya cubre los placeholders SÓLIDOS (1x1, blancos, std<3) y los archivos ROTOS sin necesidad de firma — acá SOLO van los que tienen contenido visual (texto/logo) y por eso no caen por baja entropía. Para agregar uno nuevo: corré `.venv/bin/python -c \"import hashlib;print(hashlib.sha1(open('data/images/<file>','rb').read()).hexdigest())\"` y pegá la firma. El retrofit purge_placeholder_images.py y el pipeline (delta/full) lo leen.",
+  "signatures": [
+    {
+      "sha1": "48fb1ed2e323dd5c0ca2c56d46845ce240899620",
+      "label": "Penguin Random House 'Cover Coming Soon'",
+      "source_hint": "images.penguinrandomhouse.com",
+      "dims": "297x449",
+      "added": "2026-06-13"
+    },
+    {
+      "sha1": "b54b369558ec6795b5222805d2583a8719ff6767",
+      "label": "Funside 'Immagine non disponibile' (logo MD)",
+      "source_hint": "funside.it",
+      "dims": "500x541",
+      "added": "2026-06-13"
+    },
+    {
+      "sha1": "67c656d0f5e06463f0ab6d7020099ddb494a6a35",
+      "label": "Funside 'Immagine non disponibile' (logo MD)",
+      "source_hint": "funside.it",
+      "dims": "500x500",
+      "added": "2026-06-13"
+    },
+    {
+      "sha1": "40274768ff266b81c18f7d7d36d72a38dbb478b7",
+      "label": "SocialAnime 'Image coming soon' (robot EPM)",
+      "source_hint": "socialanime.s3",
+      "dims": "720x720",
+      "added": "2026-06-13"
+    }
+  ]
+}

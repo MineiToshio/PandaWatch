@@ -87,6 +87,25 @@ DHASH_MAX_DIST = 8             # dHash 8×8: cota fija (no configurable por CLI)
 PHASH_MAX_DIST = 8             # pHash DCT: cota fija (no configurable por CLI)
 NCC_MIN = 0.90                 # correlación cruzada normalizada mínima (64×64 grises)
 ENTROPY_MIN_STDDEV = 20.0      # stddev de grises 32×32 mínima para que sea verificable
+# Gate de calidad de DISPLAY (gotcha #94): una candidata con MÁS píxeles que la
+# actual puede verse PEOR (pixelada/blanda) — el px count sobreestima su calidad.
+# El defecto se da SOLO con la combinación CHICA + BLANDA:
+#   - "blanda" = poco detalle real para su tamaño (escaneo sobre-comprimido o
+#     upscale). Se mide con _detail_ratio: residual del roundtrip downscale½→
+#     upscale a un tamaño común (lado largo 384px), normalizado por la stddev de
+#     grises → fracción de energía en la octava superior.
+#   - "chica" = por debajo de SOFT_GUARD_PX. Una imagen chica se MUESTRA AGRANDADA
+#     (modal/tarjeta la upscalean) y ahí su falta de detalle se nota. Una imagen
+#     GRANDE pero blanda NO es problema: se muestra REDUCIDA y se ve nítida — por
+#     eso el ratio solo se aplica por debajo del guard (si no, falsos positivos
+#     en escaneos grandes legítimos: whakoom 637k y planeta 6M miden ~0.10 igual
+#     que la casadellibro 80k, pero se ven bien reducidos).
+# Calibrado 2026-06-13 con casos reales: casadellibro 78-90k (blandas) ratio
+# 0.05-0.10 → rechazadas; whakoom/norma/buscalibre buenas ≥150k px o ratio ≥0.12
+# → pasan.
+DETAIL_EVAL_LONGSIDE = 384     # lado largo (px) al que se normaliza para medir detalle
+DETAIL_RATIO_MIN = 0.115       # por debajo = blanda (solo importa si además es chica)
+SOFT_GUARD_PX = 150_000        # ≥ esto se muestra reducida → el ratio bajo no molesta
 DEFAULT_WORKERS = 2            # requests HTTP paralelos
 _MAX_BYTES = 10 * 1024 * 1024 # máximo de bytes a descargar por imagen
 
@@ -320,6 +339,73 @@ def _ncc(data1: bytes, data2: bytes, size: int = 64) -> Optional[float]:
     if da == 0 or db == 0:
         return None
     return num / (da * db)
+
+
+def _detail_ratio(data: bytes, longside: int = DETAIL_EVAL_LONGSIDE) -> Optional[float]:
+    """Detalle efectivo de la imagen: fracción de energía que vive en la octava
+    superior, medida a un tamaño de display común (lado largo = ``longside``).
+
+    Mide cuánto detalle real pierde la imagen al bajar a media resolución y
+    volver a subir: una portada nítida en alta resolución conserva mucho
+    (residual alto); un escaneo blando / upscale casi no tiene detalle en esa
+    octava (residual bajo). Se normaliza por la stddev de grises para que sea
+    invariante al contraste/contenido. ``None`` si es incomputable (sin PIL o
+    imagen ilegible). Ver gotcha #94 y DETAIL_RATIO_MIN."""
+    if not _HAS_PIL or not data:
+        return None
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(io.BytesIO(data)).convert("L")
+        w, h = img.size
+        if w <= 0 or h <= 0:
+            return None
+        # Normalizar al tamaño de display común (LANCZOS sube o baja). Bajar una
+        # imagen grande y nítida concentra su detalle; subir una chica y blanda
+        # no inventa detalle → ambos extremos quedan bien separados.
+        scale = longside / max(w, h)
+        nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+        img = img.resize((nw, nh), Image.LANCZOS)
+        gp = list(img.tobytes())
+        n = len(gp)
+        mean = sum(gp) / n
+        var = sum((p - mean) ** 2 for p in gp) / n
+        if var <= 0:
+            return None
+        small = img.resize((max(1, nw // 2), max(1, nh // 2)), Image.LANCZOS)
+        back = small.resize((nw, nh), Image.LANCZOS)
+        bp = list(back.tobytes())
+        resid = sum(abs(a - b) for a, b in zip(gp, bp)) / n
+        return resid / math.sqrt(var)
+    except Exception:
+        return None
+
+
+def _is_soft_image(
+    data: bytes,
+    min_ratio: float = DETAIL_RATIO_MIN,
+    guard_px: int = SOFT_GUARD_PX,
+) -> bool:
+    """True si la candidata se verá BLANDA/pixelada al mostrarla: es CHICA (se
+    mostrará agrandada, así que su falta de detalle salta a la vista) Y tiene
+    poco detalle real para su tamaño. Una candidata así NO es upgrade aunque
+    tenga más píxeles que la actual (gotcha #94).
+
+    Una imagen GRANDE (≥ ``guard_px``) con detalle bajo NO cuenta como blanda:
+    se muestra reducida → nítida. Aplicar el ratio a cualquier tamaño daba
+    falsos positivos en escaneos grandes legítimos (whakoom 637k, planeta 6M
+    miden ~0.10 igual que la casadellibro 80k pero se ven bien reducidos).
+
+    Incomputable (sin PIL / ilegible) → ``False``: no se trata como blanda; la
+    identidad ya la gobierna ``_same_cover`` (que también requiere PIL), así que
+    este gate no agrega un default-deny redundante."""
+    px = _get_pixels_from_bytes(data)
+    if px <= 0 or px >= guard_px:
+        return False
+    r = _detail_ratio(data)
+    if r is None:
+        return False
+    return r < min_ratio
 
 
 def _is_animated_gif(data: bytes) -> bool:
@@ -1321,6 +1407,14 @@ def _try_candidates(
                 if verbose:
                     print(f"    skip {url[:60]}: hash diff demasiado grande")
                 continue
+
+        # Gate de detalle efectivo (gotcha #94): aunque tenga más px, una
+        # candidata blanda (escaneo comprimido / upscale) NO es upgrade real.
+        if _is_soft_image(data):
+            if verbose:
+                print(f"    skip {url[:60]}: imagen blanda "
+                      f"(detalle {_detail_ratio(data):.3f} < {DETAIL_RATIO_MIN})")
+            continue
 
         if verbose:
             print(f"    MEJOR: {url[:60]} → {cand_px}px (vs {orig_px}px)")

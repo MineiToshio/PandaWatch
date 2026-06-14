@@ -324,3 +324,94 @@ def clear_cover(item: dict) -> None:
     imgs = item.get("images")
     if isinstance(imgs, list) and imgs:
         imgs.pop(0)
+
+
+# ── Detección de imágenes-placeholder ─────────────────────────────────────────
+# Algunas fuentes sirven una imagen genérica cuando NO tienen la portada real:
+#   - un pixel 1×1 (Amazon devuelve un GIF 1×1 para ISBN sin carátula),
+#   - una imagen casi sólida en blanco (listadomanga, varios CDNs),
+#   - un placeholder CON texto/logo ("Cover Coming Soon", "Immagine non
+#     disponibile", "Image coming soon").
+# Ninguna es una portada: hay que quitarla de `images[]` para que la UI caiga al
+# placeholder 📚 por defecto. La detección tiene dos capas:
+#   1. ESTRUCTURAL (sin config): dims diminutas, casi-sólido (std<3), archivo roto.
+#   2. FIRMAS (data/placeholder_signatures.json): sha1 del CONTENIDO de los
+#      placeholders CON texto, que no caen por baja entropía.
+# Fuente ÚNICA de la heurística: el retrofit purge_placeholder_images.py y el
+# pipeline la importan de acá — nunca reimplementar la lógica en otro lado.
+
+_PLACEHOLDER_MIN_SIDE = 8         # lado ≤ 8 px ⇒ tracking pixel / placeholder
+_PLACEHOLDER_MAX_STD = 3.0        # std global de luminancia < 3 ⇒ casi un solo color
+_PLACEHOLDER_STD_MAXBYTES = 200_000  # std solo en archivos chicos (un sólido comprime
+                                     # mínimo; una portada real nunca es <200KB Y plana)
+
+_signatures_cache: dict[str, str] | None = None
+
+
+def _signatures_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "placeholder_signatures.json"
+
+
+def load_placeholder_signatures(refresh: bool = False) -> dict[str, str]:
+    """`{sha1_contenido: label}` de los placeholders CON texto registrados en
+    data/placeholder_signatures.json. Cacheado; `refresh=True` recarga."""
+    global _signatures_cache
+    if _signatures_cache is not None and not refresh:
+        return _signatures_cache
+    sigs: dict[str, str] = {}
+    try:
+        import json
+        data = json.loads(_signatures_path().read_text(encoding="utf-8"))
+        for entry in data.get("signatures", []):
+            h = (entry.get("sha1") or "").strip().lower()
+            if h:
+                sigs[h] = entry.get("label", "")
+    except (OSError, ValueError):
+        sigs = {}
+    _signatures_cache = sigs
+    return sigs
+
+
+def placeholder_reason(source, *, signatures: dict | None = None) -> str:
+    """Por qué `source` es un placeholder, o "" si parece una imagen real.
+
+    `source` puede ser `bytes` (imagen ya descargada) o un `Path`/`str` a un
+    archivo en disco. Devuelve uno de:
+
+    - ``""``            la imagen parece real (no tocar).
+    - ``"broken"``      0 bytes / no abre con PIL / truncado.
+    - ``"tiny:WxH"``    algún lado ≤ 8 px (1×1 tracking pixel, etc.).
+    - ``"solid:STD"``   std global de luminancia < 3 ⇒ imagen casi de un solo
+      color (el blanco "sin portada"). Una portada de manga real tiene std ≫ 20.
+    - ``"signature:LABEL"`` el sha1 del contenido está registrado en
+      placeholder_signatures.json (placeholders CON texto/logo).
+    """
+    import io
+    if isinstance(source, (bytes, bytearray)):
+        body = bytes(source)
+    else:
+        try:
+            body = Path(source).read_bytes()
+        except OSError:
+            return "broken"
+    if not body:
+        return "broken"
+    sigs = load_placeholder_signatures() if signatures is None else signatures
+    if sigs:
+        digest = hashlib.sha1(body).hexdigest()
+        if digest in sigs:
+            return f"signature:{sigs[digest] or digest[:8]}"
+    try:
+        from PIL import Image, ImageStat
+        Image.MAX_IMAGE_PIXELS = None
+        with Image.open(io.BytesIO(body)) as im:
+            w, h = im.size
+            if w <= _PLACEHOLDER_MIN_SIDE or h <= _PLACEHOLDER_MIN_SIDE:
+                return f"tiny:{w}x{h}"
+            if len(body) <= _PLACEHOLDER_STD_MAXBYTES:
+                std = ImageStat.Stat(im.convert("L")).stddev[0]
+                if std < _PLACEHOLDER_MAX_STD:
+                    return f"solid:{std:.1f}"
+    except Exception:
+        return "broken"
+    return ""

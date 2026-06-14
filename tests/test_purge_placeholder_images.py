@@ -1,0 +1,192 @@
+"""Tests para image_store.placeholder_reason y el retrofit
+scripts/retrofit/purge_placeholder_images.py.
+
+Sin red — usan imágenes sintéticas PIL en tmp_path.
+
+Cubre:
+  - placeholder_reason: tiny (1×1), solid (blanco), real (con textura),
+    signature (sha1 registrado), broken (bytes no-imagen / vacío).
+  - retrofit: quita placeholders de images[], conserva portadas reales,
+    re-posiciona la portada por posición, deja items sin foto cuando toca,
+    limpia sources[] que apuntan al placeholder, y NO toca lo real.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import sys
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "scripts"))
+sys.path.insert(0, str(_ROOT / "scripts" / "retrofit"))
+
+import image_store  # noqa: E402
+
+
+# ── helpers de imágenes sintéticas ────────────────────────────────────────────
+
+def _png_bytes(im: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _solid(w: int, h: int, color=(255, 255, 255)) -> bytes:
+    return _png_bytes(Image.new("RGB", (w, h), color))
+
+
+def _textured(w: int, h: int) -> bytes:
+    """Imagen con estructura (std alta) — una portada real."""
+    im = Image.new("RGB", (w, h))
+    px = im.load()
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = ((x * 7) % 256, (y * 13) % 256, ((x + y) * 5) % 256)
+    return _png_bytes(im)
+
+
+# ── placeholder_reason ────────────────────────────────────────────────────────
+
+def test_tiny_pixel_is_placeholder():
+    assert image_store.placeholder_reason(_solid(1, 1)).startswith("tiny")
+
+
+def test_solid_white_is_placeholder():
+    assert image_store.placeholder_reason(_solid(300, 450)).startswith("solid")
+
+
+def test_textured_cover_is_real():
+    assert image_store.placeholder_reason(_textured(300, 450)) == ""
+
+
+def test_broken_bytes():
+    assert image_store.placeholder_reason(b"") == "broken"
+    assert image_store.placeholder_reason(b"<html>not an image</html>") == "broken"
+
+
+def test_signature_match():
+    body = _textured(120, 120)  # textura ⇒ no caería por solid/tiny
+    sha1 = hashlib.sha1(body).hexdigest()
+    sigs = {sha1: "Fake 'no disponible'"}
+    assert image_store.placeholder_reason(body, signatures=sigs) == "signature:Fake 'no disponible'"
+    # sin la firma, la misma imagen es real
+    assert image_store.placeholder_reason(body, signatures={}) == ""
+
+
+def test_reads_from_path(tmp_path):
+    p = tmp_path / "x.png"
+    p.write_bytes(_solid(1, 1))
+    assert image_store.placeholder_reason(p).startswith("tiny")
+    missing = tmp_path / "nope.png"
+    assert image_store.placeholder_reason(missing) == "broken"
+
+
+# ── retrofit end-to-end ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def harness(tmp_path, monkeypatch):
+    """Monta data/items.jsonl + data/images/ sintéticos y apunta el retrofit ahí."""
+    import purge_placeholder_images as ppi
+
+    images = tmp_path / "images"
+    images.mkdir()
+
+    def _write(name: str, body: bytes) -> str:
+        (images / name).write_bytes(body)
+        return name
+
+    real = _write("real_cover.png", _textured(300, 450))
+    real2 = _write("real_gallery.png", _textured(280, 400))
+    white = _write("white.png", _solid(300, 450))
+    pixel = _write("pixel.gif", _solid(1, 1))
+
+    items_path = tmp_path / "items.jsonl"
+    monkeypatch.setattr(ppi, "ITEMS", items_path)
+    monkeypatch.setattr(ppi, "IMAGES", images)
+    monkeypatch.setattr(ppi, "ORPHANS", images / "_orphans")
+    monkeypatch.setattr(ppi, "COVER_PREVIEW", tmp_path / "cover_preview.json")
+    return ppi, items_path, images, {"real": real, "real2": real2, "white": white, "pixel": pixel}
+
+
+def _run(ppi, argv):
+    old = sys.argv
+    sys.argv = ["purge_placeholder_images.py", *argv]
+    try:
+        return ppi.main()
+    finally:
+        sys.argv = old
+
+
+def test_purge_removes_placeholder_keeps_real(harness):
+    ppi, items_path, images, f = harness
+    items = [
+        # placeholder en portada, real en galería ⇒ la real pasa a images[0]
+        {"slug": "a", "title": "A", "images": [
+            {"url": "http://x/w.png", "local": f["white"], "kind": "gallery"},
+            {"url": "http://x/r.png", "local": f["real2"], "kind": "gallery"},
+        ], "sources": []},
+        # solo placeholder ⇒ queda sin imágenes
+        {"slug": "b", "title": "B", "images": [
+            {"url": "http://x/p.gif", "local": f["pixel"], "kind": "gallery"},
+        ], "sources": [
+            {"name": "S", "image_local": f["pixel"], "image_url": "http://x/p.gif"},
+        ]},
+        # solo real ⇒ intacto
+        {"slug": "c", "title": "C", "images": [
+            {"url": "http://x/r.png", "local": f["real"], "kind": "gallery"},
+        ], "sources": []},
+    ]
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+
+    assert _run(ppi, []) == 0
+    out = [json.loads(l) for l in items_path.read_text().splitlines() if l.strip()]
+    by = {it["slug"]: it for it in out}
+
+    # A: la galería real quedó como única foto y es la portada
+    assert len(by["a"]["images"]) == 1
+    assert by["a"]["images"][0]["local"] == f["real2"]
+    # B: sin imágenes (mostrará 📚) y el source quedó limpio
+    assert by["b"]["images"] == []
+    assert by["b"]["sources"][0]["image_local"] == ""
+    assert by["b"]["sources"][0]["image_url"] == ""
+    # C: intacto
+    assert len(by["c"]["images"]) == 1
+    assert by["c"]["images"][0]["local"] == f["real"]
+
+    # huérfanos a cuarentena: white y pixel ya no se referencian
+    orphans = images / "_orphans"
+    assert (orphans / f["white"]).exists()
+    assert (orphans / f["pixel"]).exists()
+    # las reales siguen en su lugar
+    assert (images / f["real"]).exists()
+    assert (images / f["real2"]).exists()
+
+
+def test_purge_idempotent(harness):
+    ppi, items_path, images, f = harness
+    items = [{"slug": "a", "title": "A", "images": [
+        {"url": "http://x/w.png", "local": f["white"], "kind": "gallery"},
+        {"url": "http://x/r.png", "local": f["real"], "kind": "gallery"},
+    ], "sources": []}]
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    first = items_path.read_text()
+    assert _run(ppi, []) == 0  # 2ª corrida: nada que quitar
+    assert items_path.read_text() == first
+
+
+def test_dry_run_writes_nothing(harness):
+    ppi, items_path, images, f = harness
+    items = [{"slug": "a", "title": "A", "images": [
+        {"url": "http://x/p.gif", "local": f["pixel"], "kind": "gallery"},
+    ], "sources": []}]
+    raw = "\n".join(json.dumps(it) for it in items) + "\n"
+    items_path.write_text(raw)
+    assert _run(ppi, ["--dry-run"]) == 0
+    assert items_path.read_text() == raw
+    assert (images / f["pixel"]).exists()  # no movido a cuarentena

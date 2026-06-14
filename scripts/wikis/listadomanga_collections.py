@@ -114,6 +114,15 @@ DATE_LINE_PATTERN = re.compile(
 # Soporta "nº37", "n.37", "#37", "nº 37" en cualquier capitalización.
 VOLUME_PATTERN = re.compile(r"n[º°.]?\s*(\d+)", re.IGNORECASE | re.UNICODE)
 
+# Línea de PRECIO de un número GRATUITO. En "Números editados", donde un tomo
+# de pago muestra "9,98 €", un folleto promocional regalado por la editorial
+# (preview del primer capítulo, mini-artbook de regalo, avance bundleado con un
+# videojuego, etc.) muestra "Número Gratuito". NO es una edición comprable ni
+# coleccionable — es material de marketing — y se descarta en la ingestión.
+# Señal universal y 100% fiable: verificada contra todas las colecciones de la
+# categoría editorial "Previews" + promos sueltas (gotcha #103, owner 2026-06-14).
+FREE_PRICE_PATTERN = re.compile(r"^(?:n[úu]mero\s+)?gratuito$", re.IGNORECASE | re.UNICODE)
+
 # `<b>Formato:</b> <valor>` en la cabecera.
 FORMATO_PATTERN = re.compile(
     r"<b>\s*Formato\s*:\s*</b>\s*([^<\n]+?)\s*<", re.IGNORECASE
@@ -256,6 +265,35 @@ PACK_EXTRAS_KEYWORDS = re.compile(
 # ("Cofre de 2 tomos" — caso real Boichi cole 6240): único caso en que un
 # item de la sección regular sin premium es coleccionable; se emite como box.
 INLINE_BOX_RE = re.compile(r"\bcofres?\b", re.IGNORECASE)
+
+# Marcadores de EDICIÓN dentro de la descripción de un item inline de "Números
+# editados". Si la línea trae uno ADEMÁS del cofre, el item NO es un box set: es
+# esa edición (especial/limitada/variante) que INCLUYE un cofre — caso real orange
+# nº7 "-queridos amigos- Edición Especial + Cofre + Set 4 postales" (id=1970).
+# Clasificarlo como box (a) crea una edición box-set FANTASMA y (b) DUPLICA el
+# especial que la sección "Regalos/Cofres" (Layout B) emite para el mismo vol
+# (gotcha #102). Orden: Limitada antes que Especial.
+INLINE_EDITION_MARKERS: list[tuple[re.Pattern[str], str, str, list[str]]] = [
+    (re.compile(r"\bEdici[oó]n\s+(?:Especial\s+)?Limitada\b", re.IGNORECASE | re.UNICODE),
+     "limitada", "Edición Limitada", ["limited", "special_edition"]),
+    (re.compile(r"\bEdici[oó]n\s+Especial\b", re.IGNORECASE | re.UNICODE),
+     "especial", "Edición Especial", ["special_edition"]),
+    (re.compile(r"\b(?:Portada|Sobrecubierta)\s+Alternativa\b", re.IGNORECASE | re.UNICODE),
+     "alternativa", "Portada Alternativa", ["variant_cover"]),
+]
+
+
+def _match_inline_edition(desc: str) -> tuple[str, str, list[str]] | None:
+    """Si `desc` (de un item inline de 'Números editados' que trae cofre) incluye
+    un marcador de edición especial/limitada/variante, devuelve (kind, display,
+    signals) — el item es esa edición, NO un box set. None si no hay marcador.
+    Ver gotcha #102."""
+    if not desc:
+        return None
+    for pat, kind, display, sigs in INLINE_EDITION_MARKERS:
+        if pat.search(desc):
+            return (kind, display, list(sigs))
+    return None
 
 
 def _strip_series_prefix(text: str, series_title: str) -> str:
@@ -759,6 +797,11 @@ def _parse_item_table(
 
     title_part_built = False  # ya armamos la parte de título?
     for line in lines:
+        if FREE_PRICE_PATTERN.match(line.strip()):
+            # "Número Gratuito" = folleto promocional regalado (preview del 1er
+            # capítulo, mini-artbook, avance bundleado). No es comprable ni
+            # coleccionable → descartar el item entero. gotcha #103.
+            return None
         if PAGES_PAT.search(line):
             pages = line
             title_part_built = True
@@ -1405,16 +1448,27 @@ def parse_collection_page(
 
             # Modo cofre-inline: SOLO se emiten los items marcados como
             # cofre; toman kind=box (el resto de la sección regular no
-            # premium sigue descartado).
+            # premium sigue descartado). EXCEPCIÓN (gotcha #102): si el item
+            # trae un marcador de edición (Edición Especial/Limitada, Portada
+            # Alternativa) ADEMÁS del cofre, NO es un box set — es esa edición
+            # con cofre incluido (caso orange nº7). Clasificarlo por su edición
+            # evita (a) una edición box-set fantasma y (b) duplicar el especial
+            # que la sección "Regalos/Cofres" (Layout B) emite para el mismo vol
+            # (el merge tomo↔extra lo fusiona por (kind, vol)).
             item_kind = edition_kind
             item_display = edition_display
             item_signal_inject = signal_inject
             if inline_box_only:
-                if not INLINE_BOX_RE.search(parsed.get("description_extra", "")):
+                desc_x = parsed.get("description_extra", "")
+                if not INLINE_BOX_RE.search(desc_x):
                     continue
-                item_kind = "box"
-                item_display = "Cofre"
-                item_signal_inject = ["box_set"]
+                ed = _match_inline_edition(desc_x)
+                if ed:
+                    item_kind, item_display, item_signal_inject = ed
+                else:
+                    item_kind = "box"
+                    item_display = "Cofre"
+                    item_signal_inject = ["box_set"]
 
             # Filtro pack: solo aceptar si la descripción tiene keywords de extras.
             if item_kind == "pack":

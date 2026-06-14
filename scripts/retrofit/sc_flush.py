@@ -140,6 +140,31 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
                 acc[slug]['candidates'].append(c)
                 existing_urls.add(c['new_url'])
     else:
+        # Leer la entrada existente en el preview para este slug (si la hay) y rescatar
+        # las candidatas ya revisadas (approved/rejected). Sin esto, si el skill re-corre
+        # sobre un slug con candidatas aprobadas-pero-no-aplicadas, la aprobación se pierde.
+        existing_reviewed: list[dict] = []
+        preview_p_tmp = Path(preview_path)
+        if preview_p_tmp.exists():
+            try:
+                for e in json.loads(preview_p_tmp.read_text(encoding='utf-8')):
+                    if e.get('slug') == slug:
+                        existing_reviewed = [
+                            c for c in e.get('candidates', [])
+                            if c.get('status') in ('approved', 'rejected')
+                        ]
+                        break
+            except (ValueError, OSError):
+                pass
+
+        # Combinar: reviewed primero (preservar estado), luego las nuevas (dedup por new_url)
+        existing_urls = {c['new_url'] for c in existing_reviewed}
+        merged_cands = list(existing_reviewed)
+        for c in candidates:
+            if c['new_url'] not in existing_urls:
+                merged_cands.append(c)
+                existing_urls.add(c['new_url'])
+
         acc[slug] = {
             'slug'          : slug,
             'title'         : item.get('title', ''),
@@ -151,7 +176,7 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
             'old_url'       : old_url,
             'old_pixels'    : curr_px,
             'current_images': current_images,
-            'candidates'    : list(candidates),
+            'candidates'    : merged_cands,
         }
 
     # Persistir acumulador

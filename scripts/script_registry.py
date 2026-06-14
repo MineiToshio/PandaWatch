@@ -1074,6 +1074,105 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "restore_mistranslated_especial",
+        "category": "Mantenimiento",
+        "icon": "🌐",
+        "name": "Restaurar edición mal traducida",
+        "tagline": "Deshace 'Special Edition'→'Edición Especial' en títulos no españoles.",
+        "what": (
+            "Gotcha #94: el viejo format_especial_title traducía la edición "
+            "inglesa a español sobre títulos no españoles, dejándolos mezclados "
+            "('葬送のフリーレン 15 Edición Especial'). Restaura title = "
+            "clean_title(title_original) — el nombre oficial scrapeado. Excluye "
+            "listadomanga (title_original corrupto, se arregla aparte) y la firma "
+            "de corrupción 'no Special/Fanbook'. Idempotente."
+        ),
+        "when": (
+            "Ya se corrió sobre todo el corpus (2026-06-13, 85 items). El fix de "
+            "mecanismo (la regex sólo matchea español) evita reincidencia."
+        ),
+        "command": [PYTHON, "scripts/retrofit/restore_mistranslated_especial.py"],
+        "presets": [
+            {"id": "dryrun", "label": "🧪 Prueba",
+             "desc": "Muestra los títulos que restauraría sin escribir.",
+             "values": {"--dry-run": True}},
+            {"id": "apply", "label": "✅ Restaurar",
+             "desc": "Aplica con backup y consolida.", "values": {}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba", "Muestra los cambios sin guardar.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "remove_phantom_calendar_editions",
+        "category": "Mantenimiento",
+        "icon": "👻",
+        "name": "Borrar ediciones fantasma del calendario",
+        "tagline": "Quita especiales inventados + fotos del bonus de otro tomo.",
+        "what": (
+            "Gotcha #99: el módulo plano del calendario + la estandarización (LLM) "
+            "inventaban una Edición Especial/Artbook que NO existe en la página real "
+            "de ListadoManga y le pegaban la foto de un extra (cofre/posavasos/"
+            "miniartbook) de OTRO volumen — caso 'Edens Zero Especial 23'. Borra los "
+            "fantasmas verificados (guarda: sólo fuente única 'ListadoManga (calendario)' "
+            "y no aprobados) y quita las fotos robadas. Listas EXPLÍCITAS verificadas a "
+            "mano contra la página viva (el cruce calendario-vs-colecciones tiene falsos "
+            "positivos). Con backup, idempotente."
+        ),
+        "when": (
+            "Ya se corrió (2026-06-14: 5 fantasmas + 2 fotos). La guarda durable es el "
+            "invariante STOLENIMG de validate_corpus.py."
+        ),
+        "command": [PYTHON, "scripts/retrofit/remove_phantom_calendar_editions.py"],
+        "presets": [
+            {"id": "dryrun", "label": "🧪 Prueba",
+             "desc": "Muestra qué borraría/arreglaría sin escribir.",
+             "values": {"--dry-run": True}},
+            {"id": "apply", "label": "✅ Limpiar",
+             "desc": "Aplica con backup.", "values": {}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba", "Muestra los cambios sin guardar.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "remove_free_preview_editions",
+        "category": "Mantenimiento",
+        "icon": "🎟️",
+        "name": "Borrar folletos promocionales gratuitos",
+        "tagline": "Quita los 'Número Gratuito' de ListadoManga colados como especial.",
+        "what": (
+            "Gotcha #103: ListadoManga titula '(Especial)' a folletos que la editorial "
+            "REGALA (preview del 1er capítulo, mini-artbook, avance bundleado con un "
+            "videojuego). No son ediciones comprables. La señal viva es la línea de precio "
+            "'Número Gratuito' (vs '9,98 €'). Borra (a) los que tienen 'Número Gratuito' en "
+            "la description (parser de colecciones) y (b) los legacy del calendario en "
+            "colecciones free-preview verificadas por fetch. Guarda: nunca borra aprobados. "
+            "Con backup, idempotente."
+        ),
+        "when": (
+            "Ya se corrió (2026-06-14: 13 borrados). La prevención durable es "
+            "FREE_PRICE_PATTERN en listadomanga_collections.py (delta + full)."
+        ),
+        "command": [PYTHON, "scripts/retrofit/remove_free_preview_editions.py"],
+        "presets": [
+            {"id": "dryrun", "label": "🧪 Prueba",
+             "desc": "Muestra qué borraría sin escribir.",
+             "values": {"--dry-run": True}},
+            {"id": "apply", "label": "✅ Limpiar",
+             "desc": "Aplica con backup.", "values": {}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba", "Muestra los cambios sin guardar.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "clean_titles",
         "category": "Mantenimiento",
         "icon": "🧼",
@@ -1801,6 +1900,81 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--all", "Todos los items (no solo listadomanga)",
                   "Por defecto solo procesa items que tienen alguna imagen de listadomanga. "
                   "Con --all revisa el carrusel de TODOS los items con ≥2 imágenes.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "purge_placeholder_images",
+        "category": "Mantenimiento",
+        "icon": "🚫",
+        "name": "Purgar imágenes placeholder / 1×1 / rotas",
+        "tagline": "Quita de images[] las fotos que no son portadas reales para que la card muestre el 📚.",
+        "what": (
+            "Algunas fuentes sirven una imagen genérica cuando NO tienen la carátula: Amazon "
+            "devuelve un GIF 1×1, listadomanga/otros CDNs un blanco, Penguin Random House un "
+            "'Cover Coming Soon', Funside un 'Immagine non disponibile', SocialAnime un 'Image "
+            "coming soon'. Todas terminan espejadas y mostradas como si fueran la portada. Este "
+            "retrofit las detecta vía image_store.placeholder_reason() —estructural (1×1, "
+            "casi-sólido std<3, archivo roto) + firmas de contenido en "
+            "data/placeholder_signatures.json para los placeholders con texto— y las quita de "
+            "TODAS las filas. Limpia también sources[].image_local/image_url al mismo archivo, "
+            "re-marca la portada por posición y manda los archivos huérfanos a cuarentena "
+            "data/images/_orphans/ (reversible). NUNCA inventa imágenes: un item sin fotos muestra "
+            "el 📚. Corre como paso [4i] del pipeline (después de dedup_carousel_images)."
+        ),
+        "when": (
+            "Cuando aparecen cards con un placeholder de la fuente (1×1, blanco, 'no disponible') "
+            "en vez del 📚. Automático en el pipeline (delta y full); manual con --dry-run primero. "
+            "Sin red — lee el espejo local. Requiere: pip install Pillow."
+        ),
+        "command": [PYTHON, "scripts/retrofit/purge_placeholder_images.py"],
+        "presets": [
+            {"label": "🚫 Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
+            {"label": "🚫 Aplicar (mueve huérfanos a cuarentena)", "flags": {}},
+            {"label": "🚫 Aplicar sin mover archivos", "flags": {"--keep-files": True}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo mostrar, no escribir",
+                  "Reporta qué entries se quitarían y cuántos items quedarían sin imagen, "
+                  "sin tocar items.jsonl ni mover archivos.",
+                  type="bool", default=False),
+            _flag("--keep-files", "No mover huérfanos a cuarentena",
+                  "Quita las entries de images[] pero deja los archivos placeholder en "
+                  "data/images/ en vez de moverlos a _orphans/.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "prune_soft_cover_candidates",
+        "category": "Mantenimiento",
+        "icon": "🩹",
+        "name": "Podar candidatas de portada chicas + blandas",
+        "tagline": "Quita de la cola de aprobación las portadas con más px pero poco detalle, que se verían pixeladas.",
+        "what": (
+            "El px count engaña: una candidata con MÁS píxeles que la portada actual puede verse "
+            "PEOR (un escaneo sobre-comprimido o upscale tiene más px pero menos detalle real). "
+            "Mostrada agrandada en el modal/tarjeta se ve fea y pixelada. Este retrofit re-aplica a "
+            "data/cover_preview.json el MISMO gate que ahora bloquea estas candidatas upstream "
+            "(fetch_better_covers._is_soft_image: chica < 150k px Y blanda _detail_ratio < 0.115). "
+            "Si una entry se queda sin candidatas, la elimina. NUNCA toca items.jsonl —la portada "
+            "actual se conserva. Idempotente; backup .bak-prune-soft. Gotcha #94."
+        ),
+        "when": (
+            "1× para limpiar la cola ya armada antes de que existiera el gate. Después de cada "
+            "corrida del skill watch-search-covers ya no hace falta (el gate corre inline en la "
+            "validación). Sin red — lee el espejo local. Requiere: pip install Pillow."
+        ),
+        "command": [PYTHON, "scripts/retrofit/prune_soft_cover_candidates.py"],
+        "presets": [
+            {"label": "🩹 Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
+            {"label": "🩹 Aplicar", "flags": {}},
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo mostrar, no escribir",
+                  "Reporta qué candidatas chicas+blandas se quitarían y cuántas entries quedarían "
+                  "sin candidatas, sin tocar cover_preview.json.",
                   type="bool", default=False),
         ],
     },
