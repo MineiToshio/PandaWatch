@@ -1232,7 +1232,11 @@ def _save_image(data: bytes, images_dir: Path) -> Optional[str]:
     ext = _extension_from_magic(data)
     if not ext:
         return None
-    # Nombre determinístico no colisiona con el existente porque viene de una URL distinta
+    # Estandariza al ingresar (AVIF Q60, lado largo ≤1600px, sin metadata) — fuente
+    # única en image_store. Punto de escritura del skill de portadas (sc_validate),
+    # apply_preview y backfill PRH. Placeholders/errores pasan crudos.
+    data, ext = image_store.normalize_image(data)
+    # Nombre determinístico (content-addressed): la misma imagen normalizada reusa archivo
     stem = sha256(data).hexdigest()[:16]
     filename = stem + ext
     dest = images_dir / filename

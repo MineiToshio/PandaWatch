@@ -1157,6 +1157,11 @@ def _download_image_to_store(image_url: str) -> tuple[str, str]:
     if not ext:
         return "", "El archivo descargado no es una imagen valida (HTML de error o formato desconocido)"
 
+    # Estandariza al ingresar (AVIF Q60, lado largo <=1600px, sin metadata) — fuente
+    # unica en image_store. Cubre la descarga manual del gestor de imagenes.
+    import image_store  # noqa: PLC0415
+    body, ext = image_store.normalize_image(body)
+
     filename = stem + ext
     dest = IMAGES_DIR / filename
     tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.tmp")

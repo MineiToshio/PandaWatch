@@ -104,7 +104,72 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
 `data/images/ → R2` (boto3, S3-compatible). **Bucket R2 propio** (no un prefijo dentro del
 bucket de PandaTrack): blast radius de credenciales + GC mark-and-sweep seguro. Serving por
 dominio propio (no `r2.dev`, rate-limited). PandaTrack ya usa el patrón con `@aws-sdk/client-s3`
-(env `ASSETS_STORAGE_*` / `ASSETS_PUBLIC_BASE_URL`).
+(env `ASSETS_STORAGE_*` / `ASSETS_PUBLIC_BASE_URL`). Decisión 2026-06-15 (verificada): R2 con
+**masters pre-optimizados** + dominio + Cache Rule (`Cache-Control: public, max-age=31536000,
+immutable`) ≈ **0 USD/mes** (los ~2-3 GB optimizados caben en el free tier de 10 GB; egress
+gratis). Pre-optimizar es OBLIGATORIO: R2 no transforma imágenes. No hace falta Cloudflare
+Images (~2-4 USD/mes) ni Polish (requiere plan Pro) para este caso.
+
+## Normalización / estandarización al ingresar (2026-06-15)
+
+**Toda imagen que entra al espejo se estandariza a un "master de display" único: AVIF
+Q60, lado largo ≤ 1600 px, sin metadata (EXIF/ICC).** Antes el espejo guardaba los bytes
+CRUDOS de la fuente (14.58 GB, 24 166 archivos; los PNG eran el 71% del peso a ~1.65 MB c/u).
+Evolución del formato: crudo 14.58 GB → WebP q80 2.37 GB (1ª pasada) → **AVIF Q60 ~1.5 GB**
+(2026-06-15). AVIF pesa ~27% menos que WebP a igual calidad visual; acota el crecimiento del
+catálogo y entra holgado en el free tier de R2. **Tamaño/formato = decisión del owner (1600 px
+/ AVIF Q60).**
+
+**Soporte de navegador AVIF ~93%** (Chrome 85+/Firefox 93+/Edge 121+/Safari 16.4+ desde 2023).
+El owner decidió **NO soportar el ~6-7% viejo** (Safari pre-2023): en web-next `next/image`
+transcodifica solo a un formato que el navegador acepte; el dashboard estático cae a la URL
+remota. (AVIF Q~50-63 ≈ WebP q80; encode más lento pero es batch/offline.)
+
+**Fuente ÚNICA: `image_store.normalize_image(body) -> (bytes, ext)`** (nunca reimplementar la
+lógica en otro lado). Reglas:
+- Solo redimensiona **hacia abajo** (nunca agranda — el upscale AI es otro proceso, manual; ver
+  `upscale_images.py`). Motor **pyvips** (`heifsave_buffer(Q, compression='av1', effort=4)`,
+  ~2.6× más rápido y ~11× menos memoria que Pillow) con **fallback a Pillow** (`save(...,'AVIF')`,
+  nativo desde 11.3). Dependencias: `brew install vips` + `pip install pyvips` + `Pillow>=11.3`.
+  `image_store` fija **`VIPS_CONCURRENCY=1`** al importar: libvips usa TODOS los cores por imagen,
+  lo que oversuscribe la CPU al paralelizar por archivo (scrape/backfills con ThreadPoolExecutor);
+  single-thread por imagen + paralelismo por pool es ~3× más rápido en batch (medido).
+- **Idempotente**: una imagen ya AVIF y ≤ 1600 px se devuelve sin re-encodear (cero pérdida
+  generacional). Una AVIF > 1600 px se redimensiona.
+- **NUNCA toca placeholders** (gotcha #100): si `placeholder_reason(body) != ""` devuelve los
+  bytes CRUDOS sin tocar, para que la detección por FIRMA (sha1 del contenido) de
+  `purge_placeholder_images` siga matcheando aguas abajo. Si re-encodeáramos, el sha1 cambiaría.
+- **Degrada con gracia**: ante error de decode/encode (o sin pyvips/PIL) devuelve los bytes
+  originales con su extensión — nunca rompe el scrape.
+
+**Los 3 cuellos de botella de escritura** (todos llaman a `normalize_image`, cubren los ~11
+entry points): `image_store.download_image()` (scrape, `mirror_images`, `upgrade_image_resolution`,
+`backfill_prh_covers`, `wayback_recover`); `fetch_better_covers._save_image()` (skill
+`/watch-search-covers` vía `sc_validate`, `apply_preview`, PRH); `serve.py._download_image_to_store()`
+(gestor de imágenes). El stem del archivo no cambia (sigue `sha256(url)[:16]`), solo la extensión
+pasa a `.avif`; `existing_local_image()` ya hace glob `<stem>.*` así que los re-scrapes reusan el
+`.avif` sin re-descargar.
+
+**Backfills (one-shot, históricos):**
+- `optimize_images.py` — 1ª pasada (crudo → estandarizado): normaliza in situ, archiva los
+  originales a `data/images/_originals/`. Flags: `--dry-run`, `--limit`, `--workers`,
+  `--originals {archive,delete,keep}`.
+- `migrate_images_to_avif.py` — **re-deriva los masters a AVIF DESDE `_originals/`** (sin doble
+  compresión; calidad = la fuente), hace **dedup por contenido** (imágenes pixel-idénticas tras
+  normalizar colapsan a un solo archivo) y **borra los WebP reemplazados** (el original queda en
+  `_originals/`). Crash-safe, idempotente, con backup de items.jsonl/cover_preview.json.
+  Tests: `tests/test_migrate_images_to_avif.py`.
+
+⚠️ Cerrá el panel de cover-preview antes de correr cualquiera (reescriben `cover_preview.json`;
+el guard de mtime lo recarga si intenta guardar encima). Tests del core:
+`tests/test_normalize_image.py`, `tests/test_optimize_images.py`.
+
+**GC rutinario (anti-explosión).** Cada scrape corre `[4j] mirror_images.py --gc-only` (delta y
+full): manda a cuarentena `data/images/_orphans/` los archivos que ningún item referencia
+(portadas reemplazadas por el skill/scripts, masters viejos). Reversible y NO toca `_originals/`
+(el GC sólo escanea archivos top-level de `data/images/`). Vaciar `_orphans/` periódicamente (o
+`--gc-delete`) para reclamar el disco. Esto evita el verdadero riesgo de crecimiento: los
+archivos MUERTOS, no las fotos vivas (cada foto está acotada a ~110 KB por el cap AVIF/1600).
 
 ## Upgrade de resolución — `upgrade_image_resolution.py`
 

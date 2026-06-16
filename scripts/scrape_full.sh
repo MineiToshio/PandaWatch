@@ -549,6 +549,14 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         > "$LOG_DIR/04i-purge-placeholders.log" 2>&1
     echo "    items: $(count_lines)"
 
+    # [4j] GC rutinario del espejo: manda a cuarentena (data/images/_orphans/) los
+    # archivos que ningún item referencia — portadas reemplazadas por el skill/scripts,
+    # masters viejos, etc. Reversible (no toca _originals/). Evita que el espejo crezca
+    # con archivos muertos. Vaciar _orphans/ periódicamente (o --gc-delete) para reclamar.
+    echo ">>> [4j] mirror_images --gc-only (cuarentena de huérfanos del espejo)"
+    "$VENV_PY" scripts/retrofit/mirror_images.py --gc-only \
+        > "$LOG_DIR/04j-gc.log" 2>&1 || echo "    (GC no crítico, continúa)"
+
     echo " ✓ PHASE 3 cleanup done"
 else
     echo "[SKIP] PHASE 3 (cleanup) saltada por SKIP_CLEANUP=1"

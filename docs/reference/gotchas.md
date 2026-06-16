@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 103 known gotchas
+## The 104 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -860,3 +860,23 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     fuera del pipeline canónico) sólo ve el texto del enlace del día, no la línea de precio; si se invoca a
     mano puede re-meter un free preview vía estandarización (mismo origen que gotcha #99). Tests:
     `test_lmc_free_preview_number_is_skipped`, `test_lmc_free_preview_skipped_but_paid_items_kept`.
+
+100. **Estandarizar la imagen al ingresar NO debe tocar los placeholders, o se rompe la detección
+    por FIRMA (2026-06-15).** Desde 2026-06-15 toda imagen que entra al espejo se normaliza a un
+    "master de display" único (AVIF Q60, lado largo ≤1600px, resize-down + strip de metadata) en
+    `image_store.normalize_image()`, llamado desde los 3 cuellos de escritura: `download_image`
+    (scrape + retrofits que bajan red), `fetch_better_covers._save_image` (skill de portadas /
+    apply / PRH) y `serve._download_image_to_store` (gestor). TRAMPA: `purge_placeholder_images`
+    detecta los placeholders CON texto/logo ("Cover Coming Soon", "Immagine non disponibile", etc.)
+    por **sha1 del CONTENIDO** (`data/placeholder_signatures.json`). Si normalizáramos un placeholder,
+    su sha1 cambiaría y la firma dejaría de matchear → el placeholder sobreviviría como portada (los
+    estructurales —1×1, solid— sí sobreviven el re-encode porque dims/std se preservan; los de FIRMA
+    NO). FIX: `normalize_image` llama `placeholder_reason(body)` PRIMERO y, si es placeholder, devuelve
+    los bytes CRUDOS sin tocar. Orden obligatorio: detectar placeholder → recién después normalizar.
+    Reglas extra: solo achica (NUNCA agranda — el upscale AI es manual y aparte, `upscale_images.py`);
+    idempotente (un WebP ≤max se devuelve igual, sin pérdida generacional); fallback a los bytes
+    originales si pyvips/PIL fallan (nunca rompe el scrape). Backfill del histórico:
+    `optimize_images.py` → `migrate_images_to_avif.py` (14.58 GB crudo → 2.37 GB WebP → ~1.5 GB
+    AVIF). Decisión del owner: 1600px / **AVIF Q60** (no se soporta el ~6% de navegadores viejos;
+    el fallback es next/image transcodificando o la url remota). Tests: `test_normalize_image.py`,
+    `test_optimize_images.py`, `test_migrate_images_to_avif.py`.

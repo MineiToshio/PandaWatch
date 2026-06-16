@@ -36,12 +36,21 @@ Cuando llegue, sólo cambia de dónde se sirven los archivos: el esquema
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
 import requests
+
+# libvips por defecto usa TODOS los cores para UNA imagen. Cuando paralelizamos por
+# ARCHIVO (ThreadPoolExecutor en el scrape y en los backfills de imágenes), eso
+# oversuscribe la CPU y thrashea (N workers × M cores = N·M hilos peleando). Con
+# VIPS_CONCURRENCY=1 cada imagen se procesa single-thread y la paralelización la da el
+# pool → throughput mucho mayor. Debe setearse ANTES de importar pyvips (libvips lo lee
+# al inicializar). `setdefault` deja overridearlo por env si alguien lo necesita.
+os.environ.setdefault("VIPS_CONCURRENCY", "1")
 
 # ── CDN resize-param normalization ────────────────────────────────────────────
 # These query params only control thumbnail size/quality, not image identity.
@@ -255,6 +264,11 @@ def download_image(
         # No es una imagen reconocible (probable HTML de error / anti-bot).
         return ""
 
+    # Estandariza al ingresar: AVIF Q60, lado largo ≤ 1600px, sin metadata
+    # (fuente única en normalize_image). Placeholders y errores pasan crudos,
+    # con su extensión original.
+    body, ext = normalize_image(body)
+
     filename = image_stem(image_url) + ext
     images_dir.mkdir(parents=True, exist_ok=True)
     dest = images_dir / filename
@@ -415,3 +429,112 @@ def placeholder_reason(source, *, signatures: dict | None = None) -> str:
     except Exception:
         return "broken"
     return ""
+
+
+# ── Normalización de imágenes — estandarización al ingresar ────────────────────
+# Toda imagen que entra al espejo se estandariza a un "master de display" único:
+# AVIF calidad 60, lado largo ≤ NORMALIZE_MAX_LONG_SIDE px, sin metadata. AVIF pesa
+# ~27% menos que WebP a la MISMA calidad visual (decisión owner 2026-06-15) → clave
+# para Cloudflare R2 + velocidad web, y acota el crecimiento del catálogo. Fuente
+# ÚNICA: download_image() y el retrofit optimize_images.py llaman acá — nunca
+# reimplementar la lógica en otro lado.
+#
+# Soporte de navegador: AVIF ~93% (Chrome/Firefox/Edge/Safari 16.4+). El ~6-7% viejo
+# (Safari pre-2023) NO se soporta a propósito (decisión owner): en web-next next/image
+# transcodifica solo; el dashboard estático cae a la url remota.
+#
+# Reglas (importan):
+#   - Solo redimensiona HACIA ABAJO (nunca agranda; el upscale AI es otro proceso,
+#     manual y gateado — ver scripts/retrofit/upscale_images.py).
+#   - NUNCA toca placeholders: si placeholder_reason(body) != "", devuelve los bytes
+#     CRUDOS sin cambiar, para que la detección por FIRMA (sha1 del contenido) de
+#     purge_placeholder_images siga matcheando aguas abajo. Si re-encodearamos, el
+#     sha1 cambiaría y las firmas dejarían de funcionar.
+#   - Idempotente: una imagen ya AVIF y ≤ max se devuelve sin re-encodear (cero
+#     pérdida generacional en re-runs).
+#   - Degrada con gracia: ante cualquier error de decode/encode (o sin pyvips/PIL)
+#     devuelve los bytes originales con su extensión — nunca rompe el scrape.
+
+NORMALIZE_MAX_LONG_SIDE = 1600
+NORMALIZE_QUALITY = 60  # escala AVIF (Q~50-63 ≈ WebP q80 a igual calidad visual)
+
+
+def _normalize_pyvips(body: bytes, max_long_side: int, quality: int) -> bytes:
+    """Resize-down + AVIF via libvips/libheif. thumbnail_buffer auto-rota por EXIF y
+    solo achica (size='down'); keep='none' strippea la metadata en el mismo save.
+    compression='av1' = AVIF; effort 0-9 (4 = balance velocidad/peso)."""
+    import pyvips
+
+    img = pyvips.Image.thumbnail_buffer(
+        body, max_long_side, height=max_long_side, size="down"
+    )
+    return img.heifsave_buffer(Q=quality, compression="av1", effort=4, keep="none")
+
+
+def _normalize_pillow(body: bytes, max_long_side: int, quality: int) -> bytes:
+    """Fallback con Pillow (>=11.3 trae AVIF nativo): respeta orientación EXIF,
+    conserva alpha, solo achica, y al guardar AVIF sin pasar exif= la metadata no se
+    copia (queda strippeada)."""
+    import io
+
+    from PIL import Image, ImageOps
+
+    Image.MAX_IMAGE_PIXELS = None
+    with Image.open(io.BytesIO(body)) as im:
+        im = ImageOps.exif_transpose(im)
+        has_alpha = im.mode in ("RGBA", "LA", "PA") or (
+            im.mode == "P" and "transparency" in im.info
+        )
+        im = im.convert("RGBA" if has_alpha else "RGB")
+        im.thumbnail((max_long_side, max_long_side), Image.LANCZOS)
+        out = io.BytesIO()
+        im.save(out, "AVIF", quality=quality)
+        return out.getvalue()
+
+
+def normalize_image(
+    body: bytes,
+    *,
+    max_long_side: int = NORMALIZE_MAX_LONG_SIDE,
+    quality: int = NORMALIZE_QUALITY,
+) -> tuple[bytes, str]:
+    """Estandariza `body` a AVIF Q60 con lado largo ≤ max_long_side, sin metadata.
+
+    Devuelve ``(bytes, extension_con_punto)`` listos para escribir a disco:
+
+    - imagen real más grande que el máximo o en otro formato → AVIF redimensionado.
+    - imagen ya AVIF y ≤ max → se devuelve igual (idempotente, sin re-encode).
+    - placeholder (``placeholder_reason`` != "") → bytes CRUDOS sin tocar.
+    - error / sin librerías → bytes originales con su extensión (fallback elegante).
+    """
+    orig_ext = _extension_from_magic(body) or ".bin"
+
+    # 1. Placeholders: NO normalizar (preserva las firmas sha1 para el purge).
+    if placeholder_reason(body):
+        return body, orig_ext
+
+    # 2. Idempotencia: ya AVIF y dentro del máximo → no re-encodear.
+    if orig_ext == ".avif":
+        try:
+            import io
+
+            from PIL import Image
+
+            Image.MAX_IMAGE_PIXELS = None
+            with Image.open(io.BytesIO(body)) as im:
+                if max(im.size) <= max_long_side:
+                    return body, ".avif"
+        except Exception:
+            return body, ".avif"
+
+    # 3. Normalizar: pyvips (rápido, baja memoria) y, si falla, Pillow.
+    for engine in (_normalize_pyvips, _normalize_pillow):
+        try:
+            out = engine(body, max_long_side, quality)
+            if out:
+                return out, ".avif"
+        except Exception:
+            continue
+
+    # 4. Fallback: nada funcionó → bytes originales sin tocar.
+    return body, orig_ext

@@ -436,7 +436,7 @@
                    :class="selectMode && isSelected('e:'+ed.edition_key) ? 'border-pink-500 ring-2 ring-pink-400' : 'border-gray-200'">
                 <div class="img-wrap relative">
                   <template x-if="coverSrc(ed.leader)">
-                    <img :src="coverSrc(ed.leader)" :data-fallback="coverImage(ed.leader).url" :alt="ed.leader.title" loading="lazy" @error="onCoverError($event)">
+                    <img :src="coverSrc(ed.leader)" :data-fallback="coverImage(ed.leader).url" :alt="ed.leader.title" loading="lazy" decoding="async" @error="onCoverError($event)">
                   </template>
                   <div class="img-placeholder" :style="coverSrc(ed.leader) ? 'display:none' : ''">📚</div>
                   <template x-if="selectMode">
@@ -554,7 +554,7 @@
                  :class="selectMode && isSelected('i:'+item.url) ? 'border-pink-500 ring-2 ring-pink-400' : 'border-gray-200'">
               <div class="img-wrap relative">
                 <template x-if="coverSrc(item)">
-                  <img :src="coverSrc(item)" :data-fallback="coverImage(item).url" :alt="item.title" loading="lazy" @error="onCoverError($event)">
+                  <img :src="coverSrc(item)" :data-fallback="coverImage(item).url" :alt="item.title" loading="lazy" decoding="async" @error="onCoverError($event)">
                 </template>
                 <div class="img-placeholder" :style="coverSrc(item) ? 'display:none' : ''">📚</div>
                 <template x-if="selectMode">
