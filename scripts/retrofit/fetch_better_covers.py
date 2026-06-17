@@ -2007,10 +2007,19 @@ def run(
                     # (el owner elige otra en la UI antes de aprobar).
                     previewed += 1
                     slug = item.get("slug", "")
+                    # new_pixels del archivo YA NORMALIZADO (AVIF ≤1600px), no del original
+                    # pre-resize — el cover-preview debe mostrar la resolución que queda.
+                    _stored_px = result["candidate_pixels"]
+                    try:
+                        _p = images_dir / new_local
+                        if new_local and new_local != "[dry-run]" and _p.is_file():
+                            _stored_px = _get_pixels_from_bytes(_p.read_bytes()) or _stored_px
+                    except OSError:
+                        pass
                     candidate = {
                         "new_image": new_local,
                         "new_url": new_url,
-                        "new_pixels": result["candidate_pixels"],
+                        "new_pixels": _stored_px,
                         "page_title": result.get("page_title", ""),
                         "domain": result.get("domain", ""),
                         "query": result.get("query", ""),

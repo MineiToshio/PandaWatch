@@ -378,7 +378,12 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
   candidatas `pending` cuya premisa ya no existe (portada ya ≥ 90 000 px, foto de galería
   target desaparecida o ya ok, new_url igual a la portada actual) y elimina entries cuyo slug
   ya no existe en el catálogo o que quedaron sin candidatas. Las candidatas `approved`/`rejected`
-  nunca se tocan. Si hubo cambios, persiste el JSON atómicamente antes de responder.
+  nunca se tocan. **Además recomputa `new_pixels` (y `old_pixels`) desde el archivo REAL en
+  disco** (2026-06-16): como el ingreso normaliza a AVIF ≤1600px, el panel debe mostrar la
+  resolución que QUEDA guardada, no la del original pre-resize (que inflaba el ratio xN). El
+  skill (`sc_validate`) y el script (`fetch_better_covers`) ya registran el px del archivo
+  normalizado al crear la candidata; el sync auto-corrige las que quedaron con valor viejo.
+  Si hubo cambios (incluido `pixels_recomputed`), persiste el JSON atómicamente antes de responder.
   El CLI manual: `.venv/bin/python scripts/retrofit/sync_cover_preview.py [--dry-run]`.
 
 ### Eliminar fotos de la galería actual (`cover-preview.html`)

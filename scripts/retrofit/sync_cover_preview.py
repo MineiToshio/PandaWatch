@@ -91,6 +91,7 @@ def sync_preview(
         "pruned_target_gone": 0,
         "pruned_target_ok": 0,
         "pruned_already_current": 0,
+        "pixels_recomputed": 0,
     }
 
     _REPLACE_COVER_ACTIONS = frozenset({
@@ -179,6 +180,15 @@ def sync_preview(
                         stats["pruned_target_ok"] += 1
                         continue
 
+            # Recompute new_pixels desde el archivo YA NORMALIZADO en disco (AVIF ≤1600px),
+            # así el panel muestra la resolución REAL que quedará guardada, no la del
+            # original pre-resize. Solo es el campo de display; la decisión no se toca.
+            ni = cand.get("new_image") or ""
+            if ni and ni != "[dry-run]":
+                real_px = _get_local_pixels(ni, images_dir)
+                if real_px and real_px != cand.get("new_pixels"):
+                    cand = {**cand, "new_pixels": real_px}
+                    stats["pixels_recomputed"] += 1
             new_candidates.append(cand)
 
         # Regla 4: entry sin candidatas → eliminar
@@ -268,14 +278,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Candidatas podadas — target gone:     {stats['pruned_target_gone']}")
     print(f"  Candidatas podadas — target ok px:    {stats['pruned_target_ok']}")
     print(f"  Candidatas podadas — ya es portada:   {stats['pruned_already_current']}")
+    print(f"  new_pixels recomputados (archivo real):{stats['pixels_recomputed']}")
     print(f"  Entries resultado: {len(synced)} (de {len(preview)})")
-    print(f"  Cambios: {total_pruned + total_dropped} operaciones")
+    print(f"  Cambios: {total_pruned + total_dropped + stats['pixels_recomputed']} operaciones")
 
     if args.dry_run:
         print("\n[dry-run] No se escribió ningún archivo.")
         return 0
 
-    if total_pruned + total_dropped == 0 and len(synced) == len(preview):
+    if (total_pruned + total_dropped + stats["pixels_recomputed"] == 0
+            and len(synced) == len(preview)):
         print("\nCola ya sincronizada — sin cambios.")
         return 0
 

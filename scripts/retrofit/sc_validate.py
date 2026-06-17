@@ -144,10 +144,16 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
         filename = fbc._save_image(img_bytes, images_dir)
         if not filename:
             continue
+        # new_pixels = resolución del archivo YA NORMALIZADO (AVIF ≤1600px), no la del
+        # original — el cover-preview debe mostrar lo que realmente queda guardado.
+        try:
+            stored_px = fbc._get_pixels_from_bytes((images_dir / filename).read_bytes()) or new_px
+        except OSError:
+            stored_px = new_px
         validated.append({
             'new_image'  : filename,
             'new_url'    : used_url,
-            'new_pixels' : new_px,
+            'new_pixels' : stored_px,
             'ref_pixels' : curr_px,
             'match_dist' : match_dist,
             'verified'   : verified,

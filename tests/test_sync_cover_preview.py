@@ -310,3 +310,28 @@ def test_multiple_entries_mixed(tmp_path):
     assert len(synced) == 1
     assert synced[0]["slug"] == "keep-me"
     assert stats["dropped_missing_item"] == 1
+
+
+def test_new_pixels_recomputed_from_real_file(tmp_path):
+    """new_pixels se recomputa a la resolución REAL del archivo normalizado guardado
+    (no la stale del original pre-resize), para que el panel muestre lo que queda."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    _make_lores_img(images_dir / "old.jpg")            # cover actual lores → candidata se conserva
+    _make_img(images_dir / "new.jpg", size=(300, 400))  # archivo real = 120_000 px
+    cand = _cand(new_image="new.jpg")                  # new_pixels stale = 200_000
+    entry = _entry("s1", [cand])
+    items_by_slug = {"s1": _item("s1", images=[
+        {"url": "http://x/old.jpg", "local": "old.jpg", "kind": "gallery"}
+    ])}
+
+    synced, stats = sync_preview([entry], items_by_slug, images_dir)
+
+    kept = synced[0]["candidates"][0]
+    assert kept["new_pixels"] == 120_000            # recomputado al archivo real, no 200_000
+    assert stats["pixels_recomputed"] == 1
+
+    # Idempotente: una 2ª pasada no vuelve a contarlo (ya matchea el archivo)
+    synced2, stats2 = sync_preview(synced, items_by_slug, images_dir)
+    assert stats2["pixels_recomputed"] == 0
+    assert synced2[0]["candidates"][0]["new_pixels"] == 120_000
