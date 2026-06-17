@@ -247,9 +247,7 @@ export type Item = {
   release_date?: string
   detected_at?: string
   standardized_at?: string
-  image_url?: string
-  image_local?: string
-  images?: ItemImage[]
+  images?: ItemImage[]   // portada = images[0]; image_url/image_local top-level ELIMINADOS (2026-06-09)
   extras?: ItemExtra[]
   source?: string
   stock_type?: string
@@ -257,8 +255,8 @@ export type Item = {
 
 export type ItemImage = {
   url: string
-  local?: string
-  kind: 'cover' | 'gallery' | 'extra' | 'variant_cover' | 'back_cover'
+  local?: string                  // filename del espejo (AVIF Q60 ≤1600px desde 2026-06-15)
+  kind: 'gallery' | 'extra'       // simplificado: portada = images[0] por posición, NO por kind
   description?: string
 }
 

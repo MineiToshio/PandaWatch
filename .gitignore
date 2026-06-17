@@ -35,3 +35,13 @@ data/quality_report.json
 # Archivos de progreso de scripts largos (estado de runtime, no versionar)
 data/*_progress.json
 data/standardize-progress.json
+
+# Dependencias de Node (regenerables con npm install — nunca versionar)
+node_modules/
+
+# Temporales de orquestación de scripts (cover-search, etc.)
+.tmp_sc_*
+
+# Backups ad-hoc de archivos de data que dejan algunos retrofits (.bak-* / .pre-*-bak)
+data/*.bak-*
+data/*.pre-*-bak
