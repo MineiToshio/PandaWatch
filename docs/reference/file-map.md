@@ -38,8 +38,9 @@ data/  (todo gi salvo los .yml versionados)
                                series_key (req) + contexto + flagged_by
                                (pipeline|audit:<n>|human) + opcionales libres.
                                Lo vacía /watch-enrich-series-aliases; el pipeline lo repuebla.
-  images/                    — espejo local de portadas: <sha256(url)[:16]>.<ext>.
-                               El JSONL referencia el filename en image_local.
+  images/                    — espejo local de portadas estandarizadas (AVIF Q60 ≤1600px):
+                               <sha256(url)[:16]>.avif. El JSONL referencia el filename en
+                               images[].local. _originals/ = originales pre-AVIF archivados.
   backups/<archivo>/         — backups rotativos (máx 3) vía backup_and_rotate().
                                NUNCA a mano ni en /tmp.
   diagnostics/               — outputs de debug de los filtros (se sobreescriben).
@@ -64,7 +65,9 @@ scripts/
   overnight_run.sh           — DEPRECATED (alias de scrape_delta.sh).
   retry_failed.sh            — re-corre solo las fuentes que erraron en el último log.
   series_aliases.py          — canonical_series_key() + log_unmapped_series(). Ver #20.
-  image_store.py             — primitivas del espejo local (hash, magic-bytes, idempotencia).
+  image_store.py             — primitivas del espejo local (hash, magic-bytes, idempotencia)
+                               + normalize_image() (estandariza a AVIF Q60 ≤1600px al ingresar,
+                               fuente única; fija VIPS_CONCURRENCY=1) + placeholder_reason().
   shopify_variants.py        — parser de variants multi-tomo Shopify (ver #16).
   standardize_audit.py       — AUDIT de /watch-standardize-catalog (fuente única
                                skill+workflow, anti-drift): tiering + proyecciones
@@ -133,6 +136,10 @@ scripts/
                                data/placeholder_signatures.json. Paso [4i] del pipeline (#97).
     upgrade_image_resolution.py / promote_hires_cover.py / backfill_prh_covers.py /
     upscale_images.py / fetch_better_covers.py / sync_cover_preview.py
+    optimize_images.py         backfill genérico: estandariza el espejo histórico a AVIF
+                               (resize+encode, archiva originales a _originals/).
+    migrate_images_to_avif.py  migración WebP→AVIF re-derivando desde _originals/ + dedup por
+                               contenido + commit incremental (RESUMIBLE; un crash no rehace).
                                — mejora de portadas (CDN full-res, hi-res intra-cluster,
                                PRH, AI upscale, búsqueda, sincronización de cola).
                                fetch_better_covers: SEGURO POR DEFECTO (preview, no auto-aplica

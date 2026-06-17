@@ -116,11 +116,21 @@ to ISR (Incremental Static Regeneration) or dynamic rendering.
 
 ---
 
-### ADR-005: Images via symlink in public/
+### ADR-005: Images via symlink in public/ (formato AVIF)
 
 **Decision:** `web-next/public/images` is a symlink to `../../data/images/`. Next.js
-serves files in `public/` statically at the root. So `/images/abc123.jpg` maps to
-`data/images/abc123.jpg`.
+serves files in `public/` statically at the root. So `/images/abc123.avif` maps to
+`data/images/abc123.avif`.
+
+**Formato (2026-06-15):** las portadas se almacenan **estandarizadas en AVIF Q60, lado
+largo ≤1600px, sin metadata** (fuente única `image_store.normalize_image`; TODO ingreso
+—scrape, skill, scripts, gestor— entra ya optimizado. Detalle en
+[docs/reference/images.md](../../reference/images.md)). `CoverImage` usa `next/image`
+para el espejo local (optimiza/transcodifica on-the-fly con sharp) y `<img>` plano para
+el fallback remoto. AVIF tiene ~93% de soporte de navegador (Safari 16.4+); el ~6% viejo
+lo cubre `next/image` transcodificando, o —en el dashboard estático `web/`— la url remota.
+**NO se soportan navegadores pre-2023 a propósito** (decisión owner). Corpus: 14.58 GB
+crudo → 1.64 GB AVIF (89% menos).
 
 **Rationale:** The Python scraper writes images to `data/images/`. Symlinking means
 zero duplication — there is only one copy of each image on disk. The Python pipeline
@@ -129,7 +139,8 @@ does not change.
 **Consequence:** The symlink must be created once as part of project setup (WO-001).
 Deploying to a server requires either keeping the symlink or copying the images folder.
 For the cloud deploy (Cloudflare R2, future), images will be served from R2 and this
-symlink becomes unnecessary.
+symlink becomes unnecessary. El espejo AVIF (~1.64 GB) entra holgado en el free tier de
+10 GB de R2; pre-optimizar es obligatorio porque R2 no transforma imágenes.
 
 ---
 

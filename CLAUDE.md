@@ -212,8 +212,10 @@ Diferidos explícitamente:
   serie/volumen/publisher/país pero no precio ni URL de tienda. Script aparte
   (`enrich_references.py`) que busque la URL de tienda y la agregue a `sources[]`. NO es
   filtro upstream (los de referencia son válidos igual). Ver "URL como referencia".
-- **Image storage Fase 2** — subir el espejo local a un bucket Cloudflare R2 propio al
-  desplegar. Ver sección "Image storage".
+- **Image storage Fase 2** — subir el espejo local (ya estandarizado: AVIF Q60 ≤1600px,
+  ~1.64 GB) a un bucket Cloudflare R2 propio al desplegar. La pre-optimización ya está hecha
+  (entra en el free tier de 10 GB; pre-optimizar es obligatorio porque R2 no transforma). Ver
+  `docs/reference/images.md` → "Normalización / estandarización al ingresar".
 
 ## Claude-in-Chrome MCP — Context Rules
 
