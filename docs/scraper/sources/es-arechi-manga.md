@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -59,10 +59,15 @@ novedades directas del editor. Hoy no aporta items netos.
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
-- **0 items netos en el corpus**: a hoy ningún producto de `arechimanga` quedó en
-  `items.jsonl`. {{pendiente: causa no confirmada — puede ser que `/novedades/`
-  no liste productos vendibles, que los selectores `wc-block-grid` no matcheen el
-  layout actual, o que lo que aparece no pase los filtros de coleccionable.}}
+- **0 items netos — CAUSA CONFIRMADA (2026-07-07, auditoría de ingestión): NO es un
+  bug del parser.** El `item_selector` (`li.wc-block-grid__product`) funciona: la
+  auditoría verificó en vivo que `/novedades/` expone 5 productos visibles y el
+  selector los matchea. El 0-yield histórico es correcto de acuerdo a las reglas
+  de negocio: el contenido actual de `/novedades/` son **tomos regulares** (sin
+  edición especial/deluxe/kanzenban), y el gate `is_collectible_edition` los
+  descarta correctamente — un tomo normal sin señal coleccionable no debe entrar
+  al catálogo. Antes de este hallazgo se sospechaba selector roto o layout
+  cambiado; ninguna de las dos cosas es cierta.
 - **#6 (imágenes lazy/placeholder)**: layout WooCommerce típico; tenerlo presente
   si se depura la extracción de portadas.
 
@@ -70,9 +75,10 @@ novedades directas del editor. Hoy no aporta items netos.
 
 ## 9. Pendientes / limitaciones conocidas
 
-- Fuente con **0 aporte** hoy. Antes de invertir en ella, confirmar si
-  `/novedades/` realmente expone productos parseables con los selectores
-  actuales, o si conviene apuntar a otra URL del catálogo.
+- Fuente con **0 aporte** hoy — pero **esperado** (ver §8): el selector funciona,
+  la causa es que `/novedades/` hoy sólo lista tomos regulares sin señal
+  coleccionable. Si Arechi anuncia una edición especial/deluxe, debería pasar el
+  gate sin cambios de código. No hay nada que arreglar en el parser.
 - La editorial Arechi ya está cubierta vía ListadoManga; el valor de esta fuente
   es captar novedades antes/directo del editor. {{pendiente: validar solape real
   con ListadoManga.}}

@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 104 known gotchas
+## The 116 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -12,8 +12,13 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
    `clean_title()::_fix_mojibake()` lo repara PRIMERO; no metas regex-cleaning antes.
 2. **Manga-Sanctuary URL drift.** Releases futuros redirigen a productos no
    relacionados. `manga_sanctuary.py::_title_matches_page()` valida — no lo desactives.
-3. **Otaku Calendar = sólo mes actual.** El `?month=YYYY-M` se ignora; bootstrapear
-   un rango da duplicados. Parser para chequeo mensual, no backfill histórico.
+3. **Otaku Calendar: el mes va por PATH, no por query string (2026-07-07).** `?month=
+   YYYY-M` se armaba como query string, pero el servidor lo IGNORA y sirve siempre el
+   mes por defecto — bootstrapear un rango daba el mismo HTML repetido (duplicados).
+   `fetch_calendar_month()` ahora arma la URL como path-segment (`/Calendar/{year}/
+   {month}`), que el servidor SÍ honra (misma estructura de HTML: `div.dateListingContainer`
+   + `/Release/<id>/<slug>`, el parser no cambió). El backfill histórico mes-a-mes es
+   viable ahora — antes el parser sólo servía para chequeo del mes actual.
 4. **Tiendanube vs Shopify.** Tiendanube: `[data-product-id]` + `/productos/`.
    Shopify: `li.grid__item`/`[data-product-card]` + `/products/`.
 5. **Kamite** parece Shopify pero es Tiendanube (catálogo en `/productos/`).
@@ -113,14 +118,25 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     (`accept_types=frozenset()` = aceptar todo; el catálogo `/limited-item/` está curado a
     mano, todo es manga limitado). Items BL/R18 usan `<img class="touch18">`; el parser busca
     cualquier `<img>` y prefiere `data-src`.
-31. **Multi-imagen: acotar al scope del producto + filtro de directorio padre EXACTO.**
+31. **Multi-imagen: acotar al scope del producto + filtro de directorio padre EXACTO — y,
+    cuando eso no alcanza, detección ESTRUCTURAL de grilla de relacionados (2026-07-07).**
     `_find_product_scope(soup)` restringe los selectores de gallery al subtree del producto;
     luego se descartan las URLs gallery cuyo **directorio padre no es exactamente igual** al
     de la cover (≥2 outliers = contaminación real). Comparación por dir exacto, NO substring
     (Star Comics sirve "otros volúmenes" en un subdirectorio del folder de la cover). Cap 6
     imágenes. Wikis con URLs sintéticas (`?item=`, `?bbm-entry=`) los SKIPEA
     `backfill_metadata.py --only images` (set `SYNTHETIC_URL_MARKERS`) porque re-fetchear
-    devuelve la página compartida.
+    devuelve la página compartida. **El filtro de directorio NO alcanza cuando la cover
+    PROPIA del producto también vive en el mismo subdir que los relacionados** (Star Comics:
+    tanto la cover real como los thumbnails de "ti potrebbe interessare" cuelgan de
+    `/files/immagini/fumetti-cover/thumbnail/`) — no queda señal de path que los separe. Fix:
+    `_related_grid_card_ids()` detecta la grilla por FORMA, no por ruta — ≥3 product-cards
+    dentro del scope que enlazan (`<a href>`) a ≥3 páginas de producto DISTINTAS (excluyendo
+    anclas a archivos de imagen, que son lightbox/zoom de la propia galería) se marcan como
+    grilla de relacionados y `_node_in_grid()` las excluye del harvest de galería. Una galería
+    legítima (front/back/lomo del mismo producto) no enlaza a N páginas de producto distintas,
+    así que nunca dispara el detector. El purge de este bug limpió 29 entradas contaminadas
+    del corpus (ver gotcha #112 y `docs/reference/images.md` → Purga).
 32. **`flush_source_candidates()` = escritura incremental** tras CADA fuente (no acumular todo
     para un único write final → kill mid-run perdía todo). Aplica el gate, no actualiza
     `state` (eso lo hace `process_state()` al final). Idempotente con el write final enriquecido.
@@ -880,3 +896,214 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     AVIF). Decisión del owner: 1600px / **AVIF Q60** (no se soporta el ~6% de navegadores viejos;
     el fallback es next/image transcodificando o la url remota). Tests: `test_normalize_image.py`,
     `test_optimize_images.py`, `test_migrate_images_to_avif.py`.
+
+105. **Los tests de `serve.py` escribían a los datos REALES — `data/feedback.jsonl` se llenó con 670
+    filas fantasma (2026-06-21).** `test_serve_merge_items_*` y `test_serve_move_*` seteaban
+    `serve.ITEMS_PATH` a un tmp pero **no** `FEEDBACK_PATH`; como `_apply_merge_items`/`_apply_move`
+    loguean vía `_log_feedback`, cada corrida de la suite appendeaba 2 filas (urls `https://a`/`https://x`,
+    reasons `dup`/`regroup`, todo lo demás en `None`) a la `data/feedback.jsonl` de producción. Tras
+    ~335 corridas → 670 filas que parecían un doble-submit del dashboard pero eran **leak de tests**
+    (no fue el owner). FIX estructural (fuente única de paths): `serve.py` deriva TODOS sus paths de
+    escritura (items/feedback/approvals/edits/dup_decisions/images) de `MANGA_WATCH_DATA_DIR`
+    (default `ROOT/data` → prod idéntico). Un fixture **autouse** en `tests/conftest.py`
+    (`_isolate_serve_data_dir`) apunta esa env var a un tmp por test, así NINGÚN test puede tocar los
+    datos reales (el `_load_serve()` interno re-importa serve y lee la env var). Regresión:
+    `test_serve_tests_never_touch_real_data_dir` afirma que cada path arranca dentro del tmp.
+    Relacionado: el guard de re-dislike (#106-style en dashboard.md) — `_handle_feedback` es ahora
+    idempotente por URL (`_url_in_feedback`) y no escribe duplicados aunque el cliente reintente.
+    Tests: `test_serve_tests_never_touch_real_data_dir`, `test_serve_feedback_dedup_guard`.
+
+106. **Alpine `:disabled="obj[key]"` con clave AUSENTE (`undefined`) deja el botón
+    DESHABILITADO → traga el click sin hacer nada (2026-06-21).** En `cover-preview.html` el
+    botón 👎 Reportar usaba `:disabled="reportedSlugs[e.slug]"`. Cuando el slug NO estaba en el
+    objeto, `reportedSlugs[e.slug]` es `undefined`, y esta versión de Alpine **no remueve** el
+    atributo booleano con `undefined` (sí lo hace con `false` — por eso el botón "Excluir" de al
+    lado, `:disabled="isSaving"`, sí funcionaba). Resultado: el botón quedaba `disabled` para SIEMPRE,
+    y un botón deshabilitado **no dispara `@click`** → el síntoma fue "le doy click y no pasa nada"
+    (no era el `prompt`). FIX: coercioná a booleano explícito — `:disabled="!!reportedSlugs[e.slug]"`.
+    Regla: cualquier `:disabled`/`:checked`/`:readonly` (atributos booleanos) que lea una propiedad
+    posiblemente `undefined` (acceso por clave dinámica, campo opcional) **debe** envolverse en `!!`.
+    El `x-text` del mismo botón SÍ reaccionaba (texto cambiaba bien) — el bug era específico del
+    binding de atributo booleano. **Bonus de la misma sesión**: el motivo del 👎 se pedía con
+    `prompt()`, que varios navegadores **suprimen** (devuelve `null` → no se envía nada) → se
+    reemplazó por un **editor de motivo inline** (input + Enviar/Cancelar). No uses `prompt()`/`confirm()`
+    para capturar input en estas UIs; metés un campo inline. Verificado en browser (preview).
+
+107. **Un 200 OK puede ser un challenge anti-bot — `detect_challenge()` es la FUENTE
+    ÚNICA (2026-07-07).** Cloudflare/WAFs a veces responden HTTP 200 con una página de
+    "verificando tu navegador" en vez de contenido: sin detectarlo, el scraper lo cuenta
+    como "0 items" en vez de "fuente bloqueada", y confunde una fuente muerta con una
+    sin novedades. `detect_challenge(html, status)` en `manga_watch.py` combina (a)
+    markers ESTRUCTURALES inequívocos (`cf-chl-bypass`, `__cf_chl_rt_tk`,
+    `/cdn-cgi/challenge-platform/h/` — OJO: NO `challenge-platform` a secas, aparece en
+    el JSD de bot-detection de CUALQUIER página protegida) y (b) markers de
+    título/texto ("just a moment", "checking your browser"…) sólo si la página es
+    CORTA (≤50 000 chars — un challenge pesa 5-15KB; contenido real que mencione esas
+    frases de pasada no debe dispararlo). La usan LOS TRES paths que pueden recibir un
+    challenge: el HTTP plano (`_scrape_one`), Playwright (`_fetch_with_playwright_impl`,
+    evalúa el título renderizado) y el spider de whakoom (`_looks_like_cf_challenge`
+    delega acá — antes tenía su propia copia de markers, divergente). Un challenge
+    detectado se loguea `CHALLENGE_DETECTED`, cuenta como fallo de fuente (categoría
+    `challenge`) y NO se procesan candidatos de esa página. **Política 403** (decisión
+    red team): ante un 403 se hace UN reintento único con UA browser-like alternativo
+    (`_BROWSER_LIKE_UA`) + 4s de backoff (`_fetch_source_html`); si persiste, se loguea
+    `BLOCKED_403`, se levanta `Blocked403Error` y se abandona la fuente en este run. **NO
+    se agregó 403 al `Retry` de urllib3** — reintentar un 403 idéntico en loop escala el
+    bloqueo (banea más agresivo), no lo resuelve. `sources.yml` acepta un `user_agent:`
+    opcional por fuente (`Source.user_agent`) para las que necesitan un UA browser-like
+    permanente; se aplica por-request (`fetch_with_metadata(..., user_agent=...)`) sin
+    mutar la sesión compartida entre threads. El resumen del run ahora imprime el
+    desglose de challenges/403 por fuente (antes invisible entre los "0 items").
+
+108. **ISBN con prefijo fullwidth "： " en fuentes JP degradaba el dedup por ISBN
+    (2026-07-07).** Cuando el ISBN sale de una ficha técnica `ISBN：978…` (label pairs),
+    el split no strippeaba el carácter "：" (dos puntos FULLWIDTH, U+FF1A, distinto del
+    ASCII ":"), así que el valor persistido quedaba `"： 9784091234567"` — dos filas del
+    mismo libro con y sin ese prefijo caían en tiers `isbn:` DISTINTOS y no fusionaban
+    (~30-40% de los ISBN de fuentes JP tenían el prefijo). Fix: `normalize_isbn(raw,
+    source="")` en `manga_watch.py` — conserva SOLO dígitos y X (x→X), descarta
+    cualquier basura alrededor. Si tras limpiar la longitud no es 10 ni 13 NO se
+    descarta el valor (puede ser un identificador parcial útil) pero se loguea
+    `ISBN_ANOMALY` para diagnóstico. Se aplica en TODOS los puntos de asignación
+    (fuente única): `fetch_metadata_from_detail`, `extract_with_selectors`,
+    `_candidate_from_card`, `extract_rss`, y de nuevo como guardia universal en
+    `candidate_to_json` (antes de que `derive_cluster_key` use el tier `isbn:`) — ningún
+    camino de ingesta (listadomanga, wikis, retailers) puede dejar un ISBN sucio.
+    Retrofit `scripts/retrofit/normalize_isbn.py` limpia el corpus histórico (dry-run:
+    109 filas cambiarían; salta `approved_at` salvo `--include-approved`; idempotente).
+
+109. **`derive_cluster_key` tier fuzzy usaba LANGUAGE, no COUNTRY — violaba "país=edición"
+    incluso pre-estandarización (2026-07-07).** El tier 3 (`fuzzy:<X>|<series>|<vol>|
+    <variant_tier>|<publisher>`, para items sin ISBN ni edition_key) discriminaba por
+    idioma: dos ediciones que comparten idioma pero son mercados distintos (ES-España vs
+    ES-México) podían fusionarse en el mismo cluster ANTES de que el skill de
+    estandarización les asigne edition_key — la regla dura #46 ("país distinto = edición
+    distinta, SIEMPRE") no debería tener una ventana donde no aplica. Fix: el componente
+    ahora es `item.country` (`fuzzy:<country>|<series>|<vol>|<variant_tier>|<publisher>`).
+    **Guard de vacío**: si `country` está vacío, NO se genera clave fuzzy (evitaría que
+    TODOS los items sin país detectado cayeran en el mismo bucket) — cae al tier
+    `url:` (standalone). Corpus actual: 0 claves fuzzy en items.jsonl (todo lo existente
+    ya tiene edition_key/ISBN), así que no hizo falta backfill; el fix protege scrapes
+    futuros de fuentes nuevas antes de su primera pasada de estandarización.
+
+110. **Orden clean_titles-antes-de-filtros: los gates evaluaban título SUCIO en el run N
+    y LIMPIO en el N+1 → no-idempotencia (2026-07-07).** La FASE 3 de `scrape_delta.sh`/
+    `scrape_full.sh` corría `rescore → filter_non_manga → filter_collectible →
+    clean_titles` — un título cuyo veredicto de filtro depende de la versión limpia (ej.
+    tras `_strip_korean_retailer_tail` un "한정판 <cola de tienda>" recortado a sólo
+    "한정판" y rechazado por `title_too_short` en la corrida donde YA estaba limpio, pero
+    sobreviviendo en la corrida anterior con el título sucio) daba un resultado DISTINTO
+    según en qué run cayera — dos corridas seguidas sobre el mismo item podían divergir.
+    Fix: el orden ahora es `rescore → clean_titles → filter_non_manga →
+    filter_collectible → backfill_metadata` (etiquetas de paso reindexadas 4a-4e) — los
+    gates SIEMPRE ven el título ya limpio, en la misma corrida. Relacionado: el guard
+    nuevo en `_strip_korean_retailer_tail` (no recortar si el resultado queda ≤ el
+    marcador "한정판" desnudo) ataca el mismo síntoma desde el extractor.
+
+111. **`validate_corpus.py` exit 2 = violaciones DURAS; el build se OMITE, no se corre
+    igual (2026-07-07).** Antes `validate_corpus` corría DESPUÉS del build (PHASE 5) — un
+    corpus con violaciones duras (dedup roto, cluster_key inconsistente) ya se había
+    publicado en `web/index.html` para cuando la alerta aparecía. Ahora: (a) el validador
+    devuelve `2` específicamente para violaciones duras (antes `1`, ambiguo con errores
+    del propio script — `1` queda reservado para excepciones no controladas del
+    validador); (b) `validate_corpus` corre como PHASE 4, ANTES del build; (c) el build
+    (PHASE 5) se OMITE por completo si `CORPUS_INVALID=1` (exit 2 o cualquier rc≠0),
+    dejando el build anterior intacto en vez de sobreescribirlo con datos corruptos. Se
+    complementa con `FAILED_STEPS` (array bash que acumula el `$?` de CADA bootstrap/
+    retrofit/build de la corrida, no sólo el gate) impreso en el FINAL SUMMARY — con
+    `set +e` un paso que crashea a mitad de la cadena era antes invisible.
+112. **El placeholder de "portada censurada" de listadomanga (`08a02c…png`) se colaba por
+    Layout B como imagen `kind=extra`/carrusel → STOLENIMG masivo (2026-07-07).** El guard
+    de gotcha #40 (vaciar `image_url` cuando el `<img>` es el hash censurado) vivía SOLO en
+    `_parse_item_table` (Layout A / portada). `_parse_layout_b_cell` (Cofres/Regalos/Extras)
+    NO tenía guard → el mismo placeholder entraba como foto de extra del tomo destino, y si
+    el tomo no estaba en Layout A, como cover de un item `from_extras` fantasma. Resultado:
+    UNA sola foto placeholder terminó de "portada" (kind=gallery) en ~80 series completamente
+    distintas (Bleach, Tokyo Revengers, Ayako, Bastard!!, JJK…) — el invariante **STOLENIMG**
+    de `validate_corpus`. Fix mecanismo (no síntoma): el listado de placeholders conocidos por
+    URL es **fuente ÚNICA** en `image_store.known_placeholder_url_reason()` (stems exactos +
+    fragmentos de URL); tanto Layout A como Layout B lo importan (`CENSORED_COVER_HASH` queda
+    como alias validado contra el registro). Consecuencia en `purge_placeholder_images.py`:
+    (a) los placeholders CONOCIDOS por URL se purgan aunque `local=""` (nunca se espejaron) y
+    en cualquier posición — nunca son cover real; (b) regla genérica cross-series: una MISMA
+    URL en ≥4 SERIES distintas es sospechosa, pero SOLO se purga de galería (`idx>0`), NUNCA
+    de la portada (`images[0]`), porque una foto puede ser el cover legítimo de UNA serie y
+    contaminar el carrusel de otras (bug de scrape de búsqueda de Star Comics: los thumbnails
+    `fumetti-cover/thumbnail/*` son covers reales de Blue Box/Dragon Ball/One Piece inyectados
+    en los carruseles de ediciones "variant"). Agrupar por SERIE (no por item) evita el falso
+    positivo box↔tomos de la misma serie. Ver `docs/reference/images.md` → Purga.
+113. **El token "box" desnudo matcheaba NOMBRES PROPIOS latinos y disparaba `box_set` falso en
+    tomos regulares (2026-07-07, primer delta real post-mejoras).** La editorial francesa
+    "Black Box" y la serie "Blue Box" (Star Comics IT, Delcourt/Tonkam FR) tienen "box" en su
+    propio nombre — el signal de `box_set` por el token suelto no distinguía "Blue Box 7" (un
+    tomo regular de la serie) de "Complete Box"/"Box Set" (un producto de caja real). Evidencia:
+    76 tomos regulares de Manga-Sanctuary con publisher "Black Box"/"Blue Box" en 6 países
+    quedaban marcados `box_set`. Fix mecanismo, no lista de series (`_box_set_signal_present()`
+    en `manga_watch.py`): (1) una CONSTRUCCIÓN de producto en latín (`box set/completo/deluxe/
+    premium/edition/collector/…`, o `con/en/com box`) sí señala `box_set`; (2) el token "box"
+    suelto SIN ese calificador y sin un bigrama latino "`<palabra> box`" inmediatamente antes
+    (es decir, pegado a CJK/dígito/puntuación o al inicio del string) también señala `box_set`
+    — preserva los boxes CJK (収納BOX, 特裝BOX, 全套收納BOX, 다용도BOX…) que no tienen otra keyword;
+    (3) un bigrama latino "`<palabra> box`" SIN calificador de formato (Blue Box, Black Box) NO
+    señala nada — es el nombre propio de la serie/editorial. Corrida real de rescore: 85
+    señales `box_set` retiradas (84 items dejaron de calificar como coleccionable y se purgaron
+    del corpus vía `filter_collectible`; un item retuvo `box_set` por otra keyword genuina).
+    Tests: cobertura en `tests/test_extraction.py` para el bigrama latino vs la construcción real.
+114. **`throttle_group` — el rate-limit puede ser de la INFRAESTRUCTURA COMPARTIDA, no de la
+    fuente (2026-07-07).** US - Dark Horse Direct (search), IT - Funside Variant e IT - Manga
+    Dreams (sus 2 entradas YAML) devolvieron HTTP 429 el mismo día — las 4 resuelven al MISMO
+    borde Shopify `23.227.38.0/24` (confirmado por DNS: `.65`, `.65`, `.68`). `--per-host-limit`
+    agrupa por HOSTNAME, así que dominios distintos (`darkhorsedirect.com`, `funside.it`,
+    `mangadreams.it`) no se serializan entre sí aunque compartan el mismo edge y el mismo
+    presupuesto de rate-limit remoto — cada uno cree que tiene su propio cupo de concurrencia
+    y entre los tres saturan el límite real del borde. Fix: campo nuevo `throttle_group:` en
+    `sources.yml` (`Source.throttle_group`, default vacío = comportamiento de siempre agrupado
+    por host). Fuentes con el mismo `throttle_group` comparten UN semáforo (limit 1) + un delay
+    mínimo configurable entre requests del grupo (`--throttle-group-delay`, default 2s), en vez
+    de cada una tener su propio semáforo por host. `ES - Milky Way Próximamente` (mismo borde,
+    `23.227.38.32`, aunque no dio 429 en esta corrida) se agrupó preventivamente por compartir
+    la misma infraestructura; `ES - Milky Way (search)` comparte el mismo borde pero todavía no
+    tiene el campo seteado. Ver `docs/reference/conventions.md` → Anti-bot.
+115. **Badges de descuento capturados como título cuando el `title_selector` cae al primer
+    match del DOM (2026-07-07).** IT - Dynit: el theme WooCommerce inserta un badge de oferta
+    ("Sconto 10%", "Sconto 5%") ANTES del nombre del producto dentro de la card; el
+    `title_selector` (`.woocommerce-loop-product__title, h2, h3, a`) tomaba el PRIMER elemento
+    que matcheaba —el badge— en vez del título real, en 3 items. Fix:
+    `_first_non_badge_title(card, title_selector)` en
+    `manga_watch.py` itera TODOS los matches del selector dentro de la card y devuelve el
+    primero cuyo texto NO sea un badge (`_is_sale_badge()` vía `_SALE_BADGE_RE`: patrones tipo
+    "-10%", "Sconto N%", "Descuento N%", "Réduction N%", "Sale"/"Saldo"/"Offerta"/"Promo(zione)"/
+    "Solde(s)" en ES/IT/FR/EN); si TODOS los matches son badges (caso raro), cae al primero
+    (comportamiento viejo, nunca peor que antes). Los 3 items con título "Sconto N%" de Dynit se
+    auto-curan en el próximo scrape vía upsert (no requiere retrofit dedicado). Nota aparte: el
+    sitio de Dynit está detrás de Cloudflare (`server: cloudflare`, header `cf-mitigated`) para
+    fetch plano — el fetch de hoy funcionó, pero es sensible a las heurísticas del WAF.
+    **Extensión (2026-07-07, IT - Funside Variant):** aparecieron 7 items con `title`
+    literalmente "Sconto" — el MISMO badge pero SIN porcentaje, que el regex (que exigía un
+    `\d{1,3}` junto a "sconto") no cubría. Se agregó a `_SALE_BADGE_RE` la alternativa de
+    palabra "desnuda" (`sconto`/`sale`/`offerta`/`descuento`/`rebaja`/`réduction` como texto
+    COMPLETO vía `fullmatch`), que NO sobre-matchea títulos con la palabra en contexto
+    ("Garage Sale Vol 1"). Regresión en `tests/test_ingestion_fixes.py`; los 7 títulos se
+    auto-curan igual en el próximo scrape (ficha: `docs/scraper/sources/it-funside-variant.md`).
+116. **Catálogos curados de artbook mueren en el gate de coleccionable (2026-07-07).**
+    Una fuente cuyo catálogo ENTERO son artbooks (tag `artbook`, p.ej. `FR - Glénat Art
+    Books`) tiene títulos que rara vez traen la keyword: "L'Art de Berserk", "One Piece Color
+    Walk", "Rumiko Takahashi Colors". Doble falla: (a) `detect_signals` daba score=0 → morían
+    en `if score <= 0: continue` (`extract_generic_html`); (b) aun con señal,
+    `derive_product_type` caía en `manga` y `is_collectible_edition` los rechazaba como
+    `regular_tomo`. Fix de mecanismo (NO parche por título): **bypass por tag `artbook`**
+    análogo al de `variant-catalog` (Mangavariant), centralizado en
+    `is_curated_collectible_source(candidate)` y usado por los TRES gates
+    (`flush_source_candidates`, `process_state`, wiki flush). Para `artbook` además fuerza
+    `product_type="artbook"` (si no es ya un tipo coleccionable) para que la fila quede bien
+    tipada y pase por la regla 3 de `is_collectible_edition`. Complementariamente se agregó
+    **vocabulario FR de artbook** a `KEYWORD_RULES` ("l'art de", "super art book", "color
+    walk", "beaux livres") + señal `artbook` para "…Colors" **anclado a fin de texto**
+    (`_COLORS_ARTBOOK_RE`) para no marcar tomos regulares con "colors" mid-title ("True Colors
+    3"). **Guard de relevancia:** el bypass se aplica SIEMPRE después de `is_likely_manga`, así
+    que los ítems no-manga de la misma página (BD occidental: Cromwell, Druillet — sin keyword
+    → score=0 → mueren en el gate de señal) nunca llegan al bypass. Regresión en
+    `tests/test_ingestion_fixes.py`. Riesgo residual: un artbook de BD titulado "L'Art de
+    <autor-BD>" SÍ matchea el STRONG hint `\bL['’]?art\s+de\b` de `is_likely_manga` y colaría;
+    si aparece, agregar esa franquicia a `data/comics_blacklist.yml` (ficha:
+    `docs/scraper/sources/fr-glenat-artbooks.md`).

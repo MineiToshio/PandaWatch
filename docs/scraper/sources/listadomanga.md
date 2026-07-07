@@ -3,7 +3,7 @@
 > Catálogo de fuentes de PandaWatch. Esta es la ficha de **ListadoManga** — la fuente
 > más importante y delicada del proyecto. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-14.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -60,6 +60,13 @@ acá. Todo cambio en su ingestión debe terminar con el corpus VÁLIDO (ver §7)
     es otra edición que se visita por su cuenta).
 - **Formato** (`Formato: …`): indica si la edición es premium (kanzenban, cartoné/tapa
   dura, A5, tomo doble, libro de ilustraciones) o normal.
+- **`Título original:`** (cabecera de `coleccion.php`, capturado 2026-07-07): texto libre
+  entre `</b>` y el siguiente `<br/>`/`<b>` — puede traer sólo romaji, romaji + título
+  japonés entre paréntesis, y/o `/` + título en inglés (ej. "Shingeki no Kyojin (進撃の巨人)
+  / Attack on Titan"). Se guarda TAL CUAL en el nuevo campo `original_title` del item —
+  **semilla para el flujo de aliases** (`data/series_aliases.yml` / `unmapped_series.jsonl`),
+  NUNCA se usa para renombrar `title` ni se escribe directo a aliases (política de títulos:
+  #92, el `title` es el nombre oficial y no se toca).
 - **URL sintética por tomo**: cada tomo/extra que entra al corpus recibe una URL estable
   `coleccion.php?id=N&item=<kind>-<vol>[-<hash>]` — es su identificador de producto.
 - **Calidad de imágenes**: las portadas de listadomanga son de baja resolución
@@ -114,10 +121,11 @@ Ambos usan el MISMO parser; sólo cambia CÓMO descubren qué colecciones visita
 | | FULL (general) | DELTA (incremental) |
 |---|---|---|
 | Script | `scripts/scrape_full.sh` | `scripts/scrape_delta.sh` |
-| Discovery | `lista.php` → ~3436 colecciones, orden alfabético | `calendario.php` → ids con actividad reciente (mes actual + 2 anteriores), ~500-600 |
+| Discovery | `lista.php` → ~3436 colecciones, orden alfabético | `calendario.php` → ids con actividad en una VENTANA centrada en hoy (mes actual + 2 anteriores **hasta** +3 meses), ~500-600 |
+| `--min-score` | **30** (gate de precisión, ver nota abajo) | **20** |
 | Frecuencia | mensual / trimestral | diaria / semanal |
 | Tiempo | ~2-4 h | ~30-60 min |
-| Cuándo | refresh completo del catálogo | novedades recientes |
+| Cuándo | refresh completo del catálogo | novedades recientes + preventas anunciadas |
 
 - **El FULL recorre `https://www.listadomanga.es/lista.php` item por item**, en orden
   alfabético, parseando cada colección completa.
@@ -126,6 +134,26 @@ Ambos usan el MISMO parser; sólo cambia CÓMO descubren qué colecciones visita
 - El **calendario plano** (`--bootstrap-wiki listadomanga`) quedó FUERA del pipeline
   (NO parsea especiales/cofres). `listadomanga-blog` también REMOVIDO (0 items netos).
 - Driver de ingesta resumible por chunks: `scripts/ingest_listadomanga_full.py`.
+
+**Ventana del delta extendida a futuro (2026-07-07)**: `scrape_delta.sh` pasa
+`--wiki-from "$LISTADO_CAL_FROM" --wiki-to "$LISTADO_CAL_TO"`, con `LISTADO_CAL_TO =
+hoy + 3 meses` (antes no se pasaba `--wiki-to`, así que la ventana quedaba `[hoy-2m..hoy]`
+y las preventas ya anunciadas en `calendario.php` para meses futuros eran invisibles —
+P1). `calendario.php` sí sirve meses futuros poblados: verificado en vivo ago/sep/oct-2026
+con 54/96/72 colecciones respectivamente. El delta ahora descubre esas colecciones futuras
+igual que cualquier otra (mismo parser de colecciones), habilitando descubrimiento
+temprano de "Números en preparación" (#38) antes de que la fecha de salida llegue.
+
+**Asimetría `--min-score` 20 (delta) vs 30 (full) — DELIBERADA, no un descuido**: el
+gate de 30 en el full es el **gate de precisión** que protege ~3432 colecciones
+recorridas en cada corrida (#50 — sin ese piso, ruido de baja confianza se acumularía a
+escala). El delta usa 20 porque su ventana es chica (~500-600 colecciones, acotada a
+actividad reciente/futura reciente): el riesgo de ruido es bajo y un piso más bajo deja
+pasar señales tempranas (ej. un pack recién anunciado con score marginal) sin esperar al
+próximo full. El red team de la auditoría de ingestión (2026-07-07) evaluó **unificar
+ambos a un mismo valor** y lo **vetó**: los dos scripts corren con perfiles de riesgo
+distintos (recorrido masivo vs ventana acotada) y unificar perdería precisión en el full
+o descubrimiento temprano en el delta.
 
 ---
 
@@ -146,6 +174,9 @@ Parser: [`scripts/wikis/listadomanga_collections.py`](../../../scripts/wikis/lis
   `variant`, `limitada`→`limited`). Distingue variantes del mismo volumen.
 - **`edition_key`** = `{serie}-{publisher}-{edition_slug}-{país}` (+ `-c{cole}` si hubo
   colisión entre colecciones, #57).
+- **`original_title`** (2026-07-07): extraído por `_extract_original_title_from_header()`
+  desde el label "Título original:" de la cabecera de `coleccion.php`. Campo nuevo,
+  aditivo, sólo semilla de aliases — no participa de ninguna key ni se propaga al `title`.
 
 ### 5.2 Qué captura el parser (mapea el §3 al código)
 
@@ -358,7 +389,14 @@ cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
   fuente, pero NO hay forma confirmada de sacar hi-res desde la misma página. Pendiente.
 - **Portadas censuradas (adult content)**: algunos tomos muestran un modal "aceptar
   contenido adulto"; el scraper ve el placeholder. Requeriría Playwright o cookie
-  injection. Diferido.
+  injection. Diferido. **MATIZ (gotcha #40)**: para algunas ediciones el sitio sirve el
+  placeholder `08a02c…png` directo en el `<img src>` server-side. El parser lo detecta y
+  vacía `image_url` para que el item entre a search-covers en vez de mostrar el placeholder.
+  El listado de placeholders conocidos por URL es **fuente única** en
+  `image_store.known_placeholder_url_reason()` (stems + fragmentos), usado por Layout A **y
+  Layout B** — antes el guard vivía sólo en Layout A y el placeholder se colaba por los
+  Extras/Cofres de Layout B como imagen `kind=extra`/carrusel, terminando de "portada" en
+  ~80 series distintas (STOLENIMG masivo, 2026-07-07, gotcha #112). Cerrado con test.
 - **Hash de `item=` no único entre colecciones** (#54): bug latente del generador. Se
   mitiga cualificando por cole en todo dedup; NO se arregló (cambiarlo rompe idempotencia
   con el corpus). Si se regenera todo desde cero, incluir el cole id en el hash.

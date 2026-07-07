@@ -431,6 +431,64 @@ def placeholder_reason(source, *, signatures: dict | None = None) -> str:
     return ""
 
 
+# ── Placeholders CONOCIDOS por URL / basename ──────────────────────────────────
+# Además de los placeholders estructurales (1×1, sólido) o por firma sha1 del
+# contenido, algunas fuentes sirven un ARCHIVO placeholder FIJO (siempre la misma
+# URL) para "portada no disponible / censurada". Estos se detectan por la URL misma
+# — clave porque:
+#   1. la imagen a veces NUNCA se espeja localmente (`local=""`), y `placeholder_reason`
+#      necesita los bytes → no llega a evaluarla; y
+#   2. una MISMA URL compartida por decenas de series distintas es, por definición, un
+#      placeholder (la foto no pertenece a ninguna) — el "STOLENIMG" del corpus.
+# Registro por STEM del basename de la URL (el hash del CDN), case-insensitive:
+#   https://static.listadomanga.com/08a02c…png → stem "08a02c…".
+# Fuente ÚNICA: el parser de listadomanga (`_parse_item_table`/`_parse_layout_b_cell`)
+# y el retrofit `purge_placeholder_images.py` la importan de acá — nunca hardcodear el
+# hash en otro lado. Sumar un nuevo placeholder conocido = una línea en este dict.
+# (1) Por STEM EXACTO del basename (archivos con nombre hash del CDN).
+KNOWN_PLACEHOLDER_URL_STEMS: dict[str, str] = {
+    # listadomanga "portada censurada / no disponible" (gotcha #40/#41). El sitio la
+    # sirve server-side en el <img src> para algunas ediciones adultas/sin cover real.
+    "08a02c268a6d6b2304c152aa0acdc7a0": "listadomanga:censored-cover",
+}
+
+# (2) Por FRAGMENTO de la URL (assets de sitio con nombre descriptivo — logos, iconos
+# de UI, placeholders "adulto", imágenes de accesorio). Verificados a mano en el
+# dry-run 2026-07-07: NUNCA son la portada de un producto → seguros de purgar en
+# cualquier posición. El fragmento se busca como substring en la URL en minúsculas.
+KNOWN_PLACEHOLDER_URL_FRAGMENTS: dict[str, str] = {
+    "/images/site/twitterfollow": "otakucalendar:twitter-follow-ui",
+    "/img/adulte.png": "manga-sanctuary:adult-placeholder",
+    "funside-logo-light": "funside:logo",
+    "buste_protettiva_fumetti": "socialanime:protective-sleeves",
+}
+
+
+def url_basename_stem(url: str) -> str:
+    """Stem (sin path, sin query, sin extensión) del basename de una URL, en minúsculas.
+
+    `https://static.listadomanga.com/08a02c…png?v=2` → `08a02c…`. "" si no hay URL.
+    """
+    if not url:
+        return ""
+    tail = url.strip().rsplit("/", 1)[-1]
+    tail = tail.split("?", 1)[0].split("#", 1)[0]
+    return tail.rsplit(".", 1)[0].strip().lower()
+
+
+def known_placeholder_url_reason(url: str) -> str:
+    """`"known:LABEL"` si `url` es un placeholder conocido (por stem exacto del basename
+    o por fragmento de URL), else "". No toca la red ni el disco — decide sólo por la URL."""
+    label = KNOWN_PLACEHOLDER_URL_STEMS.get(url_basename_stem(url))
+    if label:
+        return f"known:{label}"
+    low = (url or "").lower()
+    for frag, lbl in KNOWN_PLACEHOLDER_URL_FRAGMENTS.items():
+        if frag in low:
+            return f"known:{lbl}"
+    return ""
+
+
 # ── Normalización de imágenes — estandarización al ingresar ────────────────────
 # Toda imagen que entra al espejo se estandariza a un "master de display" único:
 # AVIF calidad 60, lado largo ≤ NORMALIZE_MAX_LONG_SIDE px, sin metadata. AVIF pesa

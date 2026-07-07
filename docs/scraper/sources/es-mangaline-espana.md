@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 > Es una fuente **simple** del YAML (entrada en `sources.yml`, extractor genérico).
 > Sólo lleva §1, §2, §5 (básico), §8/§9 si aplica y §10.
@@ -79,6 +79,16 @@ Grendizer (preventa Goldorak) — que no necesariamente aparecen en otras fuente
 - **Tarjetas de categoría como falsos productos**: el listado mezcla `li.product`
   reales con `li.product.product-category` (cards de categoría) → el
   `:not(.product-category)` las descarta.
+- **Outage total 2026-07-07** (primer delta real post-mejoras): `mangaline.es`
+  respondió `ConnectTimeoutError` (connect timeout=10s) — el mismo síntoma que
+  MangaLine México el mismo día. DNS resuelve (`217.76.149.251`), pero el host no
+  responde en el puerto 443; el IP pertenece al hosting compartido **Arsys**
+  (`arsys.es`, confirmado por whois — `NET-ARSYS-EURO-10`). El sitio SÍ funcionaba
+  en el run del 2026-06-12 (88 candidatos, 8 páginas), así que es probable que sea
+  un problema **transitorio de hosting**, no un cambio permanente del sitio.
+  Monitorear el próximo run: si persiste, escalar a contacto directo con la
+  editorial en vez de reintentos automáticos (un timeout de conexión no es un
+  429/403 — reintentar no ayuda si el host está caído).
 
 ---
 
@@ -89,6 +99,8 @@ Grendizer (preventa Goldorak) — que no necesariamente aparecen en otras fuente
   afuera.
 - {{pendiente: confirmar calidad/resolución de las imágenes de portada de esta
   fuente — no verificado en esta ficha}}.
+- **En observación tras el outage de 2026-07-07**: confirmar en el próximo delta/full
+  si `mangaline.es` volvió a responder antes de sospechar un cambio de código.
 
 ---
 

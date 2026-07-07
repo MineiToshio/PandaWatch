@@ -19,6 +19,9 @@ data/  (todo gi salvo los .yml versionados)
   series_aliases.yml         — canonical series + aliases multilingüe (ver #20).
   items.jsonl                — tabla principal. 1 fila por PRODUCTO (cluster) con
                                sources[]. Cada fila: cluster_key + slug. Ver decisión #1.
+                               original_title (opcional, solo listadomanga): título en
+                               idioma original del header "Título original:", semilla
+                               para aliases — NO confundir con title_original (gotcha #22).
   state.json                 — cache de URLs vistas (detección incremental).
   feedback.jsonl             — cola del botón 👎. Item completo + reason + action
                                (feedback|move|merge|remove). Skill /watch-review-feedback.
@@ -44,6 +47,11 @@ data/  (todo gi salvo los .yml versionados)
   backups/<archivo>/         — backups rotativos (máx 3) vía backup_and_rotate().
                                NUNCA a mano ni en /tmp.
   diagnostics/               — outputs de debug de los filtros (se sobreescriben).
+logs/  (gi)
+  metrics.jsonl               — NUEVO (2026-07-07): 1 línea por fuente/run, appendeada por
+                               source_health.py --metrics-file (idempotente por (run,source)).
+                               Historial para --baseline-alert (mediana por modo delta/full).
+  scrape-{delta,full}-<TS>/    — logs por fase de cada corrida canónica (ver PIPELINE-WALKTHROUGH.md).
 scripts/
   manga_watch.py             — módulo principal (~7k líneas): filtros, scoring, IO,
                                loop paralelo, dispatchers Bluesky/Playwright/HTTP,
@@ -88,7 +96,8 @@ scripts/
                                  y verifica que todo lo esperado (score≥30 + gate) esté en la DB.
     listadomanga_blog.py       ES — blog histórico (disponible, fuera del pipeline).
     manga_sanctuary.py         FR — planning. Valida title vs página (#2). visuel_defaut (#6).
-    otaku_calendar.py          EN — releases del mes actual (sólo, ver #3).
+    otaku_calendar.py          EN — releases por mes vía path /Calendar/{y}/{m} (backfill
+                               histórico viable desde 2026-07-07, ver #3).
     manga_mexico.py            MX — catálogo alfabético por editorial.
     whakoom.py                 ES/LatAm — spider 3-niveles, opt-in (#14, #15).
     mangavariant.py            Global — base de variants 13 países (~2700). URL-referencia.
@@ -120,6 +129,10 @@ scripts/
                                sin traducir ni renombrar — y retira title_standardized.
                                Marca title_restored_at; re-corridas son no-op.
     normalize_release_dates.py normaliza release_date legacy a ISO (DD/MM/YYYY → YYYY-MM-DD; --all-formats para 年月日/datetime/textual). Gotcha #80.
+    normalize_isbn.py          limpia el campo isbn del corpus histórico vía mw.normalize_isbn()
+                               (conserva solo dígitos/X; descarta prefijos basura como "： "
+                               fullwidth JP). Compute-only, salta approved salvo --include-approved.
+                               Registrado en script_registry.py. Gotcha #108.
     filter_non_manga.py        re-filtra (is_likely_manga / is_comic_not_manga / is_pure_novel).
     filter_collectible.py      2º gate: descarta tomos regulares.
     backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.
@@ -184,7 +197,13 @@ scripts/
   audit_lista_full_bidir.py    auditoría de RED bidireccional: re-fetchea las 3436 colecciones de
                                lista.php y compara (kind,vol) parser vs DB → FALTANTES + SOBRANTES.
   audit/
-    source_health.py           clasifica fuentes desde N logs recientes.
+    source_health.py           clasifica fuentes desde N logs recientes. Desde 2026-07-07 también
+                               acumula logs/metrics.jsonl (--metrics-file) y alerta regresiones de
+                               yield vs. mediana histórica del mismo modo (--baseline-alert --mode
+                               delta|full, warm-up ≥3 runs).
+    staleness_report.py        NUEVO — read-only, sin red. Cuenta por fuente cuántas URLs de
+                               data/state.json llevan >N días (default 90) sin verse. No propone
+                               borrar nada, siempre exit 0. Invocado al final de scrape_delta/full.sh.
     unmapped_series.py         series_keys sin alias, fuzzy-matched. Lo lee enrich-series-aliases.
     data_quality.py            audit SOLO LECTURA → quality_report.json + check_urls(). Ver quality.html.
 .claude/skills/              — skills MANUALES (solo bajo pedido explícito, ver política arriba):

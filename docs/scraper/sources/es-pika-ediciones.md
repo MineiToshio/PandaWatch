@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 > ⚠️ **No confundir con "Pika Édition" (Francia).** Esta ficha es la editorial
 > **española** Pika Ediciones, ingerida vía el agregador `hablamosdelibros.es`. La
@@ -72,10 +72,22 @@ catálogo en una grilla.
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **404 en `hablamosdelibros.es/editorial/pika-ediciones/` (2026-06-12) — FUE
+  TRANSITORIO**: se había reportado la URL caída con 404. Verificado en vivo el
+  2026-07-07 (auditoría de ingestión): la página responde **HTTP 200** y expone
+  **18 productos**. No fue un cambio de URL/estructura del agregador ni un problema
+  de selector — fue un blip transitorio del sitio. Falta correr un scrape real para
+  confirmar que el `item_selector` sigue matcheando esos 18 productos y que llegan a
+  `items.jsonl`.
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
-- **0 items en el corpus** al corte (2026-06-08): la fuente está `enabled: true` en el
-  YAML pero todavía no aparece en `data/items.jsonl`. Falta una corrida que confirme
+- **0 items en el corpus** al corte (2026-06-08), pero la fuente **SÍ está viva** (ver
+  §8 — 200 OK, 18 productos verificados 2026-07-07). Falta una corrida que confirme
   que el `item_selector` matchea las tarjetas reales del agregador y que el extractor
   genérico produce items válidos.
 - **Selector frágil de Elementor**: las clases `ae-bg-gallery-type-default`,

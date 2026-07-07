@@ -33,6 +33,9 @@ PY = str(ROOT / ".venv" / "bin" / "python")
 ITEMS = ROOT / "data" / "items.jsonl"
 RETRO = ROOT / "scripts" / "retrofit"
 
+sys.path.insert(0, str(ROOT / "scripts"))
+from manga_watch import backup_and_rotate  # noqa: E402
+
 
 def _recover_edition_display() -> int:
     """edition_display = título oficial de la coleccion, recuperado del
@@ -58,8 +61,16 @@ def _recover_edition_display() -> int:
 
 
 def _run(script: str, *args: str) -> None:
+    """Corre un retrofit de la cadena. Antes tragaba fallos (check=False):
+    un crash a mitad de la cadena de 20+ pasos dejaba el corpus a medias sin
+    señal. Ahora captura el returncode y ABORTA la cadena al primer fallo con
+    SystemExit(rc) — el pipeline (shell) lo recoge en FAILED_STEPS."""
     print(f">>> {script} {' '.join(args)}")
-    subprocess.run([PY, str(RETRO / script), *args], cwd=str(ROOT), check=False)
+    r = subprocess.run([PY, str(RETRO / script), *args], cwd=str(ROOT))
+    if r.returncode != 0:
+        print(f"[enforce] ✗ FALLÓ {script} (rc={r.returncode}) — abortando la cadena.",
+              file=sys.stderr)
+        raise SystemExit(r.returncode)
 
 
 def main() -> int:
@@ -69,6 +80,12 @@ def main() -> int:
                          "Para el pipeline delta/full, que ya corre su propio "
                          "dedup_carousel_images en [4h].")
     args = ap.parse_args()
+    # Backup pre-enforce (convención del repo: data/backups/items.jsonl/, rota máx 3).
+    # El enforcer reescribe items.jsonl vía su cadena de retrofits; un snapshot al
+    # inicio permite restaurar si la cadena aborta a media pasada.
+    if ITEMS.exists() and ITEMS.stat().st_size > 0:
+        bak = backup_and_rotate(ITEMS, "enforce-lmc")
+        print(f"[enforce] 0) backup → {bak}")
     print("[enforce] 1) edition_display oficial (desde description, sin red)")
     n = _recover_edition_display()
     print(f"    edition_display recuperados: {n}")

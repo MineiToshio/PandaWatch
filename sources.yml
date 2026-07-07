@@ -377,7 +377,7 @@ sources:
     tags: ["calendar", "manga", "spain"]
     notes: "Reemplazado por wiki parser: python scripts/manga_watch.py --bootstrap-wiki listadomanga"
 
-  - name: "ES - Listado Manga (colecciones)"
+  - name: "ListadoManga (colecciones)"
     country: "España"
     language: "Español"
     publisher: "Varias editoriales"
@@ -506,6 +506,7 @@ sources:
     kind: "html"
     url: "https://www.milkywayediciones.com/collections/proximamente"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "official"]
 
   - name: "ES - Distrito Manga"
@@ -688,6 +689,7 @@ sources:
     kind: "html"
     url: "https://www.darkhorsedirect.com/collections/comics"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "hardcover", "official", "store", "dark-horse"]
     # Catálogo mixto: comics + manga + figuras + estatuas + prints +
     # bookends. Solo aceptamos ítems con STRONG manga hint (no rescatamos
@@ -971,7 +973,7 @@ sources:
     language: "Francés"
     publisher: "Glénat Manga"
     source_class: "official"
-    kind: "html"
+    kind: "js"
     url: "https://www.glenat.com/livres-keywords-art-book/"
     enabled: true
     tags: ["artbook", "official", "france"]
@@ -1673,6 +1675,7 @@ sources:
     source_class: "retailer"
     kind: "html"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "retailer", "exclusive", "dark-horse"]
     purity: "mixed"  # catálogo mixto (comics + manga + figuras + prints)
     search_template: "https://www.darkhorsedirect.com/search?q={query}"
@@ -1923,6 +1926,7 @@ sources:
     kind: "html"
     url: "https://funside.it/collections/a-caccia-di-variant"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "retailer", "italy", "variant", "new-source"]
     selectors:
       item_selector: ".product-card"
@@ -1950,6 +1954,7 @@ sources:
     kind: "html"
     url: "https://mangadreams.it/collections/all"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "retailer", "italy", "variant", "new-source"]
     selectors:
       item_selector: ".card-wrapper.product-card-wrapper"
@@ -1970,6 +1975,7 @@ sources:
     kind: "html"
     url: "https://mangadreams.it/collections/edizioni-europee-manga-variant-limited"
     enabled: true
+    throttle_group: "shopify"  # borde Shopify 23.227.38.0/24 compartido (429; 2026-07-07)
     tags: ["manga", "retailer", "italy", "variant", "new-source"]
     selectors:
       item_selector: ".card-wrapper.product-card-wrapper"
@@ -2169,8 +2175,8 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://tokyopop.de/search?search=limited"
-    enabled: true
-    tags: ["manga", "official", "germany", "new-source"]
+    enabled: true  # DEGRADADA a fallback 2026-07-07: 77.5% overlap con Manga-Passion (auditoría ingestión); mantener por el 23% único; candidata a poda si el overlap sube.
+    tags: ["manga", "official", "germany", "new-source", "fallback"]
     selectors:
       item_selector: "div.product-box"
       title_selector: ".product-name"
@@ -2183,6 +2189,10 @@ sources:
       es enriquecimiento: URL de compra, stock, fotos de extras, ISBN.
       Más frágil que una categoría (full-text). Evaluación 2026-06-12:
       borderline-add.
+      DEGRADADA a fallback 2026-07-07: auditoría de ingestión midió
+      77.5% overlap con Manga-Passion; se mantiene habilitada por el
+      23% único que aporta, pero pasa a prioridad de fallback (tag
+      "fallback") — candidata a poda si el overlap sigue subiendo.
 
   - name: "DE - Carlsen Manga Novedades"
     country: "Alemania"

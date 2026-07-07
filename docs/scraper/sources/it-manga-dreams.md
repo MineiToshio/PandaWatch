@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -47,8 +47,16 @@ Glénat, etc.): `Manga Dreams` es la tienda, no siempre la editorial (#44).
   - `title_selector`: `a[href*='/products/']`
   - Ambas entradas YAML usan **los mismos selectores**.
 - **Identificador de producto**: URL canónica `/products/<slug>`.
-- **Anti-bot / quirks**: Shopify estándar, sin anti-bot conocido. La paginación de
-  `/collections/all` se queda corta — ver §5 (por qué existe la sub-colección).
+- **Anti-bot / quirks**: Shopify estándar. Hubo un **403 transitorio real el
+  2026-05-21** (log `logs/overnight-2026-05-21-023019/`), autorresuelto en corridas
+  posteriores sin intervención — no es un bloqueo persistente, pero no es correcto
+  decir "sin anti-bot conocido" a secas (corregido 2026-07-07; monitorear si se
+  repite con más frecuencia). **429 real el 2026-07-07** en AMBAS entradas (gotcha
+  #114): `HTTP error 429 Client Error: Too Many Requests` — no es anti-bot de esta
+  tienda puntual, es el borde Shopify compartido `23.227.38.0/24` (mismo edge que
+  Dark Horse Direct, Funside Variant y Milky Way) saturado por concurrencia
+  agregada de las 4 tiendas. La paginación de `/collections/all` se queda corta —
+  ver §5 (por qué existe la sub-colección).
 
 ---
 
@@ -72,6 +80,20 @@ solapa entre ambas entradas.
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **429 en el primer delta real post-mejoras (2026-07-07, gotcha #114)**: las dos
+  entradas (`/collections/all` y `/collections/edizioni-europee-manga-variant-limited`)
+  devolvieron `HTTP error 429 Client Error: Too Many Requests` durante `scrape_delta.sh`.
+  Causa: `mangadreams.it` resuelve al mismo borde Shopify `23.227.38.0/24` que Dark
+  Horse Direct, Funside Variant y Milky Way — `--per-host-limit` agrupa por hostname,
+  así que las 4 tiendas creían tener cupo propio y saturaban el rate-limit real del
+  borde compartido. Fix: `throttle_group: "shopify"` en ambas entradas — semáforo
+  compartido (limit 1) + delay mínimo 2s entre requests del grupo
+  (`--throttle-group-delay`). Monitorear el próximo run.
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
 - **`publisher` = tienda, no editorial** (#44): 107 de 111 items quedan con `Manga Dreams`
@@ -80,6 +102,9 @@ solapa entre ambas entradas.
 - **Cobertura por paginación**: `/collections/all` no surfacea todo; la cobertura completa
   depende de mantener las sub-colecciones relevantes como fuentes hermanas. Si aparece otra
   colección temática con productos que `/collections/all` no trae, hay que agregarla igual.
+- **403 transitorio (2026-05-21)**: sin patrón de recurrencia confirmado; si vuelve a
+  aparecer con frecuencia, considerar backoff/retry dedicado en vez de dejarlo a la
+  auto-resolución del próximo run.
 
 ---
 

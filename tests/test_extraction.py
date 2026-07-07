@@ -3048,6 +3048,18 @@ def test_is_likely_manga_rejects_western_comics_franchises():
         assert not is_manga, f"Should reject western comic: {title!r} (reason={reason})"
 
 
+def test_is_comic_not_manga_bone():
+    """Bone (Jeff Smith) es un cómic americano independiente, no manga."""
+    for title in ["Bone 1", "Bone 2", "Bone 3", "Bone Edición Deluxe"]:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="Astiberri Ediciones")
+        assert is_comic, f"Bone debe ser rechazado como cómic: {title!r}"
+        assert "comic_franchise:Bone" in reason, f"Razón inesperada: {reason}"
+    # Verificar que NO afecta a títulos con 'bone' embebido en palabras
+    is_comic, _ = mw.is_comic_not_manga("Dragonbone Chronicles", publisher="Editorial X")
+    # "Dragonbone" es una sola palabra, no debe matchear "Bone" con word boundary
+    assert not is_comic, "No debe rechazar 'Dragonbone' (sin word boundary)"
+
+
 def test_is_likely_manga_comics_blacklist_does_not_kill_real_manga():
     # Series de manga conocidas en fuente mixed NO deben caer por la blacklist.
     # Todas tienen alguna STRONG manga hint (vol, tomo, n°, kanzenban, etc.)
@@ -4794,6 +4806,69 @@ def test_otaku_calendar_parse_extracts_releases():
     assert "2026-05-06" in dates
 
 
+def test_otaku_calendar_fetch_uses_path_segment_url():
+    """Fix P0 (2026-07-07): el mes va como PATH-SEGMENT (/Calendar/YYYY/M), NO
+    como query string (?month=YYYY-M). El server IGNORA el query string y sirve
+    siempre el mes por defecto — con `?month=` cualquier mes devolvía el mismo
+    HTML, así que bootstrapear un rango producía duplicados. La vista por-path
+    usa la MISMA estructura (`div.dateListingContainer` + `/Release/<id>/<slug>`),
+    así que el parser no cambia. Verificamos (a) la URL generada y (b) que el
+    parseo de una entrada de esa vista sigue funcionando."""
+    from wikis import otaku_calendar as oc
+
+    captured: dict[str, str] = {}
+
+    class _FakeResp:
+        encoding = "utf-8"
+        text = (
+            '<div class="dateListingContainer">'
+            'Tuesday 2 June 2026'
+            '<div><a href="/Release/23615/chainsaw-man-volume-21-manga-us">'
+            'Chainsaw Man Volume 21 (Manga) US</a></div>'
+            '</div>'
+        )
+
+        def raise_for_status(self):
+            return None
+
+    class _FakeSession:
+        def get(self, url, timeout=None):
+            captured["url"] = url
+            return _FakeResp()
+
+    cands = oc.fetch_calendar_month(2026, 6, _FakeSession(), allowed_countries=("US",))
+    # (a) URL path-segment, sin el query string ?month= que el server ignora.
+    assert captured["url"] == "https://otakucalendar.com/Calendar/2026/6"
+    assert "?month=" not in captured["url"]
+    # (b) el parseo de la vista por-path sigue emitiendo el item.
+    assert len(cands) == 1
+    assert "Chainsaw Man" in cands[0].title
+    assert cands[0].release_date == "2026-06-02"
+
+
+def test_otaku_calendar_iter_year_months_includes_future():
+    """El delta acota otaku-calendar a una ventana centrada en hoy (hoy-2m →
+    hoy+3m) que INCLUYE meses futuros — otakucalendar.com sirve por-path los
+    meses futuros con contenido real ("en preparación"), y iter_year_months NO
+    debe recortarlos a 'hoy'. Verificado contra el sitio 2026-07-07 (2026-09 y
+    2026-10 devolvieron releases). Esta invariante es la que hace que el delta
+    capture preventas anunciadas; si iter_year_months clampeara a hoy, se
+    perderían silenciosamente."""
+    from wikis import otaku_calendar as oc
+
+    # Ventana que cruza 'hoy' hacia el futuro (from < to, to en el futuro).
+    pairs = oc.iter_year_months(2026, 5, 2026, 10)
+    assert pairs == [
+        (2026, 5), (2026, 6), (2026, 7), (2026, 8), (2026, 9), (2026, 10),
+    ]
+    # Rango puramente futuro (from y to ambos futuros) también se itera entero.
+    future = oc.iter_year_months(2027, 1, 2027, 4)
+    assert future == [(2027, 1), (2027, 2), (2027, 3), (2027, 4)]
+    # Cruce de año hacia el futuro.
+    cross = oc.iter_year_months(2026, 11, 2027, 2)
+    assert cross == [(2026, 11), (2026, 12), (2027, 1), (2027, 2)]
+
+
 # ----- manga_mexico.py (wiki MX) -----
 
 def test_manga_mexico_split_title():
@@ -4843,24 +4918,68 @@ def test_manga_mexico_skips_duplicate_titles():
 # ---------------------------------------------------------------------------
 
 
-def test_cluster_key_isbn_authoritative():
-    """Si hay ISBN, prevalece sobre cualquier otro derivado."""
-    item = {"isbn": "9788822624697", "title": "ONE PIECE 98 CELEBRATION EDITION",
-            "language": "Italiano", "url": "https://x.com/a"}
-    assert mw.derive_cluster_key(item) == "isbn:9788822624697"
+def test_cluster_key_isbn_is_not_a_tier():
+    """El ISBN dejó de ser criterio de fusión (2026-07-07): un item con isbn
+    pero sin edition_key NUNCA produce una clave `isbn:` — cae a la cascada
+    fuzzy → url. El ISBN se conserva como metadata del row, no como clave."""
+    # Con país+serie+volumen → fuzzy (no isbn:).
+    item = {"isbn": "9788822624697", "title": "One Piece Celebration Edition Vol. 100",
+            "country": "Italia", "language": "Italiano", "publisher": "Star Comics",
+            "signal_types": ["lore_edition"], "url": "https://x.com/a"}
+    key = mw.derive_cluster_key(item)
+    assert not key.startswith("isbn:")
+    assert key.startswith("fuzzy:")
+    # Sin país (info insuficiente) → url:, tampoco isbn:.
+    item2 = {"isbn": "9788822624697", "title": "ONE PIECE 98 CELEBRATION EDITION",
+             "language": "Italiano", "url": "https://x.com/a"}
+    assert mw.derive_cluster_key(item2) == "url:https://x.com/a"
 
 
-def test_cluster_key_two_isbns_distinct():
-    a = {"isbn": "9788822624697", "title": "X", "language": "Italiano", "url": "http://a"}
-    b = {"isbn": "9788822624698", "title": "X", "language": "Italiano", "url": "http://b"}
-    assert mw.derive_cluster_key(a) != mw.derive_cluster_key(b)
+def test_cluster_key_same_isbn_distinct_country_dont_merge():
+    """Regresión del bug: el mismo ISBN puede corresponder a ediciones
+    DISTINTAS (portadas variantes, especial vs normal, retailers como Mangaline
+    MX que reusan un ISBN en toda su línea). Dos items con MISMO isbn pero país
+    (=edición) o variante distintos NO deben compartir cluster_key."""
+    # Mismo isbn, país distinto (país = edición, regla dura).
+    es = {"isbn": "9788419177629", "title": "Devilman n. 3", "country": "España",
+          "language": "Español", "publisher": "Mangaline", "signal_types": [],
+          "url": "http://es"}
+    mx = {"isbn": "9788419177629", "title": "Devilman n. 3", "country": "México",
+          "language": "Español", "publisher": "Mangaline", "signal_types": [],
+          "url": "http://mx"}
+    assert mw.derive_cluster_key(es) != mw.derive_cluster_key(mx)
+    # Mismo isbn reusado por el retailer en OTRA serie (Mao Dante) — jamás debe
+    # colapsar con Devilman.
+    mao = {"isbn": "9788419177629", "title": "Mao Dante n. 1", "country": "México",
+           "language": "Español", "publisher": "Mangaline", "signal_types": [],
+           "url": "http://mao"}
+    assert mw.derive_cluster_key(mx) != mw.derive_cluster_key(mao)
+
+
+def test_cluster_key_two_retailers_same_edition_still_merge_via_fuzzy():
+    """No perdimos el dedup legítimo: la MISMA edición (mismo país+serie+
+    volumen+variant_tier+publisher) vista por 2 retailers, sin edition_key y
+    con el mismo isbn, SIGUE fusionando vía fuzzy (el isbn no aporta ni estorba)."""
+    a = {"isbn": "9788822624697", "title": "One Piece Celebration Edition Vol. 100",
+         "country": "Italia", "language": "Italiano", "publisher": "Star Comics",
+         "signal_types": ["lore_edition"], "url": "http://retailer-a"}
+    b = {"isbn": "9788822624697", "title": "One Piece n. 100 Celebration Edition",
+         "country": "Italia", "language": "Italiano", "publisher": "Star Comics",
+         "signal_types": ["lore_edition"], "url": "http://retailer-b"}
+    assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
+    assert mw.derive_cluster_key(a).startswith("fuzzy:")
 
 
 def test_cluster_key_fuzzy_merges_same_series_volume_variant():
-    """Dos items sin ISBN del mismo idioma + serie + vol + variant → mismo key."""
+    """Dos items sin ISBN del mismo país + serie + vol + variant → mismo key.
+
+    country coherente (fuzzy usa PAÍS, no idioma, desde 2026-07: país=edición).
+    """
     a = {"title": "ONE PIECE n. 100 CELEBRATION EDITION", "language": "Italiano",
+         "country": "Italia",
          "publisher": "Star Comics", "signal_types": ["lore_edition"], "url": "http://a"}
     b = {"title": "One Piece Celebration Edition Vol. 100", "language": "Italiano",
+         "country": "Italia",
          "publisher": "Star Comics", "signal_types": ["lore_edition"], "url": "http://b"}
     assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
 
@@ -5022,10 +5141,46 @@ def test_cluster_key_edition_key_wins_over_isbn():
     assert mw.derive_cluster_key(item) == "edition:x-y-z|1"
 
 
-def test_cluster_key_isbn_fallback_without_edition_key():
-    """ISBN sigue activo como fallback para items sin edition_key (legacy)."""
+def test_cluster_key_isbn_alone_falls_to_url():
+    """El ISBN ya NO es fallback (2026-07-07): un item con SOLO isbn (sin
+    edition_key, sin país/serie/volumen suficientes) cae a url:, no a isbn:.
+    Antes esto devolvía `isbn:9788822624697`; el tier isbn: se eliminó porque
+    fusionaba ediciones/series distintas que comparten ISBN."""
     item = {"isbn": "9788822624697", "url": "http://a"}
-    assert mw.derive_cluster_key(item) == "isbn:9788822624697"
+    assert mw.derive_cluster_key(item) == "url:http://a"
+
+
+def test_validate_corpus_isbndup_ignores_legit_shared_isbn():
+    """El validador ya NO marca ISBNDUP por un ISBN compartido entre ediciones
+    legítimamente distintas (país/serie/variante distintos), pero SÍ marca un
+    duplicado real (misma firma en clusters distintos)."""
+    # validate_corpus hace `import manga_watch` (bare); en la sesión de pytest
+    # ese nombre puede quedar como un módulo a medio cargar. Aliaseamos el
+    # módulo YA completo antes de importarlo para que `vc.mw` sea el mismo.
+    import sys as _sys
+    _sys.modules["manga_watch"] = mw
+    from scripts import validate_corpus as vc
+
+    # (1) Mismo ISBN reusado por retailer en 2 series/países distintos →
+    # firmas distintas → NO es violación.
+    legit = [
+        {"isbn": "9788419177629", "title": "Devilman n. 3", "country": "México",
+         "edition_key": "devilman-mangaline-regular-mx", "cluster_key": "c1"},
+        {"isbn": "9788419177629", "title": "Mao Dante n. 1", "country": "México",
+         "edition_key": "mao-dante-mangaline-regular-mx", "cluster_key": "c2"},
+    ]
+    assert vc.isbn_dup_violations(legit) == []
+
+    # (2) Duplicado REAL: misma edición (mismo edition_key) partida en 2
+    # clusters distintos con el mismo ISBN → sí se marca.
+    dupe = [
+        {"isbn": "9781506711980", "title": "Berserk Deluxe 1", "country": "US",
+         "edition_key": "berserk-darkhorse-deluxe-us", "cluster_key": "c1"},
+        {"isbn": "9781506711980", "title": "Berserk Deluxe 1", "country": "US",
+         "edition_key": "berserk-darkhorse-deluxe-us", "cluster_key": "c2"},
+    ]
+    viols = vc.isbn_dup_violations(dupe)
+    assert len(viols) == 1 and viols[0][0] == "9781506711980"
 
 
 def test_cluster_key_prh_and_darkhorse_merge_same_volume():
@@ -5042,6 +5197,7 @@ def test_cluster_key_prh_and_darkhorse_merge_same_volume():
 def test_cluster_key_no_edition_key_falls_through_to_fuzzy():
     """Items sin edition_key (pre-standardize-catalog) usan fuzzy como antes."""
     item = {"title": "One Piece vol. 100 Celebration", "language": "Italiano",
+            "country": "Italia",
             "publisher": "Star Comics", "signal_types": ["lore_edition"],
             "url": "http://a"}
     key = mw.derive_cluster_key(item)
@@ -5050,9 +5206,9 @@ def test_cluster_key_no_edition_key_falls_through_to_fuzzy():
 
 def test_cluster_key_japanese_preserves_kanji():
     """No strippeamos kanji/kana — son discriminantes para series JP."""
-    a = {"title": "ワンピース 100巻 限定版", "language": "Japonés",
+    a = {"title": "ワンピース 100巻 限定版", "language": "Japonés", "country": "Japón",
          "publisher": "集英社", "signal_types": ["limited"], "url": "http://a"}
-    b = {"title": "ワンピース 100巻 限定版", "language": "Japonés",
+    b = {"title": "ワンピース 100巻 限定版", "language": "Japonés", "country": "Japón",
          "publisher": "集英社", "signal_types": ["limited"], "url": "http://b"}
     assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
     assert "ワンピース" in mw.derive_cluster_key(a)
@@ -5099,6 +5255,7 @@ def test_cluster_key_one_piece_98_celebration_merges_across_sources():
         "title": "ONE PIECE n. 98 CELEBRATION EDITION",
         "url": "https://www.starcomics.com/fumetto/one-piece-98-celebration-edition",
         "language": "Italiano",
+        "country": "Italia",
         "publisher": "Star Comics",
         "signal_types": ["collector", "lore_edition"],
         "isbn": "",
@@ -5107,6 +5264,7 @@ def test_cluster_key_one_piece_98_celebration_merges_across_sources():
         "title": "One Piece — Vol.98 - Celebration edition",
         "url": "https://mangavariant.com/variant/one-piece/vol-98-celebration-edition/",
         "language": "Italiano",
+        "country": "Italia",
         "publisher": "Star Comics",
         "signal_types": ["bonus", "special_edition", "collector", "lore_edition"],
         "isbn": "",
@@ -5116,15 +5274,17 @@ def test_cluster_key_one_piece_98_celebration_merges_across_sources():
     assert sc_key == mv_key, (
         f"Expected same cluster_key:\n  star_comics: {sc_key}\n  mangavariant: {mv_key}"
     )
-    assert sc_key.startswith("fuzzy:italiano|one piece|98|lore_edition|star comics"), sc_key
+    # fuzzy usa PAÍS (no idioma): "Italia".lower() = "italia".
+    assert sc_key.startswith("fuzzy:italia|one piece|98|lore_edition|star comics"), sc_key
 
 
 def test_cluster_key_tolerates_extra_lower_priority_signals():
     """Item A con [lore_edition] y B con [lore_edition, bonus, collector] del
     mismo producto deben mergear (todos colapsan a tier='lore_edition')."""
-    a = {"title": "Naruto n. 12 anniversary", "language": "Italiano",
+    a = {"title": "Naruto n. 12 anniversary", "language": "Italiano", "country": "Italia",
          "publisher": "Panini", "signal_types": ["lore_edition"], "url": "http://a"}
     b = {"title": "Naruto Vol. 12 Anniversary Edition", "language": "Italiano",
+         "country": "Italia",
          "publisher": "Panini",
          "signal_types": ["lore_edition", "bonus", "collector"],
          "url": "http://b"}
@@ -5167,8 +5327,9 @@ def test_normalize_series_strips_numero_marker():
 def test_cluster_key_strips_brackets_to_avoid_noise():
     """Contenido entre corchetes (típico ruido de retailer JP) no afecta key."""
     a = {"title": "Naruto Vol. 5 Deluxe (BeBoy Comics Deluxe)", "language": "Japonés",
+         "country": "Japón",
          "publisher": "集英社", "signal_types": ["deluxe"], "url": "http://a"}
-    b = {"title": "Naruto Vol. 5 Deluxe", "language": "Japonés",
+    b = {"title": "Naruto Vol. 5 Deluxe", "language": "Japonés", "country": "Japón",
          "publisher": "集英社", "signal_types": ["deluxe"], "url": "http://b"}
     assert mw.derive_cluster_key(a) == mw.derive_cluster_key(b)
 
@@ -5330,6 +5491,184 @@ def test_mangavariant_iter_year_months_returns_single_batch():
     para que el dispatcher cuente '1 mes' en el resumen."""
     from wikis import mangavariant as mv
     assert mv.iter_year_months(2024, 1, 2026, 12) == [(2024, 1)]
+
+
+# --- Modo incremental (delta): diff contra el corpus + tope + lastmod ---------
+
+class _MvFakeSitemapSession:
+    """Session falsa que devuelve la fixture de sitemap para cualquier URL."""
+
+    def __init__(self) -> None:
+        self._xml = _mv_html("sitemap_sample.xml")
+
+    def get(self, url, timeout):  # noqa: ARG002
+        class _R:
+            def __init__(self, text):
+                self.text = text
+                self.status_code = 200
+            def raise_for_status(self):
+                return None
+        return _R(self._xml)
+
+
+def test_mangavariant_norm_variant_url_canonicalizes():
+    """La clave canónica ignora esquema/host/query/slash final y baja a minúsculas."""
+    from wikis import mangavariant as mv
+    a = mv._norm_variant_url("https://mangavariant.com/variant/One-Piece/Vol-10-Special/")
+    b = mv._norm_variant_url("http://mangavariant.com/variant/one-piece/vol-10-special?x=1#f")
+    assert a == "/variant/one-piece/vol-10-special"
+    assert a == b
+    assert mv._norm_variant_url("https://mangavariant.com/variant/") == ""
+    assert mv._norm_variant_url("https://example.com/otra/cosa") == ""
+
+
+def test_mangavariant_fetch_url_entries_reads_lastmod():
+    """fetch_variant_url_entries devuelve (loc, lastmod) por variante, con el
+    lastmod del sitemap; descarta /variant/ (index) y /about/."""
+    from wikis import mangavariant as mv
+    entries = mv.fetch_variant_url_entries(_MvFakeSitemapSession(), sitemaps=("dummy",))
+    assert len(entries) == 3
+    by_loc = dict(entries)
+    assert by_loc[
+        "https://mangavariant.com/variant/attack-on-titan/vol-34-crunchyroll-variant/"
+    ] == "2024-06-29T03:09:07+00:00"
+    # Todas traen lastmod no vacío en la fixture.
+    assert all(lm for _, lm in entries)
+    # fetch_variant_urls (compat) sigue devolviendo solo las 3 locs.
+    urls = mv.fetch_variant_urls(_MvFakeSitemapSession(), sitemaps=("dummy",))
+    assert urls == [loc for loc, _ in entries]
+
+
+def test_mangavariant_load_seen_variant_urls(tmp_path):
+    """load_seen_variant_urls normaliza URLs de `url` top-level y de sources[]."""
+    from wikis import mangavariant as mv
+    corpus = tmp_path / "items.jsonl"
+    corpus.write_text(
+        json.dumps({"url": "https://mangavariant.com/variant/One-Piece/Vol-10-Special/"}) + "\n"
+        + json.dumps({"sources": [
+            {"url": "https://otra.com/x"},
+            {"url": "https://mangavariant.com/variant/naruto/vol-1-deluxe/"},
+        ]}) + "\n"
+        + json.dumps({"url": "https://example.com/sin-relacion"}) + "\n",
+        encoding="utf-8",
+    )
+    seen = mv.load_seen_variant_urls(str(corpus))
+    assert seen == {
+        "/variant/one-piece/vol-10-special",
+        "/variant/naruto/vol-1-deluxe",
+    }
+
+
+def test_mangavariant_load_seen_missing_corpus_is_empty(tmp_path):
+    """Sin corpus, el set es vacío (todo se trata como nuevo)."""
+    from wikis import mangavariant as mv
+    assert mv.load_seen_variant_urls(str(tmp_path / "nope.jsonl")) == set()
+
+
+def test_mangavariant_incremental_selects_only_unseen():
+    """El diff se queda SOLO con las URLs cuya clave no está en el corpus."""
+    from wikis import mangavariant as mv
+    entries = [
+        ("https://mangavariant.com/variant/a/seen/", "2025-01-01T00:00:00+00:00"),
+        ("https://mangavariant.com/variant/b/new/", "2026-01-01T00:00:00+00:00"),
+    ]
+    seen = {"/variant/a/seen"}
+    sel, stats = mv._select_incremental_urls(entries, seen, since="", max_new=0)
+    assert sel == ["https://mangavariant.com/variant/b/new/"]
+    assert stats["new"] == 1 and stats["updated"] == 0 and stats["capped"] is False
+
+
+def test_mangavariant_incremental_orders_newest_first_and_caps():
+    """Con tope, se conservan las candidatas de lastmod más reciente (freshest)."""
+    from wikis import mangavariant as mv
+    entries = [
+        ("https://mangavariant.com/variant/x/old/", "2024-01-01T00:00:00+00:00"),
+        ("https://mangavariant.com/variant/x/new/", "2026-07-01T00:00:00+00:00"),
+        ("https://mangavariant.com/variant/x/mid/", "2025-03-01T00:00:00+00:00"),
+        ("https://mangavariant.com/variant/x/nomod/", ""),
+    ]
+    sel, stats = mv._select_incremental_urls(entries, set(), since="", max_new=2)
+    assert sel == [
+        "https://mangavariant.com/variant/x/new/",
+        "https://mangavariant.com/variant/x/mid/",
+    ]
+    assert stats["capped"] is True
+    assert stats["candidates_before_cap"] == 4 and stats["selected"] == 2
+
+
+def test_mangavariant_incremental_since_refetches_updated():
+    """Con `since`, una URL YA vista pero con lastmod > since se re-incluye."""
+    from wikis import mangavariant as mv
+    entries = [
+        ("https://mangavariant.com/variant/a/seen/", "2026-06-01T00:00:00+00:00"),
+        ("https://mangavariant.com/variant/b/new/", "2026-06-02T00:00:00+00:00"),
+    ]
+    seen = {"/variant/a/seen"}
+    # Sin since: solo la nueva.
+    sel0, _ = mv._select_incremental_urls(entries, seen, since="", max_new=0)
+    assert sel0 == ["https://mangavariant.com/variant/b/new/"]
+    # Con since anterior a ambos: la vista se re-incluye como updated.
+    sel1, stats1 = mv._select_incremental_urls(
+        entries, seen, since="2026-01-01T00:00:00+00:00", max_new=0)
+    assert set(sel1) == {
+        "https://mangavariant.com/variant/a/seen/",
+        "https://mangavariant.com/variant/b/new/",
+    }
+    assert stats1["updated"] == 1 and stats1["new"] == 1
+
+
+def test_mangavariant_bootstrap_full_mode_still_fetches_all(monkeypatch):
+    """El modo FULL (incremental=False) NO diffa contra el corpus: procesa
+    todas las URLs del sitemap (no romper el full)."""
+    from wikis import mangavariant as mv
+
+    def _fake_entries(session, timeout=(10, 30), sitemaps=mv.VARIANT_SITEMAPS):
+        return [
+            ("https://mangavariant.com/variant/a/uno/", "2026-01-01T00:00:00+00:00"),
+            ("https://mangavariant.com/variant/b/dos/", "2026-01-02T00:00:00+00:00"),
+        ]
+
+    fetched = []
+    def _fake_fetch_one(url, session, timeout):
+        fetched.append(url)
+        return None  # no nos importa el parseo acá
+
+    monkeypatch.setattr(mv, "fetch_variant_url_entries", _fake_entries)
+    monkeypatch.setattr(mv, "_fetch_one", _fake_fetch_one)
+    # load_seen NO debe consultarse en full; si lo hiciera, fallaría el conteo.
+    monkeypatch.setattr(mv, "load_seen_variant_urls",
+                        lambda *_a, **_k: {"/variant/a/uno", "/variant/b/dos"})
+
+    mv.bootstrap(2024, 1, 2026, 12, session=object(), incremental=False, workers=1)
+    assert sorted(fetched) == [
+        "https://mangavariant.com/variant/a/uno/",
+        "https://mangavariant.com/variant/b/dos/",
+    ]
+
+
+def test_mangavariant_bootstrap_incremental_skips_seen(monkeypatch):
+    """El modo incremental fetchea SOLO lo no visto (diff contra el corpus)."""
+    from wikis import mangavariant as mv
+
+    def _fake_entries(session, timeout=(10, 30), sitemaps=mv.VARIANT_SITEMAPS):
+        return [
+            ("https://mangavariant.com/variant/a/uno/", "2026-01-01T00:00:00+00:00"),
+            ("https://mangavariant.com/variant/b/dos/", "2026-01-02T00:00:00+00:00"),
+        ]
+
+    fetched = []
+    def _fake_fetch_one(url, session, timeout):
+        fetched.append(url)
+        return None
+
+    monkeypatch.setattr(mv, "fetch_variant_url_entries", _fake_entries)
+    monkeypatch.setattr(mv, "_fetch_one", _fake_fetch_one)
+    monkeypatch.setattr(mv, "load_seen_variant_urls",
+                        lambda *_a, **_k: {"/variant/a/uno"})
+
+    mv.bootstrap(2024, 1, 2026, 12, session=object(),
+                 incremental=True, max_new=400, workers=1)
+    assert fetched == ["https://mangavariant.com/variant/b/dos/"]
 
 
 def test_socialanime_parse_variant_item_basic():
@@ -6028,11 +6367,11 @@ def test_sumikko_dedupe_by_isbn_within_page():
 
 # --- listadomanga_collections (Fase 1) -------------------------------------
 
-def _lmc_html_minimal(*sections_html: str, formato: str = "Tomo (115x175) rústica (tapa blanda) con sobrecubierta", title: str = "Berserk (Panini)", publisher: str = "Panini Manga", author: str = "Kentaro Miura") -> str:
+def _lmc_html_minimal(*sections_html: str, formato: str = "Tomo (115x175) rústica (tapa blanda) con sobrecubierta", title: str = "Berserk (Panini)", publisher: str = "Panini Manga", author: str = "Kentaro Miura", original_title: str = "Test") -> str:
     """Construye un HTML mínimo de coleccion.php con header + secciones dadas."""
     header = (
         f'<h2>{title}\t\t</h2><hr/>'
-        f'<b>T&iacute;tulo original:</b> Test<br/>'
+        f'<b>T&iacute;tulo original:</b> {original_title}<br/>'
         f'<b>Guion:</b> <a href="autor.php?id=1">{author}</a><br/>'
         f'<b>Editorial espa&ntilde;ola:</b> <a href="editorial.php?id=1">{publisher}</a><br/>'
         f'<b>Formato:</b> {formato}<br/>'
@@ -6164,6 +6503,54 @@ def test_lmc_two_especiales_same_section_get_distinct_clusters():
     # los fusione (la causa raíz de la pérdida histórica del especial-1).
     clusters = {mw.derive_cluster_key(mw.candidate_to_json(c)) for c in cands}
     assert clusters == {"lmc:5050:special:1", "lmc:5050:special:2"}, clusters
+
+
+def test_lmc_extract_original_title_three_formats():
+    """`_extract_original_title_from_header` captura el campo '<b>Título
+    original:</b>' de la cabecera de coleccion.php. A diferencia de editorial/
+    autor NO viene envuelto en <a>: es texto plano hasta el próximo <br/>. Debe
+    devolver el string COMPLETO tal cual, en los 3 formatos reales del sitio."""
+    from wikis import listadomanga_collections as lmc
+    # Formato 1: sólo romaji.
+    h1 = '<b>T&iacute;tulo original:</b> Shingeki no Kyojin<br/><b>Guion:</b> <a>X</a>'
+    assert lmc._extract_original_title_from_header(h1) == "Shingeki no Kyojin"
+    # Formato 2: romaji + título japonés entre paréntesis.
+    h2 = '<b>T&iacute;tulo original:</b> Shingeki no Kyojin (進撃の巨人)<br/>'
+    assert lmc._extract_original_title_from_header(h2) == "Shingeki no Kyojin (進撃の巨人)"
+    # Formato 3: romaji + japonés + inglés (separado por " / ").
+    h3 = ('<b>T&iacute;tulo original:</b> Shingeki no Kyojin (進撃の巨人) '
+          '/ Attack on Titan<br/><b>Guion:</b> <a>X</a>')
+    assert (lmc._extract_original_title_from_header(h3)
+            == "Shingeki no Kyojin (進撃の巨人) / Attack on Titan")
+    # Ausente → "".
+    assert lmc._extract_original_title_from_header('<b>Guion:</b> <a>X</a>') == ""
+
+
+def test_lmc_original_title_propagated_to_candidate():
+    """El 'Título original' del header viaja al Candidate emitido como semilla
+    del flujo de aliases (unmapped/enrich lo consume aparte). PROHIBIDO que
+    renombre el `title` (política de títulos: el title es el nombre OFICIAL con
+    que publica la editorial — acá el español 'Ataque a los Titanes')."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(1, "Ataque a los Titanes",
+                      desc_extra="Edición Especial + Lámina", price="15,00 €"),
+        ),
+        title="Ataque a los Titanes (Norma)",
+        publisher="Norma Editorial",
+        original_title="Shingeki no Kyojin (進撃の巨人) / Attack on Titan",
+    )
+    cands = lmc.parse_collection_page(html, 1606)
+    assert len(cands) >= 1
+    # Presencia del campo en TODOS los candidates emitidos.
+    assert all(
+        getattr(c, "original_title", None) == "Shingeki no Kyojin (進撃の巨人) / Attack on Titan"
+        for c in cands
+    )
+    # El title NO se toca: sigue siendo el nombre oficial del tomo en español.
+    assert all("Ataque a los Titanes" in c.title for c in cands)
 
 
 def test_lmc_free_preview_number_is_skipped():
@@ -6418,6 +6805,57 @@ def test_lmc_censored_placeholder_kept_without_image():
     assert len(cands) == 1, "el item censurado debe capturarse igual"
     assert cands[0].image_url == "", "no debe usar el placeholder censurado como portada"
     assert not cands[0].images, "sin imágenes → entra a search-covers"
+
+
+def test_lmc_censored_placeholder_in_layout_b_extra_not_added():
+    """Vía LIVE (2026-07-07, STOLENIMG ×78): el placeholder censurado (08a02c…png)
+    servido en un EXTRA de Layout B ("Extras de X") NO debe entrar como imagen del
+    tomo destino — sin este guard la MISMA foto placeholder terminaba de portada en
+    decenas de series distintas. El tomo se enriquece igual (extras[] con la desc)
+    pero SIN la imagen placeholder."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_section(
+            "N&uacute;meros editados (Ediciones Especiales)",
+            _lmc_item(5, "Other Series", price="12,00 €", image_id="realcover5"),
+        ),
+        _lmc_layout_b_section(
+            "Extras de Other Series",
+            _lmc_layout_b_cell("Other Series nº5", "(Edici&oacute;n Especial)",
+                               ["Postal exclusiva"], "1 Junio 2020",
+                               image_id=lmc.CENSORED_COVER_HASH),
+        ),
+        title="Other Series (Panini)",
+    )
+    cands = lmc.parse_collection_page(html, 99992)
+    assert len(cands) == 1
+    urls = [im.get("url") for im in (cands[0].images or [])]
+    assert not any(lmc.CENSORED_COVER_HASH in (u or "") for u in urls), \
+        "el placeholder censurado NO debe entrar como imagen del extra"
+    # la cover real del tomo sí sigue
+    assert any("realcover5" in (u or "") for u in urls)
+
+
+def test_lmc_censored_placeholder_in_layout_b_no_phantom_cover():
+    """Un extra Layout B cuyo tomo NO está en Layout A crea un item `from_extras`.
+    Si la foto del extra era el placeholder censurado, el item nuevo NO debe usar el
+    placeholder como cover — queda sin imagen (elegible para search-covers)."""
+    from wikis import listadomanga_collections as lmc
+    html = _lmc_html_minimal(
+        _lmc_layout_b_section(
+            "Extras de Phantom Series",
+            _lmc_layout_b_cell("Phantom Series nº3", "(Edici&oacute;n Especial)",
+                               ["Libro de ilustraciones"], "1 Junio 2020",
+                               image_id=lmc.CENSORED_COVER_HASH),
+        ),
+        title="Phantom Series (Panini)", formato="Tomo rústica",
+    )
+    cands = lmc.parse_collection_page(html, 99993)
+    assert len(cands) == 1, "el extra crea el item from_extras igual"
+    urls = [im.get("url") for im in (cands[0].images or [])]
+    assert not any(lmc.CENSORED_COVER_HASH in (u or "") for u in urls), \
+        "el item from_extras NO debe llevar el placeholder censurado"
+    assert cands[0].image_url == "" or lmc.CENSORED_COVER_HASH not in cands[0].image_url
 
 
 def test_lmc_two_line_subtitle_joined_into_title():
@@ -10550,6 +10988,48 @@ def test_serve_move_consolidates_into_existing_volume(tmp_path):
     out = [json.loads(l) for l in items.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert len(out) == 1, "mover al tomo existente debe fusionar, no duplicar"
     assert {s["name"] for s in out[0]["sources"]} == {"X", "Y"}
+
+
+def test_serve_tests_never_touch_real_data_dir():
+    """Regresión del leak que llenó data/feedback.jsonl con 670 filas de prueba.
+
+    El conftest (autouse) setea MANGA_WATCH_DATA_DIR a un tmp; serve debe derivar
+    TODOS sus paths de escritura de ahí, nunca del data/ real del repo.
+    """
+    import os
+    serve = _load_serve()
+    data_env = os.environ.get("MANGA_WATCH_DATA_DIR")
+    assert data_env, "el fixture autouse debe setear MANGA_WATCH_DATA_DIR"
+    for p in (serve.FEEDBACK_PATH, serve.ITEMS_PATH, serve.APPROVALS_PATH,
+              serve.EDITS_PATH, serve.DUP_DECISIONS_PATH):
+        assert str(p).startswith(data_env), f"{p} escapa del tmp de tests"
+
+
+def test_serve_feedback_dedup_guard(tmp_path):
+    """No se puede re-reportar la misma URL mientras está pendiente en la cola;
+    al truncar la cola (procesar el feedback) vuelve a poder reportarse."""
+    serve = _load_serve()
+    fb = tmp_path / "feedback.jsonl"
+    serve.FEEDBACK_PATH = fb
+    serve.ITEMS_PATH = tmp_path / "items.jsonl"
+
+    url = "https://shop/op1"
+    assert serve._url_in_feedback(url) is False          # cola inexistente → no reportado
+    serve._log_feedback(url, "no es manga", action="feedback")
+    assert serve._url_in_feedback(url) is True
+
+    # El guard del handler bloquea el segundo intento → 1 sola fila.
+    if not serve._url_in_feedback(url):
+        serve._log_feedback(url, "otra vez", action="feedback")
+    lines = [l for l in fb.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(lines) == 1, "no debe duplicar feedback de la misma URL"
+
+    # Otra URL distinta sí entra.
+    assert serve._url_in_feedback("https://shop/op2") is False
+
+    # Tras procesar (truncar la cola) se puede volver a reportar.
+    fb.write_text("", encoding="utf-8")
+    assert serve._url_in_feedback(url) is False
 
 
 def test_serve_item_update_product_field_propagates_row_field_does_not(tmp_path):

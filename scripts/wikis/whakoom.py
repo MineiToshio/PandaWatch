@@ -76,6 +76,7 @@ try:
         _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
+        detect_challenge,
         is_likely_manga,
         score_candidate,
     )
@@ -86,6 +87,7 @@ except ImportError:
         _extract_images_from_detail_soup,
         candidate_from_source,
         clean_text,
+        detect_challenge,
         is_likely_manga,
         score_candidate,
     )
@@ -191,26 +193,17 @@ def _ua_session(session: requests.Session) -> requests.Session:
 # de "verify human"). Si detectamos esto, la IP está banneada o en
 # challenge mode. Mejor abortar limpiamente que insistir.
 #
-# ⚠️ NO usar "challenge-platform" como marker: aparece en CUALQUIER página
-# protegida por Cloudflare como parte del JSD bot-detection script
-# (/cdn-cgi/challenge-platform/scripts/jsd/main.js). El path real de un
-# challenge UI es /cdn-cgi/challenge-platform/h/g/... (con /h/, no /scripts/).
-# Lo mismo con "cf_challenge": demasiado genérico.
-_CLOUDFLARE_CHALLENGE_MARKERS = (
-    "cf-chl-bypass",                          # form metadata del challenge
-    "Just a moment...",                       # title de la página de espera
-    "Checking your browser",                  # texto del verify
-    "__cf_chl_rt_tk",                         # token de challenge
-    "/cdn-cgi/challenge-platform/h/",         # UI path del challenge (no /scripts/)
-)
-
-
+# La lógica + los markers viven ahora en manga_watch.detect_challenge()
+# (fuente ÚNICA, compartida con el path HTTP plano y el path Playwright del
+# scraper). Este wrapper conserva el nombre local por compatibilidad con los
+# call-sites del spider (fetch_html) y los tests.
 def _looks_like_cf_challenge(html_text: str) -> bool:
-    """¿La página es un challenge de Cloudflare en lugar de contenido real?"""
-    if not html_text or len(html_text) > 50000:
-        # Pages largas (>50KB) son contenido real; challenges son 5-15KB.
-        return False
-    return any(marker in html_text for marker in _CLOUDFLARE_CHALLENGE_MARKERS)
+    """¿La página es un challenge de Cloudflare en lugar de contenido real?
+
+    Delega en `manga_watch.detect_challenge()`. Devuelve bool (el spider solo
+    necesita saber si abortar, no el tipo de challenge).
+    """
+    return detect_challenge(html_text) is not None
 
 
 # Throttle global: lockfile en ~/.cache/manga-watch/whakoom_lastrun

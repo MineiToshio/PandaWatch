@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 >
 > Nota: MangaLine México (`mangaline.com.mx`) y MangaLine España (`mangaline.es`)
 > comparten el MISMO theme WooCommerce custom, pero son **sitios y países distintos**.
@@ -61,10 +61,25 @@ MangaLine España, por lo que ambos usan los mismos selectores (`h3.product-titl
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **Outage total 2026-07-07** (primer delta real post-mejoras): `mangaline.com.mx`
+  respondió `ConnectTimeoutError` (connect timeout=10s) — el mismo síntoma que
+  MangaLine España el mismo día. DNS resuelve (`217.76.130.154`), pero el host no
+  responde en el puerto 443; el IP pertenece al hosting compartido **Arsys**
+  (`arsys.es`, confirmado por whois — `NET-ARSYS-EURO-4`). El sitio SÍ funcionaba
+  en el run del 2026-06-12 (132 candidatos, 6 páginas), así que es probable un
+  problema **transitorio de hosting** compartido con la ficha de España, no un
+  cambio permanente del sitio. Monitorear el próximo run.
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
 - Catálogo chico (~19 items); no hay ediciones especiales/cofres con lógica propia
   como en ListadoManga, así que entra todo por el extractor genérico.
+- **En observación tras el outage de 2026-07-07**: confirmar en el próximo delta/full
+  si `mangaline.com.mx` volvió a responder antes de sospechar un cambio de código.
 
 ---
 

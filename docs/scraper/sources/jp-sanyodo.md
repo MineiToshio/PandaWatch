@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -72,6 +72,13 @@ fichas de la editorial oficial, útil para descubrir ediciones especiales del me
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
+- **Veredicto de auditoría de ingestión (2026-07-07): SE MANTIENE — no podar ni
+  deshabilitar.** Sanyodo solapa un 82% por `cluster_key` con Sumikko (la fuente JP
+  de limitadas más grande), pero su valor no es sólo de descubrimiento: aporta
+  **precio en 25 de los 76 items solapados**, dato que Sumikko no siempre tiene.
+  Ese precio/stock alimenta directamente al skill `/watch-validate-rarity` (evidencia
+  de `stock_status` para re-derivar rareza). Podarla perdería esa señal de evidencia,
+  no sólo cobertura de catálogo.
 - **#44 (tienda ≠ editorial)** — es la gotcha central de esta fuente. Antes seteaba
   `publisher: "Sanyodo"`, lo que contaminaba el `edition_key` y producía dups de mismo-ISBN
   contra la editorial oficial. ✅ Fix: se removió el `publisher` de la fuente; el corpus

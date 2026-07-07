@@ -14,17 +14,20 @@
 # Para recorrer TODO el catálogo (~3432 colecciones vía lista.php), usar
 # `scrape_full.sh` en su lugar (correr 1x/mes o 1x/trimestre).
 #
-# El resto de fuentes (Mangavariant, SocialAnime, BBM, Manga-Sanctuary,
-# Whakoom, retailers Shopify/Tiendanube, etc.) se comportan igual entre
-# delta y full por ahora — la diferencia es solo el método de discovery
-# de listadomanga.
+# Mangavariant corre en AMBOS modos pero distinto: el full baja las ~2700 URLs
+# del sitemap; el delta baja los sitemaps y fetchea SOLO las variantes cuya URL
+# no está ya en el corpus (diff incremental, tope MANGAVARIANT_MAX_NEW, orden por
+# lastmod desc). El resto de fuentes (SocialAnime, BBM, Manga-Sanctuary, Whakoom,
+# retailers Shopify/Tiendanube, etc.) se comportan igual entre delta y full por
+# ahora — la otra diferencia grande es el método de discovery de listadomanga.
 #
 # Encadena las fases:
 #   1. Scrape principal (sources del YAML, --max-pages 5, --enable-js)
 #   2. Wiki bootstraps DELTA (listadomanga-collections modo calendar,
 #      manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm,
 #      booksprivilege, sumikko, mangapassion DE, animeclick IT,
-#      prhcomics US/CA, kinokuniya US, yenpress US)
+#      prhcomics US/CA, kinokuniya US, yenpress US,
+#      mangavariant incremental)
 #   3. Cleanup retrofits (rescore → filter_non_manga → filter_collectible →
 #      clean_titles → backfill_metadata)
 #   4. Build web final
@@ -115,9 +118,13 @@ _run_timed() {
     fi
 }
 
-# Para el delta el calendario de listadomanga toma solo los últimos meses.
-# Default: últimos 3 meses (mes actual + 2 anteriores).
+# Para el delta el calendario de listadomanga toma una VENTANA centrada en hoy:
+#  - FROM: últimos 3 meses (mes actual + 2 anteriores) → novedades recientes.
+#  - TO:   próximos 3 meses → "en preparación" / preventas ya anunciadas.
+# calendario.php sirve meses futuros poblados; sin --wiki-to la ventana quedaba
+# [hoy-2m..hoy] y se perdían los anuncios futuros (P1).
 LISTADO_CAL_FROM="${LISTADO_CAL_FROM:-$(date -v-2m '+%Y-%m' 2>/dev/null || date -d '2 months ago' '+%Y-%m' 2>/dev/null || date '+%Y-%m')}"
+LISTADO_CAL_TO="${LISTADO_CAL_TO:-$(date -v+3m '+%Y-%m' 2>/dev/null || date -d '3 months' '+%Y-%m' 2>/dev/null || date '+%Y-%m')}"
 
 GLOBAL_START=$(date +%s)
 
@@ -128,7 +135,7 @@ echo " Log dir: $LOG_DIR"
 echo "========================================================"
 echo
 echo "Config:"
-echo "  Listadomanga calendar: $LISTADO_CAL_FROM → mes actual"
+echo "  Listadomanga calendar: $LISTADO_CAL_FROM → $LISTADO_CAL_TO"
 echo "  INCLUDE_WHAKOOM_SPIDER=$INCLUDE_WHAKOOM_SPIDER"
 echo "  INCLUDE_WAYBACK_RECOVERY=$INCLUDE_WAYBACK_RECOVERY"
 echo "  SCRAPE_WORKERS=$SCRAPE_WORKERS (per-host limit=$PER_HOST_LIMIT)"
@@ -163,6 +170,29 @@ phase_done() {
 count_lines() {
     wc -l < data/items.jsonl 2>/dev/null | tr -d ' ' || echo 0
 }
+
+# Acumulador de pasos que crashean (exit≠0). Con `set +e` un retrofit o wiki
+# bootstrap que muere es invisible; record_step lo captura para el FINAL SUMMARY.
+FAILED_STEPS=()
+record_step() {
+    # record_step <nombre> <returncode>
+    local name=$1 rc=$2
+    if [ "$rc" -ne 0 ]; then
+        FAILED_STEPS+=("$name (rc=$rc)")
+        echo "    ⚠ STEP FALLÓ: $name (rc=$rc)"
+    fi
+}
+
+# ── Backup pre-scrape de items.jsonl (convención backup_and_rotate del repo:
+# escribe en data/backups/items.jsonl/, rota máx 3). Un snapshot ANTES de que
+# el run toque nada permite restaurar si algo corrompe el corpus.
+if [ -s data/items.jsonl ]; then
+    echo ">>> Backup pre-scrape de data/items.jsonl"
+    env PYTHONUNBUFFERED=1 "$VENV_PY" -u -c \
+        "import sys; sys.path.insert(0,'scripts'); from pathlib import Path; from manga_watch import backup_and_rotate; print('    backup →', backup_and_rotate(Path('data/items.jsonl'), 'scrape-delta'))" \
+        || echo "    ⚠ backup pre-scrape falló (continúa)"
+    echo
+fi
 
 # ============================================================
 # PHASE 1: Scrape principal (sources del YAML)
@@ -205,63 +235,81 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # collections-calendar es estrictamente más rico sobre los mismos ids.)
     echo ">>> [2a] listadomanga-collections (calendar delta: actividad ${LISTADO_CAL_FROM} → mes actual)"
     P2A_START=$(date +%s)
-    _run_timed 1800 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki listadomanga-collections \
         --coleccion-mode calendar \
         --wiki-from "$LISTADO_CAL_FROM" \
+        --wiki-to "$LISTADO_CAL_TO" \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02a-listadomanga-collections-calendar.log" 2>&1
+    record_step "listadomanga-collections" $?
     echo "    duración: $(($(date +%s) - P2A_START))s — items: $(count_lines)"
 
     # 2b. manga-sanctuary (FR planning)
     echo ">>> [2b] manga-sanctuary (FR)"
     P2B_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki manga-sanctuary \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02b-manga-sanctuary.log" 2>&1
+    record_step "manga-sanctuary" $?
     echo "    duración: $(($(date +%s) - P2B_START))s — items: $(count_lines)"
 
-    # 2c. otaku-calendar (EN/US)
-    echo ">>> [2c] otaku-calendar (EN/US)"
+    # 2c. otaku-calendar (EN/US). VENTANA ACOTADA estilo listadomanga: sin
+    # --wiki-from/--wiki-to el dispatcher usa su default (2024-01 → mes actual =
+    # ~31 meses). Desde el fix por-path (2026-07-07) cada mes es UNA página REAL
+    # (antes las 31 iteraciones bajaban la misma página), así que el delta diario
+    # backfillearía 31 meses distintos cada vez — lento e innecesario para un
+    # delta. Reusamos la ventana del calendario (LISTADO_CAL_FROM..TO = hoy-2m →
+    # hoy+3m = 6 meses): novedades recientes + preventas anunciadas (el sitio SÍ
+    # sirve meses futuros poblados; verificado 2026-07-07). Costo medido: 1
+    # request/mes (sin detail fetch), ~0.6s/mes → 6 meses ≈ 10s. Timeout 120s =
+    # holgado (~12× lo esperado) pero bounded para no colgar el run diario.
+    echo ">>> [2c] otaku-calendar (EN/US — ventana ${LISTADO_CAL_FROM} → ${LISTADO_CAL_TO})"
     P2C_START=$(date +%s)
-    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 120 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki otaku-calendar \
+        --wiki-from "$LISTADO_CAL_FROM" \
+        --wiki-to "$LISTADO_CAL_TO" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02c-otaku-calendar.log" 2>&1
+    record_step "otaku-calendar" $?
     echo "    duración: $(($(date +%s) - P2C_START))s — items: $(count_lines)"
 
     # 2d. manga-mexico
     echo ">>> [2d] manga-mexico (catálogo)"
     P2D_START=$(date +%s)
-    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki manga-mexico \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02d-manga-mexico.log" 2>&1
+    record_step "manga-mexico" $?
     echo "    duración: $(($(date +%s) - P2D_START))s — items: $(count_lines)"
 
     # 2e. socialanime (IT)
     echo ">>> [2e] socialanime (IT — variant + cofanetti)"
     P2E_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki socialanime \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02e-socialanime.log" 2>&1
+    record_step "socialanime" $?
     echo "    duración: $(($(date +%s) - P2E_START))s — items: $(count_lines)"
 
     # 2f. blogbbm (BR)
     echo ">>> [2f] blogbbm (BR — capas variantes + volúmenes especiais)"
     P2F_START=$(date +%s)
-    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki blogbbm \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02f-blogbbm.log" 2>&1
+    record_step "blogbbm" $?
     echo "    duración: $(($(date +%s) - P2F_START))s — items: $(count_lines)"
 
     # 2g. booksprivilege — DESHABILITADO (2026-05-26)
@@ -278,11 +326,12 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # ordenado por release_date desc. El upsert por URL deja sólo lo nuevo.
     echo ">>> [2h] sumikko (JP — 限定版/特装版 catálogo completo)"
     P2H_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki sumikko \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02h-sumikko.log" 2>&1
+    record_step "sumikko" $?
     echo "    duración: $(($(date +%s) - P2H_START))s — items: $(count_lines)"
 
     # 2i. mangapassion (DE — Sonderausgaben + Variant-Covers). Modo delta:
@@ -290,12 +339,13 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # sin auth, sin anti-bot — no requiere Playwright.
     echo ">>> [2i] mangapassion (DE — Sonderausgaben + Variant-Covers últimos 3 meses)"
     P2I_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki mangapassion \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02i-mangapassion.log" 2>&1
+    record_step "mangapassion" $?
     echo "    duración: $(($(date +%s) - P2I_START))s — items: $(count_lines)"
 
     # 2j. animeclick (IT — variant/limitata/cofanetto últimos 3 meses).
@@ -304,45 +354,49 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # Timeout generoso (2700s = 45min) porque fetcha detail pages por cada item.
     echo ">>> [2j] animeclick (IT — edizioni speciali últimos 3 meses)"
     P2J_START=$(date +%s)
-    _run_timed 2700 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 2700 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki animeclick \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02j-animeclick.log" 2>&1
+    record_step "animeclick" $?
     echo "    duración: $(($(date +%s) - P2J_START))s — items: $(count_lines)"
 
     # 2k. prhcomics (EN/US — catálogo de ediciones especiales inglesas de PRH).
     # Una sola request HTTP estática, timeout corto.
     echo ">>> [2k] prhcomics (US/CA — hardcovers + box sets EN)"
     P2K_START=$(date +%s)
-    _run_timed 120 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 120 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki prhcomics \
         --wiki-from "$LISTADO_CAL_FROM" \
         --min-score 20 \
         > "$LOG_DIR/02k-prhcomics.log" 2>&1
+    record_step "prhcomics" $?
     echo "    duración: $(($(date +%s) - P2K_START))s — items: $(count_lines)"
 
     # 2l. kinokuniya (EN/US — exclusivos Kinokuniya USA: variant covers, dust
     # jackets, shikishi, ID cards, sticker packs). Una sola request, timeout corto.
     echo ">>> [2l] kinokuniya (US — exclusivos Kinokuniya: variant covers + extras)"
     P2L_START=$(date +%s)
-    _run_timed 120 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 120 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki kinokuniya \
         --min-score 20 \
         > "$LOG_DIR/02l-kinokuniya.log" 2>&1
+    record_step "kinokuniya" $?
     echo "    duración: $(($(date +%s) - P2L_START))s — items: $(count_lines)"
 
     # 2m. yenpress (EN/US — calendario mensual Yen Press, ediciones especiales).
     # Itera los últimos 3 meses del calendario; timeout 300s.
     echo ">>> [2m] yenpress calendar (US — collector's, deluxe, box set, hardcover)"
     P2M_START=$(date +%s)
-    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki yenpress \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02m-yenpress.log" 2>&1
+    record_step "yenpress" $?
     echo "    duración: $(($(date +%s) - P2M_START))s — items: $(count_lines)"
 
     # 2n. shueisha (JP — artbooks, magazines, databooks nuevos).
@@ -350,23 +404,25 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # el modo delta interno del parser, que sólo trae volúmenes nuevos).
     echo ">>> [2n] shueisha books (JP — delta: new Magazine/Color Walk volumes)"
     P2N_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki shueisha \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02n-shueisha.log" 2>&1
+    record_step "shueisha" $?
     echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
 
     # 2o. viz artbooks (US — small catalog, quick).
     echo ">>> [2o] viz artbooks (US — Color Walk Compendium, companion books)"
     P2O_START=$(date +%s)
-    _run_timed 300 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki viz \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 1.0 \
         --min-score 20 \
         > "$LOG_DIR/02o-viz.log" 2>&1
+    record_step "viz" $?
     echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
 
     # 2p. sevenseas (US — deluxe/box sets/collector vía WordPress API).
@@ -374,24 +430,26 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # Enrich por item (ISBN/portada/fecha) — el dispatcher fuerza fetch_details.
     echo ">>> [2p] sevenseas (US — deluxe hardcovers + box sets, últimos 3 meses)"
     P2P_START=$(date +%s)
-    _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 900 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki sevenseas \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02p-sevenseas.log" 2>&1
+    record_step "sevenseas" $?
     echo "    duración: $(($(date +%s) - P2P_START))s — items: $(count_lines)"
 
     # 2r. kodansha-us (US — deluxe/omnibus/collector vía API kodansha.us).
     # Modo delta: solo volúmenes con datePublished >= LISTADO_CAL_FROM.
     echo ">>> [2r] kodansha-us (US — deluxe + omnibus + collector, últimos 3 meses)"
     P2R_START=$(date +%s)
-    _run_timed 600 "$VENV_PY" scripts/manga_watch.py \
+    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki kodansha-us \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02r-kodansha-us.log" 2>&1
+    record_step "kodansha-us" $?
     echo "    duración: $(($(date +%s) - P2R_START))s — items: $(count_lines)"
 
     # 2s. storefronts API (HK/TW/VN/TH — catálogos completos, son chicos y
@@ -399,23 +457,48 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     echo ">>> [2s] storefronts API (jd-intl HK · spp-tw · kimdong/ipm VN · yaakz TH)"
     P2S_START=$(date +%s)
     for SF in jd-intl spp-tw kimdong ipm yaakz; do
-        _run_timed 900 "$VENV_PY" scripts/manga_watch.py \
+        _run_timed 900 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
             --bootstrap-wiki "$SF" \
             --sleep-seconds 0.3 \
             --min-score 20 \
             > "$LOG_DIR/02s-$SF.log" 2>&1
+        record_step "storefront:$SF" $?
     done
     echo "    duración: $(($(date +%s) - P2S_START))s — items: $(count_lines)"
+
+    # 2t. mangavariant INCREMENTAL (variantes/ediciones nuevas del catálogo global).
+    # A diferencia del full (que baja las ~2700 URLs del sitemap), el delta baja
+    # los sitemaps (costo fijo: sitemaps + 1 resolución del challenge sgcaptcha) y
+    # fetchea SOLO las variantes cuya URL NO está ya en data/items.jsonl (diff
+    # contra el corpus), ordenadas por lastmod desc (las más recientes primero) y
+    # acotadas por MANGAVARIANT_MAX_NEW (tope de seguridad; si se topa, LOGuea).
+    # Así las ediciones variantes nuevas entran en el delta diario en vez de
+    # esperar hasta el próximo full (antes: hasta ~3 meses de lag).
+    # Requiere Playwright para el challenge; sin él degrada con WARN e importa 0.
+    # Timeout 1200s: challenge (~5-8s, one-shot) + 3 sitemaps + hasta 400 detail
+    # pages (workers=4 default × ~1.5s ÷ 4 ≈ 150s) + mirror de portadas nuevas.
+    # ≈ 4-8× lo esperado, pero bounded para no colgar el run diario.
+    echo ">>> [2t] mangavariant incremental (variantes nuevas vs corpus, tope 400)"
+    P2T_START=$(date +%s)
+    _run_timed 1200 env MANGAVARIANT_INCREMENTAL=1 MANGAVARIANT_MAX_NEW=400 \
+        PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+        --bootstrap-wiki mangavariant \
+        --sleep-seconds 0.3 \
+        --min-score 20 \
+        > "$LOG_DIR/02t-mangavariant-incremental.log" 2>&1
+    record_step "mangavariant-incremental" $?
+    echo "    duración: $(($(date +%s) - P2T_START))s — items: $(count_lines)"
 
     # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
     if [ "$INCLUDE_WHAKOOM_SPIDER" = "1" ]; then
         echo ">>> [2q] whakoom spider (OPT-IN, riesgo Cloudflare)"
         P2N_START=$(date +%s)
-        _run_timed 3600 "$VENV_PY" scripts/manga_watch.py \
+        _run_timed 3600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
             --bootstrap-wiki whakoom \
             --sleep-seconds 2.0 \
             --min-score 20 \
             > "$LOG_DIR/02q-whakoom.log" 2>&1
+        record_step "whakoom" $?
         echo "    duración: $(($(date +%s) - P2N_START))s — items: $(count_lines)"
     else
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"
@@ -434,23 +517,31 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
 
     echo ">>> [4a] rescore"
     "$VENV_PY" scripts/retrofit/rescore.py > "$LOG_DIR/04a-rescore.log" 2>&1
+    record_step "rescore" $?
     echo "    items: $(count_lines)"
 
-    echo ">>> [4b] filter_non_manga"
-    "$VENV_PY" scripts/retrofit/filter_non_manga.py > "$LOG_DIR/04b-filter-non-manga.log" 2>&1
+    # [4b] clean_titles ANTES de los filtros (P2): los gates filter_non_manga /
+    # filter_collectible deben evaluar el TÍTULO LIMPIO, no el crudo — si no, un
+    # título que sólo pasa/rechaza tras limpiarse produce no-idempotencia.
+    echo ">>> [4b] clean_titles (antes de los filtros)"
+    "$VENV_PY" scripts/retrofit/clean_titles.py > "$LOG_DIR/04b-clean-titles.log" 2>&1
+    record_step "clean_titles" $?
     echo "    items: $(count_lines)"
 
-    echo ">>> [4c] filter_collectible"
-    "$VENV_PY" scripts/retrofit/filter_collectible.py > "$LOG_DIR/04c-filter-collectible.log" 2>&1
+    echo ">>> [4c] filter_non_manga"
+    "$VENV_PY" scripts/retrofit/filter_non_manga.py > "$LOG_DIR/04c-filter-non-manga.log" 2>&1
+    record_step "filter_non_manga" $?
     echo "    items: $(count_lines)"
 
-    echo ">>> [4d] clean_titles"
-    "$VENV_PY" scripts/retrofit/clean_titles.py > "$LOG_DIR/04d-clean-titles.log" 2>&1
+    echo ">>> [4d] filter_collectible"
+    "$VENV_PY" scripts/retrofit/filter_collectible.py > "$LOG_DIR/04d-filter-collectible.log" 2>&1
+    record_step "filter_collectible" $?
     echo "    items: $(count_lines)"
 
     echo ">>> [4e] backfill_metadata --only image_url"
     "$VENV_PY" scripts/retrofit/backfill_metadata.py --only image_url --sleep 0.5 \
         > "$LOG_DIR/04e-backfill-images.log" 2>&1
+    record_step "backfill_metadata:image_url" $?
     echo "    items: $(count_lines)"
 
     if [ "$INCLUDE_WAYBACK_RECOVERY" = "1" ]; then
@@ -458,6 +549,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
         P4F_START=$(date +%s)
         "$VENV_PY" -u scripts/retrofit/wayback_recover.py --sleep 1.0 \
             > "$LOG_DIR/04f-wayback-recover.log" 2>&1
+        record_step "wayback_recover" $?
         echo "    duración: $(($(date +%s) - P4F_START))s — items: $(count_lines)"
     else
         echo "    [SKIP] wayback recovery (INCLUDE_WAYBACK_RECOVERY=0)"
@@ -471,6 +563,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     echo ">>> [4f2] align_raw_to_std_coleccion (dedup raw-vs-estandarizado)"
     "$VENV_PY" scripts/retrofit/align_raw_to_std_coleccion.py \
         > "$LOG_DIR/04f2-align-raw-std.log" 2>&1
+    record_step "align_raw_to_std_coleccion" $?
     echo "    items: $(count_lines)"
 
     # [4f3] ENFORCER de reglas listadomanga (--fast: sin dedup de carrusel, que
@@ -484,6 +577,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     P4F3_START=$(date +%s)
     "$VENV_PY" scripts/retrofit/enforce_listadomanga_rules.py --fast \
         > "$LOG_DIR/04f3-enforce-lmc.log" 2>&1
+    record_step "enforce_listadomanga_rules" $?
     echo "    duración: $(($(date +%s) - P4F3_START))s — items: $(count_lines)"
 
     # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
@@ -493,6 +587,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     P4H_START=$(date +%s)
     _run_timed 1200 "$VENV_PY" scripts/retrofit/dedup_carousel_images.py \
         > "$LOG_DIR/04h-dedup-carousel.log" 2>&1
+    record_step "dedup_carousel_images" $?
     echo "    duración: $(($(date +%s) - P4H_START))s — items: $(count_lines)"
 
     # [4i] purga de placeholders: algunas fuentes sirven una imagen genérica
@@ -502,6 +597,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     echo ">>> [4i] purge_placeholder_images (1×1 / blancos / 'no disponible')"
     "$VENV_PY" scripts/retrofit/purge_placeholder_images.py \
         > "$LOG_DIR/04i-purge-placeholders.log" 2>&1
+    record_step "purge_placeholder_images" $?
     echo "    items: $(count_lines)"
 
     # [4j] GC rutinario del espejo: manda a cuarentena (data/images/_orphans/) los
@@ -518,40 +614,58 @@ else
 fi
 
 # ============================================================
-# PHASE 4: Build web
+# PHASE 4: Validación estructural del corpus (GATE pre-build)
 # ============================================================
-if [ "$SKIP_BUILD" != "1" ]; then
-    phase_header 4 "Build web"
-    "$VENV_PY" scripts/build_web.py > "$LOG_DIR/04-build-web.log" 2>&1
-    tail -10 "$LOG_DIR/04-build-web.log"
-    echo " ✓ PHASE 4 build done"
-else
-    echo "[SKIP] PHASE 4 (build) saltada por SKIP_BUILD=1"
-fi
-
-# ============================================================
-# PHASE 5: Validación estructural del corpus (gate de salud)
-# ============================================================
-echo
-echo ">>> [5] validate_corpus (invariantes estructurales — gotcha #54)"
+# Corre ANTES del build: si hay violaciones DURAS (invariantes corruptoras —
+# duplicados de volumen/slug/title/cluster), NO se construye la web y se conserva
+# el build anterior intacto. exit 2 = duras, exit 0 = válido, exit ≠0/≠2 = error
+# del validador (también bloquea por precaución). Ver validate_corpus.py.
+phase_header 4 "Validación estructural del corpus (gate pre-build)"
+echo ">>> [4] validate_corpus (invariantes estructurales — gotcha #54)"
 CORPUS_INVALID=0
-"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/05-validate-corpus.log"
-# Sin `set -o pipefail`, $? sería el de `tee` (siempre 0) → el `|| echo` viejo era
-# código muerto. El exit real de validate_corpus está en PIPESTATUS[0] (bash).
-if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+"$VENV_PY" scripts/validate_corpus.py | tee "$LOG_DIR/04-validate-corpus.log"
+# Sin `set -o pipefail`, $? sería el de `tee` (siempre 0). El exit real de
+# validate_corpus está en PIPESTATUS[0] (bash).
+VAL_RC=${PIPESTATUS[0]}
+if [ "$VAL_RC" -eq 2 ]; then
     CORPUS_INVALID=1
-    echo " ⚠ validate_corpus reportó violaciones DURAS — revisar $LOG_DIR/05-validate-corpus.log"
+    FAILED_STEPS+=("validate_corpus (violaciones DURAS)")
+    echo " ✗ validate_corpus: violaciones DURAS — se OMITE el build (build anterior intacto). Ver $LOG_DIR/04-validate-corpus.log"
+elif [ "$VAL_RC" -ne 0 ]; then
+    CORPUS_INVALID=1
+    FAILED_STEPS+=("validate_corpus (error rc=$VAL_RC)")
+    echo " ⚠ validate_corpus falló con rc=$VAL_RC (error del validador) — se OMITE el build por precaución."
 fi
 
 # ============================================================
-# PHASE 6: Salud de fuentes de ESTE run (observabilidad)
+# PHASE 5: Build web (sólo si el corpus es válido)
+# ============================================================
+if [ "$SKIP_BUILD" = "1" ]; then
+    echo "[SKIP] PHASE 5 (build) saltada por SKIP_BUILD=1"
+elif [ "$CORPUS_INVALID" -ne 0 ]; then
+    echo "[SKIP] PHASE 5 (build) OMITIDA — corpus inválido (ver PHASE 4). Build anterior intacto."
+else
+    phase_header 5 "Build web"
+    "$VENV_PY" scripts/build_web.py > "$LOG_DIR/05-build-web.log" 2>&1
+    record_step "build_web" $?
+    tail -10 "$LOG_DIR/05-build-web.log"
+    echo " ✓ PHASE 5 build done"
+fi
+
+# ============================================================
+# PHASE 6: Salud de fuentes de ESTE run (métricas + baseline alert)
 # ============================================================
 echo
-echo ">>> [6] source_health (fuentes con errores / 0 candidatos en este run)"
-"$VENV_PY" scripts/audit/source_health.py --last-n 1 --output md \
-    --output-file "$LOG_DIR/06-source-health.md" 2>/dev/null \
-    && grep -E "^## |^\| " "$LOG_DIR/06-source-health.md" | head -40 \
-    || echo " ⚠ source_health falló (no bloquea)"
+echo ">>> [6] source_health (métricas + baseline alert, modo delta)"
+"$VENV_PY" scripts/audit/source_health.py \
+    --last-n 1 \
+    --metrics-file logs/metrics.jsonl \
+    --baseline-alert \
+    --mode delta \
+    --output md \
+    --output-file "$LOG_DIR/06-source-health.md" \
+    > "$LOG_DIR/06-source-health.stdout.log" 2>&1 \
+    || echo " ⚠ source_health falló (no bloquea) — ¿interfaz --metrics-file/--baseline-alert/--mode aún no disponible?"
 
 # ============================================================
 # FINAL SUMMARY
@@ -571,14 +685,37 @@ printf " %-30s %s\n" "items.jsonl antes:"   "$BEFORE_COUNT"
 printf " %-30s %s\n" "items.jsonl después:" "$AFTER_COUNT"
 printf " %-30s %s\n" "delta:" "$((AFTER_COUNT - BEFORE_COUNT))"
 if [ "${CORPUS_INVALID:-0}" -ne 0 ]; then
-    printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — violaciones DURAS (ver $LOG_DIR/05-validate-corpus.log)"
+    printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — violaciones DURAS (ver $LOG_DIR/04-validate-corpus.log) · build OMITIDO"
 else
     printf " %-30s %s\n" "corpus:" "✓ válido"
+fi
+if [ "${#FAILED_STEPS[@]}" -gt 0 ]; then
+    printf " %-30s %s\n" "pasos con error:" "⚠ ${#FAILED_STEPS[@]}"
+    for step in "${FAILED_STEPS[@]}"; do
+        printf "   %-28s %s\n" "" "✗ $step"
+    done
+else
+    printf " %-30s %s\n" "pasos con error:" "✓ ninguno"
+fi
+echo
+echo "Salud de fuentes (source_health --baseline-alert):"
+if [ -f "$LOG_DIR/06-source-health.md" ]; then
+    grep -E "^## |^\| |ALERT|baseline|⚠|✗" "$LOG_DIR/06-source-health.md" | head -40 \
+        || echo "  (sin alertas destacadas — ver $LOG_DIR/06-source-health.md)"
+else
+    echo "  (source_health no produjo salida — ver $LOG_DIR/06-source-health.stdout.log)"
 fi
 echo
 echo "Logs por fase: $LOG_DIR/"
 ls -la "$LOG_DIR/"
 echo
+
+# ── Reporte de staleness (fuentes sin novedades hace tiempo). Interfaz pactada;
+# la crea otro agente. No bloquea el run.
+echo ">>> staleness_report (fuentes sin novedades en 90 días)"
+"$VENV_PY" scripts/audit/staleness_report.py --days 90 || true
+echo
+
 echo "Recordatorio:"
 echo "  - Este es el scrape DELTA (incremental, últimos meses)."
 echo "  - Para recorrer el catálogo COMPLETO de listadomanga (~3432"

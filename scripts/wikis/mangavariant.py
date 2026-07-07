@@ -50,13 +50,23 @@ Challenge sgcaptcha (SiteGround, 2026-06):
 API pública (paralela a otaku_calendar.py / whakoom.py):
     parse_variant_detail(html_text, url) -> Candidate | None
     fetch_variant_urls(session, timeout) -> list[str]
-    bootstrap(yf, mf, yt, mt, session, ...) -> list[Candidate]
+    fetch_variant_url_entries(session, timeout) -> [(loc, lastmod), …]
+    load_seen_variant_urls(items_path) -> set[str]  (claves canónicas ya en corpus)
+    bootstrap(yf, mf, yt, mt, session, incremental=…, max_new=…, ...) -> list[Candidate]
     iter_year_months(yf, mf, yt, mt) -> [(yf, mf)]  (single batch; no calendar)
+
+Modo incremental (delta): baja los sitemaps (costo fijo) y fetchea SOLO las
+variantes cuya URL no está ya en el corpus (diff), acotado por `max_new`.
+Seleccionable desde el shell vía env vars MANGAVARIANT_INCREMENTAL / _MAX_NEW /
+_SINCE / _ITEMS_PATH (manga_watch.py no expone flags para esto). El FULL sigue
+bajando todo el sitemap.
 """
 
 from __future__ import annotations
 
 import concurrent.futures as cf
+import json
+import os
 import re
 import sys
 import threading
@@ -98,6 +108,12 @@ VARIANT_SITEMAPS = (
     f"{BASE_URL}/variant-sitemap2.xml",
     f"{BASE_URL}/variant-sitemap3.xml",
 )
+
+# Corpus por defecto para el diff incremental (repo_root/data/items.jsonl).
+_DEFAULT_ITEMS_PATH = _SCRIPTS_DIR.parent / "data" / "items.jsonl"
+
+# Tope por defecto de URLs nuevas por corrida incremental (acota costo del delta).
+_DEFAULT_MAX_NEW = 400
 
 # Mapping de slugs de país de mangavariant → (nombre_es, idioma_es).
 # Slugs cubiertos hoy (13): ar br fr de it jp mexico es tw th uk us vn.
@@ -447,14 +463,72 @@ def parse_variant_detail(html_text: str, url: str) -> Candidate | None:
     return cand
 
 
-def fetch_variant_urls(
+# Path canónico de una variant: /variant/<manga>/<variant>. Se usa para
+# normalizar tanto las URLs del sitemap como las ya vistas en el corpus, de
+# modo que el diff sea robusto a diferencias de esquema/host/query/slash final.
+_VARIANT_PATH_RE = re.compile(r"/variant/([^/?#]+)/([^/?#]+)")
+
+
+def _norm_variant_url(url: str) -> str:
+    """Devuelve la clave canónica '/variant/<manga>/<variant>' (minúsculas) o ''.
+
+    Ignora esquema, host, query, fragmento y slash final. Sirve para comparar
+    una URL del sitemap contra las que ya están en el corpus.
+    """
+    m = _VARIANT_PATH_RE.search(url or "")
+    if not m:
+        return ""
+    return f"/variant/{m.group(1).lower()}/{m.group(2).lower()}"
+
+
+def load_seen_variant_urls(items_path: "str | Path") -> set[str]:
+    """Lee items.jsonl y devuelve el set de claves canónicas de variantes ya
+    vistas de la fuente Mangavariant (de `url` top-level y de cada `sources[].url`).
+
+    Si el corpus no existe, devuelve un set vacío (todo se tratará como nuevo,
+    acotado luego por `max_new`).
+    """
+    seen: set[str] = set()
+    p = Path(items_path)
+    if not p.exists():
+        print(f"[mangavariant][WARN] corpus no encontrado en {p} — "
+              f"todas las URLs del sitemap se tratarán como nuevas")
+        return seen
+    with p.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            # Filtro barato antes de parsear el JSON denso.
+            if not line or "mangavariant" not in line:
+                continue
+            try:
+                it = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            candidates = [it.get("url", "") or ""]
+            for s in it.get("sources", []) or []:
+                candidates.append(s.get("url", "") or "")
+            for u in candidates:
+                k = _norm_variant_url(u)
+                if k:
+                    seen.add(k)
+    return seen
+
+
+def fetch_variant_url_entries(
     session: requests.Session,
     timeout: tuple[int, int] = (10, 30),
     sitemaps: tuple[str, ...] = VARIANT_SITEMAPS,
-) -> list[str]:
-    """Descarga los 3 sitemaps de variants y devuelve la lista de URLs únicas."""
-    urls: list[str] = []
+) -> list[tuple[str, str]]:
+    """Descarga los 3 sitemaps y devuelve [(loc, lastmod), …] de variantes únicas.
+
+    `lastmod` es el `<lastmod>` de Yoast (modified_time del post de la variante,
+    ISO 8601 con offset uniforme +00:00) o '' si el sitemap no lo trae. Se usa
+    como señal ADICIONAL para re-fetchear variantes actualizadas; el diff contra
+    el corpus (URLs no vistas) NO depende de él.
+    """
+    entries: list[tuple[str, str]] = []
     seen: set[str] = set()
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     for sm_url in sitemaps:
         try:
             gen = _challenge_generation
@@ -472,18 +546,82 @@ def fetch_variant_urls(
         except ET.ParseError as exc:
             print(f"[WARN] XML malformado en {sm_url}: {exc}")
             continue
-        # Yoast sitemap namespace
-        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-        for url_el in root.findall("sm:url/sm:loc", ns):
-            loc = (url_el.text or "").strip()
+        for url_el in root.findall("sm:url", ns):
+            loc_el = url_el.find("sm:loc", ns)
+            loc = (loc_el.text or "").strip() if loc_el is not None else ""
             if not loc or loc in seen:
                 continue
             # Solo /variant/<manga>/<variant>/, no la home /variant/
             if not re.search(r"/variant/[^/]+/[^/]+/?$", loc):
                 continue
+            lm_el = url_el.find("sm:lastmod", ns)
+            lastmod = (lm_el.text or "").strip() if lm_el is not None else ""
             seen.add(loc)
-            urls.append(loc)
-    return urls
+            entries.append((loc, lastmod))
+    return entries
+
+
+def fetch_variant_urls(
+    session: requests.Session,
+    timeout: tuple[int, int] = (10, 30),
+    sitemaps: tuple[str, ...] = VARIANT_SITEMAPS,
+) -> list[str]:
+    """Descarga los 3 sitemaps de variants y devuelve la lista de URLs únicas."""
+    return [loc for loc, _ in fetch_variant_url_entries(session, timeout, sitemaps)]
+
+
+def _select_incremental_urls(
+    entries: list[tuple[str, str]],
+    seen_norm: set[str],
+    since: str = "",
+    max_new: int = 0,
+) -> tuple[list[str], dict[str, Any]]:
+    """Elige qué URLs fetchear en modo incremental a partir del diff con el corpus.
+
+    - `new`: URLs cuya clave canónica NO está en el corpus (señal primaria).
+    - `updated`: URLs YA vistas pero con `lastmod > since` (señal adicional; solo
+      si `since` viene seteado). La comparación es lexicográfica — válida porque
+      el `lastmod` de Yoast es ISO 8601 con offset uniforme.
+    - Orden: candidatas por `lastmod` DESCENDENTE (las más recientes primero).
+      Esto es clave para el tope: hay ~1100 URLs del sitemap que el parser rechaza
+      (sin serie) y que NUNCA entran al corpus, así que SIEMPRE parecen "nuevas";
+      ordenando por recencia el `max_new` se gasta en las variantes recién
+      publicadas (lastmod fresco), no en re-fetchear viejos rechazos. Si el
+      `lastmod` viniera vacío/basura, la corrección (solo-nuevas) se mantiene:
+      solo cambia el orden dentro del tope.
+    - `max_new`: tope de seguridad. Si se supera, se truncan las candidatas y se
+      marca `capped=True` (el caller lo LOGuea explícito; nada de truncar en silencio).
+    """
+    new_pairs: list[tuple[str, str]] = []
+    updated_pairs: list[tuple[str, str]] = []
+    for loc, lastmod in entries:
+        key = _norm_variant_url(loc)
+        if not key:
+            continue
+        if key not in seen_norm:
+            new_pairs.append((loc, lastmod))
+        elif since and lastmod and lastmod > since:
+            updated_pairs.append((loc, lastmod))
+    # Más recientes primero; lastmod vacío ('') queda al final.
+    new_pairs.sort(key=lambda p: p[1], reverse=True)
+    updated_pairs.sort(key=lambda p: p[1], reverse=True)
+    new_urls = [loc for loc, _ in new_pairs]
+    updated_urls = [loc for loc, _ in updated_pairs]
+    selected = new_urls + updated_urls
+    candidates_before_cap = len(selected)
+    capped = False
+    if max_new and max_new > 0 and len(selected) > max_new:
+        selected = selected[:max_new]
+        capped = True
+    stats = {
+        "sitemap_total": len(entries),
+        "new": len(new_urls),
+        "updated": len(updated_urls),
+        "selected": len(selected),
+        "candidates_before_cap": candidates_before_cap,
+        "capped": capped,
+    }
+    return selected, stats
 
 
 def _fetch_one(
@@ -519,17 +657,64 @@ def bootstrap(
     workers: int = 4,
     max_items: int = 0,
     flush_fn: "Callable[[list[Candidate]], None] | None" = None,
+    incremental: "bool | None" = None,
+    max_new: "int | None" = None,
+    since: "str | None" = None,
+    items_path: "str | None" = None,
     **kwargs: Any,
 ) -> list[Candidate]:
-    """Descarga el catálogo completo de mangavariant.com.
+    """Descarga variantes de mangavariant.com.
 
-    El rango año/mes se ignora — mangavariant no particiona por fecha, los
-    sitemaps cubren todo. Lo aceptamos solo por compat con el dispatcher.
+    Dos modos (el rango año/mes se ignora en ambos — mangavariant no particiona
+    por fecha, los sitemaps cubren todo):
+
+    - **FULL** (default): baja los 3 sitemaps y fetchea TODAS las variantes (~2700).
+    - **INCREMENTAL** (`incremental=True`): baja los sitemaps (costo fijo: sitemaps
+      + 1 resolución de challenge) y fetchea SOLO las variantes cuya URL no está ya
+      en el corpus (`items_path`), acotado por `max_new`. Con `since` (ISO 8601)
+      además re-fetchea las variantes con `lastmod > since` (entradas actualizadas).
+
+    Como manga_watch.py no expone flags para el modo incremental, los parámetros
+    caen a variables de entorno (`MANGAVARIANT_INCREMENTAL`, `MANGAVARIANT_MAX_NEW`,
+    `MANGAVARIANT_SINCE`, `MANGAVARIANT_ITEMS_PATH`) — así el delta lo selecciona
+    desde el shell sin tocar el dispatcher. Los args explícitos ganan al entorno.
+
     `max_items` es para pruebas (0 = todo).
     """
-    print(f"[mangavariant] descargando sitemaps de variants…")
-    urls = fetch_variant_urls(session, timeout=timeout)
-    print(f"[mangavariant] {len(urls)} URLs de variants en los sitemaps")
+    if incremental is None:
+        incremental = os.environ.get("MANGAVARIANT_INCREMENTAL", "").strip().lower() \
+            in {"1", "true", "yes", "on"}
+    if max_new is None:
+        try:
+            max_new = int(os.environ.get("MANGAVARIANT_MAX_NEW", str(_DEFAULT_MAX_NEW)))
+        except ValueError:
+            max_new = _DEFAULT_MAX_NEW
+    if since is None:
+        since = os.environ.get("MANGAVARIANT_SINCE", "").strip()
+    if items_path is None:
+        items_path = os.environ.get("MANGAVARIANT_ITEMS_PATH", "").strip() \
+            or str(_DEFAULT_ITEMS_PATH)
+
+    if incremental:
+        print("[mangavariant] modo INCREMENTAL (diff contra el corpus)")
+        entries = fetch_variant_url_entries(session, timeout=timeout)
+        seen = load_seen_variant_urls(items_path)
+        urls, stats = _select_incremental_urls(
+            entries, seen, since=since, max_new=max_new,
+        )
+        print(f"[mangavariant] sitemap={stats['sitemap_total']} yaVistas={len(seen)} "
+              f"nuevas={stats['new']} actualizadas={stats['updated']} "
+              f"→ a fetchear={stats['selected']}")
+        if since:
+            print(f"[mangavariant] filtro lastmod activo (since={since})")
+        if stats["capped"]:
+            print(f"[mangavariant][WARN] TOPE alcanzado: {stats['candidates_before_cap']} "
+                  f"candidatas > max_new={max_new}; se procesan las primeras "
+                  f"{stats['selected']}. Correr de nuevo (o scrape_full) para el resto.")
+    else:
+        print("[mangavariant] descargando sitemaps de variants (modo FULL)…")
+        urls = fetch_variant_urls(session, timeout=timeout)
+        print(f"[mangavariant] {len(urls)} URLs de variants en los sitemaps")
     if max_items and max_items > 0:
         urls = urls[:max_items]
         print(f"[mangavariant] limitado a {len(urls)} (--max-items)")
@@ -590,6 +775,16 @@ if __name__ == "__main__":
     parser.add_argument("--max-items", type=int, default=20,
                         help="Para pruebas locales. 0 = todo.")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--incremental", action="store_true",
+                        help="Modo incremental: solo variantes cuya URL no está "
+                             "ya en el corpus (--items-path), acotado por --max-new.")
+    parser.add_argument("--max-new", type=int, default=_DEFAULT_MAX_NEW,
+                        help="Tope de URLs nuevas por corrida incremental.")
+    parser.add_argument("--since", default="",
+                        help="ISO 8601: re-fetchea variantes con lastmod > since "
+                             "(entradas actualizadas). Vacío = solo nuevas.")
+    parser.add_argument("--items-path", default=str(_DEFAULT_ITEMS_PATH),
+                        help="Corpus para el diff incremental.")
     args = parser.parse_args()
 
     s = requests.Session()
@@ -601,6 +796,10 @@ if __name__ == "__main__":
         min_score=0,
         workers=args.workers,
         max_items=args.max_items,
+        incremental=args.incremental,
+        max_new=args.max_new,
+        since=args.since,
+        items_path=args.items_path,
     )
     print(f"\nTotal: {len(cands)} candidates")
     for c in cands[:10]:

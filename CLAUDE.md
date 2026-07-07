@@ -99,7 +99,7 @@ scraper periódicamente y navega resultados en una UI web local.
   defecto — opt-in `--enable-js`, serializado por el worker thread; gotcha #12)
 - HTML + Alpine.js + Tailwind CDN (UI estática) + app Next.js nueva en `web-next/`
 - Storage: JSONL, 1 fila por producto con `sources[]` (decisión #1)
-- Tests: pytest (~645 al último commit)
+- Tests: pytest (~1028 al último commit)
 
 ## 2 scripts canónicos: full vs delta
 
@@ -144,7 +144,7 @@ chico. ANTES de tocar código de un área, leé su doc:
 |---|---|
 | **Implementar cualquier feature o fix** (elegir vía A/B/C, plan mode, verificación, eficiencia de tokens; skills de proceso `/feature-spec`, `/ship-check`, `/product-pulse`) | [docs/process/AI-WORKFLOW.md](docs/process/AI-WORKFLOW.md) |
 | **Escribir, transformar, filtrar o mostrar el `title` de un item** (parser, skill, retrofit de títulos, filtro non-manga, tarjeta/detalle de UI) | [docs/reference/title-policy.md](docs/reference/title-policy.md) — **léelo ANTES**; el title es el nombre OFICIAL, no se traduce/renombra |
-| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 104 gotchas) |
+| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 116 gotchas) |
 | Cambiar storage, cluster_key, el pipeline, o entender el modelo de datos | [docs/reference/architecture.md](docs/reference/architecture.md) (pipeline + corpus state + las 7 decisiones) |
 | Escribir/modificar un retrofit, fuente, wiki, o script del registry | [docs/reference/conventions.md](docs/reference/conventions.md) (filtros, backup/flush/nohup, registry, playbooks) |
 | Ubicar un archivo o entender qué hace cada módulo | [docs/reference/file-map.md](docs/reference/file-map.md) |
@@ -258,9 +258,9 @@ strictly to prevent autocompact thrashing.
 
 ---
 
-Last updated: 2026-06-12. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
+Last updated: 2026-07-07. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 104 gotchas, convenciones, dashboard,
+referencia (file map, las 7 decisiones, las 116 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,

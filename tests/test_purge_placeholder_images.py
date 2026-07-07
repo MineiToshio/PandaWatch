@@ -190,3 +190,129 @@ def test_dry_run_writes_nothing(harness):
     assert _run(ppi, ["--dry-run"]) == 0
     assert items_path.read_text() == raw
     assert (images / f["pixel"]).exists()  # no movido a cuarentena
+
+
+# ── placeholders por URL: conocidos (a) + cross-series (b) ─────────────────────
+
+_KNOWN_HASH = "08a02c268a6d6b2304c152aa0acdc7a0"  # censored-cover listadomanga (LM7)
+_KNOWN_URL = f"https://static.listadomanga.com/{_KNOWN_HASH}.png"
+
+
+def _by_slug(items_path: Path) -> dict:
+    return {
+        json.loads(l)["slug"]: json.loads(l)
+        for l in items_path.read_text().splitlines() if l.strip()
+    }
+
+
+def test_known_hash_registered_in_image_store():
+    """El hash del placeholder censurado vive en el registro único de image_store."""
+    assert _KNOWN_HASH in image_store.KNOWN_PLACEHOLDER_URL_STEMS
+    assert image_store.known_placeholder_url_reason(_KNOWN_URL).startswith("known:")
+    # con query params / mayúsculas sigue matcheando (stem case-insensitive)
+    assert image_store.known_placeholder_url_reason(_KNOWN_URL + "?v=2").startswith("known:")
+
+
+def test_purge_known_placeholder_url_keeps_owner(harness):
+    """Rule (a): la MISMA URL placeholder conocida (local="") se purga de las
+    series ROBADAS (kind=gallery) pero se CONSERVA en el dueño legítimo (el único
+    item que la lleva como extra de su propia colección)."""
+    ppi, items_path, images, f = harness
+    items = [
+        {"slug": "owner", "title": "Sexy Cosplay Doll 8", "series_display": "Sexy Cosplay Doll",
+         "images": [{"url": _KNOWN_URL, "local": "", "kind": "extra"}], "sources": []},
+        {"slug": "v1", "title": "Ayako 1", "series_display": "Ayako",
+         "images": [{"url": _KNOWN_URL, "local": "", "kind": "gallery"}], "sources": []},
+        {"slug": "v2", "title": "Bastard 1", "series_display": "Bastard",
+         "images": [{"url": _KNOWN_URL, "local": "", "kind": "gallery"}], "sources": []},
+    ]
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    assert by["v1"]["images"] == [] and by["v2"]["images"] == []
+    assert len(by["owner"]["images"]) == 1
+    assert _KNOWN_HASH in by["owner"]["images"][0]["url"]
+
+
+def test_purge_cross_series_purges_gallery_not_cover(harness):
+    """Rule (b) SEGURA: una URL DESCONOCIDA compartida por ≥4 series distintas es
+    sospechosa, pero SOLO se purga de posiciones de GALERÍA (idx>0). NUNCA se toca
+    la portada (images[0]): una misma foto puede ser la portada legítima de UNA
+    serie y contaminar el carrusel de otras (bug de scrape de búsqueda). Quitar la
+    portada destruiría un cover real."""
+    ppi, items_path, images, f = harness
+    shared = "https://cdn.example.com/thumb-blue.jpg"
+    # dueño legítimo: `shared` ES su portada (images[0]) → debe sobrevivir.
+    items = [
+        {"slug": "bluebox", "title": "Blue Box 16", "series_display": "Blue Box",
+         "images": [{"url": shared, "local": "", "kind": "gallery"}], "sources": []},
+    ]
+    # 4 series distintas la llevan como foto de galería (idx>0) contaminando su carrusel.
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta"]):
+        items.append({"slug": f"v{i}", "title": f"{name} 1", "series_display": name,
+                      "images": [
+                          {"url": f"http://x/{name}.jpg", "local": "", "kind": "gallery"},
+                          {"url": shared, "local": "", "kind": "gallery"},
+                      ], "sources": []})
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    # portada legítima preservada
+    assert len(by["bluebox"]["images"]) == 1
+    assert shared in by["bluebox"]["images"][0]["url"]
+    # contaminación de galería purgada, la portada propia de cada víctima intacta
+    for i in range(4):
+        urls = [im["url"] for im in by[f"v{i}"]["images"]]
+        assert shared not in urls, "la copia de galería contaminante se purga"
+        assert len(by[f"v{i}"]["images"]) == 1, "la portada propia (idx0) se conserva"
+
+
+def test_purge_known_fragment_placeholder_cover(harness):
+    """Rule (a) por FRAGMENTO: un asset de sitio conocido (icono/logo/placeholder
+    adulto) se purga aunque esté en posición de portada — nunca es un cover real."""
+    ppi, items_path, images, f = harness
+    twitter = "https://otakucalendar.com/Images/Site/TwitterFollow.png"
+    items = [
+        {"slug": "a", "title": "Series A 1", "series_display": "A",
+         "images": [{"url": twitter, "local": "", "kind": "gallery"}], "sources": []},
+        {"slug": "b", "title": "Series B 1", "series_display": "B",
+         "images": [{"url": twitter, "local": "", "kind": "gallery"}], "sources": []},
+    ]
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    assert by["a"]["images"] == [] and by["b"]["images"] == []
+
+
+def test_purge_cross_series_below_threshold_kept(harness):
+    """Una URL desconocida compartida por MENOS de 4 series NO se purga."""
+    ppi, items_path, images, f = harness
+    shared = "https://cdn.example.com/maybe.jpg"
+    items = []
+    for i, name in enumerate(["One", "Two", "Three"]):  # 3 series < 4
+        items.append({"slug": f"s{i}", "title": f"{name} 1", "series_display": name,
+                      "images": [{"url": shared, "local": "", "kind": "gallery"}], "sources": []})
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    assert all(len(by[f"s{i}"]["images"]) == 1 for i in range(3)), "bajo umbral → intacto"
+
+
+def test_purge_intra_series_shared_url_preserved(harness):
+    """Falso positivo a evitar: un box y sus tomos de la MISMA serie comparten
+    legítimamente una foto. Aunque sean muchos items, es UNA sola serie → NO se
+    purga (la regla agrupa por serie, no por item)."""
+    ppi, items_path, images, f = harness
+    shared = "https://cdn.example.com/box-photo.jpg"
+    items = [
+        {"slug": "box", "title": "MySeries Box", "series_display": "MySeries",
+         "images": [{"url": shared, "local": "", "kind": "gallery"}], "sources": []},
+    ]
+    for v in range(1, 6):  # 5 tomos misma serie
+        items.append({"slug": f"t{v}", "title": f"MySeries {v}", "series_display": "MySeries",
+                      "images": [{"url": shared, "local": "", "kind": "extra"}], "sources": []})
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    assert len(by["box"]["images"]) == 1
+    assert all(len(by[f"t{v}"]["images"]) == 1 for v in range(1, 6)), "misma serie → conservado"

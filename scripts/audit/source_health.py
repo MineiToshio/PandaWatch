@@ -14,6 +14,19 @@ Uso:
     python scripts/audit/source_health.py --last-n 5     # últimos 5 runs
     python scripts/audit/source_health.py --output md    # markdown (default)
     python scripts/audit/source_health.py --output json
+
+Detección de regresiones de yield (contexto: con --last-n 1 el clasificador
+sólo detecta broken_http; una fuente que cae de 300 a 0 items con HTTP 200
+sale "healthy"). Dos piezas nuevas:
+
+    # 1) acumular una métrica por fuente del run más reciente (idempotente)
+    python scripts/audit/source_health.py --last-n 1 \\
+        --metrics-file logs/metrics.jsonl
+
+    # 2) alertar cuando el yield actual cae <50% de la mediana histórica
+    #    del MISMO modo (delta-vs-delta, full-vs-full) con >=3 runs de historia
+    python scripts/audit/source_health.py --last-n 1 \\
+        --metrics-file logs/metrics.jsonl --baseline-alert --mode delta
 """
 
 from __future__ import annotations
@@ -21,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import statistics
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -60,6 +74,43 @@ _SKIP_RE = re.compile(r"^\[SKIP-(\w+)\]\s+([^:]+):\s+(.+)$")
 
 # Nombres entre corchetes que NO son sources (markers de estado del scraper).
 _NON_SOURCE_BRACKETS = {"ERROR", "OK", "WARN", "INFO", "SKIP"}
+
+# Fecha (y hora opcional) embebida en el nombre del run dir:
+#   scrape-delta-2026-06-12-021300 → 2026-06-12T02:13:00
+#   overnight-2026-05-21-023019    → 2026-05-21T02:30:19
+_RUN_TS_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2})(\d{2}))?")
+
+
+def infer_run_ts(run_name: str) -> str:
+    """Deriva un timestamp ISO del nombre del run dir (mejor esfuerzo).
+
+    Devuelve `YYYY-MM-DDTHH:MM:SS` si el nombre trae hora, `YYYY-MM-DD` si sólo
+    trae fecha, o "" si no hay fecha parseable.
+    """
+    m = _RUN_TS_RE.search(run_name)
+    if not m:
+        return ""
+    y, mo, d = m.group(1), m.group(2), m.group(3)
+    if m.group(4):
+        return f"{y}-{mo}-{d}T{m.group(4)}:{m.group(5)}:{m.group(6)}"
+    return f"{y}-{mo}-{d}"
+
+
+def infer_run_mode(run_name: str) -> str:
+    """Clasifica el modo del run por el prefijo de su nombre.
+
+    scrape-delta-* → delta, scrape-full-* → full, resto (overnight/retry/…) → other.
+    """
+    if run_name.startswith("scrape-delta-"):
+        return "delta"
+    if run_name.startswith("scrape-full-"):
+        return "full"
+    return "other"
+
+
+def _run_date(run_name: str) -> str:
+    """Sólo la parte de fecha (YYYY-MM-DD) del run, para anotaciones legibles."""
+    return infer_run_ts(run_name)[:10]
 
 
 def collect_run_dirs(log_root: Path, last_n: int = 10) -> list[Path]:
@@ -224,6 +275,162 @@ def classify(stats: dict) -> str:
     return "healthy"
 
 
+def _single_run_agg(stats: dict) -> dict:
+    """Arma el mini-agregado que `classify` espera, para UN solo run/fuente.
+
+    Con runs_seen=1 el clasificador nunca dispara selector_dead/low_yield/decline
+    (exigen >=2 runs); por eso la métrica per-run sólo distingue broken_http /
+    broken_skip / healthy. Ese es justamente el límite que metrics.jsonl + el
+    baseline vienen a cubrir acumulando historia.
+    """
+    error = stats.get("error")
+    skipped = stats.get("skipped")
+    candidates = stats.get("candidates")
+    a = {
+        "runs_seen": 1,
+        "runs_with_error": 1 if error else 0,
+        "runs_with_skip": 1 if (skipped and not error) else 0,
+        "runs_with_zero": 0,
+        "avg_candidates": 0.0,
+        "trend": "—",
+    }
+    if not error and not skipped and candidates is not None:
+        a["avg_candidates"] = float(candidates)
+        if candidates == 0:
+            a["runs_with_zero"] = 1
+    return a
+
+
+def _read_metrics(metrics_path: Path) -> list[dict]:
+    """Lee metrics.jsonl tolerando líneas corruptas. [] si no existe."""
+    if not metrics_path.exists():
+        return []
+    records: list[dict] = []
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def append_metrics(metrics_path: Path, run_dir: Path, source_stats: dict[str, dict]) -> tuple[int, int]:
+    """Appendea una línea JSON por fuente del run dado a metrics.jsonl.
+
+    Idempotente por (run, source): si ese par ya está en el archivo, no duplica.
+    Devuelve (appended, skipped).
+    """
+    run_name = run_dir.name
+    ts = infer_run_ts(run_name)
+    mode = infer_run_mode(run_name)
+
+    existing = {(r.get("run"), r.get("source")) for r in _read_metrics(metrics_path)}
+
+    new_lines: list[str] = []
+    skipped = 0
+    for name, stats in source_stats.items():
+        if (run_name, name) in existing:
+            skipped += 1
+            continue
+        candidates = stats.get("candidates")
+        rec = {
+            "run": run_name,
+            "ts": ts,
+            "mode": mode,
+            "source": name,
+            "candidates": candidates if candidates is not None else 0,
+            "errors": 1 if stats.get("error") else 0,
+            "status": classify(_single_run_agg(stats)),
+        }
+        new_lines.append(json.dumps(rec, ensure_ascii=False))
+
+    if new_lines:
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with metrics_path.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(new_lines) + "\n")
+    return len(new_lines), skipped
+
+
+def compute_yield_regressions(
+    metrics_path: Path,
+    current_run_name: str,
+    current_stats: dict[str, dict],
+    mode: str,
+    min_history: int = 3,
+    threshold: float = 0.5,
+) -> list[dict]:
+    """Compara el yield del run actual contra la mediana histórica del MISMO modo.
+
+    Los yields de delta y full difieren radicalmente, así que sólo se comparan
+    runs del mismo modo. Se exigen >=`min_history` runs históricos (distintos del
+    actual) con mediana > 0; si el yield actual < `threshold`× esa mediana, es una
+    regresión. Fuentes en 0 (con historial > 0) se destacan primero.
+    """
+    history: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for rec in _read_metrics(metrics_path):
+        if rec.get("mode") != mode:
+            continue
+        if rec.get("run") == current_run_name:
+            continue  # la historia excluye el run que estamos evaluando
+        cand = rec.get("candidates")
+        if cand is None:
+            continue
+        history[rec.get("source")].append((rec.get("run"), cand))
+
+    regressions: list[dict] = []
+    for name, stats in current_stats.items():
+        current = stats.get("candidates")
+        if current is None:
+            continue  # errored/skipped: sin conteo de candidatos que comparar
+        runs_for_source = history.get(name, [])
+        distinct_runs = {r for r, _ in runs_for_source}
+        if len(distinct_runs) < min_history:
+            continue  # warm-up: no alertar con poca historia
+        values = [c for _, c in runs_for_source]
+        median = statistics.median(values)
+        if median <= 0:
+            continue  # sin baseline positivo no hay regresión que medir
+        if current < median * threshold:
+            regressions.append({
+                "source": name,
+                "current": current,
+                "median": median,
+                "pct": (current / median * 100.0) if median else 0.0,
+                "history_runs": len(distinct_runs),
+                "zero": current == 0,
+            })
+
+    # Zeros primero; luego por % de la mediana ascendente (peor caída arriba).
+    regressions.sort(key=lambda r: (not r["zero"], r["pct"]))
+    return regressions
+
+
+def render_regressions_md(regressions: list[dict], mode: str) -> str:
+    """Sección markdown de regresiones de yield."""
+    lines: list[str] = []
+    lines.append(f"## 🚨 YIELD REGRESSIONS ({mode}, {len(regressions)})")
+    lines.append("")
+    lines.append(
+        f"Fuentes cuyo yield actual cayó por debajo del 50% de su mediana "
+        f"histórica ({mode}, ≥3 runs). Un 200 → 0 con HTTP 200 aparece acá "
+        f"aunque el clasificador lo marque `healthy`."
+    )
+    lines.append("")
+    lines.append("| Source | Current | Median | % of median | Hist runs |")
+    lines.append("|---|---:|---:|---:|---:|")
+    for r in regressions:
+        flag = "🔴 " if r["zero"] else ""
+        lines.append(
+            f"| {flag}{r['source'][:55]} | {r['current']} | {r['median']:g} "
+            f"| {r['pct']:.0f}% | {r['history_runs']} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
     """Genera reporte en markdown."""
     lines: list[str] = []
@@ -263,11 +470,18 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         lines.append("| Source | Kind | Enabled | Runs | Avg cand | Errors | Skips | Zero runs | Last issue |")
         lines.append("|---|---|---|---:|---:|---:|---:|---:|---|")
         for name, s in items[:30]:  # cap por categoría
+            # Recencia (#3): anotar la fecha del run MÁS RECIENTE donde se vio el
+            # síntoma, para que un 403 viejo ya resuelto no parezca activo cuando
+            # se corre con --last-n > 1. La fecha se deriva del nombre del run
+            # (robusto al orden de iteración).
             last_issue = ""
-            if s["errors"]:
-                last_issue = f"`{s['errors'][-1][1][:60]}`"
-            elif s["skips"]:
-                last_issue = f"`{s['skips'][-1][1][:60]}`"
+            issues = s["errors"] or s["skips"]
+            if issues:
+                text = max(issues, key=lambda ri: infer_run_ts(ri[0]))
+                last_run = max((r for r, _ in issues), key=infer_run_ts, default="")
+                date = _run_date(last_run)
+                suffix = f" (last: {date})" if date else ""
+                last_issue = f"`{text[1][:60]}`{suffix}"
             enabled = "✓" if s["enabled"] else "✗"
             lines.append(
                 f"| {name[:55]} | {s['kind'] or '?'} | {enabled} "
@@ -291,6 +505,17 @@ def main() -> int:
     p.add_argument("--output", choices=["md", "json"], default="md")
     p.add_argument("--output-file", default="",
                    help="Si se especifica, escribe a archivo (default: stdout).")
+    p.add_argument("--metrics-file", default="",
+                   help="Si se especifica, appendea una línea JSON por fuente del "
+                        "run MÁS RECIENTE analizado a este archivo (logs/metrics.jsonl). "
+                        "Idempotente por (run, source).")
+    p.add_argument("--baseline-alert", action="store_true",
+                   help="Compara el yield del run actual contra la mediana histórica "
+                        "del mismo modo en --metrics-file y reporta regresiones "
+                        "(caída por debajo de la mitad).")
+    p.add_argument("--mode", choices=["delta", "full", "other"], default="",
+                   help="Modo del run para el baseline (delta-vs-delta, full-vs-full). "
+                        "Si se omite con --baseline-alert, se infiere del run más reciente.")
     args = p.parse_args()
 
     log_root = Path(args.logs_root)
@@ -311,8 +536,49 @@ def main() -> int:
     sources_yaml = load_sources(Path("sources.yml"))
     agg = aggregate_health(parsed, sources_yaml)
 
+    # El run MÁS RECIENTE analizado (collect_run_dirs devuelve most-recent-first).
+    latest_run, latest_stats = parsed[0]
+
+    # --metrics-file: acumular la métrica per-source del run más reciente.
+    if args.metrics_file:
+        appended, skipped = append_metrics(Path(args.metrics_file), latest_run, latest_stats)
+        print(
+            f"[metrics] {latest_run.name}: +{appended} líneas "
+            f"({skipped} ya presentes) → {args.metrics_file}",
+            file=sys.stderr,
+        )
+
+    # --baseline-alert: regresiones de yield vs la mediana histórica del mismo modo.
+    regressions: list[dict] | None = None
+    baseline_mode = ""
+    if args.baseline_alert:
+        baseline_mode = args.mode or infer_run_mode(latest_run.name)
+        if not args.metrics_file:
+            print(
+                "[baseline] --baseline-alert sin --metrics-file: sin historial que comparar.",
+                file=sys.stderr,
+            )
+            regressions = []
+        else:
+            regressions = compute_yield_regressions(
+                Path(args.metrics_file), latest_run.name, latest_stats, baseline_mode,
+            )
+            if regressions:
+                print(
+                    f"[baseline] {len(regressions)} regresión(es) de yield ({baseline_mode}).",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[baseline] sin regresiones de yield ({baseline_mode}).",
+                    file=sys.stderr,
+                )
+
     if args.output == "md":
         out = render_markdown(runs, agg)
+        if regressions:
+            # La sección de regresiones va arriba: es lo más accionable.
+            out = render_regressions_md(regressions, baseline_mode) + "\n" + out
     else:
         # JSON serializable
         agg_clean = {}
@@ -321,8 +587,10 @@ def main() -> int:
             agg_clean[k]["errors"] = [e[1] for e in v["errors"][-3:]]
             agg_clean[k]["skips"] = [s[1] for s in v["skips"][-3:]]
             agg_clean[k]["classification"] = classify(v)
-        out = json.dumps({"runs": [r.name for r in runs], "sources": agg_clean},
-                         indent=2, ensure_ascii=False)
+        payload = {"runs": [r.name for r in runs], "sources": agg_clean}
+        if regressions is not None:
+            payload["yield_regressions"] = {"mode": baseline_mode, "items": regressions}
+        out = json.dumps(payload, indent=2, ensure_ascii=False)
 
     if args.output_file:
         Path(args.output_file).write_text(out, encoding="utf-8")

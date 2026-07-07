@@ -5,7 +5,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07 (detección de challenge delega en función compartida).
 
 ---
 
@@ -82,6 +82,11 @@ portada alternativa). El acceso es sin login.
     challenges/429, detecta la página de challenge (`WhakoomBlocked`) y **aborta el batch
     entero** si la IP entra en cuarentena. Markers reales: `cf-chl-bypass`,
     `__cf_chl_rt_tk`, `/cdn-cgi/challenge-platform/h/` (NO el script JSD legítimo).
+    **Refactor 2026-07-07 (sin cambio de comportamiento)**: la detección ya NO vive en
+    `wikis/whakoom.py` — delega en la función compartida `detect_challenge()` de
+    `scripts/manga_watch.py`, que es ahora la fuente ÚNICA de esos markers (la reutiliza
+    también Mangavariant para su challenge sgcaptcha). `whakoom.py` sólo llama
+    `detect_challenge(html_text) is not None`; los mismos markers, la misma lógica.
   - **Brotli** (#15): el header **NO** debe pedir `br` — `requests` no lo decodifica nativo
     y `response.text` quedaría binario (parser ve 0 tomos en silencio). Se usa
     `Accept-Encoding: gzip, deflate`. Si re-agregás `br`, agregá `brotli` a requirements.

@@ -1,6 +1,6 @@
 """Parser de otakucalendar.com — calendario de releases de manga (EN/US).
 
-Estructura del HTML (Calendar?month=YYYY-M):
+Estructura del HTML (Calendar/YYYY/M):
 
     <div class="dateListing">
       <h3>May 2026</h3>
@@ -210,8 +210,17 @@ def fetch_calendar_month(
     timeout: tuple[int, int] = (10, 30),
     allowed_countries: tuple[str, ...] = DEFAULT_COUNTRIES,
 ) -> list[Candidate]:
-    """Descarga el calendario de un mes y devuelve candidates parseados."""
-    url = f"{BASE_URL}/Calendar?month={year:04d}-{month}"
+    """Descarga el calendario de un mes y devuelve candidates parseados.
+
+    El mes va como PATH-SEGMENT (`/Calendar/YYYY/M`), NO como query string
+    (`?month=YYYY-M`). El servidor IGNORA el query string y sirve siempre el
+    mes por defecto, así que `?month=` daba el mismo HTML para cualquier mes
+    (bootstrapear un rango producía duplicados). La vista por-path devuelve el
+    mes solicitado (~375 releases/mes) con la MISMA estructura de HTML
+    (`div.dateListingContainer` + `/Release/<id>/<slug>`), así que el parser no
+    cambia. Verificado 2026-07-07.
+    """
+    url = f"{BASE_URL}/Calendar/{year}/{month}"
     try:
         response = session.get(url, timeout=timeout)
         response.raise_for_status()

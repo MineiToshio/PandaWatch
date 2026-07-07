@@ -43,7 +43,7 @@ nueva, revisá ese registro — puede que ya esté evaluada.
 - **Brasil** — [br-panini-brasil](sources/br-panini-brasil.md) · [br-jbc](sources/br-jbc.md) · [br-newpop](sources/br-newpop.md) · [br-pipoca-nanquim](sources/br-pipoca-nanquim.md)
 - **España** — [es-planeta-comic](sources/es-planeta-comic.md) · [es-norma-editorial](sources/es-norma-editorial.md) · [es-panini-espana](sources/es-panini-espana.md) · [es-milky-way](sources/es-milky-way.md) · [es-distrito-manga](sources/es-distrito-manga.md) · [es-arechi-manga](sources/es-arechi-manga.md) · [es-pika-ediciones](sources/es-pika-ediciones.md) · [es-mangaline-espana](sources/es-mangaline-espana.md)
 - **Estados Unidos** — [us-dark-horse-direct](sources/us-dark-horse-direct.md) · [us-square-enix-manga](sources/us-square-enix-manga.md) · [us-kodansha-usa](sources/us-kodansha-usa.md)
-- **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) · [fr-akata](sources/fr-akata.md)
+- **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-glenat-artbooks](sources/fr-glenat-artbooks.md) (alta 2026-07-07, split de fr-glenat: pasó a `kind: js`) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) · [fr-akata](sources/fr-akata.md)
 - **Italia** — [it-panini-planet-manga](sources/it-panini-planet-manga.md) · [it-star-comics](sources/it-star-comics.md) · [it-dynit](sources/it-dynit.md) · [it-funside-variant](sources/it-funside-variant.md) · [it-manga-dreams](sources/it-manga-dreams.md) · [it-edizioni-bd](sources/it-edizioni-bd.md)
 - **Polonia** (alta 2026-06-12) — [pl-mangarden](sources/pl-mangarden.md) · [pl-mangastore](sources/pl-mangastore.md)
 - **Corea del Sur** (alta 2026-06-12) — [kr-aladin](sources/kr-aladin.md)
@@ -110,6 +110,8 @@ Optional:
     description_selector: ".desc"      # optional
   max_pages: 5                         # 0 = use global default
   notes: "free-text"
+  user_agent: "Mozilla/5.0 (...) Chrome/..."  # override per-source del UA HTTP
+  throttle_group: "shopify"           # comparte semáforo+delay con otras fuentes del mismo grupo
   # For search-template entries:
   search_template: "https://example.com/search?q={query}"
   keywords:
@@ -117,6 +119,29 @@ Optional:
     - "deluxe"
     - "kanzenban"
 ```
+
+**`user_agent:` (soporte nuevo, 2026-07-07)** — UA HTTP browser-like específico para
+UNA fuente puntual. Pensado para fuentes con WAF/anti-bot sensible al User-Agent por
+defecto (ej. rechaza el UA genérico de `requests` pero deja pasar un UA de navegador
+real). Se aplica **por-request** vía `fetch_with_metadata(..., user_agent=...)` — NO
+muta la `requests.Session` compartida, así que no afecta a otras fuentes que corren en
+el mismo proceso/workers. Si no se define, la fuente usa el UA global de la sesión
+(comportamiento de siempre). A la fecha ninguna fuente del YAML lo usa todavía (el
+soporte está listo para cuando aparezca un caso real de WAF sensible al UA).
+
+**`throttle_group:` (soporte nuevo, 2026-07-07, gotcha #114)** — agrupa fuentes que
+resuelven a la MISMA infraestructura compartida (un borde/CDN, no solo un hostname).
+`--per-host-limit` sólo serializa por hostname; si varios dominios comparten el mismo
+borde (ej. cuatro tiendas Shopify tras `23.227.38.0/24`), cada una cree tener su propio
+cupo de concurrencia y entre todas agotan el rate-limit real del borde → 429 en cascada.
+Las fuentes con el mismo `throttle_group` (string libre, ej. `"shopify"`) comparten UN
+semáforo (limit 1) + un delay mínimo configurable entre requests del grupo
+(`--throttle-group-delay`, default 2s), en vez de un semáforo por host. Hoy lo usan 6
+entradas del mismo grupo `"shopify"`: `ES - Milky Way Próximamente`, `US - Dark Horse
+Direct Manga`, `US - Dark Horse Direct (search)`, `IT - Funside Variant` e
+`IT - Manga Dreams` (sus 2 entradas) — las cuatro tiendas detrás del mismo borde
+Shopify (`23.227.38.0/24`); `ES - Milky Way (search)` comparte el mismo borde pero
+todavía no tiene el campo seteado. Vacío (default) = agrupar solo por host, como siempre.
 
 ## Recipe: add a new HTML retailer
 

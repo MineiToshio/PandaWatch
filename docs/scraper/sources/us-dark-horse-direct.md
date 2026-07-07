@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -73,12 +73,35 @@ a dominios conocidos (hoy `darkhorsedirect.com`).
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **403 transitorio en las queries de búsqueda (2026-05-21)**: la entrada `(search)`
+  devolvió 403 en algunas keywords ese día (autorresuelto en la corrida siguiente sin
+  cambios de código). Verificado en vivo el 2026-07-07 (chequeo manual previo al
+  delta real): la fuente respondía normal, sin ningún challenge.
+- **429 real en el primer delta post-mejoras (2026-07-07, gotcha #114)**: horas
+  después del chequeo manual de arriba, la corrida real de `scrape_delta.sh` sí
+  disparó `HTTP error 429 Client Error: Too Many Requests` en varias keywords de
+  `US - Dark Horse Direct (search)` (limited edition, deluxe, slipcase, hardcover,
+  exclusive, variant). Causa: `darkhorsedirect.com` resuelve al mismo borde Shopify
+  `23.227.38.0/24` que Milky Way, Funside Variant y Manga Dreams — el rate-limit es
+  del BORDE compartido, no de esta tienda puntual (`--per-host-limit` agrupa por
+  hostname y no lo detecta). Fix: `throttle_group: "shopify"` en las dos entradas
+  YAML de esta fuente (`US - Dark Horse Direct Manga` y `(search)`) — comparten
+  semáforo (limit 1) + delay mínimo 2s con las otras tres tiendas del mismo grupo
+  (`--throttle-group-delay`).
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
 - El helper de variantes Shopify (#16) está limitado a `darkhorsedirect.com`; si otra
   tienda Shopify usa el mismo patrón habría que ampliar el allowlist de dominios.
 - {{pendiente: no se determinó un valor de paginación para la entrada de búsqueda
   (`max_pages` no está definido en su entrada del YAML)}}.
+- **Monitorear el próximo run** si `throttle_group` (delay 2s + semáforo compartido
+  con Milky Way/Funside Variant/Manga Dreams) evita el 429 recurrente en `(search)`;
+  si persiste, considerar reducir keywords por corrida o aumentar el delay.
 
 ---
 

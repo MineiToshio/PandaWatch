@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -63,6 +63,25 @@ Sin parser propio: ambas entradas se scrapean en la **FASE 1** del pipeline
   `source_class = official`. El país va al `edition_key` como `…-es` (#46).
 - El merge multi-fuente es el estándar del proyecto (`consolidate_by_cluster()` en
   `manga_watch.py`, decisión #1); esta fuente no tiene reglas de agrupación propias.
+
+---
+
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **0 candidatos en "Próximamente" es NORMAL, no un selector roto** (verificado
+  2026-07-07, auditoría de ingestión): cuando no hay preventas activas, Shopify
+  **server-renderea el estado vacío** de la colección ("0 productos") — no es un
+  fallo de `item_selector` ni de la fuente. Antes de sospechar un selector roto por
+  0 items de esta fuente, confirmar primero si la colección `collections/proximamente`
+  realmente tiene productos publicados en ese momento.
+- **Agrupada preventivamente en `throttle_group` (2026-07-07, gotcha #114)**:
+  `milkywayediciones.com` resuelve al mismo borde Shopify `23.227.38.0/24`
+  (`23.227.38.32`) que Dark Horse Direct, Funside Variant y Manga Dreams — las tres
+  SÍ devolvieron HTTP 429 el 2026-07-07 (Milky Way no, en esta corrida). Por
+  compartir el mismo borde, `ES - Milky Way Próximamente` se agregó al
+  `throttle_group: "shopify"` como medida preventiva (semáforo compartido + delay
+  mínimo 2s). **`ES - Milky Way (search)` todavía NO tiene el campo seteado** — si
+  llega a 429ear, agregarlo ahí también.
 
 ---
 

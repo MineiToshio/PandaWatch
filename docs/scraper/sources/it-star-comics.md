@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -57,7 +57,14 @@ perdería la edición.
 - **Calidad de imágenes**: Star Comics sirve "otros volúmenes" en un
   **subdirectorio del folder de la cover** — relevante para el filtro multi-imagen
   (#31): la comparación de directorio padre es **exacta, no substring**, para no
-  arrastrar covers de otros tomos a la galería del producto.
+  arrastrar covers de otros tomos a la galería del producto. **La página de detalle
+  además incrusta DOS carruseles ajenos a la galería del producto**: "Altri volumi
+  della serie" (otros tomos de la MISMA serie) y, más abajo, "Se ti è piaciuto prova
+  anche:" (recomendación de OTRAS series — verificado en vivo 2026-07-07: 9 cards de
+  9 productos distintos en un ejemplo real). Ambos viven dentro del `<main>` del
+  producto; cuando la cover propia también vive en `/thumbnail/` (mismo subdir que
+  esas cards), el filtro de directorio no las separa — hace falta detección
+  estructural (ver §8, gotcha #31 actualizada).
 
 ---
 
@@ -103,6 +110,19 @@ vía el **extractor genérico** del YAML. **No tiene parser propio.**
 - **Keywords con 0 resultados eliminadas** — `edizione limitata/speciale`,
   `esclusiva`, `metal edition`, `prima tiratura`, `final edition`. Re-verificar
   caso por caso si se quieren re-añadir tras nuevos lanzamientos.
+- **Bug de galería: la grilla "otros volúmenes" contaminaba el carrusel del producto
+  (2026-07-07, gotcha #31 actualizada)**: las páginas de detalle incrustan "Altri
+  volumi della serie" + "Se ti è piaciuto prova anche:" (recomendaciones de otras
+  series) DENTRO del scope del producto. Cuando la cover propia del producto también
+  vive en `/files/immagini/fumetti-cover/thumbnail/` (mismo subdirectorio que esas
+  cards), el filtro de "directorio padre exacto" (#31 original) no las distinguía —
+  ambos viven en el mismo folder, así que no había señal de path que los separara.
+  Los thumbnails de esas grillas (covers reales de OTRAS series — Blue Box, Dragon
+  Ball, One Piece, etc.) terminaban en la galería del producto scrapeado. Fix
+  estructural (no síntoma): `_related_grid_card_ids()` detecta la grilla por FORMA
+  (≥3 product-cards que enlazan a ≥3 páginas de producto distintas) y las excluye
+  del harvest, sin importar en qué carpeta viva la imagen. El purge de este bug
+  limpió **29 entradas contaminadas** del corpus. ✅
 
 ---
 

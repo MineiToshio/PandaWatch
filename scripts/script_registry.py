@@ -1257,6 +1257,49 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "normalize_isbn",
+        "category": "Mantenimiento",
+        "icon": "🔢",
+        "name": "Normalizar ISBN",
+        "tagline": "Limpia prefijos basura del ISBN (ej. '： ' fullwidth en fuentes JP).",
+        "what": (
+            "Aplica normalize_isbn() sobre el campo isbn de todos los items: "
+            "conserva solo dígitos y X (x→X) y descarta prefijos/sufijos basura "
+            "—el más común es el '： ' (dos puntos fullwidth) que las fuentes JP "
+            "dejan pegado. Ese prefijo degrada el dedup por ISBN. Los scrapes "
+            "nuevos ya entran normalizados; esto limpia el corpus histórico. Es "
+            "seguro correrlo varias veces (idempotente)."
+        ),
+        "when": (
+            "Una vez, sobre el corpus histórico. Los items ingresados después "
+            "del fix de ingestión ya vienen limpios."
+        ),
+        "command": [PYTHON, "scripts/retrofit/normalize_isbn.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Cuenta cuántos ISBN cambiarían sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Normalizar",
+                "desc": "Aplica la normalización con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Cuenta cuántos ISBN cambiarían sin guardar nada.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también los items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
         "id": "clean_descriptions",
         "category": "Mantenimiento",
         "icon": "🧹",

@@ -74,6 +74,17 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   Shopify/Tiendanube/WooCommerce/Magento + genéricos), acotado al scope del producto y
   filtrando "productos relacionados" (gotcha #31). Un solo `<img>` → lista de 1. La portada
   es `images[0]`; el mirror puebla `local` para TODAS las fotos, no solo la portada.
+  - **Detección ESTRUCTURAL de grilla de relacionados (2026-07-07, gotcha #31 actualizada)**:
+    el filtro de "mismo directorio padre" no alcanza cuando la cover PROPIA del producto
+    también vive en el mismo subdirectorio que los relacionados (Star Comics: tanto la cover
+    real como los thumbnails de "ti potrebbe interessare" cuelgan de
+    `/files/immagini/fumetti-cover/thumbnail/`). `_related_grid_card_ids()` complementa el
+    filtro de path con una señal de FORMA: ≥3 product-cards dentro del scope que enlazan
+    (`<a href>`) a ≥3 páginas de producto DISTINTAS (no a archivos de imagen — eso es lightbox/
+    zoom de la propia galería) se detectan como grilla de relacionados y se excluyen del
+    harvest vía `_node_in_grid()`. Una galería legítima del propio producto no enlaza a N
+    páginas de producto distintas, así que nunca la dispara. El purge de este bug limpió 29
+    entradas contaminadas del corpus.
   - **`srcset` → mayor resolución**: `_img_to_url` parsea todas las entradas del `srcset` y
     elige la de mayor descriptor `<N>w`; sin descriptores, toma la última (gotcha #67).
   - **`<a href="full.jpg">` envolviendo `<img>`**: cuando el `<a>` apunta a imagen del mismo
@@ -228,7 +239,7 @@ bytes: ES una imagen válida). Casos verificados (2026-06-13): Amazon devuelve u
 disponibile"** (logo MD), SocialAnime **"Image coming soon"** (robot EPM). Resultado: la
 card muestra el placeholder de la fuente en vez del 📚 por defecto.
 
-**Detector — fuente ÚNICA `image_store.placeholder_reason(source)`** (úsalo, no
+**Detector por CONTENIDO — fuente ÚNICA `image_store.placeholder_reason(source)`** (úsalo, no
 reimplementes). `source` = bytes o path; devuelve `""` (real) o la razón:
 - `tiny:WxH` — algún lado ≤ 8 px (tracking pixel / 1×1).
 - `solid:STD` — std global de luminancia < 3 ⇒ imagen casi de un solo color (el blanco
@@ -238,13 +249,38 @@ reimplementes). `source` = bytes o path; devuelve `""` (real) o la razón:
   Ahí van SOLO los placeholders **con texto/logo** (no caen por baja entropía). Para
   agregar uno: pegá su sha1 en ese JSON — **no toca código**.
 
+**Detector por URL — fuente ÚNICA `image_store.known_placeholder_url_reason(url)`** (gotcha
+#112). Complementa al de contenido para dos casos que éste NO puede ver: (1) placeholders que
+**nunca se espejaron** (`local=""`, decide sólo por la URL — clave para el `08a02c…png`
+"portada censurada" de listadomanga que llega con `local` vacío), y (2) assets de sitio
+(logos, iconos de UI, "adulto") que SON imágenes válidas con textura. Registro en dos partes:
+- `KNOWN_PLACEHOLDER_URL_STEMS` — stem exacto del basename (archivos con nombre hash del CDN):
+  `08a02c…` = listadomanga censored-cover.
+- `KNOWN_PLACEHOLDER_URL_FRAGMENTS` — substring de la URL (assets de sitio con nombre
+  descriptivo): `TwitterFollow.png` (otakucalendar), `img/adulte.png` (manga-sanctuary),
+  `funside-logo-light` (funside), `buste_protettiva_fumetti` (socialanime — accesorio).
+  Sumar uno = una línea en el dict — **importable, sin copias** (el parser de listadomanga lo
+  usa en Layout A y Layout B; ver gotcha #40/#112).
+
 **⚠️ "Contenido idéntico repetido" NO es señal de placeholder.** La portada real de *BECK
 16* aparecía idéntica en 3 items (eso es cross-cover, otro bug). El detector la deja
 intacta (std 66) porque borra solo por reglas estructurales/firma, nunca por repetición.
 
 **Retrofit `scripts/retrofit/purge_placeholder_images.py`** (sin red, lee el espejo local):
 - Quita la ENTRY completa de `images[]` (no solo `local`: si quedara la `url` remota, la
-  card cargaría el placeholder remoto igual) en TODAS las filas.
+  card cargaría el placeholder remoto igual) en TODAS las filas. Tres detecciones:
+  1. **por CONTENIDO local** (`placeholder_reason` — estructural/firma) para las espejadas;
+  2. **por URL conocida** (`known_placeholder_url_reason` — gotcha #112): purga aunque
+     `local=""` y en cualquier posición (un placeholder conocido nunca es cover real);
+  3. **genérica cross-series**: la MISMA URL en ≥ N series DISTINTAS (`--cross-series-min`,
+     default 4) es sospechosa → se purga SOLO de galería (`idx>0`), **NUNCA de la portada
+     (`images[0]`)**. Una foto puede ser el cover legítimo de UNA serie y contaminar el
+     carrusel de otras (caso real: los thumbnails de búsqueda de Star Comics inyectados en
+     ediciones "variant"); quitar la portada destruiría un cover real, quitar la copia de
+     galería es siempre seguro. Se agrupa por SERIE (`series_display`, fallback título sin
+     volumen), no por item, para no castigar box↔tomos de la misma serie que comparten foto.
+- Preserva el **dueño legítimo** identificable: si una URL-placeholder la lleva UN solo item
+  como `kind=extra`/`bonus` de su propia colección, ahí se conserva (y no se limpia su source).
 - Limpia `sources[].image_local`/`image_url` que apunten al mismo archivo/URL.
 - Re-marca la portada por posición (la primera foto que queda pasa a `images[0]`); un item
   sin fotos muestra el 📚.
@@ -252,7 +288,7 @@ intacta (std 66) porque borra solo por reglas estructurales/firma, nunca por rep
   (reversible; protege los referenciados por `cover_preview.json`). `--keep-files` lo evita.
 - Optimización: solo evalúa archivos ≤ 200 KB (un placeholder pesa pocos KB; una portada
   real > 200 KB jamás es casi-sólida ni matchea firma) → no decodifica los 14 GB de espejo.
-- Idempotente. Flags: `--dry-run`, `--keep-files`. Tests: `tests/test_purge_placeholder_images.py`.
+- Idempotente. Flags: `--dry-run`, `--keep-files`, `--cross-series-min N`. Tests: `tests/test_purge_placeholder_images.py`.
 
 Corre como paso **[4i]** del pipeline canónico (delta y full), después de
 `dedup_carousel_images` y antes de `build_web`, así un placeholder que reentre durante un

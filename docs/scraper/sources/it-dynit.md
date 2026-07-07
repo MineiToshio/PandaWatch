@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -39,7 +39,12 @@ junto con las otras fuentes de Italia. Aporte actual muy bajo (1 item).
   - `item_selector`: `div.sc_extended_products_content`
   - `title_selector`: `.woocommerce-loop-product__title, h2, h3, a`
 - **Identificador de producto**: URL del producto (sin parser propio que derive SKU/ISBN).
-- **Anti-bot / quirks**: {{pendiente: no verificado para esta fuente}}.
+- **Anti-bot / quirks**: el sitio está detrás de **Cloudflare** para fetch plano
+  (verificado 2026-07-07: headers `server: cloudflare` + `cf-mitigated: challenge` en
+  algunos requests). El fetch del scraper funcionó normal en el run de hoy (13
+  candidatos), pero es sensible a las heurísticas del WAF — si empieza a devolver
+  0 items/challenge sin razón aparente, sospechar primero de Cloudflare antes que
+  de un cambio de selectores.
 - **Calidad de imágenes**: {{pendiente: no verificado para esta fuente}}.
 
 ---
@@ -61,7 +66,15 @@ junto con las otras fuentes de Italia. Aporte actual muy bajo (1 item).
 - **Cola "Disponibile dal: DD/MM/YYYY Dynit" pegada al título** (gotcha #94,
   2026-06-13): `title` quedaba "Isekai Editor (The) #03 Disponibile dal: 05/06/2026
   Dynit". Fix: `clean_title` corta desde "Disponibile dal:". 2 items.
-- **Anti-bot y calidad de imágenes** sin verificar para esta fuente.
+- **Badge de descuento capturado como título (2026-07-07, gotcha #115)**: el
+  `title_selector` genérico (`.woocommerce-loop-product__title, h2, h3, a`) tomaba
+  el PRIMER match dentro de la card — cuando el theme insertaba un badge de oferta
+  ("Sconto 10%", "Sconto 5%") ANTES del título real, ese badge quedaba como `title`
+  en 3 items. Fix: `_first_non_badge_title()` en `manga_watch.py` itera los matches
+  y salta los que son badges de descuento (`_is_sale_badge()`). Los 3 items malos se
+  auto-curan en el próximo scrape vía upsert (no hizo falta retrofit dedicado).
+- **Cloudflare confirmado** (antes decía "sin verificar"): ver §2.
+- **Calidad de imágenes** sin verificar para esta fuente.
 
 ---
 

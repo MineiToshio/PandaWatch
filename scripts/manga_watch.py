@@ -24,6 +24,17 @@ Uso:
     python manga_watch.py --source-classes official,retailer
     python manga_watch.py --source-classes trusted_media,social
     python manga_watch.py --list-sources
+
+Config opcional por fuente (sources.yml):
+- user_agent: UA HTTP browser-like específico para esa fuente (para fuentes con
+  anti-bot agresivo que rechazan el UA por defecto). Se aplica por-request, sin
+  mutar la sesión compartida. Ver Source.user_agent / fetch_with_metadata.
+
+Anti-bot: un 200 OK que en realidad es un challenge de Cloudflare/WAF se detecta
+con detect_challenge() y se trata como FALLO de fuente (log CHALLENGE_DETECTED),
+no como 0 items silencioso. Ante un 403 se hace un reintento único con UA
+browser-like alternativo + backoff; si persiste, se loguea BLOCKED_403 y se
+abandona la fuente (NO se reintenta en loop — escala el bloqueo).
 """
 
 from __future__ import annotations
@@ -40,8 +51,8 @@ import sys
 import threading
 import time
 import unicodedata
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -115,7 +126,6 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "paginas a color", "score": 18, "type": "bonus"},
     {"phrase": "extras", "score": 14, "type": "bonus"},
     {"phrase": "regalos", "score": 20, "type": "bonus"},
-    {"phrase": "brindes", "score": 20, "type": "bonus"},
     {"phrase": "artbook", "score": 35, "type": "artbook"},
     {"phrase": "libro de arte", "score": 35, "type": "artbook"},
     {"phrase": "libro de ilustraciones", "score": 35, "type": "artbook"},
@@ -215,9 +225,17 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "marque-page", "score": 20, "type": "bonus"},
     {"phrase": "cartes postales", "score": 22, "type": "bonus"},
     {"phrase": "beau livre", "score": 30, "type": "artbook"},
+    {"phrase": "beaux livres", "score": 30, "type": "artbook"},
     {"phrase": "livre d'illustration", "score": 35, "type": "artbook"},
     {"phrase": "livre d’illustration", "score": 35, "type": "artbook"},
     {"phrase": "artbook luxe", "score": 45, "type": "artbook"},
+    # Vocabulario artbook FR de la línea Glénat (fuente "FR - Glénat Art Books").
+    # "l'art de X" (normalize_text ya colapsa el apóstrofo curvo a ASCII, así que
+    # una sola forma cubre "L'Art de Berserk" / "L’Art de …"). "super art book" y
+    # "color walk" son series de artbooks concretas (Dragon Ball, One Piece).
+    {"phrase": "l'art de", "score": 35, "type": "artbook"},
+    {"phrase": "super art book", "score": 45, "type": "artbook"},
+    {"phrase": "color walk", "score": 35, "type": "artbook"},
 
     # -------------------------
     # Italiano
@@ -344,6 +362,8 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     # -------------------------
     {"phrase": "ชุดพิเศษ", "score": 40, "type": "special_edition"},
     {"phrase": "ฉบับพิเศษ", "score": 40, "type": "special_edition"},
+    {"phrase": "ฉบับจำกัด", "score": 45, "type": "limited"},
+    {"phrase": "บ็อกซ์เซ็ต", "score": 40, "type": "box_set"},
 
     # -------------------------
     # Coreano (fuente KR 2026-06-12: Aladin — 한정판 son LEs de fábrica
@@ -381,6 +401,29 @@ KEYWORD_RULES: list[dict[str, Any]] = [
     {"phrase": "復刻版", "score": 35, "type": "premium_format"},
     {"phrase": "官網限定", "score": 45, "type": "retailer_exclusive"},
     {"phrase": "畫集", "score": 40, "type": "artbook"},            # tradicional de 画集
+
+    # -------------------------
+    # Portugués (PT-BR — Panini/JBC/NewPOP Brasil). normalize_text hace NFKD +
+    # strip de acentos, así que "edição"→"edicao" matchea con o sin acento; no
+    # hace falta duplicar la forma ASCII. "brindes" (freebies) es portugués, se
+    # movió acá desde la sección ES.
+    # -------------------------
+    {"phrase": "edição limitada", "score": 45, "type": "limited"},
+    {"phrase": "edição especial", "score": 40, "type": "special_edition"},
+    {"phrase": "edição de colecionador", "score": 45, "type": "collector"},
+    {"phrase": "edição definitiva", "score": 38, "type": "premium_format"},
+    {"phrase": "capa dura", "score": 35, "type": "hardcover"},
+    # NOTA: "box" suelto NO es una regla de frase — un token "box" desnudo
+    # matchea nombres propios ("Blue Box", editorial "Black Box") y disparaba
+    # box_set en tomos regulares (run 2026-07-07). El token "box" se detecta
+    # SOLO en construcción de producto vía `_BOX_CONSTRUCTION_RE` (abajo). Las
+    # variantes con keyword propia (box set, boxset, coffret, cofanetto, cofre,
+    # slipcase, mit box, có box, 박스…) siguen por sus reglas dedicadas.
+    {"phrase": "luva", "score": 40, "type": "box_set"},
+    {"phrase": "estojo", "score": 40, "type": "box_set"},
+    {"phrase": "caixa", "score": 35, "type": "box_set"},
+    {"phrase": "sobrecapa", "score": 25, "type": "bonus"},
+    {"phrase": "brindes", "score": 20, "type": "bonus"},
 ]
 
 
@@ -405,6 +448,19 @@ class Source:
     # título/descripción — no basta con "Collector's Edition".
     # Default "manga_only" para no romper el comportamiento histórico.
     purity: str = "manga_only"
+    # user_agent: UA HTTP específico para ESTA fuente (opcional, sources.yml
+    # `user_agent:`). Algunas fuentes con anti-bot agresivo requieren un UA
+    # browser-like distinto del UA por defecto del proyecto. Se aplica
+    # por-request al fetchear la fuente (NO muta la sesión compartida entre
+    # threads). Vacío = usar el UA de la sesión.
+    user_agent: str = ""
+    # throttle_group: fuentes que resuelven a la MISMA infraestructura compartida
+    # (p. ej. varias tiendas Shopify tras el borde 23.227.38.0/24) comparten el
+    # rate-limit remoto → un 429 en una golpea a todas. Las fuentes con el mismo
+    # `throttle_group` comparten UN semáforo (limit 1) + un delay mínimo entre
+    # requests del grupo, en vez de agruparse sólo por hostname. Vacío = se agrupa
+    # por host como siempre. Ver ThrottleRegistry.
+    throttle_group: str = ""
 
 
 @dataclass
@@ -738,7 +794,16 @@ def _strip_korean_retailer_tail(title: str) -> str:
     if "한정판" in title:
         cut = _KR_EDITION_CUT.sub(r"\1", title)
         if cut != title:
-            return cut.strip()
+            stripped_cut = cut.strip()
+            # Guard: si el recorte deja el título reducido al marcador de edición
+            # desnudo ("한정판") o algo igual/más corto (vacío, solo el marcador),
+            # NO recortar — conservar el título original. Sin esto, un título como
+            # "한정판 <cola de tienda>" quedaba en "한정판" (3 chars) y luego lo
+            # rechazaba is_collectible_edition por title_too_short (< 4), perdiendo
+            # el item (caso vivo 2026-07-07).
+            if stripped_cut and len(stripped_cut) > len("한정판"):
+                return stripped_cut
+            return title
     return _KR_META_TAIL.sub("", title).strip()
 
 
@@ -1078,6 +1143,67 @@ _ARTBOOK_BOOKLET_PHRASES = frozenset(
 )
 
 
+# El token "box" desnudo matchea NOMBRES PROPIOS latinos — la editorial francesa
+# "Black Box", la serie "Blue Box", "Tokyo Black Box" — y así disparaba box_set en
+# decenas de tomos REGULARES (evidencia run 2026-07-07: 76 tomos de Manga-Sanctuary
+# con publisher "Black Box" + "Blue Box" en 6 países). Mecanismo, no lista de series:
+#
+#   1. Construcción de producto en LATÍN (box + calificador, o "con box") → box_set.
+#   2. Token "box" que NO forma un bigrama latino "<palabra> box" → box_set. Esto
+#      preserva los boxes CJK (収納BOX, 特裝BOX, 全套收納BOX, 다용도BOX…) donde "BOX"
+#      va pegado a un ideograma (no es un nombre propio latino) y era la ÚNICA señal.
+#   3. Un bigrama latino "<palabra> box" SIN calificador de formato (Blue Box, Black
+#      Box) → NO señala box_set (es el nombre de la serie/editorial).
+#
+# Las otras keywords de caja (box set/boxset/coffret/cofanetto/cofre/slipcase/
+# mit box/có box/盒裝/박스…) tienen su propia regla y no dependen de esto.
+_BOX_CONSTRUCTION_RE = re.compile(
+    # box + calificador de formato después (NO "box vol/tomo/N" → eso es tomo regular)
+    r"\bbox[\s\-]+(?:"
+    r"set|sets|completo|completa|completos|completas|especial|deluxe|premium|"
+    r"edition|edicion|edizione|collector|colecionador|colecionavel|"
+    r"colecao|coleccao|coleccion|de|do|da|dos|das|com|con|ep"
+    r")\b"
+    # preposición "con/em/en box" (edición CON box) — mit/có ya tienen su regla
+    r"|\b(?:com|con|em|en|avec)\s+box\b"
+    # calificador de formato ANTES de box (NO colores/nombres propios: blue/black).
+    # "Complete Box", "Deluxe Box", "Collector Box"… son cajas reales.
+    r"|\b(?:complete|komplett|kompletn[iy]|completa|completo|deluxe|"
+    r"collector|collectors|collezione|premium|storage|gift|slipcase)\s+box\b",
+    re.IGNORECASE,
+)
+# Token "box" con word-boundary (mismo criterio que _build_phrase_pattern).
+_BOX_TOKEN_RE = re.compile(r"(?<![a-z0-9])box(?![a-z0-9])")
+_BOX_CONSTRUCTION_SCORE = 35
+
+# "Colors" al FINAL del texto = artbook de ilustraciones a color de la línea
+# manga ("<serie/autor> Colors": "Rumiko Takahashi Colors", "Ranma ½ Colors").
+# Anclado a fin de `normalized` para NO disparar en tomos regulares que lleven
+# "colors" en otra posición ("True Colors 3", "Colorful vol 2"): esos terminan en
+# el número de tomo, no en "colors". normalize_text ya hizo casefold → sin flags.
+_COLORS_ARTBOOK_RE = re.compile(r"(?:^|\s)colou?rs$")
+_COLORS_ARTBOOK_SCORE = 30
+
+
+def _box_set_signal_present(normalized: str) -> bool:
+    """¿Hay una señal de box_set legítima por el token "box" en `normalized`?
+
+    `normalized` viene de normalize_text (casefold + NFKD, así que el BOX de ancho
+    completo japonés ya es "box"). Ver comentario de _BOX_CONSTRUCTION_RE.
+    """
+    if _BOX_CONSTRUCTION_RE.search(normalized):
+        return True
+    for m in _BOX_TOKEN_RE.finditer(normalized):
+        # ¿La palabra inmediatamente anterior es latina? → bigrama tipo "blue box"
+        # (nombre propio) → no cuenta. Si va pegado a CJK/puntuación/dígito o es el
+        # inicio, es un box de producto (収納BOX, Re:BOX…) → cuenta.
+        prefix = normalized[:m.start()].rstrip()
+        if prefix and prefix[-1].isascii() and prefix[-1].isalpha():
+            continue
+        return True
+    return False
+
+
 def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     normalized = normalize_text(text)
     matched_phrases: list[str] = []
@@ -1105,6 +1231,22 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
                     matched_types.append(rule_type)
                     score += rule_score // _DETECT_FUZZY_DIVISOR
                     break
+
+    # "box" como señal de box_set (construcción latina o box CJK), excluyendo los
+    # bigramas latinos de nombre propio (Blue Box / Black Box). Ver
+    # _box_set_signal_present. Guarda contra doble-scoring si ya hay box_set por
+    # otra keyword (coffret, cofanetto, 盒裝…).
+    if "box_set" not in matched_types and _box_set_signal_present(normalized):
+        matched_phrases.append("box [signal]")
+        matched_types.append("box_set")
+        score += _BOX_CONSTRUCTION_SCORE
+
+    # "…Colors" al final = artbook (línea Glénat). Anclado a fin (ver
+    # _COLORS_ARTBOOK_RE) para no marcar tomos regulares con "colors" mid-title.
+    if "artbook" not in matched_types and _COLORS_ARTBOOK_RE.search(normalized):
+        matched_phrases.append("colors [signal]")
+        matched_types.append("artbook")
+        score += _COLORS_ARTBOOK_SCORE
 
     # "画集付き" / "イラスト集付き特装版" = un cuadernillo de ilustraciones INCLUIDO
     # como bonus, NO el producto. El producto es el tomo de manga (特装版/限定版).
@@ -1746,6 +1888,32 @@ def extract_isbn(text: str, soup: Any = None) -> str:
     return ""
 
 
+def normalize_isbn(raw: str, source: str = "") -> str:
+    """Limpia un ISBN crudo para almacenarlo/deduplicarlo.
+
+    Conserva SOLO dígitos y X (x→X mayúscula) y descarta prefijos/sufijos
+    basura — el más común: el "： " (dos puntos fullwidth U+FF1A) que las
+    fuentes JP dejan pegado cuando el valor viene de una ficha técnica
+    `ISBN：978…` (el split por label no strippea el colon fullwidth). Ese
+    prefijo degrada el dedup por ISBN (dos filas del mismo libro con y sin el
+    "： " caen en claves distintas).
+
+    Si tras limpiar la longitud no es 10 ni 13 NO se descarta el valor (puede
+    ser un identificador parcial útil) pero se loguea `ISBN_ANOMALY` para
+    diagnóstico. Devuelve "" si queda vacío. Idempotente: un ISBN ya limpio
+    (10/13 dígitos) se devuelve intacto y sin log.
+    """
+    if not raw:
+        return ""
+    cleaned = re.sub(r"[^0-9Xx]", "", raw).upper()
+    if not cleaned:
+        return ""
+    if len(cleaned) not in (10, 13):
+        print(f"[ISBN_ANOMALY] source={source or '?'} len={len(cleaned)} "
+              f"raw={raw!r} cleaned={cleaned!r}")
+    return cleaned
+
+
 SCHEMA_ORG_CURRENCY_SYMBOLS = {
     "EUR": "€", "USD": "$", "JPY": "¥", "GBP": "£",
     "MXN": "MXN", "ARS": "$", "CAD": "$", "AUD": "$",
@@ -2094,6 +2262,66 @@ def _find_product_scope(soup: BeautifulSoup):
     return None
 
 
+def _related_grid_card_ids(scope: Any, source_url: str) -> set[int]:
+    """IDs de los contenedores que forman una GRILLA de 'productos relacionados'
+    dentro del scope del producto (repetición de product-cards, cada una con
+    enlace a una PÁGINA DE PRODUCTO distinta).
+
+    Varias fuentes (Star Comics, retailers Shopify) incrustan un carrusel de
+    'otri volumi / ti potrebbe interessare' DENTRO del `<main>` del producto.
+    Sus thumbnails son de OTROS productos y no deben entrar al carrusel del
+    producto que se scrapea. El filtro de mismo-directorio (gotcha #31) no
+    alcanza cuando la cover del PROPIO producto también vive en el subdir
+    `thumbnail/` (misma carpeta que los relacionados): no queda señal de path
+    que los separe. La señal robusta es ESTRUCTURAL — son cards repetidas que
+    enlazan a productos DISTINTOS, no la galería del propio producto.
+
+    Devuelve el set de `id()` de esas cards para que el harvest de galería
+    (selectores CSS + fallback) las saltee. Vacío si no hay grilla: una galería
+    legítima (front/back/lomo del MISMO producto, lightbox a archivos de imagen)
+    no enlaza a N páginas de producto distintas, así que no se detecta.
+    """
+    try:
+        clusters = detect_product_clusters(scope, source_url)
+    except Exception:
+        return set()
+    own = canonicalize_url(source_url, source_url)
+    grid_cards: list[Any] = []
+    product_hrefs: set[str] = set()
+    for card in clusters:
+        if not card.find("img"):
+            continue
+        anchor = card.find("a", href=True)
+        if not anchor:
+            continue
+        href = (anchor.get("href") or "").split("?", 1)[0].split("#", 1)[0]
+        # Un ancla que apunta a un ARCHIVO de imagen (lightbox/zoom) NO es un
+        # enlace a otro producto: es la propia galería. No cuenta como grilla.
+        if _IMAGE_EXT_RE.search(href):
+            continue
+        url = canonicalize_url(source_url, anchor.get("href"))
+        if not url or url == own:
+            continue
+        grid_cards.append(card)
+        product_hrefs.add(url)
+    # >=3 cards con imagen que enlazan a >=3 productos DISTINTOS = listing real.
+    if len(grid_cards) < 3 or len(product_hrefs) < 3:
+        return set()
+    return {id(c) for c in grid_cards}
+
+
+def _node_in_grid(node: Any, grid_card_ids: set[int]) -> bool:
+    """True si `node` es (o desciende de) una card de grilla de relacionados."""
+    if not grid_card_ids:
+        return False
+    cur = node
+    while cur is not None:
+        if id(cur) in grid_card_ids:
+            return True
+        cur = getattr(cur, "parent", None)
+    return False
+
+
 def _extract_images_from_detail_soup(
     soup: BeautifulSoup,
     source_url: str,
@@ -2200,6 +2428,11 @@ def _extract_images_from_detail_soup(
     # thumbnails de "productos relacionados" / "recently viewed" como si
     # fueran de la misma galería del producto, contaminando el carrusel.
     scope = _find_product_scope(soup) or soup
+    # Grilla de 'productos relacionados' incrustada en el scope (gotcha #31):
+    # sus thumbnails son de OTROS productos. Los excluimos ANTES del filtro de
+    # path porque cuando la cover propia también es un thumbnail el filtro de
+    # directorio no puede separarlos.
+    grid_card_ids = _related_grid_card_ids(scope, source_url)
     for selector in _GALLERY_CSS_SELECTORS:
         if len(out) >= limit:
             break
@@ -2211,6 +2444,8 @@ def _extract_images_from_detail_soup(
             if len(out) >= limit:
                 break
             if not node:
+                continue
+            if _node_in_grid(node, grid_card_ids):
                 continue
             if node.name == "img":
                 # Preferir el href del <a> envolvente cuando apunta a full-res
@@ -2237,6 +2472,8 @@ def _extract_images_from_detail_soup(
         fallback_scope = _find_product_scope(soup) or soup.body or soup
         scored: list[tuple[int, str, str]] = []
         for img in fallback_scope.find_all("img", limit=60):
+            if _node_in_grid(img, grid_card_ids):
+                continue
             url = _img_to_url(img, source_url)
             if not url:
                 continue
@@ -2513,6 +2750,10 @@ def fetch_metadata_from_detail(
     if not result["isbn"]:
         body_text = clean_text(soup.body.get_text(" ", strip=True) if soup.body else "")
         result["isbn"] = extract_isbn(f"{body_text}\n{url}", soup)
+    # Normaliza en el punto de extracción: el valor de la ficha técnica (label
+    # pairs) llega con "： " fullwidth pegado en fuentes JP. Fuente única de
+    # limpieza para que md.get("isbn") ya salga limpio a los call-sites.
+    result["isbn"] = normalize_isbn(result["isbn"], source=url)
 
     # === Name fallback: OG title → <title> ===
     # JSON-LD muchas veces no trae 'name'. og:title es estándar (lo expone
@@ -2976,7 +3217,7 @@ _STRONG_MANGA_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"Print|Digital|Paperback|Hardcover|Spanish|English|French|Italian|"
         r"Japanese|German|US|UK|EU|Standard|Regular|Original|Final)\b)"
         r"[A-Za-z][\w\-]{2,}\s+"
-        r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
+        r"(?:Edition|Edizione|Édition|Edición|Edicion|Edição|Edicao)\b",
         re.IGNORECASE,
     ),
 )
@@ -3668,6 +3909,39 @@ COLLECTIBLE_PRODUCT_TYPES = frozenset({
     "artbook", "fanbook", "guidebook", "magazine", "boxset",
 })
 
+
+def is_curated_collectible_source(candidate: Any) -> bool:
+    """¿El candidato viene de una fuente 100% CURADA de coleccionables y debe
+    saltar el gate `is_collectible_edition`?
+
+    Dos catálogos curados por diseño donde exigir la keyword en el título
+    descartaría items legítimos:
+
+    - **variant-catalog** (Mangavariant): cataloga SOLO variants; su título a
+      menudo dice sólo "Vol.1 - Cover A" / "First print" sin keyword de edición.
+    - **artbook** (catálogos de artbooks de editoriales, p.ej. "FR - Glénat Art
+      Books"): la PÁGINA entera son artbooks, pero el título del producto rara
+      vez trae "art book"/"画集" ("L'Art de Berserk", "One Piece Color Walk",
+      "Rumiko Takahashi Colors"). Sin este bypass caían como `regular_tomo`
+      pese a ser literalmente el catálogo de artbooks de la editorial. Para
+      estos forzamos `product_type='artbook'` (si no es ya un tipo coleccionable)
+      para que la fila quede correctamente tipada y `is_collectible_edition` la
+      acepte por su regla 3.
+
+    ⚠️ Este bypass se aplica SIEMPRE **después** de `is_likely_manga`: los items
+    no-manga de esas mismas páginas (BD occidental — Cromwell, Druillet en la
+    página de Glénat) ya quedaron filtrados aguas arriba por relevancia-manga /
+    purity. Este helper NO relaja ese gate; sólo el de coleccionabilidad.
+    """
+    tags = getattr(candidate, "tags", None) or []
+    if "variant-catalog" in tags:
+        return True
+    if "artbook" in tags:
+        if getattr(candidate, "product_type", "") not in COLLECTIBLE_PRODUCT_TYPES:
+            candidate.product_type = "artbook"
+        return True
+    return False
+
 # Regex generalista "<Word> Edition / Edizione / Édition / Edición".
 # Captura lore-words específicas a cada manga sin necesidad de diccionario:
 # "Beherit Edition", "Tarot Edition", "Tribute Edition", "Master Edition",
@@ -3699,9 +3973,13 @@ _GENERIC_X_EDITION_PATTERN = re.compile(
     r"|Nueva|Nuova|Nouvelle|Primera|Prima|Première|Premiere"
     r"|Segunda|Seconda|Tercera|Terza|Última|Ultima"
     r"|Estándar|Estandar|Regolare|Originale|Digitale|Numérique|Numerique|Impresa"
-    r"|Española|Espanola|Inglesa|Italiana|Japonesa|Alemana|Francesa)\b)"
+    r"|Española|Espanola|Inglesa|Italiana|Japonesa|Alemana|Francesa"
+    # Genéricos PT-BR: reimpresión / formato estándar / mercado. Sin esto,
+    # "Primeira Edição" / "Nova Edição" / "Edição Brasileira" colarían tomos
+    # normales por el gate de coleccionable. (Segunda ya está cubierta arriba.)
+    r"|Primeira|Nova|Padrão|Padrao|Comum|Brochura|Brasileira)\b)"
     r"([A-Za-z][\w\-]{2,})\s+"
-    r"(?:Edition|Edizione|Édition|Edición|Edicion)\b",
+    r"(?:Edition|Edizione|Édition|Edición|Edicion|Edição|Edicao)\b",
     re.IGNORECASE,
 )
 
@@ -4021,16 +4299,25 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
        (`gon-norma-collector` vs `gon-glenat-collector`), por eso no
        necesita campos extra. El ISBN se preserva como metadata del item
        para búsqueda y enrichment, pero no como discriminante de grupo.
-    2. ISBN → "isbn:<isbn>". Fallback para items sin edition_key. ISBN es
-       unique per edición/mercado.
-    3. Si NO hay ISBN ni edition_key, pero podemos derivar
-       `(language, series, volume)` con una serie de >= 3 caracteres →
+    2. Si NO hay edition_key, pero podemos derivar
+       `(country, series, volume)` con una serie de >= 3 caracteres →
        fuzzy combinando esos + variant_tier + publisher.
-    4. Cualquier otro caso → "url:<url>" (standalone, no se agrupa).
+    3. Cualquier otro caso → "url:<url>" (standalone, no se agrupa).
+
+    ISBN NO se usa como criterio de fusión (removido 2026-07-07). La premisa
+    "un ISBN = una edición" es FALSA en manga: portadas variantes comparten
+    ISBN, especial y normal comparten ISBN, y varios retailers (p. ej.
+    Mangaline MX) reusan un mismo ISBN en toda su línea — ej. 9788419177629
+    aparece en Devilman #3 Y en Mao Dante #1, dos series distintas. Usar el
+    ISBN pelado como clave fusionaba destructivamente ediciones/series
+    distintas. El ISBN se CONSERVA en el row como metadata (búsqueda,
+    enrichment) pero un item con isbn y sin edition_key CAE a la cascada
+    fuzzy → url, que sí respeta la regla dura país+serie+volumen+tier+publisher.
 
     `variant_tier` y `publisher` son discriminantes para EVITAR juntar
     "OP100 normal" con "OP100 Celebration" (distinto tier) o ediciones de
-    publishers distintos. Idioma es discriminante para no mezclar mercados.
+    publishers distintos. PAÍS es discriminante (país = edición): no mezcla
+    mercados que comparten idioma (ES-España vs ES-México).
 
     Antes este campo era `variant_sig = ",".join(sorted(signal_types))`. El
     problema: dos fuentes con descripciones distintas detectan signal_types
@@ -4076,16 +4363,16 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
         volume = (item.get("volume") or "").strip().translate(FULLWIDTH_DIGITS_TABLE)
         return f"edition:{edition_key}|{volume}"
 
-    # Tier 2: ISBN — para items sin edition_key (pre-standardize o legacy).
-    # Normalizado a ISBN-13 puro: ISBN-10 vs ISBN-13 (o guiones) del mismo
-    # libro deben caer en el mismo cluster.
-    isbn = (item.get("isbn") or "").strip()
-    if isbn:
-        norm = isbn13(isbn)
-        return f"isbn:{norm or isbn}"
-
+    # Tier 2: fuzzy (país + serie + volumen + variant_tier + publisher).
+    # OJO: NO hay tier ISBN. El ISBN pelado NO es criterio de fusión (removido
+    # 2026-07-07): en manga el mismo ISBN se repite entre ediciones/series
+    # DISTINTAS (portadas variantes, especial vs normal, y retailers como
+    # Mangaline MX que reusan un ISBN en toda su línea), así que fusionarlo
+    # era destructivo. Un item con isbn pero sin edition_key cae acá (fuzzy)
+    # o a url:, respetando la regla dura país=edición. El ISBN queda en el row
+    # como metadata, no como clave.
     title = item.get("title") or ""
-    language = (item.get("language") or "").strip().lower()
+    country = (item.get("country") or "").strip().lower()
     publisher = (item.get("publisher") or "").strip().lower()
     signal_types = item.get("signal_types") or []
     variant_tier = _variant_tier(signal_types)
@@ -4093,15 +4380,19 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
     series = _normalize_series_name(title, volume)
     url = (item.get("url") or "").strip()
 
-    # Guardas anti-falso-positivo: series, language y volume son
-    # requeridos para considerar dos items "el mismo producto" sin ISBN
-    # ni edition_key.
+    # Guardas anti-falso-positivo: series, country y volume son requeridos
+    # para considerar dos items "el mismo producto" sin ISBN ni edition_key.
+    # PAÍS (no idioma) es el discriminante porque "país = edición" es regla
+    # dura: ES-España y ES-México comparten language pero son ediciones
+    # DISTINTAS y no deben colapsar en el mismo cluster. Si country está
+    # vacío, tampoco generamos clave fuzzy (evita que todos los country-vacío
+    # caigan en el mismo bucket) → cae al tier url:.
     if (not series or len(series) < 3
-            or not language
+            or not country
             or not volume):
         return f"url:{url}"
 
-    return f"fuzzy:{language}|{series}|{volume}|{variant_tier}|{publisher}"
+    return f"fuzzy:{country}|{series}|{volume}|{variant_tier}|{publisher}"
 
 
 def is_collectible_edition(
@@ -4304,10 +4595,93 @@ def load_sources(path: Path) -> list[Source]:
                     selectors=dict(item.get("selectors", {}) or {}),
                     max_pages=int(item.get("max_pages", 0) or 0),
                     purity=str(item.get("purity", "manga_only")).strip().lower(),
+                    user_agent=str(item.get("user_agent", "")).strip(),
+                    throttle_group=str(item.get("throttle_group", "")).strip(),
                 )
             )
 
     return [source for source in sources if source.name and source.url]
+
+
+class ThrottleRegistry:
+    """Semáforos de concurrencia por HOST, con soporte de GRUPOS compartidos.
+
+    Por defecto limita a `per_host_limit` requests concurrentes por hostname
+    (comportamiento histórico). Las fuentes cuyo host está mapeado a un
+    `throttle_group` (sources.yml) comparten en cambio UN semáforo por grupo
+    (limit `group_limit`, default 1) más un delay mínimo `group_delay` entre
+    requests del grupo.
+
+    Motivación (run 2026-07-07): Dark Horse Direct, IT-Funside e IT-Manga Dreams
+    resuelven al MISMO borde Shopify (23.227.38.0/24) y comparten el rate-limit
+    remoto; un 429 en una golpea a todas. Agrupar sólo por hostname (el
+    `--per-host-limit`) no las serializa entre sí. El grupo sí.
+
+    Thread-safe: `acquire(url)` es un context manager usable desde los workers.
+    """
+
+    def __init__(
+        self,
+        per_host_limit: int,
+        host_to_group: dict[str, str] | None = None,
+        group_limit: int = 1,
+        group_delay: float = 2.0,
+    ) -> None:
+        self.per_host_limit = max(1, int(per_host_limit))
+        self.host_to_group = {
+            (h or "").lower(): g for h, g in (host_to_group or {}).items() if h and g
+        }
+        self.group_limit = max(1, int(group_limit))
+        self.group_delay = max(0.0, float(group_delay))
+        self._sems: dict[str, threading.Semaphore] = {}
+        self._last_start: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def _key_for(self, url: str) -> tuple[str, bool]:
+        host = (urlparse(url).hostname or "").lower()
+        group = self.host_to_group.get(host)
+        if group:
+            return f"group:{group}", True
+        return f"host:{host}", False
+
+    def _sem(self, key: str, is_group: bool) -> threading.Semaphore:
+        with self._lock:
+            sem = self._sems.get(key)
+            if sem is None:
+                limit = self.group_limit if is_group else self.per_host_limit
+                sem = threading.Semaphore(limit)
+                self._sems[key] = sem
+            return sem
+
+    def _reserve_delay(self, key: str) -> float:
+        """Reserva el próximo slot temporal del grupo y devuelve cuánto dormir.
+
+        Espaciamos los INICIOS de request del grupo en al menos `group_delay`.
+        Se reserva bajo lock (marcando el próximo inicio) para que threads que
+        entren en ráfaga encadenen su espera en vez de solaparse.
+        """
+        if self.group_delay <= 0:
+            return 0.0
+        with self._lock:
+            now = time.monotonic()
+            last = self._last_start.get(key, 0.0)
+            target = max(now, last + self.group_delay)
+            self._last_start[key] = target
+            return target - now
+
+    @contextmanager
+    def acquire(self, url: str):
+        key, is_group = self._key_for(url)
+        sem = self._sem(key, is_group)
+        sem.acquire()
+        try:
+            if is_group:
+                wait = self._reserve_delay(key)
+                if wait > 0:
+                    time.sleep(wait)
+            yield
+        finally:
+            sem.release()
 
 
 def filter_sources(
@@ -4742,13 +5116,23 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             for field in _CURATED_FIELDS:
                 if old.get(field) not in (None, ""):
                     merged[field] = old[field]
-            # Gotcha #65: la fila cruda trae cluster_key de tier isbn:/url:.
+            # Gotcha #65: la fila cruda trae cluster_key de tier fuzzy/url:.
             # Con edition_key/volume curados ya restaurados, re-derivar acá
             # devuelve el tier edition: y mantiene la invariante CLKEY
             # (stored == derive_cluster_key(item)) sin reparación manual.
             merged["cluster_key"] = derive_cluster_key(merged)
             existing[key] = merged
         else:
+            # Item RAW (no aprobado, no estandarizado): el upsert reemplaza la
+            # fila entera. Fill-if-empty para isbn/author/release_date: si el
+            # re-scrape NO recapturó uno de esos 3 campos (llega vacío/None) pero
+            # el viejo lo tenía backfilleado (backfill_metadata.py), conservamos
+            # el viejo. Si el nuevo trae valor, SIEMPRE gana el nuevo. No toca la
+            # lógica sticky de arriba (standardized/approved van por otra rama).
+            if old:
+                for _f in ("isbn", "author", "release_date"):
+                    if not row.get(_f) and old.get(_f):
+                        row[_f] = old[_f]
             existing[key] = row
 
     # 3. Reescribir atómicamente. Conservamos el orden: primero todos los que
@@ -4770,6 +5154,12 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
         for item in no_url_rows:
             file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+        # Durabilidad: forzar el flush del buffer de Python + fsync del FD antes
+        # del rename atómico, para que un corte de energía justo tras el replace
+        # no deje items.jsonl truncado/vacío (el .tmp podría estar en el page
+        # cache pero no en disco).
+        file.flush()
+        os.fsync(file.fileno())
     tmp_path.replace(path)
 
 
@@ -4802,7 +5192,7 @@ def flush_source_candidates(
     for c in candidates:
         if c.score < min_score:
             continue
-        if "variant-catalog" not in (c.tags or []):
+        if not is_curated_collectible_source(c):
             is_coll, _ = is_collectible_edition(
                 c.title, c.description, c.signal_types, c.product_type,
                 tags=c.tags, isbn=c.isbn, url=c.url,
@@ -4851,6 +5241,77 @@ class RobotsCache:
         except Exception as exc:
             print(f"[WARN] Error evaluando robots.txt para {url}: {exc}. Permito por defecto.")
             return True
+
+
+# ---------------------------------------------------------------------------
+# Detección de challenge anti-bot (Cloudflare / WAF) — FUENTE ÚNICA
+# ---------------------------------------------------------------------------
+#
+# La usan: el path HTTP plano de `_scrape_one`, el path Playwright
+# (`_fetch_with_playwright_impl`) y el spider de Whakoom
+# (`scripts/wikis/whakoom.py`, que la importa y delega su
+# `_looks_like_cf_challenge` acá). NO reimplementar en otro lado.
+#
+# Marcadores ESTRUCTURALES inequívocos de Cloudflare (form/token/UI path del
+# challenge). NO usar "challenge-platform" a secas: el script JSD de
+# bot-detection (/cdn-cgi/challenge-platform/scripts/jsd/main.js) aparece en
+# CUALQUIER página protegida. El challenge UI real vive en /h/ (no /scripts/).
+_CHALLENGE_STRUCTURAL_MARKERS = (
+    "cf-chl-bypass",                    # form metadata del challenge
+    "__cf_chl_rt_tk",                   # token de challenge
+    "/cdn-cgi/challenge-platform/h/",   # UI path del challenge (no /scripts/)
+)
+# Marcadores de TÍTULO/TEXTO (Cloudflare "Just a moment" + WAFs genéricos).
+# Ambiguos fuera de una página de challenge, así que solo se evalúan en páginas
+# CORTAS: los challenges pesan 5-15KB; el contenido real supera 50KB y podría
+# contener estas frases en el body (falso positivo).
+_CHALLENGE_TEXT_MARKERS = (
+    "just a moment",
+    "checking your browser",
+    "attention required",
+    "access denied",
+    "verification",
+)
+_CHALLENGE_TEXT_MAX_LEN = 50000
+
+
+def detect_challenge(html: str, status: int | None = None) -> str | None:
+    """¿La respuesta es un challenge anti-bot en lugar de contenido real?
+
+    Devuelve el tipo de challenge ("cloudflare" | "challenge") o None si la
+    página parece contenido legítimo. `status` (código HTTP) se acepta para
+    futuros WAFs que solo challenguean con 403/503 — hoy no altera la decisión.
+    """
+    if not html:
+        return None
+    lowered = html.lower()
+    for marker in _CHALLENGE_STRUCTURAL_MARKERS:
+        if marker in lowered:
+            return "cloudflare"
+    if len(html) <= _CHALLENGE_TEXT_MAX_LEN:
+        for marker in _CHALLENGE_TEXT_MARKERS:
+            if marker in lowered:
+                return "challenge"
+    return None
+
+
+class Blocked403Error(Exception):
+    """La fuente devolvió 403 incluso tras un reintento con UA alternativo.
+
+    Señaliza que hay que ABANDONAR la fuente en este run. El red team vetó
+    agregar 403 al Retry de urllib3: reintentar idéntico escala el bloqueo. El
+    reintento único con UA browser-like alternativo se hace en `_scrape_one`.
+    """
+
+
+# Backoff (segundos) antes del reintento único ante 403.
+_BLOCKED_403_BACKOFF_SECONDS = 4.0
+# UA browser-like de respaldo para el reintento único ante 403 (distinto del UA
+# por defecto del proyecto, que algunos WAF bloquean por identificarlo como bot).
+_BROWSER_LIKE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 def make_session(user_agent: str) -> requests.Session:
@@ -5001,11 +5462,18 @@ def find_next_page_url(
 
 
 def fetch_with_metadata(
-    session: requests.Session, url: str, timeout: tuple[int, int]
+    session: requests.Session, url: str, timeout: tuple[int, int],
+    *, user_agent: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Como fetch_text pero devuelve también metadata útil para diagnóstico."""
+    """Como fetch_text pero devuelve también metadata útil para diagnóstico.
+
+    `user_agent` (opcional) sobreescribe el UA SOLO para esta request (per-source
+    UA de sources.yml, o el UA browser-like del reintento ante 403), sin mutar
+    la sesión compartida entre threads.
+    """
     start = time.perf_counter()
-    response = session.get(url, timeout=timeout)
+    headers = {"User-Agent": user_agent} if user_agent else None
+    response = session.get(url, timeout=timeout, headers=headers)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     response.raise_for_status()
     if not response.encoding:
@@ -5229,9 +5697,10 @@ def _fetch_with_playwright_impl(
     try:
         response = page.goto(url, timeout=timeout_ms, wait_until=wait_until)
         # Si la página parece ser un challenge de Cloudflare/Akamai, esperar más.
+        # detect_challenge() es la fuente única de markers (comparte lista con el
+        # path HTTP y con whakoom); acá se evalúa contra el TÍTULO renderizado.
         try:
-            title = page.title().lower()
-            if any(t in title for t in ("just a moment", "attention required", "access denied", "verification")):
+            if detect_challenge(page.title()):
                 page.wait_for_timeout(6000)
         except Exception:
             pass
@@ -5291,6 +5760,57 @@ def candidate_from_source(source: Source, title: str, url: str, description: str
     )
 
 
+# Badges de descuento/oferta que themes de tienda (WooCommerce y similares)
+# insertan en la card ANTES del título: "Sconto 10%", "-10%", "Sale", "Offerta"…
+# El title_selector genérico cae a h2/h3/a y capturaba ese badge como título (caso
+# IT - Dynit, run 2026-07-07: title "Sconto 10%"/"Sconto 5%"). No es el nombre del
+# producto — se salta al elegir el título dentro de la card.
+_SALE_BADGE_RE = re.compile(
+    r"^\s*(?:"
+    r"-?\s*\d{1,3}\s*%\s*(?:off|di\s+sconto|sconto|dto\.?|desc\.?|de\s+descuento)?"  # -10%, 10% off
+    r"|sconto\s*-?\s*\d{1,3}\s*%?"                       # Sconto 10%
+    r"|descuento\s*-?\s*\d{1,3}\s*%?"                    # Descuento 10%
+    r"|r[ée]duction\s*-?\s*\d{1,3}\s*%?"                 # Réduction 10%
+    r"|(?:in\s+)?saldo|sale|offerta|oferta|promo(?:zione)?|solde[s]?"
+    r"|sconto|descuento|rebaja|r[ée]duction"  # badges "desnudos" sin % (IT - Funside, run 2026-07-07)
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_sale_badge(text: str) -> bool:
+    """¿El texto es SÓLO un badge de descuento/oferta (no un título de producto)?
+
+    Comparación de TEXTO COMPLETO (fullmatch): sólo se salta el candidato cuando
+    el texto ENTERO es el badge. Un título real que contenga la palabra en
+    contexto ("Garage Sale Vol 1", "Summer Sale Special Edition") NO se salta.
+    """
+    return bool(text) and bool(_SALE_BADGE_RE.fullmatch(text.strip()))
+
+
+def _first_non_badge_title(card: Any, title_selector: str) -> str:
+    """Primer elemento del title_selector cuyo texto NO es un badge de descuento.
+
+    `select_one` devolvía el PRIMER match en orden de documento — si el theme
+    pone un "Sconto 10%" antes del título, ese era el título. Iteramos y saltamos
+    badges; si todos son badges (raro), caemos al primero (comportamiento viejo).
+    """
+    try:
+        els = card.select(title_selector)
+    except Exception:
+        return ""
+    fallback = ""
+    for el in els:
+        t = clean_text(el.get_text(" ", strip=True))
+        if not t:
+            continue
+        if not fallback:
+            fallback = t
+        if not _is_sale_badge(t):
+            return t
+    return fallback
+
+
 def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) -> list[Candidate]:
     selectors = source.selectors or {}
     item_selector = selectors.get("item_selector")
@@ -5314,8 +5834,7 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
         description = ""
 
         if title_selector:
-            title_el = card.select_one(title_selector)
-            title = clean_text(title_el.get_text(" ", strip=True) if title_el else "")
+            title = _first_non_badge_title(card, title_selector)
 
         if link_selector:
             link_el = card.select_one(link_selector)
@@ -5353,7 +5872,10 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
             candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
             candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
             candidate.author = schema.get("author") or extract_author(candidate.description, card)
-            candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{candidate.url}", card)
+            candidate.isbn = normalize_isbn(
+                schema.get("isbn") or extract_isbn(f"{candidate.description}\n{candidate.url}", card),
+                source=candidate.source,
+            )
             candidates.append(candidate)
 
     return candidates
@@ -5645,7 +6167,10 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
     candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
     candidate.author = schema.get("author") or extract_author(candidate.description, card)
-    candidate.isbn = schema.get("isbn") or extract_isbn(f"{candidate.description}\n{url}", card)
+    candidate.isbn = normalize_isbn(
+        schema.get("isbn") or extract_isbn(f"{candidate.description}\n{url}", card),
+        source=candidate.source,
+    )
     return candidate
 
 
@@ -5965,7 +6490,7 @@ def extract_rss(source: Source, feed_text: str, max_items: int, max_age_days: in
                 pass
         candidate.release_date = extract_release_date(summary) or normalize_release_date(published_at)
         candidate.author = extract_author(summary)
-        candidate.isbn = extract_isbn(f"{summary}\n{link}")
+        candidate.isbn = normalize_isbn(extract_isbn(f"{summary}\n{link}"), source=candidate.source)
         candidates.append(candidate)
     return candidates
 
@@ -6210,15 +6735,18 @@ def process_state(
     # BYPASS para fuentes 100% curadas: bases comunitarias como Mangavariant
     # catalogan SOLO variants por diseño — el gate por keywords ("variant",
     # "limited", "deluxe"…) descarta ~30% de items legítimos cuyo title solo
-    # dice "Vol.1 - Cover A" o "First print". Marcamos esas filas con el tag
-    # 'variant-catalog' en el parser y las dejamos pasar sin filtrar. Ver
-    # "URL como referencia" en CLAUDE.md.
+    # dice "Vol.1 - Cover A" o "First print". Idem los catálogos de artbooks de
+    # editorial (tag 'artbook', p.ej. Glénat Art Books): la página entera son
+    # artbooks pero el título rara vez trae la keyword. `is_curated_collectible_source`
+    # centraliza ambos bypass (y para 'artbook' fija product_type='artbook'). Se
+    # aplica DESPUÉS de is_likely_manga, así que los no-manga ya quedaron fuera.
+    # Ver "URL como referencia" en CLAUDE.md y la ficha fr-glenat-artbooks.md.
     pre_filter_count = len(candidates)
     filtered: list[Candidate] = []
     collectible_rejected = 0
     collectible_bypassed = 0
     for candidate in candidates:
-        if "variant-catalog" in (candidate.tags or []):
+        if is_curated_collectible_source(candidate):
             filtered.append(candidate)
             collectible_bypassed += 1
             continue
@@ -6988,7 +7516,11 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "product_type": candidate.product_type,
         "author": clean_author(candidate.author),
         "stock_type": candidate.stock_type,
-        "isbn": candidate.isbn,
+        # Guardia universal de ISBN: normaliza en el sink de escritura para que
+        # NINGÚN camino (listadomanga, wikis, retailers) deje "： "/guiones en el
+        # campo persistido. El ISBN es metadata (búsqueda, selección de canónica
+        # en merge_cluster) — ya NO es criterio de cluster_key (ver derive_cluster_key).
+        "isbn": normalize_isbn(candidate.isbn, source=candidate.source),
     }
     # images[] es la ÚNICA fuente de verdad de la portada (decisión 2026-06-09):
     # `images[0]` es la portada; no hay campos top-level image_url/image_local.
@@ -7019,6 +7551,15 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     extras_list = list(getattr(candidate, "extras", []) or [])
     if extras_list:
         row["extras"] = extras_list
+
+    # original_title: título en el idioma original del producto, atributo
+    # dinámico que setea el parser de colecciones de listadomanga (mismo
+    # mecanismo que edition_display/volume). Solo se persiste si no-vacío para
+    # no inflar todas las filas con un campo vacío. OJO: NO confundir con
+    # title_original (gotcha #93), que es el nombre OFICIAL scrapeado completo.
+    original_title = getattr(candidate, "original_title", "") or ""
+    if original_title:
+        row["original_title"] = original_title
 
     # Hook: si el Candidate ya tiene series_key/edition_key (set por una pasada
     # de estandarización manual o por un scraper futuro), aplicar
@@ -7085,7 +7626,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
 
     # cluster_key se deriva DESPUÉS del Paso C: con edition_key ya escrito en
     # el row, la clave sale en tier edition: (o lmc:). Derivarla antes dejaba
-    # toda fila fresca en tier isbn:/url: → stored != derive_cluster_key(item),
+    # toda fila fresca en tier fuzzy/url: → stored != derive_cluster_key(item),
     # violación CLKEY hasta correr backfill_cluster_key (gotcha #65).
     row["cluster_key"] = derive_cluster_key(row)
 
@@ -7129,6 +7670,8 @@ PROBLEM_CATEGORY_LABELS = {
     "no-links": "Sin enlaces significativos",
     "http": "Errores HTTP",
     "request": "Errores de red / timeout",
+    "challenge": "Challenge anti-bot (Cloudflare/WAF)",
+    "blocked-403": "Bloqueadas con 403 (tras reintento)",
     "robots": "Bloqueadas por robots.txt",
     "selector": "Selectores YAML inválidos",
     "other": "Otros errores",
@@ -7877,7 +8420,7 @@ def _run_wiki_bootstrap(
             for c in batch:
                 if c.score < args.min_score:
                     continue
-                if "variant-catalog" not in (c.tags or []):
+                if not is_curated_collectible_source(c):
                     is_coll, _ = is_collectible_edition(
                         c.title,
                         c.description,
@@ -8167,11 +8710,30 @@ def run(args: argparse.Namespace) -> int:
     if workers > 1:
         print(f"[INFO] Concurrencia: workers={workers}, per-host-limit={per_host_limit}")
 
-    # Per-host semaphore para no martillar el mismo dominio bajo concurrencia.
-    host_semaphores: dict[str, threading.Semaphore] = defaultdict(
-        lambda: threading.Semaphore(per_host_limit)
+    # Semáforos de concurrencia: por host por defecto, o por throttle_group para
+    # fuentes que comparten infraestructura remota (p. ej. borde Shopify). Ver
+    # ThrottleRegistry. host_to_group se arma desde las fuentes cargadas (no sólo
+    # las activas: el enriquecimiento de detalles puede tocar hosts agrupados).
+    host_to_group: dict[str, str] = {}
+    for _s in sources:
+        grp = getattr(_s, "throttle_group", "")
+        if grp:
+            _h = (urlparse(_s.url).hostname or "").lower()
+            if _h:
+                host_to_group[_h] = grp
+    throttle_group_delay = float(getattr(args, "throttle_group_delay", 2.0) or 0.0)
+    throttle = ThrottleRegistry(
+        per_host_limit,
+        host_to_group=host_to_group,
+        group_delay=throttle_group_delay,
     )
-    host_locks_lock = threading.Lock()
+    if workers > 1 and host_to_group:
+        _grp_names = sorted(set(host_to_group.values()))
+        print(
+            f"[INFO] Throttle groups: {', '.join(_grp_names)} "
+            f"(limit 1, delay {throttle_group_delay:g}s) — "
+            f"{len(host_to_group)} host(s) agrupados"
+        )
     # Playwright sync NO es thread-safe (greenlets bound al thread inicial).
     # NO usamos un lock manual: `fetch_with_playwright` despacha jobs al
     # dedicated `_PLAYWRIGHT_WORKER` thread via queue, que serializa
@@ -8184,10 +8746,40 @@ def run(args: argparse.Namespace) -> int:
         with print_lock:
             print(line)
 
-    def _host_sem_for(url: str) -> threading.Semaphore:
-        host = (urlparse(url).hostname or "").lower()
-        with host_locks_lock:
-            return host_semaphores[host]
+    def _fetch_source_html(
+        source: Source, url: str, timeout: tuple[int, int]
+    ) -> tuple[str, dict[str, Any]]:
+        """Fetch HTML de una fuente `html`, con UA por-fuente + manejo de 403.
+
+        - Usa `source.user_agent` (sources.yml) si está definido; si no, el UA
+          de la sesión.
+        - Ante un 403: UN reintento único con UA browser-like alternativo +
+          backoff (NO se reintenta en loop — 403 idéntico escala el bloqueo).
+          Si el 403 persiste, loguea BLOCKED_403 y levanta Blocked403Error para
+          abandonar la fuente en este run.
+        """
+        per_source_ua = (getattr(source, "user_agent", "") or "").strip() or None
+        try:
+            return fetch_with_metadata(session, url, timeout, user_agent=per_source_ua)
+        except requests.HTTPError as exc:
+            resp = getattr(exc, "response", None)
+            if resp is None or resp.status_code != 403:
+                raise
+        # 403 → un reintento único con UA browser-like alternativo + backoff.
+        alt_ua = _BROWSER_LIKE_UA if per_source_ua != _BROWSER_LIKE_UA else _PLAYWRIGHT_REAL_UA
+        _safe_print(
+            f"[403] {source.name}: reintento único con UA browser-like tras "
+            f"{int(_BLOCKED_403_BACKOFF_SECONDS)}s"
+        )
+        time.sleep(_BLOCKED_403_BACKOFF_SECONDS)
+        try:
+            return fetch_with_metadata(session, url, timeout, user_agent=alt_ua)
+        except requests.HTTPError as exc:
+            resp = getattr(exc, "response", None)
+            if resp is not None and resp.status_code == 403:
+                _safe_print(f"[BLOCKED_403] source={source.name}")
+                raise Blocked403Error(source.name) from exc
+            raise
 
     def _scrape_one(index: int, source: Source) -> dict[str, Any]:
         """Ejecuta el scrape completo de una fuente. Thread-safe.
@@ -8250,7 +8842,7 @@ def run(args: argparse.Namespace) -> int:
             all_candidates_source: list[Candidate] = []
             pages_visited = 0
             skipped_for_js = False
-            host_sem = _host_sem_for(source.url)
+            challenge_hit = False
 
             for page_num in range(1, effective_max_pages + 1):
                 visited_urls.add(current_url)
@@ -8274,22 +8866,44 @@ def run(args: argparse.Namespace) -> int:
                         _record_problem("bluesky-handle", message)
                         break
                     api_url = bluesky_api_url(handle, limit=args.max_items_per_source)
-                    with _host_sem_for(api_url):
+                    with throttle.acquire(api_url):
                         text, fetch_meta = fetch_with_metadata(
                             session=session,
                             url=api_url,
                             timeout=(args.connect_timeout, args.read_timeout),
                         )
                 else:
-                    with host_sem:
-                        text, fetch_meta = fetch_with_metadata(
-                            session=session,
-                            url=current_url,
+                    with throttle.acquire(current_url):
+                        # Path HTTP plano: UA por-fuente + manejo de 403 (un
+                        # reintento con UA alternativo; si persiste, Blocked403Error).
+                        text, fetch_meta = _fetch_source_html(
+                            source, current_url,
                             timeout=(args.connect_timeout, args.read_timeout),
                         )
 
                 if page_num == 1:
                     diagnostic.record_fetch(fetch_meta, text, entry=entry)
+
+                # Anti-bot: un 200 OK que en realidad es un challenge
+                # (Cloudflare/WAF) NO es "0 items": es un fallo de fuente.
+                # Detectarlo y tratarlo como tal para no confundir un bloqueo
+                # con una fuente vacía. Solo aplica al path HTTP plano (rss/
+                # bluesky son JSON; js tiene su propio manejo en Playwright).
+                if source.kind not in {"rss", "feed", "atom", "bluesky", "js"}:
+                    challenge_type = detect_challenge(text, fetch_meta.get("http_status"))
+                    if challenge_type:
+                        message = (
+                            f"challenge anti-bot ({challenge_type}) en HTTP "
+                            f"{fetch_meta.get('http_status')}"
+                        )
+                        _safe_print(
+                            f"[CHALLENGE_DETECTED] source={source.name} type={challenge_type}"
+                        )
+                        local_errors.append(f"{source.name}: {message}")
+                        _record_problem("challenge", message)
+                        diagnostic.record_status("challenge", message, entry=entry)
+                        challenge_hit = True
+                        break
 
                 if source.kind in {"rss", "feed", "atom"}:
                     page_candidates = extract_rss(
@@ -8356,7 +8970,7 @@ def run(args: argparse.Namespace) -> int:
                     time.sleep(min(args.sleep_seconds, 1.0))
                 current_url = next_url
 
-            if not skipped_for_js:
+            if not skipped_for_js and not challenge_hit:
                 scored = [score_candidate(candidate) for candidate in all_candidates_source]
                 local_candidates.extend(scored)
                 diagnostic.record_candidates(scored, entry=entry)
@@ -8380,6 +8994,14 @@ def run(args: argparse.Namespace) -> int:
             local_errors.append(message)
             _record_problem("request", str(exc))
             diagnostic.record_status("request", str(exc), entry=entry)
+        except Blocked403Error:
+            # 403 persistente tras el reintento con UA alternativo: fuente
+            # abandonada en este run (BLOCKED_403 ya se logueó en _fetch_source_html).
+            message = f"{source.name}: bloqueada con 403 tras reintento (BLOCKED_403)"
+            _safe_print(f"[ERROR] {message}")
+            local_errors.append(message)
+            _record_problem("blocked-403", "403 persistente tras reintento con UA alternativo")
+            diagnostic.record_status("blocked-403", "BLOCKED_403", entry=entry)
         except Exception as exc:
             message = f"{source.name}: error inesperado {exc}"
             _safe_print(f"[ERROR] {message}")
@@ -8477,8 +9099,7 @@ def run(args: argparse.Namespace) -> int:
 
         def _fetch_one_detail(c: Candidate) -> tuple[Candidate, dict[str, str]]:
             """Worker thread-safe: solo hace HTTP + parsing, no muta nada."""
-            host_sem = _host_sem_for(c.url)
-            with host_sem:
+            with throttle.acquire(c.url):
                 metadata = fetch_metadata_from_detail(
                     c.url, session, timeout=(args.connect_timeout, args.read_timeout)
                 )
@@ -8579,6 +9200,20 @@ def run(args: argparse.Namespace) -> int:
     print(f"  candidatos totales con señales: {len(all_candidates)}")
     print(f"  reportables: {len(reportable)}")
     print(f"  errores: {len(errors)}")
+    # Anti-bot: contar challenges / 403 por fuente para que un BLOQUEO no se
+    # confunda con "fuente vacía" (una fuente challengeada trae 0 items pero
+    # NO está vacía). Desglose por fuente debajo del contador.
+    challenge_problems = [p for p in problems if p.get("category") == "challenge"]
+    blocked_problems = [p for p in problems if p.get("category") == "blocked-403"]
+    if challenge_problems or blocked_problems:
+        print(
+            f"  anti-bot: {len(challenge_problems)} challenge(s), "
+            f"{len(blocked_problems)} bloqueo(s) 403"
+        )
+        for p in challenge_problems:
+            print(f"    [challenge] {p.get('source', '?')} — {p.get('message', '')}")
+        for p in blocked_problems:
+            print(f"    [blocked-403] {p.get('source', '?')}")
     print(f"  reporte: {report_path}")
 
     diagnostic_paths = diagnostic.write()
@@ -8637,6 +9272,12 @@ def parse_args() -> argparse.Namespace:
         "--per-host-limit", type=int, default=2,
         help="Bajo --workers > 1, máximo de requests concurrentes al mismo dominio. Default: 2. "
              "Sube si tu red lo permite y los retailers no rate-limitean; baja a 1 para sitios sensibles.",
+    )
+    parser.add_argument(
+        "--throttle-group-delay", type=float, default=2.0,
+        help="Segundos mínimos entre requests de fuentes que comparten `throttle_group` "
+             "en sources.yml (p. ej. tiendas Shopify tras el mismo borde). Default: 2.0. "
+             "0 = sólo serializar (limit 1) sin delay.",
     )
     parser.add_argument("--connect-timeout", type=int, default=10, help="Timeout conexión HTTP. Default: 10")
     parser.add_argument("--read-timeout", type=int, default=30, help="Timeout lectura HTTP. Default: 30")

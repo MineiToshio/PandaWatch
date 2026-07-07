@@ -31,6 +31,7 @@ Uso:
 from __future__ import annotations
 import argparse
 import json
+import re
 import shutil
 import sys
 from collections import Counter, defaultdict
@@ -38,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-import image_store  # noqa: E402  (fuente única de placeholder_reason)
+import image_store  # noqa: E402  (fuente única de placeholder_reason + placeholders conocidos)
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -49,6 +50,78 @@ COVER_PREVIEW = ROOT / "data" / "cover_preview.json"
 # o los registrados) pesa unos pocos KB; una portada real de >200KB jamás es
 # casi-sólida ni matchea una firma. Evita leer/decodificar 14GB de portadas.
 _EVAL_MAX_BYTES = 200_000
+
+# Regla genérica (b): si la MISMA URL de imagen aparece como foto en items de al
+# menos este número de series DISTINTAS, no puede pertenecer a ninguna → es un
+# placeholder / imagen genérica compartida ("STOLENIMG"). Se agrupa por SERIE (no
+# por item) para NO castigar el caso legítimo de un box y sus tomos de la misma
+# serie/colección compartiendo una foto.
+_CROSS_SERIES_MIN = 4
+
+# Sufijo de volumen al final de un título ("… 5", "… nº5", "… #5") — se quita para
+# derivar una clave de serie estable cuando el item no trae series_display.
+_VOL_TAIL_RE = re.compile(r"[\s\-–—:]*\b(?:n[º°.]?|#|vol\.?)?\s*\d+\s*$", re.IGNORECASE)
+
+
+def series_key(item: dict) -> str:
+    """Clave de agrupación por SERIE (no por edición ni item). Preferimos el
+    nombre de serie explícito; si falta, caemos al título sin el sufijo de
+    volumen (para que vol 1/2/… de la misma serie agrupen). Cross-source-safe:
+    dos ediciones de la misma serie comparten esta clave."""
+    for f in ("series_display", "series_canonical"):
+        v = (item.get(f) or "").strip()
+        if v:
+            return "s:" + v.lower()
+    t = (item.get("title") or "").strip().lower()
+    t = _VOL_TAIL_RE.sub("", t).strip()
+    return "t:" + (t or (item.get("slug") or ""))
+
+
+def _iter_item_image_urls(item: dict):
+    """URLs (no vacías) de las fotos de un item, con su kind."""
+    for im in (item.get("images") or []):
+        if isinstance(im, dict):
+            url = (im.get("url") or "").strip()
+            if url:
+                yield url, (im.get("kind") or "")
+
+
+def build_shared_url_index(items: list[dict], cross_series_min: int) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Devuelve (url_reason, url_owner):
+
+    - `url_reason[url]` = motivo por el que la URL es placeholder:
+      "known:LABEL" (registro image_store) o "cross-series:N" (misma foto en N
+      series distintas ≥ umbral). Solo contiene URLs marcadas como placeholder.
+    - `url_owner[url]` = slug del DUEÑO legítimo a conservar, o None si no es
+      identificable. Dueño = el ÚNICO item que lleva esa foto como `extra`/`bonus`
+      de su propia colección (los demás la usan robada como portada/galería).
+    """
+    url_series: dict[str, set[str]] = defaultdict(set)
+    url_extra_owners: dict[str, set[str]] = defaultdict(set)
+    for it in items:
+        skey = series_key(it)
+        slug = it.get("slug") or ""
+        for url, kind in _iter_item_image_urls(it):
+            url_series[url].add(skey)
+            if kind in ("extra", "bonus"):
+                url_extra_owners[url].add(slug)
+
+    url_reason: dict[str, str] = {}
+    url_owner: dict[str, str | None] = {}
+    for url, series in url_series.items():
+        known = image_store.known_placeholder_url_reason(url)
+        reason = ""
+        if known:
+            reason = known
+        elif len(series) >= cross_series_min:
+            reason = f"cross-series:{len(series)}"
+        if not reason:
+            continue
+        url_reason[url] = reason
+        owners = url_extra_owners.get(url) or set()
+        # Dueño identificable solo si hay EXACTAMENTE uno que la lleva como extra.
+        url_owner[url] = next(iter(owners)) if len(owners) == 1 else None
+    return url_reason, url_owner
 
 
 def classify_local(local: str, cache: dict[str, str]) -> str:
@@ -97,10 +170,17 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="no escribe nada, solo reporta")
     ap.add_argument("--keep-files", action="store_true",
                     help="no mover los archivos huérfanos a cuarentena _orphans/")
+    ap.add_argument("--cross-series-min", type=int, default=_CROSS_SERIES_MIN,
+                    help=f"umbral de la regla genérica: misma foto en ≥N series "
+                         f"distintas ⇒ placeholder (default {_CROSS_SERIES_MIN})")
     args = ap.parse_args()
 
     items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
     cache: dict[str, str] = {}
+
+    # Índice de URLs-placeholder (rule a: registro conocido; rule b: misma foto
+    # cross-series) + su dueño legítimo a conservar. Fuente de verdad de la URL.
+    url_reason, url_owner = build_shared_url_index(items, args.cross_series_min)
 
     removed_entries = 0
     items_changed = 0
@@ -114,11 +194,31 @@ def main() -> int:
     # Pasada 1 — clasificar imágenes y quitar las placeholder de images[].
     for it in items:
         imgs = it.get("images") or []
+        slug = it.get("slug") or ""
         kept = []
         dropped = []
-        for im in imgs:
+        for idx, im in enumerate(imgs):
             local = (im.get("local") or "").strip()
+            url = (im.get("url") or "").strip()
+            # (1) placeholder por ARCHIVO local (estructural/firma).
             reason = classify_local(local, cache) if local else ""
+            # (2) placeholder por URL — funciona aunque la foto NUNCA se haya
+            #     espejado (local=""), caso del placeholder censurado. Se CONSERVA
+            #     en el dueño legítimo identificable (kind extra/bonus propio).
+            if not reason and url in url_reason and url_owner.get(url) != slug:
+                url_r = url_reason[url]
+                if url_r.startswith("known:"):
+                    # Placeholder CONOCIDO (registro image_store): nunca es una
+                    # portada real → seguro purgarlo en cualquier posición.
+                    reason = url_r
+                elif idx > 0:
+                    # Inferencia genérica cross-series: SOLO purgamos fotos de
+                    # galería (idx>0). NUNCA tocamos la portada (images[0]) por una
+                    # heurística — una misma foto puede ser la portada legítima de
+                    # UNA serie y contaminar el carrusel de otras (bug de scrape de
+                    # búsqueda, p.ej. Star Comics). Quitar la portada destruiría un
+                    # cover real; quitar la copia de galería es siempre seguro.
+                    reason = url_r
             if reason:
                 dropped.append((im, reason))
             else:
@@ -147,10 +247,14 @@ def main() -> int:
     # Pasada 2 — limpiar refs en sources[] al mismo archivo/URL placeholder
     # (con removed_locals/removed_urls ya COMPLETOS) y juntar las que sobreviven.
     for it in items:
+        slug = it.get("slug") or ""
         for src in it.get("sources") or []:
             sloc = (src.get("image_local") or "").strip()
             surl = (src.get("image_url") or "").strip()
-            if sloc in removed_locals or (surl and surl in removed_urls):
+            # No tocar el dueño legítimo: si conservamos la imagen en su images[],
+            # tampoco limpiamos su referencia en sources[].
+            is_owner_of_url = bool(surl) and url_owner.get(surl) == slug
+            if not is_owner_of_url and (sloc in removed_locals or (surl and surl in removed_urls)):
                 if not args.dry_run:
                     src["image_local"] = ""
                     src["image_url"] = ""

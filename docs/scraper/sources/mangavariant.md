@@ -4,7 +4,7 @@
 > de datos global comunitaria de variantes/ediciones especiales. Léela ANTES de
 > tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-12 (challenge sgcaptcha resuelto en el bootstrap).
+> Última revisión: 2026-07-07 (delta INCREMENTAL implementado — mangavariant ya no es full-only).
 
 ---
 
@@ -110,25 +110,60 @@ y las notas. Es fuente de **descubrimiento**, no de compra (ver §8).
 
 ## 4. Discovery: scrape general (FULL) vs incremental (DELTA)
 
-Mangavariant se recorre **distinto** en full vs delta (dos modos de ingestión):
+Mangavariant se recorre **en AMBOS modos**, con distinto discovery (dos modos del
+MISMO módulo `wikis/mangavariant.py`; el delta ya no es full-only desde 2026-07-07):
 
 | | FULL (general) | DELTA (incremental) |
 |---|---|---|
-| Script | `scripts/scrape_full.sh` (paso 2e) | `scripts/scrape_delta.sh` (fila YAML, fase 1) |
-| Mecanismo | módulo wiki: `--bootstrap-wiki mangavariant` | fila `Global - Mangavariant` en `sources.yml`, `max_pages: 1` |
-| Discovery | lee los **3 variant-sitemaps** (~2700 URLs) y parsea todas | recoge sólo las novedades que aparecen en la home `/variant/` |
+| Script | `scripts/scrape_full.sh` (paso 2e) | `scripts/scrape_delta.sh` (paso 2t) |
+| Mecanismo | `--bootstrap-wiki mangavariant` | `--bootstrap-wiki mangavariant` + `MANGAVARIANT_INCREMENTAL=1` |
+| Discovery | lee los **3 variant-sitemaps** (~2700 URLs) y parsea **todas** | lee los mismos sitemaps y parsea **sólo las URLs que NO están ya en `items.jsonl`** (diff contra el corpus), ordenadas por `lastmod` desc, con tope `MANGAVARIANT_MAX_NEW` (default 400) |
+| Costo | ~2700 detail pages | fijo (sitemaps + 1 challenge) + hasta `max_new` detail pages |
 | Frecuencia | mensual / trimestral | diaria / semanal |
 | Cuándo | refresh completo del catálogo de variantes | detectar variantes recién publicadas |
 
 - En **FULL**, el paso 2e corre el bulk del sitemap completo (`--min-score 20`,
   timeout 1800s). El bootstrap se hace una vez (carga histórica) y luego se repite
   en cada full para re-sincronizar.
-- En **DELTA**, el bootstrap NO corre; el incremental llega por la fila del YAML
-  con `max_pages: 1`, que recoge lo nuevo de la home en la fase 1 (scrape de
-  sources del YAML), sin re-recorrer los 2700.
+- En **DELTA**, el paso 2t corre el **modo incremental** (`MANGAVARIANT_INCREMENTAL=1`,
+  timeout 1200s): baja los sitemaps (costo fijo) y hace `nuevas = urls_sitemap −
+  urls_ya_en_corpus`. Fetchea el detalle SÓLO de esas nuevas, priorizadas por
+  `lastmod` desc (las recién publicadas primero) y acotadas por `max_new`. Esto
+  captura las ediciones variantes nuevas sin bajar el catálogo entero.
 - El rango año/mes que recibe `bootstrap()` se **ignora**: mangavariant no
   particiona por fecha, los sitemaps cubren todo (`iter_year_months` devuelve un
   único batch sólo por compat con el dispatcher).
+
+**Cómo funciona el diff (implementación 2026-07-07).** `fetch_variant_url_entries`
+baja los sitemaps y devuelve `(loc, lastmod)` por variante. `load_seen_variant_urls`
+lee `items.jsonl` una vez y arma el set de claves canónicas ya vistas
+(`_norm_variant_url` = `/variant/<manga>/<variant>` en minúsculas, ignora
+esquema/host/query/slash final; cubre `url` top-level y `sources[].url`).
+`_select_incremental_urls` se queda con las URLs cuya clave NO está en el corpus,
+ordena por `lastmod` desc y aplica `max_new` (si se topa, LOGuea explícito — nada
+de truncar en silencio). Como `manga_watch.py` no expone flags para esto (el
+dispatcher pasa un set fijo de kwargs), el modo se selecciona con **variables de
+entorno** (`MANGAVARIANT_INCREMENTAL`, `MANGAVARIANT_MAX_NEW`, `MANGAVARIANT_SINCE`,
+`MANGAVARIANT_ITEMS_PATH`), sin tocar el dispatcher.
+
+**Por qué el orden por `lastmod` importa.** El corpus tiene ~1604 variantes
+canónicas pero el sitemap lista ~2700 URLs: la brecha (~1100) son mayormente URLs
+que el parser RECHAZA (sin serie) y que NUNCA entran al corpus, así que SIEMPRE
+parecen "nuevas". Ordenando por `lastmod` descendente, el presupuesto `max_new` se
+gasta en las variantes **recién publicadas** (lastmod fresco), no re-fetcheando los
+viejos rechazos en cada corrida. Si el `lastmod` viniera vacío/basura, la corrección
+se mantiene (solo-nuevas): sólo cambia el orden dentro del tope.
+
+**Veredicto sobre `lastmod` (Yoast).** Es **por-entrada** (modified_time del post de
+cada variante; la fixture `sitemap_sample.xml` muestra timestamps variados por URL) —
+por eso es útil como sort key de recencia y, opcionalmente, como filtro de
+"actualizadas" vía `MANGAVARIANT_SINCE` (re-fetch de URLs YA vistas con `lastmod >
+since`). Se deja **opt-in** (default off) porque `lastmod` también se mueve ante
+ediciones menores (typo, cambio de imagen), así que como filtro de novedad es ruidoso;
+el diff-contra-corpus es la señal robusta y siempre-activa. El sitemap sigue detrás
+del challenge sgcaptcha, así que el diff/filtrado ocurre DESPUÉS de resolverlo (el
+módulo ya lo maneja). **Trade-off cerrado**: antes las novedades tardaban hasta ~3
+meses (entre dos fulls); ahora entran en el delta diario/semanal.
 
 ---
 
@@ -151,6 +186,11 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
 ### 5.2 Qué captura el parser (mapea el §3 al código)
 
 - `fetch_variant_urls()` → baja los 3 sitemaps, devuelve URLs `/variant/x/y/` únicas.
+- `fetch_variant_url_entries()` → igual pero devuelve `(loc, lastmod)` por variante
+  (para el diff incremental / sort por recencia).
+- `load_seen_variant_urls(items_path)` → set de claves canónicas ya en el corpus.
+- `_select_incremental_urls(entries, seen, since, max_new)` → decide qué fetchear en
+  el delta (solo-nuevas + opcional updated-since, ordenadas por lastmod, cap).
 - `parse_variant_detail(html, url)` → un `Candidate` por variant page:
   - `og:title` (sin sufijo Yoast) = nombre de edición; `Manga` = serie;
     `title = "<Serie> — <Edición>"`.
@@ -167,10 +207,10 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
 ### 5.3 Flujo end-to-end
 
 - **FULL**: `scrape_full.sh` paso **2e** corre `--bootstrap-wiki mangavariant`
-  (sitemap completo, sólo en FULL). Cae en la fase 2 (wiki bootstraps) junto con
-  el resto de wikis.
-- **DELTA**: `scrape_delta.sh` NO corre el bootstrap; el incremental entra por la
-  fila YAML `Global - Mangavariant` en la fase 1 (scrape de sources del YAML).
+  (sitemap completo). Cae en la fase 2 (wiki bootstraps) junto con el resto.
+- **DELTA**: `scrape_delta.sh` paso **2t** corre el MISMO bootstrap con
+  `MANGAVARIANT_INCREMENTAL=1 MANGAVARIANT_MAX_NEW=400` (diff contra el corpus,
+  timeout 1200s). También en la fase 2.
 - Luego pasa por los cleanup retrofits y el build como cualquier otra fuente.
 - ⚠️ Tras un scrape, items.jsonl queda **raw** (sin `standardized_at`). NO correr
   el skill `/watch-standardize-catalog` automáticamente.
@@ -207,6 +247,13 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
 
 ## 9. Pendientes / limitaciones conocidas
 
+- **Delta incremental (IMPLEMENTADO 2026-07-07, ver §4)**: el delta ya trae
+  novedades vía diff-contra-corpus (solo-nuevas, orden por `lastmod`, tope
+  `max_new`). El filtro por `lastmod > since` queda **opt-in** (`MANGAVARIANT_SINCE`)
+  porque como señal de novedad es ruidoso. Limitación residual: las URLs que el
+  parser rechaza (sin serie) nunca entran al corpus y re-aparecen como "nuevas" cada
+  corrida — mitigado por el orden por recencia (se fetchean las frescas primero) y el
+  tope, pero pueden consumir parte del presupuesto si no hay muchas novedades reales.
 - **Sin precio ni URL de tienda**: por naturaleza de la fuente. Queda para el
   enrichment pass diferido (ver §8 y CLAUDE.md "URL como referencia").
 - **País nuevo no mapeado**: si el sitio agrega un país fuera de `COUNTRY_MAP`,
@@ -214,11 +261,10 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
   agregar.
 - **Imágenes**: dependen de `og:image` / mini-galería; algunas variantes pueden
   traer portadas de baja resolución (mismo flujo de baja calidad que el resto).
-- **Incremental del DELTA (fila YAML) vs sgcaptcha**: la fila `Global - Mangavariant`
-  va por el fetch genérico y recibe el challenge → puede traer 0 items hasta
-  adaptarla (ver sección 2026-06-12). El bulk del FULL ya está adaptado.
-- **Playwright ahora es requisito del bulk**: sin `playwright` + Chromium instalados
-  el bootstrap degrada con WARN e importa 0 (el challenge no se puede resolver).
+- **Playwright ahora es requisito de AMBOS modos**: tanto el bulk del FULL como el
+  incremental del DELTA bajan los sitemaps detrás del challenge sgcaptcha. Sin
+  `playwright` + Chromium instalados el bootstrap degrada con WARN e importa 0 (el
+  challenge no se puede resolver). El módulo lo resuelve UNA vez y reusa las cookies.
 
 ---
 
@@ -229,6 +275,17 @@ Parser: [`scripts/wikis/mangavariant.py`](../../../scripts/wikis/mangavariant.py
 # Requiere Playwright instalado (resuelve el challenge sgcaptcha una vez):
 .venv/bin/python scripts/manga_watch.py --bootstrap-wiki mangavariant \
     --sleep-seconds 0.3 --min-score 20
+
+# Incremental (delta paso 2t): solo variantes nuevas vs el corpus, tope 400.
+# Selección por env vars (manga_watch.py no expone flags para esto):
+MANGAVARIANT_INCREMENTAL=1 MANGAVARIANT_MAX_NEW=400 \
+    .venv/bin/python scripts/manga_watch.py --bootstrap-wiki mangavariant \
+    --sleep-seconds 0.3 --min-score 20
+# (opcional) re-fetch de variantes actualizadas desde una fecha:
+#   MANGAVARIANT_SINCE=2026-06-01T00:00:00+00:00
+
+# Prueba local del modo incremental sin tocar el corpus (parser standalone):
+.venv/bin/python scripts/wikis/mangavariant.py --incremental --max-new 20 --workers 4
 
 # Prueba local del parser (sin tocar el corpus):
 .venv/bin/python scripts/wikis/mangavariant.py --max-items 20 --workers 4
@@ -286,10 +343,12 @@ el fetch concurrente con `ThreadPoolExecutor` queda intacto. Detalles:
 - Verificado en vivo (2026-06-12): 1 solve (5 cookies) → 2679 URLs de sitemap →
   12/12 detail pages parseadas con requests concurrente, sin re-solve.
 
-⚠️ La fila YAML `Global - Mangavariant` (incremental del DELTA, home `/variant/`)
-sigue yendo por el fetch genérico de manga_watch.py y **también recibe el challenge**
-— el incremental diario puede traer 0 hasta adaptarlo (`kind: js` la haría pasar por
-el worker Playwright, gotcha #12, pero paga el challenge por página). Pendiente.
+✅ **Actualización 2026-07-07**: el DELTA ya no depende de la home `/variant/` ni de
+la fila YAML genérica. Ahora corre el MISMO módulo `wikis/mangavariant.py` en modo
+incremental (paso 2t de `scrape_delta.sh`, `MANGAVARIANT_INCREMENTAL=1`), que reusa
+el manejo de challenge del bulk (resuelve una vez, cachea cookies) y baja los mismos
+sitemaps — así que ya NO trae 0 por el challenge. Sólo fetchea el detalle de las URLs
+nuevas (diff contra `items.jsonl`). Ver §4.
 
 Además: hay items viejos en el corpus con la URL de mangavariant TRUNCADA (~80 chars,
 bug de sesiones LLM tempranas, ej. `…/vol-10-spec`) — esas fichas dan 404 y no van a

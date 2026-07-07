@@ -94,17 +94,26 @@ incrementales: solo tocan lo que falta).
 | **8** | **Feedback** 🧠 | skill `/watch-review-feedback` | corrige errores reportados (👎) |
 | **9** | **Aprobación humana** | dashboard → `approved_at` + `apply_approvals.py` | golden records congelados |
 | **★** | **Build / publish** | `consolidate_sources.py` + `build_web.py` | `web/index.html` + web-next |
-| **✔** | **Validación estructural** | `validate_corpus.py` (gate de salud, paso [5] de scrape_*.sh) | reporte de invariantes (0 violaciones duras = corpus válido) + warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX (gotchas #69/#70/#71) |
+| **✔** | **Validación estructural** | `validate_corpus.py` (gate DURO, PHASE 4 de scrape_*.sh — **ANTES** del build, 2026-07-07) | reporte de invariantes (0 violaciones duras = corpus válido) + warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX (gotchas #69/#70/#71); exit 2 = violaciones duras → el build (PHASE 5) se OMITE (gotcha #111) |
 
 🧠 = LLM-driven (skill). **Nunca corre solo** — el owner lo invoca por nombre (policy de tokens, CLAUDE.md).
 
-> **Gate de validación — exit real vía `PIPESTATUS` (fix 2026-06-13).** El paso [5]
-> de `scrape_delta.sh`/`scrape_full.sh` corría `validate_corpus.py | tee log || echo
-> "⚠ violaciones"`. Sin `set -o pipefail`, `$?` del pipe era el de `tee` (siempre 0),
-> así que el `|| echo` **nunca disparaba**: un run desatendido que rompiera invariantes
-> no dejaba señal visible. Ahora se captura `${PIPESTATUS[0]}` (exit real de
-> validate_corpus), se setea `CORPUS_INVALID=1` y se **surface en el FINAL SUMMARY**
-> (`corpus: ⚠ INVÁLIDO …` vs `✓ válido`). Crítico para el LaunchAgent nocturno.
+> **Gate de validación — exit real vía `PIPESTATUS` (fix 2026-06-13) + gate ANTES del
+> build (fix 2026-07-07, gotcha #111).** `scrape_delta.sh`/`scrape_full.sh` corrían
+> `validate_corpus.py | tee log || echo "⚠ violaciones"` **DESPUÉS** del build. Sin
+> `set -o pipefail`, `$?` del pipe era el de `tee` (siempre 0), así que el `|| echo`
+> **nunca disparaba**: un run desatendido que rompiera invariantes no dejaba señal
+> visible — y aunque la dejara, el build YA había publicado el corpus corrupto. Ahora:
+> (1) se captura `${PIPESTATUS[0]}` (exit real de validate_corpus); (2)
+> `validate_corpus.py` devuelve **exit 2** específicamente para violaciones duras (antes
+> `1`, ambiguo con errores del propio script); (3) el validador corre como **PHASE 4**,
+> ANTES del build; (4) el build (**PHASE 5**) se **OMITE por completo** si
+> `CORPUS_INVALID=1`, dejando el build anterior intacto. `CORPUS_INVALID` se surfacea en
+> el FINAL SUMMARY (`corpus: ⚠ INVÁLIDO … · build OMITIDO` vs `✓ válido`), junto a
+> **`FAILED_STEPS`** — un array bash que acumula el `$?` de CADA bootstrap/retrofit/build
+> de la corrida (no solo el gate), impreso también en el FINAL SUMMARY: con `set +e` un
+> paso que crashea a mitad de la cadena era antes invisible. Crítico para el LaunchAgent
+> nocturno.
 
 **Regla de oro del flujo.** El scrape (Etapa 0/1) deja `items.jsonl` **crudo**
 (sin `standardized_at`/`slug`/`description_es`/`rarity`). Todo lo demás es una
@@ -148,20 +157,25 @@ flowchart TD
     BUILD --> PUB["🌐 Dashboard (serve.py) + web-next /item/[slug]"]
 ```
 
-### 2.2 Etapa 0 — el scrape automático (fases 1→4)
+### 2.2 Etapa 0 — el scrape automático (fases 1→6)
 
 ```mermaid
 flowchart TD
-    START([./scripts/scrape_delta.sh<br/>o scrape_full.sh]) --> LOG["logs/scrape-*-TS/ + backup items.jsonl"]
+    START([./scripts/scrape_delta.sh<br/>o scrape_full.sh]) --> BAK["Backup pre-scrape items.jsonl<br/>(2026-07-07, ANTES de tocar nada)"]
+    BAK --> LOG["logs/scrape-*-TS/"]
     LOG --> F1["FASE 1 · manga_watch.py<br/>--enable-js --fetch-details --workers 8<br/>--min-score 20 · timeout 90m/3h"]
     F1 --> F2{"FASE 2 · Wikis<br/>¿delta o full?"}
-    F2 -->|DELTA| D2["listadomanga **calendar** (3 meses)<br/>+ 13 wikis recientes"]
-    F2 -->|FULL| FU2["listadomanga **lista** (~3432)<br/>+ **mangavariant sitemap** (~2700)<br/>+ histórico de wikis (--wiki-from 2000/2013/2015)"]
+    F2 -->|DELTA| D2["listadomanga **calendar** (hoy-3m → hoy+3m)<br/>+ 13 wikis recientes<br/>+ **mangavariant incremental** (solo URLs nuevas vs corpus, tope 400)"]
+    F2 -->|FULL| FU2["listadomanga **lista** (~3432)<br/>+ **mangavariant sitemap** (~2700, todo)<br/>+ histórico de wikis (--wiki-from 2000/2013/2015)"]
     D2 --> F3
     FU2 --> F3
-    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["rescore → filter_non_manga →<br/>filter_collectible → clean_titles →<br/>backfill imágenes →[full] mirror →<br/>consolidate_sources"]
-    R --> F4["FASE 4 · build_web.py"]
-    F4 --> END([items.jsonl crudo + web])
+    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["rescore → **clean_titles** →<br/>filter_non_manga → filter_collectible →<br/>backfill imágenes →[full] mirror →<br/>enforcer → consolidate_sources"]
+    R --> F4{"FASE 4 · validate_corpus<br/>(gate DURO)"}
+    F4 -->|✗ exit 2: violaciones duras| SKIP["build OMITIDO<br/>(build anterior intacto)"]
+    F4 -->|✓ válido| F5["FASE 5 · build_web.py"]
+    F5 --> F6["FASE 6 · source_health<br/>(+ metrics.jsonl + baseline-alert)<br/>+ staleness_report"]
+    SKIP --> F6
+    F6 --> END([items.jsonl crudo + web])
 ```
 
 ### 2.3 Per-source pipeline (qué le pasa a CADA candidato en Fase 1/2)
@@ -235,15 +249,30 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
 - `set +e` (si una fase falla, las demás corren). Logs por sub-paso en `logs/scrape-{delta,full}-<TS>/`.
 - Skippeable por env var: `SKIP_SCRAPE` / `SKIP_WIKIS` / `SKIP_CLEANUP` / `SKIP_BUILD`.
 - `_run_timed` (timeout portable) por fuente — una colgada no bloquea el resto.
-- Backup de `items.jsonl` antes de tocar (`backup_and_rotate`, 3 copias).
+- Backup de `items.jsonl` antes de tocar (`backup_and_rotate`, 3 copias). **Desde
+  2026-07-07** el primer backup ocurre AL INICIO del script (antes de Fase 1), no recién
+  en un retrofit puntual de Fase 3 — cubre también scrape+wikis.
+- **`FAILED_STEPS` (2026-07-07)**: cada bootstrap/retrofit/build de la corrida se
+  envuelve en `record_step <nombre> $?`; los que fallan (rc≠0) quedan listados en el
+  FINAL SUMMARY. Con `set +e` un paso que crashea a mitad de la cadena era antes
+  invisible entre el resto de la salida.
 - **Lock global `data/.scrape.lock`** (2026-06-12): mkdir atómico + PID; una segunda
   corrida (delta o full) aborta sola en vez de corromper items.jsonl. Lock stale
   (PID muerto) se recupera automáticamente.
 - **[4f3] `enforce_listadomanga_rules.py --fast`** corre en la FASE 3 de ambos
   (cadena completa de agrupación, incluye merge ISBN/series, dedup sintético,
   consolidate y slugs — invariantes DUPSYN/TITLE/DUPVOL/ISBNDUP).
-- **PHASE 6 `source_health.py --last-n 1`** al cierre de ambos: el resumen de fuentes
-  con errores/0-candidatos de ESTE run queda en `logs/scrape-*/06-source-health.md`.
+- **PHASE 4 `validate_corpus.py`, ANTES del build (2026-07-07, gotcha #111)**: gate
+  duro — exit 2 = violaciones duras → PHASE 5 (build) se OMITE, el build anterior
+  queda intacto. Ver el recuadro de "Gate de validación" arriba.
+- **PHASE 6 `source_health.py --last-n 1 --metrics-file logs/metrics.jsonl
+  --baseline-alert --mode delta|full`** al cierre de ambos: el resumen de fuentes con
+  errores/0-candidatos de ESTE run queda en `logs/scrape-*/06-source-health.md`, y desde
+  2026-07-07 además acumula histórico por fuente en `logs/metrics.jsonl` y alerta si el
+  yield actual cae <50% de la mediana histórica del MISMO modo (warm-up ≥3 runs) — cubre
+  el caso "200 OK pero 0 items" que el clasificador de un solo run no puede ver. Cierra
+  con **`staleness_report.py --days 90`** (read-only, no bloquea): URLs de `state.json`
+  sin verse hace >90 días, por fuente.
 
 #### Delta diario (programación)
 `scripts/com.pandawatch.scrape-delta.plist` — LaunchAgent de macOS listo para correr
@@ -257,7 +286,7 @@ full manual en curso.
 manga_watch.py --enable-js --fuzzy-keywords --max-pages 5 --fetch-details \
   --diagnostic --workers 8 --per-host-limit 2 --sleep-seconds 0.5 --min-score 20
 ```
-- Lee `sources.yml` (~138 entradas, ~67-76 habilitadas), despacha cada fuente a `_scrape_one`.
+- Lee `sources.yml` (151 entradas, 63 habilitadas), despacha cada fuente a `_scrape_one`.
 - `ThreadPoolExecutor(workers=8)` + `Semaphore` por host. Fuentes `kind: js` → **Playwright worker thread + queue** dedicado (gotcha #12).
 - Timeout 90 min (delta) / 3 h (full).
 
@@ -266,15 +295,34 @@ La **diferencia central** full vs delta:
 
 | | listadomanga | wikis extra |
 |---|---|---|
-| DELTA | `calendar`, `--wiki-from` últimos 3 meses | 15 wikis recientes (manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm, sumikko, mangapassion, animeclick, prhcomics, kinokuniya, yenpress, shueisha, viz, **sevenseas**, **kodansha-us**) |
-| FULL | `lista` ~3432, `--min-score 30` | **+ mangavariant sitemap ~2700** + cada wiki con `--wiki-from 2000/2013/2015` (histórico) + **sevenseas** (full, catálogo completo) + **kodansha-us** (full) |
+| DELTA | `calendar`, `--wiki-from` últimos 3 meses **`--wiki-to` próximos 3 meses** (2026-07-07) | 15 wikis recientes (manga-sanctuary, otaku-calendar, manga-mexico, socialanime, blogbbm, sumikko, mangapassion, animeclick, prhcomics, kinokuniya, yenpress, shueisha, viz, **sevenseas**, **kodansha-us**) **+ mangavariant incremental** (2026-07-07) |
+| FULL | `lista` ~3432, `--min-score 30` | **+ mangavariant sitemap ~2700 (todo)** + cada wiki con `--wiki-from 2000/2013/2015` (histórico) + **sevenseas** (full, catálogo completo) + **kodansha-us** (full) |
 
-Notas: `booksprivilege` **deshabilitado** (2026-05-26); `whakoom` y el histórico de `listadomanga-blog` son **opt-in/fuera** del canónico. Mangavariant: sus items son **siempre** manga válido (nunca van a blacklist). **`kodansha-us`** (alta 2026-06-12): API propia `/wp-json/kodansha/v1/search-series` + JSON-LD por volumen (~61 series especiales, ~200-300 vols). Reemplaza la fuente search `US - Kodansha USA (search)` que devolvía artículos de blog (0 candidatos). **`sevenseas`** (alta 2026-06-12): API WordPress, ~150-250 especiales EN.
+Notas: `booksprivilege` **deshabilitado** (2026-05-26); `whakoom` y el histórico de `listadomanga-blog` son **opt-in/fuera** del canónico. Mangavariant: sus items son **siempre** manga válido (nunca van a blacklist). **Mangavariant ya NO es full-only** (2026-07-07): el delta lo corre en modo **incremental** — baja los sitemaps (costo fijo: sitemaps + 1 resolución del challenge sgcaptcha) y fetchea SOLO las variantes cuya URL no está ya en `items.jsonl` (diff contra el corpus), ordenadas por `lastmod` desc y acotadas por `MANGAVARIANT_MAX_NEW` (default 400). Selección desde el shell vía env vars (`MANGAVARIANT_INCREMENTAL=1`), sin tocar `manga_watch.py`. Cierra el lag de ~3 meses que tenían las variantes nuevas. Con esto **no queda ninguna fuente de descubrimiento full-only** (los pasos full-only restantes son de imagen/calidad: backfill galleries, mirror, upgrade-resolution, dedup-carousel `--all`). **`kodansha-us`** (alta 2026-06-12): API propia `/wp-json/kodansha/v1/search-series` + JSON-LD por volumen (~61 series especiales, ~200-300 vols). Reemplaza la fuente search `US - Kodansha USA (search)` que devolvía artículos de blog (0 candidatos). **`sevenseas`** (alta 2026-06-12): API WordPress, ~150-250 especiales EN.
+
+**Ventana futura del delta (2026-07-07, P1 de la auditoría de ingestión).** El delta
+pasa `LISTADO_CAL_TO` (default hoy+3 meses) a `listadomanga-collections`, además del
+`LISTADO_CAL_FROM` (hoy-2 meses) que ya existía — antes la ventana quedaba
+`[hoy-2m..hoy]` y se perdían los anuncios/"en preparación" que `calendario.php` YA
+tiene poblados para meses futuros (el delta era ciego al futuro). El dedup (synthetic
+URL + cluster_key) absorbe el solapamiento entre corridas cuando esos anuncios pasan a
+confirmados.
+
+**Campo nuevo `original_title` (2026-07-07).** `listadomanga_collections.py` ahora
+extrae el bloque "Título original:" del header de cada `/coleccion`
+(`_extract_original_title_from_header`) y lo persiste como `original_title` (solo si
+no-vacío) — típicamente romaji, a veces + el título japonés entre paréntesis y/o el
+título en inglés tras " / ". Es semilla para el flujo de aliases (Etapas 2-3 lo pueden
+usar para poblar `series_aliases.yml`); **nunca** toca `title` ni `title_original`
+(gotcha #22) — es un campo aparte y opcional. Detalle en architecture.md → "Política
+de títulos".
 
 Cada candidato pasa por el **per-source pipeline** (§3.0.bis).
 
 #### FASE 3 = ETAPA 1 (cleanup) — ver §3.1.
-#### FASE 4 — `build_web.py` — ver §3.★.
+#### FASE 4 — `validate_corpus.py` (gate DURO, ANTES del build) — ver §3.★.
+#### FASE 5 — `build_web.py` (solo si el corpus es válido) — ver §3.★.
+#### FASE 6 — `source_health.py` (+ metrics/baseline-alert) + `staleness_report.py` — ver "Convenciones de ambos scripts" arriba.
 
 #### 3.0.bis Per-source pipeline (el corazón del scrape)
 Detalle de los 10 pasos por cada candidato (vale para sources y wikis):
@@ -311,9 +359,9 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 | Paso | Script | Qué hace |
 |---|---|---|
 | 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. **Guard gotcha #61 (2026-06-11)**: items con `standardized_at` se saltean por defecto (`--include-standardized` para override) — el paso es seguro sobre corpus estandarizado. |
-| 4b | `filter_non_manga.py` | Re-aplica `is_likely_manga`+`is_pure_novel`+`is_comic_not_manga`; expulsa rechazados. |
-| 4c | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. `rescore.py` tiene el mismo guard desde 2026-06-11 (salta `standardized_at` por defecto). |
-| 4d | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). |
+| 4b | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). **Reordenado ANTES de los filtros (2026-07-07, gotcha #110)**: antes corría al final (4d) y los gates de 4c/4d evaluaban el título SUCIO en un run y el LIMPIO recién en el siguiente — un título que solo pasa/rechaza tras limpiarse (ej. 한정판 recortado por `_strip_korean_retailer_tail`) daba resultado distinto según en qué run cayera. Ahora los filtros ven SIEMPRE el título ya limpio, en la misma corrida. |
+| 4c | `filter_non_manga.py` | Re-aplica `is_likely_manga`+`is_pure_novel`+`is_comic_not_manga`; expulsa rechazados. |
+| 4d | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. `rescore.py` tiene el mismo guard desde 2026-06-11 (salta `standardized_at` por defecto). |
 | 4e | `backfill_metadata.py --only image_url` | Rellena portadas faltantes (HTTP por item). |
 | 4e2 | `backfill_metadata.py --only images` | **[full]** galería multi-imagen (carrusel). |
 | 4e3 | `mirror_images.py --no-gc` | **[full]** descarga galería al espejo local. |
@@ -462,6 +510,13 @@ El owner aprueba cards correctas desde el dashboard (botón aprobar):
 
 ### 3.★ Build / publish
 1. **`consolidate_sources.py`** — re-consolida 1-fila-por-producto (necesario tras standardize, que reasigna `edition_key` → nuevos clusters).
+1.5. **`validate_corpus.py` — gate DURO ANTES de construir (2026-07-07, gotcha #111)**:
+   dentro de `scrape_delta.sh`/`scrape_full.sh` este paso corre como PHASE 4, antes de
+   `build_web.py` (PHASE 5). Exit 2 = violaciones duras → el build se OMITE y el sitio
+   servido sigue siendo el build anterior (nunca se publica un corpus corrupto). Fuera
+   del script canónico (build manual) correlo a mano primero:
+   `.venv/bin/python scripts/validate_corpus.py` — si el exit code es distinto de 0, no
+   corras `build_web.py` todavía.
 2. **`build_web.py`** — por **default deja el embed VACÍO** (`web/index.html` ~139 KB; el JS hace `fetch(items.jsonl)` en vivo, requiere `serve.py`). Antes embebía el catálogo (~30 MB en el HTML) que el navegador parseaba ADEMÁS del fetch en vivo → trabajo doble; eso se quitó el 2026-06-14 (gotcha #100). Con `--embed` vuelve a poblar el `<script id="manga-data">` (normaliza URLs, agrupa por `cluster_key`, construye `sources[]`) para el fallback `file://`. `serve.py` además sirve el `items.jsonl` con **gzip** (~31 MB → ~4 MB) si el cliente lo acepta.
    También regenera **`data/series_aliases.json`** (`export_series_aliases.py`, vista
    de búsqueda del YAML de aliases): ambas UIs buscan también contra los aliases del
@@ -481,6 +536,7 @@ El owner aprueba cards correctas desde el dashboard (botón aprobar):
 /watch-standardize-catalog            # → series/edition/volume + slugs + traducción
 /watch-enrich-series-aliases          # SOLO si standardize reportó series nuevas
 .venv/bin/python scripts/retrofit/set_rarity.py
+.venv/bin/python scripts/validate_corpus.py   # gate: si exit≠0, no corras build_web todavía
 .venv/bin/python scripts/build_web.py
 .venv/bin/python scripts/serve.py     # ver el resultado en :8000
 ```
@@ -513,6 +569,7 @@ El owner aprueba cards correctas desde el dashboard (botón aprobar):
 
 # ★ build
 .venv/bin/python scripts/retrofit/consolidate_sources.py
+.venv/bin/python scripts/validate_corpus.py    # gate: si exit≠0, no corras build_web todavía
 .venv/bin/python scripts/build_web.py
 ```
 

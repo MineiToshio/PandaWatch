@@ -2,7 +2,11 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
+
+> ⚠️ **FIX CRÍTICO 2026-07-07**: el bootstrap llevaba meses trayendo el mismo mes
+> por defecto para cualquier rango pedido (ver §8) — el backfill histórico recién
+> ahora es viable.
 
 ---
 
@@ -12,7 +16,7 @@
 |---|---|
 | **Nombre** | Otaku Calendar |
 | **URL base** | `https://otakucalendar.com` |
-| **Índice / punto de entrada** | `https://otakucalendar.com/Calendar?month=YYYY-M` (un mes por página) |
+| **Índice / punto de entrada** | `https://otakucalendar.com/Calendar/{year}/{month}` (un mes por página, path-segment — ver §8) |
 | **Tipo de fuente** | Catálogo comunitario / calendario de lanzamientos (no es tienda) |
 | **`kind` en sources.yml** | `html` (fila puntero) — la ingestión real es vía wiki |
 | **`source_class`** | `trusted_media` |
@@ -33,8 +37,10 @@ fila YAML. No hay doble conteo: las dos referencias apuntan al mismo origen.
 que los items entran como `Varias editoriales` (1 item con publisher seteado; el resto sin
 publisher). Todos son de Estados Unidos.
 
-**Por qué importa / qué aporta de único**: cubre el calendario de lanzamientos del mercado
-manga/LN en inglés (US) por fecha — una señal de novedades que las fuentes ES/FR/JP no dan.
+**Por qué importa / qué aporta de único**: es la **agregadora cross-editorial** del
+mercado manga/LN en inglés (US) — cubre el calendario de lanzamientos de TODAS las
+editoriales EN por fecha, una señal de novedades que las fuentes ES/FR/JP no dan y que
+ninguna ficha mono-editorial (VIZ, Yen Press, Kodansha USA…) puede dar por sí sola.
 Aporte de corpus pequeño porque sólo entran releases que pasan `is_likely_manga` y el
 umbral de score; es una fuente de descubrimiento, no de catálogo masivo.
 
@@ -42,8 +48,11 @@ umbral de score; es una fuente de descubrimiento, no de catálogo masivo.
 
 ## 2. Descripción técnica de la fuente
 
-- **Estructura de URLs**: una página por mes, `Calendar?month=YYYY-M` (mes sin cero a la
-  izquierda). El módulo arma esa URL en `fetch_calendar_month()`.
+- **Estructura de URLs**: una página por mes, `Calendar/{year}/{month}` como **path-segment**
+  (mes sin cero a la izquierda). El módulo arma esa URL en `fetch_calendar_month()`
+  ([`scripts/wikis/otaku_calendar.py:223`](../../../scripts/wikis/otaku_calendar.py#L223)).
+  ⚠️ El formato viejo `?month=YYYY-M` (query string) el servidor lo **ignora por completo**
+  — ver §8, fix 2026-07-07.
 - **Estructura del HTML**: cada mes trae varios `<div class="dateListingContainer">`, uno
   por día. El contenedor empieza con un encabezado de fecha en texto (`"Tuesday 5 May
   2026"`) y dentro lleva un `<a href="/Release/<id>/<slug>">` por cada release. El texto de
@@ -145,7 +154,21 @@ API pública paralela al resto de wikis: `parse_calendar_page`, `fetch_calendar_
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
-- **Aporte bajo (6 items)**: esperado. Es un calendario de novedades, no un catálogo; sólo
+- **FIX CRÍTICO (2026-07-07): el query string `?month=YYYY-M` era IGNORADO por el
+  servidor** — cualquier mes pedido devolvía siempre la página del mes por defecto (el
+  actual). En la práctica esto significaba que bootstrapear un rango de meses producía
+  el MISMO HTML una y otra vez (duplicados silenciosos, sin error) — de ahí que el corpus
+  sólo tuviera 6 items históricos. ✅ Fix: `fetch_calendar_month()` ahora arma la URL como
+  **path-segment** `/Calendar/{year}/{month}` (`scripts/wikis/otaku_calendar.py:223`), que
+  el servidor sí respeta. Verificado en vivo: ~374-375 releases/mes reales (antes,
+  cualquier mes devolvía el mismo conteo del mes actual). El HTML de respuesta tiene la
+  MISMA estructura (`div.dateListingContainer` + `/Release/<id>/<slug>`), así que el parser
+  no necesitó cambios — sólo la construcción de la URL. **El backfill histórico completo
+  (2024-01 → hoy) ahora es viable** y debería recuperar cientos de releases que el bug
+  dejaba invisibles.
+- **Aporte bajo (6 items)**: era, en parte, consecuencia del bug de arriba (los rangos
+  históricos no traían nada nuevo). Con el fix, se espera que el aporte suba
+  sustancialmente tras un backfill. Es un calendario de novedades, no un catálogo; sólo
   entra lo que pasa `is_likely_manga` (#2) y supera el score. No es un bug.
 - **Sin portada/precio/ISBN en la página de release** — la página individual no expone esos
   datos, por eso `fetch_details` es no-op y el dato útil se toma del listing.
@@ -158,6 +181,9 @@ API pública paralela al resto de wikis: `parse_calendar_page`, `fetch_calendar_
 
 ## 9. Pendientes / limitaciones conocidas
 
+- **Backfill histórico pendiente de correr**: el fix de §8 (2026-07-07) habilita bootstrapear
+  todo el rango 2024-01 → hoy con datos reales por mes; todavía no se corrió ese backfill
+  completo (sólo se verificó el fix puntualmente). Próximo paso natural.
 - **Publisher ausente**: el calendario no expone editorial, así que los items quedan sin
   `publisher` (o como `Varias editoriales`). Enriquecerlo requeriría cruzar con otra fuente.
 - **Sin imágenes**: no hay portada disponible desde esta fuente; los items dependen de que

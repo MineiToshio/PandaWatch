@@ -30,8 +30,11 @@ Invariantes (cada una con su id corto):
          lo corrige merge_duplicate_series.py / curación del YAML]
   PUBMIX >1 string de publisher dentro de una misma edition_key. [warning —
          lo corrige normalize_edition_publishers.py]
-  ISBNDUP el mismo ISBN-13 en >1 fila con cluster distinto (mismo producto
-         físico duplicado). [warning — lo corrige merge_isbn_duplicates.py]
+  ISBNDUP mismo ISBN-13 compartido por >1 fila QUE ADEMÁS huelen a duplicado
+         real (mismo edition_key, o mismo título+país+variante). Un ISBN
+         compartido por sí solo NO es violación: en manga el mismo ISBN se
+         reusa entre ediciones/series distintas (portadas variantes, especial
+         vs normal, retailers que reciclan ISBN). [warning]
   EKPREFIX el edition_key empieza con el series_key del item (formato
          `{series}-{pub}-{slug}-{pais}`). [warning — lo corrige
          fix_edition_key_prefix.py; excluye approved]
@@ -39,7 +42,11 @@ Invariantes (cada una con su id corto):
          fila (cofre/posavasos/miniartbook de otro volumen; gotcha #99). [warning
          — lo corrige remove_phantom_calendar_editions.py]
 
-Exit code != 0 si hay violaciones DURAS (warnings no fallan).
+Exit codes (contrato para el gate pre-build de scrape_delta/full):
+  0  corpus VÁLIDO — 0 violaciones DURAS (los warnings NO fallan).
+  2  hay violaciones DURAS — corpus INVÁLIDO (el pipeline OMITE el build).
+  1  error del propio validador (excepción no controlada) — reservado; el
+     shell lo trata también como fallo, pero distinto de "duras".
 
 Uso:
   .venv/bin/python scripts/validate_corpus.py
@@ -127,6 +134,46 @@ def _kind_canon(it):
             return _CANON.get(m.group(1), m.group(1))
     parts = (it.get("edition_key", "") or "").split("-")
     return parts[-2] if len(parts) >= 2 else "regular"
+
+
+def _isbn_dup_signature(it):
+    """Firma que distingue 'duplicado real' de 'ediciones distintas que
+    comparten ISBN'. Preferimos edition_key; si falta, título+país+
+    variante(kind). Módulo-level para poder testearlo."""
+    ek = (it.get("edition_key") or "").strip()
+    if ek:
+        return ("ek", ek)
+    title = (it.get("title") or "").strip().lower()
+    country = (it.get("country") or "").strip().lower()
+    return ("tpv", title, country, _kind_canon(it))
+
+
+def isbn_dup_violations(items):
+    """Devuelve [(isbn, [firmas duplicadas])] para ISBNs compartidos que
+    huelen a DUPLICADO REAL: mismo ISBN Y misma firma de duplicado (edition_key,
+    o título+país+variante) repartida en clusters distintos.
+
+    Premisa corregida (2026-07-07): un ISBN compartido por sí solo NO es
+    violación — en manga el mismo ISBN se reusa entre ediciones/series
+    DISTINTAS (portadas variantes, especial vs normal, retailers que reciclan
+    ISBN). Sólo es sospechoso cuando dos filas de CLUSTER distinto comparten
+    firma de duplicado real."""
+    isbn_owner = defaultdict(list)
+    for it in items:
+        raw = (it.get("isbn") or "").strip()
+        if raw:
+            isbn_owner[mw.isbn13(raw) or raw].append(it)
+    out = []
+    for isbn, group in isbn_owner.items():
+        if len(group) < 2:
+            continue
+        by_sig = defaultdict(set)
+        for g in group:
+            by_sig[_isbn_dup_signature(g)].add(g.get("cluster_key", ""))
+        dupes = [sig for sig, cks in by_sig.items() if len(cks) > 1]
+        if dupes:
+            out.append((isbn, dupes))
+    return out
 
 
 def main():
@@ -291,18 +338,18 @@ def main():
         if len(pubs) > 1:
             flag("PUBMIX", f"{ek}: {sorted(pubs)[:4]}")
 
-    # ISBNDUP — el mismo ISBN-13 en >1 fila con cluster distinto = el mismo
-    # producto físico duplicado (lo corrige merge_isbn_duplicates.py; los
-    # cruces con listadomanga los maneja merge_crosssource_into_lmc).
-    isbn_owner = defaultdict(list)
-    for it in items:
-        raw = (it.get("isbn") or "").strip()
-        if raw:
-            isbn_owner[mw.isbn13(raw) or raw].append(it)
-    for isbn, group in isbn_owner.items():
-        if len(group) > 1 and len({g.get("cluster_key", "") for g in group}) > 1:
-            flag("ISBNDUP", f"{isbn} ×{len(group)}: "
-                 f"{[g.get('edition_key') or g.get('cluster_key','')[:40] for g in group][:3]}")
+    # ISBNDUP — un ISBN compartido por varias filas NO es por sí solo una
+    # violación. Premisa corregida (2026-07-07): en manga el mismo ISBN se
+    # reusa entre ediciones/series DISTINTAS (portadas variantes comparten
+    # ISBN, especial y normal comparten ISBN, y retailers como Mangaline MX
+    # reciclan un ISBN en toda su línea — el mismo dígito en dos series). Por
+    # eso ISBN dejó de ser criterio de fusión en derive_cluster_key. Acá sólo
+    # marcamos (warning, nunca dura) los casos que de verdad huelen a
+    # DUPLICADO real: mismo ISBN Y (mismo edition_key) o (mismo título+país+
+    # variante) repartido en clusters distintos. Ver isbn_dup_violations().
+    for isbn, dupes in isbn_dup_violations(items):
+        flag("ISBNDUP", f"{isbn}: firmas duplicadas "
+             f"{[list(sig)[:3] for sig in dupes[:2]]}")
 
     # STOLENIMG (gotcha #99) — la portada de un TOMO normal es, en realidad, la foto
     # de un extra/bonus (cofre, posavasos, miniartbook) de OTRA fila. Síntoma del bug
@@ -343,7 +390,7 @@ def main():
     print()
     if hard_fail:
         print(f"RESULTADO: ✗ {hard_fail} violaciones DURAS — el corpus NO es válido.")
-        return 1
+        return 2  # 2 = violaciones DURAS (gate pre-build); 1 queda para errores del validador
     print("RESULTADO: ✓ corpus VÁLIDO (0 violaciones duras).")
     return 0
 

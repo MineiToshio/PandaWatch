@@ -78,7 +78,7 @@ El detalle se carga **bajo demanda** desde `docs/reference/`:
 | Doc | Qué cubre |
 |---|---|
 | [`reference/architecture.md`](reference/architecture.md) | Pipeline, storage, corpus state, las 7 decisiones de diseño (completas) |
-| [`reference/gotchas.md`](reference/gotchas.md) | Las 36 known gotchas (referenciadas por #N en todo el repo) |
+| [`reference/gotchas.md`](reference/gotchas.md) | Las 116 known gotchas (referenciadas por #N en todo el repo) |
 | [`reference/conventions.md`](reference/conventions.md) | Convenciones de cambio de código + playbooks "when user reports X" |
 | [`reference/file-map.md`](reference/file-map.md) | Qué vive dónde (módulos, wikis, retrofits, data files) |
 | [`reference/dashboard.md`](reference/dashboard.md) | Curación humana: feedback, edición inline, aprobación |

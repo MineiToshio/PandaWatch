@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -77,6 +77,23 @@ otras fuentes mono-editorial no cubren.
 
 ## 8. Problemas encontrados — qué funcionó y qué NO
 
+- **Veredicto de auditoría de ingestión (2026-07-07): las queries `画集` y `限定版` se
+  MANTIENEN**, tras verificar overlap por ISBN contra Sumikko (la otra fuente JP grande
+  de ediciones limitadas):
+  - **`画集` (artbooks)**: **0% overlap** con Sumikko — Sumikko casi no indexa artbooks
+    (11/2751 items de Sumikko). Esta keyword es **100% aporte neto**.
+  - **`限定版` (edición limitada)**: **15.2% único** — el resto solapa con Sumikko, pero
+    ese 15.2% son ediciones con bundle de DVD/CD que Sumikko no siempre lista. Se
+    mantiene por ese aporte neto.
+- **Nota de calidad de datos (misma auditoría): ISBN con prefijo basura fullwidth**.
+  ~30-40% de los ISBN capturados de fuentes JP (Rakuten Books incluida) traían un
+  prefijo `"： "` (colon fullwidth + espacio) delante del ISBN real (ej. `"： 9784799777046"`).
+  Causa: el split por label de "ISBN：" no strippeaba el colon fullwidth. Ya se
+  **normaliza en la extracción** (`normalize_isbn()` en `manga_watch.py`, aplicado en
+  `candidate_to_json` y en los parsers que setean `candidate.isbn`). Para el corpus
+  legacy existe el retrofit `scripts/retrofit/normalize_isbn.py` — **109 filas
+  pendientes de la corrida real** (verificado con `--dry-run`: "12870 líneas totales,
+  109 ISBN cambiarían"); sólo se corrió en dry-run, falta aplicarlo.
 - **#44: la tienda no es la editorial** — Rakuten Books es marketplace multi-editorial;
   poner el nombre de la tienda como `publisher` contaminaría el `edition_key` y generaría
   duplicados. ✅ Solución: el bloque NO define `publisher` (queda vacío a propósito); el

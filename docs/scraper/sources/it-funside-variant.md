@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -43,7 +43,11 @@ covers** de manga, un nicho de coleccionismo que otras fuentes IT no concentran.
   - "Ai Tempi di Bocchan Perfect Edition vol 3 Variant"
   - "Vita da Slime - A Spasso per Tempest Vol 5 Variant"
 - **Identificador de producto**: URL canónica `/products/<handle>`.
-- **Anti-bot / quirks**: ninguno conocido; Shopify HTML plano, sin JS-render.
+- **Anti-bot / quirks**: Shopify HTML plano, sin JS-render. **429 real el
+  2026-07-07** (gotcha #114) — no es anti-bot propio de esta tienda, es el borde
+  Shopify compartido `23.227.38.0/24` (mismo edge que Dark Horse Direct, Manga
+  Dreams y Milky Way) saturado por la concurrencia agregada de las 4 tiendas. Ver
+  §8.
 
 ---
 
@@ -75,6 +79,14 @@ covers** de manga, un nicho de coleccionismo que otras fuentes IT no concentran.
   Fix: `clean_title` corta desde "Prezzo normale/di vendita/unitario", el prefijo del
   botón y el sufijo "FUNSIDE". **Pendiente**: afinar `title_selector` (hoy
   `a[href*='/products/']` arrastra toda la tarjeta en algunos productos).
+- **HTTP 429 en el primer delta real post-mejoras (2026-07-07, gotcha #114)**:
+  `HTTP error 429 Client Error: Too Many Requests` al scrapear
+  `/collections/a-caccia-di-variant`. Causa: `funside.it` resuelve al mismo borde
+  Shopify `23.227.38.0/24` que Dark Horse Direct, Manga Dreams y Milky Way —
+  `--per-host-limit` agrupa por hostname y no ve el rate-limit del borde compartido.
+  Fix: `throttle_group: "shopify"` en `sources.yml` — semáforo compartido (limit 1)
+  + delay mínimo 2s entre requests del grupo (`--throttle-group-delay`). Monitorear
+  el próximo run.
 
 ---
 
@@ -82,6 +94,19 @@ covers** de manga, un nicho de coleccionismo que otras fuentes IT no concentran.
 
 - `publisher` queda mayormente como "Funside" (la tienda) en vez de la editorial real
   (#44). Los productos no siempre exponen la editorial original; quedan ≈49 items así.
+- **RESUELTO (2026-07-07): 7 items con `title` literalmente "Sconto"** (sin
+  porcentaje) — `tensura-tempest-tour-funside-variant-it-5/8`,
+  `tokyo-duel-funside-variant-it-8`, `mf-ghost-funside-variant-it-2/3`,
+  `kumichou-musume-to-sewagakari-funside-variant-it-1/5`. Es el MISMO mecanismo que
+  el badge de Dynit (gotcha #115, "Sconto N%") pero SIN el número/porcentaje: el
+  regex `_is_sale_badge()` exigía un `\d{1,3}` junto a "sconto", así que un badge
+  "Sconto" pelado no matcheaba y `_first_non_badge_title()` no lo salteaba. **Fix**:
+  `_SALE_BADGE_RE` extendido con la alternativa de palabra "desnuda"
+  (`sconto`/`sale`/`offerta`/`descuento`/`rebaja`/`réduction` como texto COMPLETO,
+  vía `fullmatch`, sin sobre-matchear títulos que la contengan en contexto tipo
+  "Garage Sale Vol 1"). Regresión en `tests/test_ingestion_fixes.py`
+  (`test_is_sale_badge_detecta_badges_desnudos` y vecinos). Los 7 títulos "Sconto"
+  del corpus se auto-curan en el próximo scrape vía upsert (sin retrofit manual).
 
 ---
 

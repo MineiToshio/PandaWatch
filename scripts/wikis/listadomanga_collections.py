@@ -90,6 +90,8 @@ except ImportError:
         score_candidate,
     )
 
+import image_store  # fuente única de placeholders conocidos (LM7)
+
 
 BASE_URL = "https://www.listadomanga.es/"
 COLECCION_URL_TEMPLATE = "https://www.listadomanga.es/coleccion.php?id={cid}"
@@ -97,7 +99,13 @@ LISTA_URL = "https://www.listadomanga.es/lista.php"
 CALENDAR_URL_TEMPLATE = "https://www.listadomanga.es/calendario.php?mes={month}&ano={year}"
 # Hash del placeholder de "portada censurada" que listadomanga sirve para
 # algunas ediciones adultas / sin cover real (gotcha #40/#41). No es portada.
+# El listado vivo de placeholders conocidos es image_store.KNOWN_PLACEHOLDER_URL_STEMS
+# (fuente única, LM7); esta constante se conserva por retrocompat y se valida contra
+# el registro para que NO pueda desincronizarse.
 CENSORED_COVER_HASH = "08a02c268a6d6b2304c152aa0acdc7a0"
+assert CENSORED_COVER_HASH in image_store.KNOWN_PLACEHOLDER_URL_STEMS, (
+    "CENSORED_COVER_HASH debe estar registrado en image_store.KNOWN_PLACEHOLDER_URL_STEMS"
+)
 
 # Meses para parsear fechas tipo "23 Marzo 2023" o "Junio 2017"
 SPANISH_MONTHS = {
@@ -663,6 +671,27 @@ def _extract_author_from_header(html_text: str) -> str:
     return ""
 
 
+def _extract_original_title_from_header(html_text: str) -> str:
+    """Extrae `<b>Título original:</b> Shingeki no Kyojin (進撃の巨人) / Attack on Titan`.
+
+    A diferencia de editorial/autor, el valor NO viene envuelto en `<a>`: es
+    texto plano entre el `</b>` y el siguiente `<br/>` (o el próximo `<b>`).
+    Puede traer sólo romaji, romaji + título japonés entre paréntesis, y/o
+    ` / ` + título en inglés. Se devuelve el string COMPLETO tal cual (semilla
+    para el flujo de aliases: unmapped/enrich lo parsea aparte). NUNCA se usa
+    para renombrar el `title` ni se escribe a series_aliases (política de
+    títulos: el title es el nombre OFICIAL, no se toca).
+    """
+    decoded = html_lib.unescape(html_text)
+    m = re.search(
+        r"<b>\s*T[íi]tulo\s+original\s*:\s*</b>\s*([^<]+)",
+        decoded, re.IGNORECASE | re.UNICODE,
+    )
+    if m:
+        return _decode_text(m.group(1))
+    return ""
+
+
 def _slugify(text: str) -> str:
     """Slug simple ASCII-only minúsculas para construir URLs sintéticas."""
     text = text.lower().strip()
@@ -766,7 +795,8 @@ def _parse_item_table(
     # (que SÍ es válido: tiene título/precio) entre al worklist de search-covers
     # en vez de mostrar el placeholder. NO descartamos el item.
     # (Matiz de gotcha #40: la censura NO siempre es client-side.)
-    if CENSORED_COVER_HASH in image_url:
+    # Fuente ÚNICA del listado de placeholders conocidos: image_store (LM7).
+    if image_store.known_placeholder_url_reason(image_url):
         image_url = ""
 
     td = item_table.find("td", class_="cen") or item_table.find("td")
@@ -957,6 +987,15 @@ def _parse_layout_b_cell(td: Any) -> dict[str, str] | None:
     image_url = (img.get("src") or "").strip()
     if not image_url:
         return None  # cell de padding
+    # Placeholder de portada CENSURADA / "no disponible" servido en un extra o
+    # cofre de Layout B (mismo `08a02c…png` de gotcha #40). Sin este guard el
+    # placeholder entraba como imagen `kind=extra` del tomo destino — y si el
+    # tomo no estaba en Layout A, como cover de un item `from_extras` fantasma:
+    # la MISMA foto placeholder terminaba de "portada" en decenas de series
+    # distintas (STOLENIMG). Lo vaciamos igual que en Layout A (misma fuente
+    # única de placeholders conocidos, image_store — LM7).
+    if image_store.known_placeholder_url_reason(image_url):
+        image_url = ""
 
     lines = _parse_item_text_lines(td)
     if not lines:
@@ -1076,6 +1115,7 @@ def _merge_extras_into_items(
     formato: str,
     premium_signals: list[str],
     layout_a_covers: dict[tuple[str, str], str] | None = None,
+    original_title: str = "",
 ) -> list[Candidate]:
     """Aplica el algoritmo merge extra→tomo. Devuelve la lista de tomos
     NUEVOS creados desde Layout B (los existentes ya se mutaron in-place).
@@ -1115,13 +1155,17 @@ def _merge_extras_into_items(
         target = layout_a_items.get(key)
 
         if target is not None:
-            # ENRICH: agregar imagen + extra al item existente.
-            target.images.append({
-                "url": ex["image_url"],
-                "local": "",
-                "kind": "extra",
-                "description": ex.get("description", ""),
-            })
+            # ENRICH: agregar imagen + extra al item existente. Si la foto del
+            # extra era un placeholder conocido, `_parse_layout_b_cell` ya vació
+            # image_url → NO agregamos una entrada de imagen vacía (el extra se
+            # documenta igual en `extras[]`).
+            if ex.get("image_url"):
+                target.images.append({
+                    "url": ex["image_url"],
+                    "local": "",
+                    "kind": "extra",
+                    "description": ex.get("description", ""),
+                })
             target.extras.append({
                 "description": ex.get("description", ""),
                 "release_date": ex.get("release_date", ""),
@@ -1174,6 +1218,7 @@ def _merge_extras_into_items(
             )
             cand.publisher = publisher
             cand.author = author
+            cand.original_title = original_title  # semilla aliases (gotcha #49: no renombra title)
             cand.edition_display = collection_title  # nombre oficial, sin traducir (gotcha #49)
             cand.release_date = ex.get("release_date", "")
             cand.tags = list(source.tags or []) + [
@@ -1208,12 +1253,16 @@ def _merge_extras_into_items(
                 cand.image_url = cover_url  # alias del primer kind=cover
             else:
                 cand.image_url = ex["image_url"]
-            images_list.append({
-                "url": ex["image_url"],
-                "local": "",
-                "kind": "extra",
-                "description": ex.get("description", ""),
-            })
+            # image_url vacío ⇒ el extra era un placeholder conocido (vaciado en
+            # _parse_layout_b_cell): NO agregamos entrada de imagen vacía. El item
+            # queda válido sin foto (elegible para search-covers), como Layout A.
+            if ex.get("image_url"):
+                images_list.append({
+                    "url": ex["image_url"],
+                    "local": "",
+                    "kind": "extra",
+                    "description": ex.get("description", ""),
+                })
             cand.images = images_list
             cand.extras = [{
                 "description": ex.get("description", ""),
@@ -1330,6 +1379,7 @@ def parse_collection_page(
         premium_signals = premium_signals + ["box_set"]
     publisher = _extract_publisher_from_header(html_text)
     author = _extract_author_from_header(html_text)
+    original_title = _extract_original_title_from_header(html_text)
 
     source = _virtual_source(publisher_hint=publisher)
     candidates: list[Candidate] = []
@@ -1575,6 +1625,9 @@ def parse_collection_page(
             )
             cand.publisher = publisher
             cand.author = author
+            # original_title = "Título original" del header (romaji [+ JP] [+ EN]).
+            # Semilla para el flujo de aliases; NUNCA renombra el title.
+            cand.original_title = original_title
             # edition_display = nombre OFICIAL de la edición (título de la
             # coleccion), SIN traducir (gotcha #49). NO el slug genérico
             # "Special/Regular". El nombre del TOMO sí se traduce (lo hace el
@@ -1689,6 +1742,7 @@ def parse_collection_page(
         )
         box_cand.publisher = publisher
         box_cand.author = author
+        box_cand.original_title = original_title  # semilla aliases (gotcha #49: no renombra title)
         box_cand.edition_display = collection_title  # nombre oficial, sin traducir (gotcha #49)
 
         # Carrusel: box cover primero, luego cada tomo del cofre como
@@ -1777,6 +1831,7 @@ def parse_collection_page(
                 formato=formato,
                 premium_signals=premium_signals,
                 layout_a_covers=layout_a_covers,
+                original_title=original_title,
             )
             candidates.extend(created)
 

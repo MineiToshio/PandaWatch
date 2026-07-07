@@ -6,7 +6,7 @@
 ## High-level pipeline
 
 ```
-sources.yml  (138 entries, ~67 enabled)
+sources.yml  (151 entries, 63 enabled)
     │
     ▼
 manga_watch.py (scraper)  ←─── ThreadPoolExecutor(--workers N)
@@ -53,11 +53,13 @@ http://localhost:8000/ (via scripts/serve.py — servidor ÚNICO)
   (lo genera scripts/audit/data_quality.py) y lo muestra como worklists
   clickeables. Detalle en docs/admin/README.md.
 
-Orchestration: scrape_delta.sh / scrape_full.sh (decisión #7) encadenan
-  scrape (parallel) → wiki bootstraps →
-  cleanup retrofits (rescore, filter_non_manga, filter_collectible,
-  clean_titles, backfill_metadata, [wayback_recover]) →
-  consolidate_sources → build_web.
+Orchestration: scrape_delta.sh / scrape_full.sh (decisión #7) hacen backup
+  pre-scrape de items.jsonl y encadenan scrape (parallel) → wiki bootstraps →
+  cleanup retrofits (rescore, **clean_titles** [2026-07-07: ANTES de los
+  filtros, gotcha #110], filter_non_manga, filter_collectible,
+  backfill_metadata, [wayback_recover]) → enforcer → consolidate_sources →
+  **validate_corpus (gate DURO)** → build_web **sólo si el corpus es válido**
+  (gotcha #111; si no, se preserva el build anterior).
 
 Observability: scripts/audit/source_health.py parses N recent overnight
   logs and classifies sources (broken_http / selector_dead / declining
@@ -312,9 +314,17 @@ Cuatro shapes, en orden de prioridad:
    Horse), mergean igual. El edition_key ya codifica publisher/market en su slug
    (`gon-norma-collector`). Crucial para boxes/artbooks sin volumen.
 2. **`isbn:<X>`** — fallback para items sin edition_key (legacy).
-3. **`fuzzy:<lang>|<series>|<vol>|<variant_tier>|<publisher>`** — sin ISBN ni
-   edition_key. Los 5 componentes deben ser significativos (series ≥3 chars, lang
-   non-empty, volume detectado); si no → standalone.
+3. **`fuzzy:<country>|<series>|<vol>|<variant_tier>|<publisher>`** — sin ISBN ni
+   edition_key. Los 5 componentes deben ser significativos (series ≥3 chars, country
+   non-empty, volume detectado); si no → standalone. **Discriminante = país, NO idioma
+   (fix 2026-07-07, gotcha #109)**: antes usaba `language`, y dos ediciones que
+   comparten idioma pero son mercados distintos (ES-España vs ES-México) podían
+   fusionarse en este tier ANTES de que el skill de estandarización les asigne
+   `edition_key` — la regla dura "país=edición" (#46) no debería tener una ventana sin
+   aplicar. Guard: `country` vacío → NO genera clave fuzzy (evita que todos los items
+   sin país detectado caigan en el mismo bucket) → cae al tier `url:`. Corpus actual: 0
+   claves fuzzy (todo lo existente ya tiene edition_key/ISBN); el fix protege scrapes
+   futuros antes de su primera pasada de estandarización, no requirió backfill.
 4. **`url:<url>`** — standalone, nunca agrupa (mejor 1 card por fuente que mergear cosas no relacionadas).
 
 **Variant tier**: distintas fuentes detectan signal_types ligeramente distintos para
@@ -322,7 +332,8 @@ el mismo producto, así que el set completo no serviría como discriminante.
 `_variant_tier(signal_types)` elige el **primer tier que matchee** (más → menos específico):
 `artbook > omnibus > box_set > kanzenban > lore_edition > variant_cover > deluxe >
 limited > special > "" (tomo regular)`. Mismo tier → mergean; distinto tier → no
-(OP100 Deluxe ≠ OP100 Celebration).
+(OP100 Deluxe ≠ OP100 Celebration). PAÍS (no idioma) es el discriminante de mercado en
+el tier fuzzy (gotcha #109): dos ediciones ES-España/ES-México no deben mezclarse.
 
 Al compartir cluster_key: el de mayor score es canónico, faltantes se completan
 best-of, todos van a `sources[]`. **Si cambiás la derivación, corré
@@ -348,12 +359,31 @@ en workload I/O-bound con ~250 LOC.
 
 ### 7. Pipeline canónico + observabilidad
 
-Los scripts canónicos (`scrape_delta.sh` / `scrape_full.sh`, ver arriba) encadenan
-scrape → wikis → cleanup retrofits (rescore → filter_non_manga → filter_collectible →
-clean_titles → backfill_metadata → [wayback_recover opt-in]) → consolidate → build_web,
-cada fase en su log bajo `logs/`. Skips vía `SKIP_*`, opt-ins vía `INCLUDE_*`.
+Los scripts canónicos (`scrape_delta.sh` / `scrape_full.sh`, ver arriba) hacen **backup
+pre-scrape** de `items.jsonl` (`backup_and_rotate`, convención del repo) y encadenan
+scrape → wikis → cleanup retrofits (rescore → **clean_titles** [2026-07-07: reordenado
+ANTES de los filtros — antes corría al final y los gates evaluaban título sucio en un
+run y limpio en el siguiente, gotcha #110] → filter_non_manga → filter_collectible →
+backfill_metadata → enforcer → [wayback_recover opt-in]) → consolidate →
+**`validate_corpus` (gate DURO, PHASE 4, exit 2 = violaciones duras)** → **build_web
+(PHASE 5) SOLO si el corpus es válido** (gotcha #111; si no, se preserva el build
+anterior en vez de publicar datos corruptos), cada fase en su log bajo `logs/` +
+`FAILED_STEPS` (array bash que acumula el `$?` de CADA paso, impreso en el FINAL
+SUMMARY — con `set +e` un crash a mitad de la cadena era antes invisible). Skips vía
+`SKIP_*`, opt-ins vía `INCLUDE_*`.
+
 `audit/source_health.py` clasifica fuentes desde los logs recientes (broken/declining/
-healthy/unseen). `retry_failed.sh` re-corre sólo lo que erró en el último log.
+healthy/unseen) y desde 2026-07-07 además: (a) acumula `logs/metrics.jsonl` (histórico
+por fuente/run, idempotente por `(run, source)`, vía `--metrics-file`); (b)
+`--baseline-alert --mode delta|full` compara el yield actual contra la MEDIANA
+histórica del MISMO modo (delta-vs-delta, full-vs-full; exige ≥3 runs de historia —
+warm-up — con mediana > 0) y alerta si cae por debajo del 50% — cubre el caso de un
+200 OK que pasó de 300 items a 0 sin ningún error HTTP, que el clasificador por-run
+solo (`--last-n 1`) no puede ver por falta de historia. `scripts/audit/staleness_report.py`
+(nuevo, read-only, nunca falla) reporta por fuente cuántas URLs de `data/state.json`
+llevan >N días (default 90) sin verse — señal de que una fuente cambió o el parser dejó
+de encontrarla; no propone borrar nada. `retry_failed.sh` re-corre sólo lo que erró en
+el último log.
 
 **Ordenamiento de tomos dentro de una edición (regla global, gotcha #60):** aplica a
 TODAS las fuentes y TODAS las UIs (app HTML + Next.js). Dos reglas duras:
@@ -417,3 +447,14 @@ corpus validado + convergencia verificada). Limitación conocida: algunos
 el mejor título disponible. Consecuencia en filtros: gotcha #92 (bonus context).
 La razón de producto: lo que el usuario ve debe ser lo que encuentra en la tienda y
 en Google; renombrar minaba la confianza y rompía la búsqueda externa.
+
+**Campo `original_title` (2026-07-07) — NO confundir con `title_original`.**
+`title_original` (gotcha #22) es el nombre OFICIAL scrapeado tal cual, antes de
+normalizaciones cosméticas — sigue existiendo en TODAS las fuentes. `original_title`
+es un campo nuevo, opcional, que solo setea el parser de colecciones de listadomanga
+(`_extract_original_title_from_header`) desde el bloque "Título original:" del header
+de la `/coleccion` (romaji + opcionalmente el título japonés entre paréntesis y/o el
+título en inglés tras " / "). Se persiste sólo si no viene vacío. Es pura semilla para
+el flujo de aliases (unmapped/enrich lo parsea aparte para poblar
+`series_aliases.yml`) — **nunca** renombra el `title` ni se escribe directo a los
+aliases (misma política de arriba).

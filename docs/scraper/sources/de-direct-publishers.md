@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-12 (alta de las 6 fuentes).
+> Última revisión: 2026-07-07 (TOKYOPOP search degradada a fallback).
 
 Ficha agrupada: las 4 editoriales comparten el mismo racional y proceso. Antes de
 2026-06-12 TODO el corpus alemán (~856 items) venía de un único wiki comunitario
@@ -21,7 +21,7 @@ de ISBN — el wiki no los tiene).
 | DE - altraverse Manga mit Box | `altraverse.de/manga/?f=64` | ~13 | genéricos | GACHIAKUTA Schuber, FMA Metal Box |
 | DE - Egmont Luxusausgaben | `egmont-shop.de/manga/luxusausgaben/` | ~12 | `li.o-grid__cell` + `a.c-product-card` | línea Luxury (HC kanzenban) — 0% overlap con Manga-Passion (que solo cubre la línea Limited de Egmont) |
 | DE - TOKYOPOP Jubiläumseditionen | `tokyopop.de/buecher/jubilaeumseditionen/` | ~11 | `div.product-box` + `.product-name` | HC aniversario "streng limitiert" |
-| DE - TOKYOPOP (search limited) | `tokyopop.de/search?search=limited` | ~66 | ídem | overlap alto con Manga-Passion (84 LEs TOKYOPOP ya en corpus) — valor = enriquecimiento |
+| DE - TOKYOPOP (search limited) | `tokyopop.de/search?search=limited` | ~66 | ídem | **DEGRADADA a fallback 2026-07-07** — 77.5% overlap por cluster con Manga-Passion; se mantiene por el 23% único (ver §9) |
 | DE - Carlsen Manga Novedades | `carlsen.de/manga/monatsuebersicht` | ~15-20/mes (~1-2 especiales) | `a.pondus-product__link` + `.field--name-title` | delta mensual mixto: el gate filtra los regulares; ISBN viene en la URL del producto |
 
 Todas `country: Alemania`, `source_class: official`, `purity: manga_only` (default),
@@ -58,6 +58,13 @@ Todas `country: Alemania`, `source_class: official`, `purity: manga_only` (defau
 - Si los items duplican a Manga-Passion sin fusionarse (el wiki no tiene ISBN →
   el match cae a fuzzy por título DE), vigilar duplicados en validate_corpus y
   considerar un merge asistido por título normalizado alemán.
+- **DE - TOKYOPOP (search limited): degradada a `tags: [..., "fallback"]` en
+  `sources.yml` (2026-07-07)**, tras medir en la auditoría de ingestión que el
+  77.5% de sus items solapan por `cluster_key` con Manga-Passion (que ya cubre
+  esas 84 LEs TOKYOPOP). Se mantiene habilitada (no se poda) por el **23% único**
+  que sigue aportando, pero pasa a prioridad de fallback frente a Manga-Passion.
+  **Candidata a poda** si una futura auditoría mide que el overlap sigue subiendo
+  (más cerca del 100%, es decir, cero aporte neto).
 
 ## 10. Runbook
 
