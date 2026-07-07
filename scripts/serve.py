@@ -66,12 +66,17 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
-ITEMS_PATH     = ROOT / "data" / "items.jsonl"
-FEEDBACK_PATH  = ROOT / "data" / "feedback.jsonl"
-APPROVALS_PATH = ROOT / "data" / "approvals.jsonl"
-EDITS_PATH     = ROOT / "data" / "edits.jsonl"
-DUP_DECISIONS_PATH = ROOT / "data" / "dup_decisions.jsonl"
-IMAGES_DIR     = ROOT / "data" / "images"
+# Directorio de datos. Override con MANGA_WATCH_DATA_DIR (lo usa la suite de tests
+# para aislar TODAS las escrituras a un tmp y nunca tocar los datos reales —
+# evita el leak que llenó data/feedback.jsonl con filas de prueba). En prod la
+# env var está sin setear → comportamiento idéntico (ROOT/data).
+_DATA_DIR      = Path(os.environ.get("MANGA_WATCH_DATA_DIR") or (ROOT / "data"))
+ITEMS_PATH     = _DATA_DIR / "items.jsonl"
+FEEDBACK_PATH  = _DATA_DIR / "feedback.jsonl"
+APPROVALS_PATH = _DATA_DIR / "approvals.jsonl"
+EDITS_PATH     = _DATA_DIR / "edits.jsonl"
+DUP_DECISIONS_PATH = _DATA_DIR / "dup_decisions.jsonl"
+IMAGES_DIR     = _DATA_DIR / "images"
 
 MAX_BUFFERED_LINES = 5000
 MAX_FINISHED_JOBS  = 30
@@ -457,6 +462,29 @@ def _find_item_by_url(items: list[dict], url: str) -> dict | None:
         if it.get("url") == url:
             return it
     return None
+
+
+def _url_in_feedback(url: str) -> bool:
+    """¿La URL ya tiene una entrada pendiente en la cola de feedback?
+
+    'Pendiente' = la fila sigue en feedback.jsonl. Cuando el feedback se procesa,
+    la cola se trunca (skill /watch-review-feedback, Step 7) → la URL deja de
+    aparecer y se puede volver a reportar. Sostiene el guard "no re-reportar lo
+    mismo hasta tratarlo" del lado servidor (autoritativo, a prueba de doble-click).
+    """
+    if not url or not FEEDBACK_PATH.exists():
+        return False
+    with FEEDBACK_PATH.open("r", encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                if json.loads(raw).get("url") == url:
+                    return True
+            except json.JSONDecodeError:
+                pass
+    return False
 
 
 def _log_feedback(url: str, reason: str, action: str = "feedback",
@@ -1614,6 +1642,13 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
 
         if not title or not url or not reason:
             self.send_error(400, "Missing 'title', 'url' or 'reason'")
+            return
+
+        # Guard idempotente: si la URL ya está en la cola, NO se vuelve a escribir
+        # (evita filas duplicadas por doble-click/retry). Se podrá reportar de nuevo
+        # cuando se procese el feedback y se trunque la cola.
+        if _url_in_feedback(url):
+            self._json(200, {"ok": True, "already_reported": True})
             return
 
         _log_feedback(url, reason, action="feedback")

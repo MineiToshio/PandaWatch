@@ -25,6 +25,17 @@ operativas inmediatas. El campo `action` distingue el tipo:
 url + action + reason + submitted_at + spread del item. Sin auth, POST capado 100 kB.
 Lo procesa el skill `/watch-review-feedback`.
 
+**Guard anti-doble-dislike (2026-06-21).** Un item ya reportado NO se puede volver a
+reportar hasta que el feedback se procese (la cola se trunca → vuelve a habilitarse).
+Dos capas: **(1) backend autoritativo** — `_handle_feedback` consulta `_url_in_feedback(url)`
+y, si la URL ya está en `feedback.jsonl`, responde `{"ok":true,"already_reported":true}`
+**sin escribir** (idempotente, a prueba de doble-click/retry — antes hacía append ciego).
+**(2) frontend UX** — `loadReportedUrls()` levanta las URLs reportadas al cargar; con el
+item reportado, `canSubmitCuration()` devuelve `false` (botón "Aplicar" deshabilitado) y el
+panel de "Mala elección" muestra un aviso ámbar "Ya reportado — pendiente de procesar". El
+badge "⚠ Reportado" ya existía en card/detalle. (El guard cubre la acción `feedback`; move/
+merge/remove son operaciones estructurales distintas.) Ver gotcha #105.
+
 ### ✏️ Edición inline de la metadata → `POST /api/item/update {url, fields}`
 
 Modo edición in-situ: la metadata se vuelve un form dinámico (`buildEditSchema`
@@ -111,6 +122,19 @@ botones deshabilitados) salgan cada una con el token que dejó la anterior, en v
 competir y generar 409 entre sí. Si un save falla (no-409), la UI recarga la cola para no
 mostrar como guardado algo que no se persistió. `deleteGalleryImage` y `flagIrrelevant`
 usan esta misma ruta (antes duplicaban el fetch del save inline).
+
+**👎 Reportar desde el cover review (2026-06-21).** Cada entry tiene, además de
+"Excluir", un botón **👎 Reportar** con la MISMA funcionalidad que el dislike del
+dashboard. `toggleReport(entry)` abre un **editor de motivo inline** (un `<input>` con
+Enviar/Cancelar, Enter envía / Esc cierra) — NO usa `prompt()`, que algunos navegadores
+suprimen (gotcha #106). `submitReport(entry)` resuelve la URL del item (`/api/item?slug=`)
+y hace `POST /api/feedback` con `{title, url, reason}`. A diferencia de "Excluir"
+(`flagIrrelevant`, motivo fijo "irrelevante" + saca de la cola), el 👎 **NO elimina** la
+entry — solo la reporta, igual que en el catálogo. El estado "reportado" se levanta de
+`feedback.jsonl` al cargar (`loadReportedSlugs()`, indexado por `slug` —cada fila de
+feedback es el item completo + reason) y el botón pasa a "✓ Reportado" deshabilitado; se
+rehabilita cuando la cola se procesa y trunca. El backend dedup-ea por URL
+(`already_reported`), así que el guard anti-doble-dislike vale acá también. Ver gotchas #105, #106.
 
 ## Cover-preview (`web/cover-preview.html`) — atajos de teclado
 

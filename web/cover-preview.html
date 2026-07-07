@@ -12,6 +12,7 @@
           --muted: #71717a; --green: #22c55e; --red: #ef4444; --accent: #e84393;
           --yellow: #eab308; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  [x-cloak] { display: none !important; }
   body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
          color: var(--text); padding: 1rem; }
   h1 { font-size: 1.4rem; margin-bottom: 0.3rem; }
@@ -243,6 +244,13 @@
               </span>
               <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
                     x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
+              <button class="card-toggle" @click="toggleReport(e)"
+                      :disabled="!!reportedSlugs[e.slug]"
+                      style="border:1px solid var(--border); border-radius:4px;
+                             padding:0.1rem 0.45rem; font-size:0.68rem;"
+                      :style="reportedSlugs[e.slug] ? 'color:var(--accent);opacity:0.8;cursor:default' : (reportingSlug === e.slug ? 'color:#fff;background:var(--red);border-color:var(--red)' : 'color:var(--red)')"
+                      :title="reportedSlugs[e.slug] ? 'Ya reportado — pendiente de procesar' : 'Reportar (dislike): lo agrega a feedback.jsonl con tu motivo, igual que en el catálogo'"
+                      x-text="reportedSlugs[e.slug] ? '✓ Reportado' : '👎 Reportar'"></button>
               <button class="card-toggle" @click="flagIrrelevant(e)"
                       :disabled="isSaving"
                       style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
@@ -257,6 +265,27 @@
                       title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
               <button class="card-toggle" @click="toggleCollapse(e)"
                       x-text="isCollapsed(e) ? '▸' : '▾'"></button>
+            </div>
+
+            <!-- Editor de motivo del 👎 (inline, reemplaza al prompt()) -->
+            <div x-show="reportingSlug === e.slug" x-cloak
+                 style="display:flex; flex-direction:column; gap:0.5rem; padding:0.6rem 0.75rem;
+                        background:rgba(229,72,77,0.06); border-top:1px solid var(--border);">
+              <textarea :id="'report-reason-' + e.slug" x-model="reportReason"
+                        @keydown.ctrl.enter="submitReport(e)" @keydown.escape="reportingSlug=''"
+                        placeholder="¿Por qué es una mala elección? (no es manga, incongruencia, edición mal armada...)"
+                        rows="3"
+                        style="width:100%; padding:0.4rem 0.55rem; font-size:0.8rem; border:1px solid var(--border);
+                               border-radius:4px; background:var(--bg); color:var(--text); resize:vertical;
+                               font-family:inherit; line-height:1.5;"></textarea>
+              <div style="display:flex; gap:0.4rem; justify-content:flex-end;">
+                <button class="card-toggle" @click="reportingSlug=''; reportReason=''"
+                        style="border:1px solid var(--border); border-radius:4px; padding:0.3rem 0.6rem; font-size:0.72rem;">Cancelar</button>
+                <button class="card-toggle" @click="submitReport(e)" :disabled="!reportReason.trim()"
+                        style="background:var(--red); color:#fff; border:1px solid var(--red); border-radius:4px;
+                               padding:0.3rem 0.7rem; font-size:0.72rem;"
+                        :style="!reportReason.trim() ? 'opacity:0.45;cursor:not-allowed' : ''">Enviar 👎</button>
+              </div>
             </div>
 
             <div class="card-body" x-show="!isCollapsed(e)">
@@ -627,6 +656,14 @@ function previewApp() {
     itemsBySlug: {},
     _itemsPromise: null,
     isSaving: false,
+    // Slugs ya reportados (👎) — se levantan de feedback.jsonl al cargar (cada fila
+    // lleva el slug del item) y se actualizan al reportar. Bloquean el re-dislike
+    // hasta que se procese la cola (mismo contrato que el dashboard).
+    reportedSlugs: {},
+    // Editor de motivo inline del 👎 (en vez de prompt(), que algunos navegadores
+    // suprimen): qué entry tiene el editor abierto + el texto del motivo.
+    reportingSlug: '',
+    reportReason: '',
     // Token de versión del cover_preview.json (st_mtime_ns como STRING opaco) al
     // momento de la última carga. Se envía como expected_mtime en cada POST; el
     // servidor responde 409 si el archivo cambió desde entonces (otra pestaña o
@@ -692,7 +729,28 @@ function previewApp() {
       const ret = new URLSearchParams(window.location.search).get('return');
       if (ret) this.returnUrl = ret;
       await this.loadEntries();
+      await this.loadReportedSlugs();
+      // Colapsar entries ya reportadas (👎)
+      this.entries.forEach(e => {
+        if (this.reportedSlugs[e.slug]) this.collapsed[this.entryKey(e)] = true;
+      });
       this.loaded = true;
+    },
+
+    // Levanta los slugs ya reportados desde feedback.jsonl (cada fila es el item
+    // completo + reason, así que trae el slug). Marca las entries como reportadas
+    // sin un fetch por item. Se rehabilita el 👎 cuando la cola se procesa y trunca.
+    async loadReportedSlugs() {
+      try {
+        const r = await fetch('../data/feedback.jsonl?t=' + Date.now(), { cache: 'no-store' });
+        if (!r.ok) return;
+        const text = await r.text();
+        const slugs = {};
+        text.trim().split('\n').filter(Boolean).forEach(line => {
+          try { const o = JSON.parse(line); if (o.slug) slugs[o.slug] = true; } catch {}
+        });
+        this.reportedSlugs = slugs;
+      } catch {}
     },
 
     // Etiqueta del botón de volver según de dónde se entró (lo dice el ?return=).
@@ -1204,6 +1262,55 @@ function previewApp() {
             }
           }
         }
+      }
+    },
+
+    // 👎 Dislike con motivo libre — misma funcionalidad que el dislike del
+    // dashboard (POST /api/feedback con un reason que escribe el owner). A
+    // diferencia de "Excluir" (flagIrrelevant), NO saca el item de la cola de
+    // portadas: solo lo reporta para que /watch-review-feedback lo trate.
+    // Abre/cierra el editor de motivo inline de ESTA entry.
+    toggleReport(entry) {
+      if (this.reportedSlugs[entry.slug]) return;  // ya reportado
+      if (this.reportingSlug === entry.slug) { this.reportingSlug = ''; this.reportReason = ''; return; }
+      this.reportingSlug = entry.slug;
+      this.reportReason = '';
+      this.$nextTick(() => {
+        const el = document.getElementById('report-reason-' + entry.slug);
+        if (el) el.focus();
+      });
+    },
+
+    // Envía el feedback con el motivo escrito. El backend dedup-ea por URL
+    // (already_reported), así que un doble-submit no duplica. Se rehabilita
+    // cuando la cola se procesa.
+    async submitReport(entry) {
+      const reason = (this.reportReason || '').trim();
+      if (!reason) return;
+      const item = await this._fetchItem(entry.slug, false);
+      if (!item || !item.url) {
+        this.showToast('No se encontró el item en el catálogo (slug no mapeado)', 'err');
+        return;
+      }
+      try {
+        const r = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: item.title || entry.title, url: item.url, reason }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          this.reportedSlugs = { ...this.reportedSlugs, [entry.slug]: true };
+          this.reportingSlug = '';
+          this.reportReason = '';
+          this.showToast(data.already_reported
+            ? `"${entry.title || entry.slug}" ya estaba reportado`
+            : `"${entry.title || entry.slug}" → feedback.jsonl`, 'ok');
+        } else {
+          this.showToast('Error: ' + (data.error || 'no se pudo guardar feedback'), 'err');
+        }
+      } catch (err) {
+        this.showToast('Error: ' + err.message, 'err');
       }
     },
 

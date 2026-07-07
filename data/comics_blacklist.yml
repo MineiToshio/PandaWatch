@@ -205,6 +205,10 @@ franchise_keywords:
   - "Largo Winch"
   - "Blueberry"
   - "Boule et Bill"
+  # Cómic norteamericano independiente (no manga, no Marvel/DC)
+  # "Bone" → Jeff Smith (Cartoon Books / Scholastic). Si en el futuro aparece
+  # un manga con "Bone" en el título, añadir ese título a title_exceptions.
+  - "Bone"
   # Ilustradores de pin-up/fantasy SIN obra manga — sus artbooks pasaban el
   # STRONG hint "artbook" (caso real 2026-06-10: artbook de Hajime Sorayama
   # bajo la serie "Venom" en listadomanga). Nombres propios inequívocos.
