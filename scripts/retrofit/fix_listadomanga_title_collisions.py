@@ -22,7 +22,14 @@ import json, re, sys, argparse, shutil
 from pathlib import Path
 from collections import defaultdict
 
-ITEMS = Path(__file__).resolve().parents[2] / "data" / "items.jsonl"
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import is_approved  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import is_approved  # noqa: E402
+
+ITEMS = ROOT / "data" / "items.jsonl"
 
 # Etiqueta corta de editorial a partir del campo `publisher`.
 PUB_LABEL = [
@@ -50,6 +57,10 @@ def coleccion(url: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--include-approved", action="store_true",
+                     help="También desambigua el título de items aprobados (golden "
+                          "records). Por defecto se saltean: el title es el nombre "
+                          "oficial que el owner confirmó, no se le agrega sufijo.")
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
 
@@ -62,6 +73,7 @@ def main() -> int:
 
     changed = 0
     diffs = []
+    skipped_approved = 0
     for (sk, _), g in groups.items():
         if len({i.get("edition_key") for i in g}) < 2:
             continue  # no es colisión entre ediciones distintas
@@ -86,6 +98,9 @@ def main() -> int:
                 mode = cand
                 break
         for it in g:
+            if is_approved(it) and not args.include_approved:
+                skipped_approved += 1
+                continue
             tag = tag_for(it, mode)
             if not tag:
                 continue
@@ -100,6 +115,8 @@ def main() -> int:
             changed += 1
 
     print(f"[collisions] títulos desambiguados: {changed}")
+    if skipped_approved:
+        print(f"[collisions] items aprobados saltados (usar --include-approved): {skipped_approved}")
     for old, new in diffs[:60]:
         print(f"    {old!r} → {new!r}")
     if args.dry_run:

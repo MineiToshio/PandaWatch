@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 > ⚠️ NO confundir con **"ES - Distrito Manga"** (España, `penguinlibros.com`), que se
 > documenta aparte. Esta es la fuente **argentina** servida vía la librería Cúspide.
@@ -72,6 +72,17 @@ mercado **argentino** de ese sello. Aporta cobertura de un país poco representa
 - **Decisión**: NO confundir con la fuente homónima de España (`ES - Distrito Manga`,
   `penguinlibros.com`). País distinto = edición distinta (#46); el país (`Argentina`) va en
   el `edition_key`.
+- **Prefijo de botón "Agregar a mi lista de deseos!" en el título (2026-07-07)**: se agregó
+  un pattern nuevo a `TITLE_JUNK_PREFIXES` en `manga_watch.py` para
+  `^Agregar\s+a\s+mi\s+lista\s+de\s+deseos!?\s*` (mismo mecanismo que el prefijo equivalente
+  ya existente de Panini ES). El código lo etiqueta como variante "Tiendanube/Cúspide AR" del
+  botón wishlist. **Nota de precisión**: el selector de ESTA fuente en `sources.yml` es
+  `.product` / `a[href*='/producto/']` (no el patrón clásico Tiendanube `[data-product-id]` /
+  `/productos/` — gotcha #4 — que sí usa la fuente vecina `AR - Kemuri Ediciones`); no está
+  100% confirmado si el título afectado vino de esta fuente puntual o de otro retailer AR con
+  el mismo texto de botón. Se documenta acá porque es el nombre citado explícitamente en el
+  comentario del fix; si el próximo scrape muestra el prefijo intacto en algún item de Cúspide,
+  hay que revisar el `title_selector`.
 
 ---
 

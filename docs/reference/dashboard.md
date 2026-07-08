@@ -75,6 +75,27 @@ revisión". Durabilidad: log append-only `data/approvals.jsonl` (cluster_key, ur
 approved_at/by, reason, submitted_at + snapshot) → `apply_approvals.py` re-materializa
 tras reconstruir el catálogo (match cluster_key, fallback url; idempotente).
 
+## Lock de scrape — 423 en endpoints de escritura (2026-07-07)
+
+Un scrape en curso (`data/.scrape.lock`, mismo formato que `acquire_lock()` en
+`scrape_delta.sh`/`scrape_full.sh`: mkdir atómico + PID en un archivo `pid`) re-escribe
+`data/items.jsonl` al final de cada retrofit (`append_jsonl`/`_atomic_write`). Si un
+endpoint de curación del dashboard escribe AL MISMO TIEMPO, el que termine último gana
+y el otro desaparece silenciosamente (lost update) — `_ITEMS_LOCK` sólo serializa
+requests DENTRO del proceso de `serve.py`, no protege contra el proceso *separado* del
+scrape.
+
+**Fix**: `_reject_if_scrape_locked()` chequea `data/.scrape.lock` ANTES de escribir y
+responde **423** (`{"error": "scrape en curso, reintentá al terminar", "pid": N}`) en
+vez de arriesgar la pérdida — NUNCA espera/bloquea (colgaría la UI hasta que un scrape
+de horas termine); el owner reintenta después. Un lock STALE (el PID que lo creó ya no
+existe, `os.kill(pid, 0)` → `ProcessLookupError`) se trata como "sin lock" (no lo toca,
+igual que el fallback de `acquire_lock()` en los `.sh`, que se re-adquiere solo).
+Aplica a los **11 endpoints** que escriben `items.jsonl`: `/api/curation/{move,merge,
+remove}`, `/api/item/update`, `/api/approve`, `/api/approve-edition`, `/api/batch/
+{approve,move}`, `/api/dup-merge`, `/api/save-cover-preview` (cuando aplica sync),
+`/api/image-manager/save`.
+
 ## Cover-preview — endpoint puntual por slug
 
 `GET /api/item?slug=<slug>` devuelve la fila de `items.jsonl` con ese slug (404 si no existe).
@@ -95,9 +116,22 @@ el botón de aplicar. Los botones de acción se deshabilitan (`isSaving`) mientr
 Al cargar la cola, el frontend llama `GET /api/cover-preview` (un solo request): el servidor
 carga `cover_preview.json`, sincroniza contra `items.jsonl` vía `sync_preview()` de
 `scripts/retrofit/sync_cover_preview.py`, persiste los cambios atómicamente si los hubo, y
-responde `{"entries": [...], "mtime": "<st_mtime_ns como string>", "synced": {stats}}`. Si el endpoint no
+responde `{"entries": [...], "mtime": "<st_mtime_ns como string>", "synced": {stats},
+"approved_unapplied": <int>}`. Si el endpoint no
 está disponible (servidor viejo), el frontend cae al fetch estático `cover_preview.json` +
-`GET /api/cover-preview-meta`. Si `synced` incluye cambios (> 0), se muestra un toast.
+`GET /api/cover-preview-meta` (y recalcula `approved_unapplied` del lado cliente vía
+`approvedCount()`). Si `synced` incluye cambios (> 0), se muestra un toast.
+
+**`approved_unapplied` (P24, 2026-07-07)** — contador AUTORITATIVO (server-side) de
+candidatas con `status=approved` que TODAVÍA no se aplicaron a `items.jsonl`
+(`_count_approved_unapplied()`, cuenta ambos schemas: multi-candidato
+`candidates[].status` y el legado plano `status` a nivel de entry). Existe porque
+"aprobar" (👍, guarda `status=approved` en `cover_preview.json`) y "aplicar" (POST
+`/api/apply-cover-preview`, escribe `items.jsonl`) son pasos DESACOPLADOS — una
+candidata puede quedar aprobada-pero-invisible si el owner cierra la pestaña antes de
+aplicar. Cuando `approved_unapplied > 0`, `cover-preview.html` muestra un banner verde
+prominente apenas carga, con el conteo y un botón **"✓ Aplicar ahora"** (llama
+`applyApproved()` directo, sin scroll a la barra sticky de abajo).
 
 ## Cover-preview — guard de concurrencia optimista
 

@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -115,7 +115,8 @@ Parser: [`scripts/wikis/mangapassion.py`](../../../scripts/wikis/mangapassion.py
 ### 5.1 Modelo de datos / claves
 - **Source sintética por tipo de query** (`_virtual_source`): `DE - Manga-Passion
   Sonderausgaben` o `DE - Manga-Passion Variant-Covers`, ambas `country="Alemania"`,
-  `language="Deutsch"`, `source_class="trusted_catalog"`, `kind="wiki"`,
+  `language="Alemán"` (canon español del proyecto — fix 2026-07-07, ver §8),
+  `source_class="trusted_catalog"`, `kind="wiki"`,
   `purity="manga_only"`, tags `["wiki", "mangapassion", "deutschland"]`.
 - **URL canónica** = `api.manga-passion.de/volumes/{id}` (identificador de producto).
 - **País = Alemania** (#46): va de la edición, no de la tienda.
@@ -178,6 +179,18 @@ Parser: [`scripts/wikis/mangapassion.py`](../../../scripts/wikis/mangapassion.py
 **Decisiones (lo que NO se hace):** no se mergea cross-país (#46, la edición es alemana);
 las dos queries se deduplican por `id` para no duplicar un volumen que matchee ambas.
 
+- **`language="Deutsch"` hardcodeado, no "Alemán" (detectado 2026-07-07, FIX 2026-07-07)**: el
+  parser seteaba el idioma literal `"Deutsch"` (nombre en alemán) en vez del set canónico
+  español del proyecto (`"Alemán"`, ver CLAUDE.md "14 idiomas"). Era la causa de **802 de
+  las ~1206 filas** que disparaba la invariante WARN `LANG_ENUM` de
+  `validate_corpus.py` (con margen — el resto son códigos ISO-639-1 sueltos y nombres en
+  inglés de otras fuentes). NO era un bug funcional (la búsqueda/filtrado no dependen de
+  este string) pero sí deuda de normalización. **Fix**: `_virtual_source()` en
+  `scripts/wikis/mangapassion.py` ahora setea `language="Alemán"` directamente — los items
+  NUEVOS ya entran correctos. Las 802 filas existentes se normalizan con el retrofit
+  genérico `scripts/retrofit/normalize_languages.py` (mapa de sinónimos incluye
+  `"Deutsch" → "Alemán"`; corre `--dry-run` primero, guard `approved_at`).
+
 ---
 
 ## 9. Pendientes / limitaciones conocidas
@@ -188,6 +201,10 @@ las dos queries se deduplican por `id` para no duplicar un volumen que matchee a
 - **Sin URL de tienda**: el item de referencia trae serie/volumen/editorial/ISBN
   pero su URL canónica es la de la API, no una tienda donde comprar. Encaja en el pendiente
   global de "enrichment pass para items de referencia".
+- **`language="Deutsch"` histórico** (ver §8, fix 2026-07-07): el parser ya setea
+  `"Alemán"` para items nuevos; las 802 filas existentes requieren correr
+  `scripts/retrofit/normalize_languages.py` (no automático, decisión del owner sobre
+  cuándo correr retrofits que tocan `data/items.jsonl`).
 - {{pendiente: confirmar si los slugs de publishers nuevos/desconocidos —fallback
   `lc.replace(" ", "-")[:24]` en `_publisher_slug_de`— necesitan curación manual a medida
   que aparezcan editoriales no mapeadas.}}

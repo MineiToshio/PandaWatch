@@ -148,7 +148,7 @@ def _virtual_source(type_label: str) -> Source:
         name=name,
         url=SITE_BASE,
         country="Alemania",
-        language="Deutsch",
+        language="Alemán",
         publisher="",
         source_class="trusted_catalog",
         kind="wiki",

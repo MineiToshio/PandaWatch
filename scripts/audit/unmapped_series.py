@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import itertools
 import json
+import re
 import sys
 from collections import defaultdict, Counter
 from pathlib import Path
@@ -33,7 +35,7 @@ sys.path.insert(0, str(_REPO / "scripts"))
 
 import yaml  # noqa: E402
 
-from series_aliases import _load_aliases  # noqa: E402
+from series_aliases import _load_aliases, _normalize  # noqa: E402
 
 
 ITEMS_FILE = _REPO / "data" / "items.jsonl"
@@ -107,6 +109,47 @@ def _scan_items_for_unmapped(canonical_keys: set[str]) -> dict[str, dict]:
     return info
 
 
+def find_canonical_duplicates(aliases_db: dict) -> list[dict]:
+    """Detecta canonicals del YAML que colapsan a la MISMA forma normalizada.
+
+    El skill de enrichment acuñó pares de canonicals DUPLICADAS en corridas
+    distintas (gotcha #70): dos canonicals cuyo display / key / algún alias
+    normalizan idéntico bajo `series_aliases._normalize` — la MISMA normalización
+    que usa el resolver en su lookup EXACTO (`_build_lookup`). Cuando eso pasa el
+    resolver sólo puede mapear a UNA (la primera declarada) y la otra queda
+    sombreada → son duplicados a fusionar (merge gateado del Lote B).
+
+    Comparación EXACTA post-normalización, NO substring: `gto` y
+    `gto-paradise-lost` NO colisionan (spin-offs distintos, normalizan a
+    strings distintos). Sólo se reporta cuando la forma normalizada coincide
+    entera.
+
+    Devuelve una lista de `{a, b, via}` (un dict por PAR de canonicals),
+    ordenada; `via` es la forma normalizada compartida.
+    """
+    norm_to_keys: dict[str, set] = defaultdict(set)
+    for ck, info in aliases_db.items():
+        display = (info or {}).get("display", "") or ck
+        variants = [display, ck, *((info or {}).get("aliases") or [])]
+        for variant in variants:
+            n = _normalize(str(variant))
+            if not n:
+                continue
+            # Indexar la forma normalizada y su versión slugificada, igual que
+            # `series_aliases._build_lookup` (que además guarda el slug con
+            # guiones) — así el conjunto de colisiones es el que ve el resolver.
+            for form in {n, re.sub(r"\s+", "-", n)}:
+                norm_to_keys[form].add(ck)
+
+    pairs: dict[tuple[str, str], str] = {}
+    for form, keys in norm_to_keys.items():
+        if len(keys) < 2:
+            continue
+        for a, b in itertools.combinations(sorted(keys), 2):
+            pairs.setdefault((a, b), form)
+    return [{"a": a, "b": b, "via": via} for (a, b), via in sorted(pairs.items())]
+
+
 def _best_canonical_match(
     series_key: str, displays: list[str], canonical_keys: set[str], canonical_displays: dict[str, str]
 ) -> tuple[str, float]:
@@ -143,6 +186,8 @@ def main() -> int:
     canonical_keys = set(aliases_db.keys())
     canonical_displays = {ck: (info or {}).get("display", ck) for ck, info in aliases_db.items()}
 
+    canonical_dups = find_canonical_duplicates(aliases_db)
+
     log_groups = _load_unmapped_log()
     items_info = _scan_items_for_unmapped(canonical_keys)
 
@@ -177,7 +222,14 @@ def main() -> int:
         rows = rows[: args.max_suggestions]
 
     if args.json:
-        json.dump({"unmapped_series": rows, "total": len(rows)}, sys.stdout, ensure_ascii=False, indent=2)
+        json.dump(
+            {
+                "unmapped_series": rows,
+                "canonical_duplicates": canonical_dups,
+                "total": len(rows),
+            },
+            sys.stdout, ensure_ascii=False, indent=2,
+        )
         print()
         return 0
 
@@ -186,6 +238,20 @@ def main() -> int:
     print(f"# Unmapped series — {len(rows)} candidates ({total_items} items afectados)\n")
     print(f"Generado por `scripts/audit/unmapped_series.py`. ")
     print(f"Total canonical entries en `data/series_aliases.yml`: {len(canonical_keys)}.\n")
+
+    # Sección: canonicals DUPLICADOS (colapsan a la misma forma normalizada del
+    # resolver → uno queda sombreado). Insumo para el merge gateado del Lote B.
+    print(f"## Canonicals duplicados — {len(canonical_dups)} pares\n")
+    if canonical_dups:
+        print("Pares de canonicals que normalizan idéntico bajo el resolver "
+              "(`series_aliases._normalize`, comparación EXACTA): el resolver sólo "
+              "puede mapear a uno, el otro queda sombreado. Candidatos a merge.\n")
+        for d in canonical_dups:
+            print(f"- `{d['a']}`  ⇄  `{d['b']}`  (via `{d['via']}`)")
+        print()
+    else:
+        print("✓ Sin canonicals duplicados.\n")
+
     if not rows:
         print("✓ No hay series sin canonical. Todo está mapeado.")
         return 0

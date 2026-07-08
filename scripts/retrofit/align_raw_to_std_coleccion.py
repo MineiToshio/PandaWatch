@@ -32,7 +32,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-import manga_watch as mw  # noqa: E402
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    import manga_watch as mw  # noqa: E402
+    mw.is_approved  # type: ignore  # el wrapper raíz no lo tiene (en pytest)
+except (ImportError, AttributeError):  # pragma: no cover
+    import scripts.manga_watch as mw  # type: ignore  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _COLE_RE = re.compile(r"coleccion\.php\?id=(\d+)")
@@ -46,6 +50,10 @@ def _cole(url: str) -> str | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--include-approved", action="store_true",
+                     help="También realinea items raw aprobados (golden records). Por "
+                          "defecto se saltean: alinear re-deriva series_key/edition_key/"
+                          "cluster_key, la identidad que approved_at confirma.")
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
 
@@ -71,7 +79,7 @@ def main() -> int:
         ek = std_it.get("edition_key") or ""
         return f"-{slug}-" in ek or ek.endswith(f"-{slug}")
 
-    changed, diffs = 0, []
+    changed, diffs, skipped_approved = 0, [], 0
     for c, grp in by_cole.items():
         std = [it for it in grp if it.get("standardized_at") and it.get("edition_key")]
         raw = [it for it in grp if not it.get("standardized_at")]
@@ -80,6 +88,9 @@ def main() -> int:
         std_slugs = {(it.get("series_key"), it.get("edition_key")): it for it in std}
         single_std = len(std_slugs) == 1  # colección mono-edición (caso cole 52)
         for it in raw:
+            if mw.is_approved(it) and not args.include_approved:
+                skipped_approved += 1
+                continue
             kind = _raw_kind(it)
             expected = _KIND_SLUG.get(kind)
             # elegir la std cuyo edition_slug coincide con el kind del raw
@@ -103,15 +114,16 @@ def main() -> int:
             changed += 1
 
     print(f"[align-raw] items raw alineados a su edición estandarizada: {changed}")
+    if skipped_approved:
+        print(f"[align-raw] items aprobados saltados (usar --include-approved): {skipped_approved}")
     for c, oek, nek, t in diffs:
         print(f"    cole {c}: {oek!r} → {nek!r}   ({t!r})")
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        from manga_watch import consolidate_by_cluster
         before = len(items)
-        items = consolidate_by_cluster(items)
+        items = mw.consolidate_by_cluster(items)
         print(f"[align-raw] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
         shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-alignraw-bak"))
         tmp = ITEMS.with_suffix(".jsonl.tmp")

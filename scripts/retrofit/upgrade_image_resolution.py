@@ -78,7 +78,10 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import backup_and_rotate, make_session  # type: ignore
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate, make_session, is_approved  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, make_session, is_approved  # type: ignore  # noqa: E402
 
 DEFAULT_USER_AGENT = "manga-watch-personal/0.2 (+personal-use)"
 
@@ -429,16 +432,26 @@ def _try_upgrade(
 # Proceso principal
 # ─────────────────────────────────────────────────────────
 
-def _collect_targets(items: list[dict]) -> list[tuple[dict, str, str, str, str]]:
+def _collect_targets(
+    items: list[dict], *, include_approved: bool = False,
+) -> tuple[list[tuple[dict, str, str, str, str]], int]:
     """Construye la lista de (item, campo, old_url, old_local, item_url) a procesar.
 
     campo es 'img:<index>' para cada entry de images[]. images[0] es la portada
     (única fuente de verdad); el resto es galería.
     item_url es la URL canónica del item (se usa como Referer en la descarga).
+
+    Items aprobados (`approved_at`) se saltean por defecto (segundo valor
+    devuelto = cuántos): este script reemplaza url/local de una entry existente
+    sin cola de revisión, así que no debe pisar un golden record.
     """
     targets: list[tuple[dict, str, str, str, str]] = []
+    skipped_approved = 0
     for it in items:
         if "_raw" in it:
+            continue
+        if is_approved(it) and not include_approved:
+            skipped_approved += 1
             continue
         # URL canónica del item para usar como Referer
         item_url = it.get("url") or ""
@@ -449,7 +462,7 @@ def _collect_targets(items: list[dict]) -> list[tuple[dict, str, str, str, str]]
             img_url = img.get("url") or ""
             if img_url and derive_original_url(img_url):
                 targets.append((it, f"img:{idx}", img_url, img.get("local") or "", item_url))
-    return targets
+    return targets, skipped_approved
 
 
 def _apply_upgrade(
@@ -480,14 +493,17 @@ def run(
     min_gain: float,
     dry_run: bool,
     user_agent: str,
+    include_approved: bool = False,
 ) -> None:
     items = _load_items(items_path)
-    targets = _collect_targets(items)
+    targets, skipped_approved = _collect_targets(items, include_approved=include_approved)
     if limit > 0:
         targets = targets[:limit]
 
     total = len(targets)
     print(f"Targets a procesar: {total} URLs candidatas a upgrade")
+    if skipped_approved:
+        print(f"Items aprobados saltados (usar --include-approved): {skipped_approved}")
     if dry_run:
         print("[DRY-RUN] No se harán cambios en disco.")
         # Muestra algunos ejemplos
@@ -588,6 +604,10 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--limit", type=int, default=0, help="Limitar a los primeros N targets (test)")
     p.add_argument("--user-agent", default=DEFAULT_USER_AGENT, help="User-Agent HTTP")
+    p.add_argument("--include-approved", action="store_true",
+                    help="También sube la resolución de items aprobados (golden records). "
+                         "Por defecto se saltean: este script reemplaza url/local de una "
+                         "entry existente sin cola de revisión.")
     return p.parse_args()
 
 
@@ -603,4 +623,5 @@ if __name__ == "__main__":
         min_gain=args.min_gain,
         dry_run=args.dry_run,
         user_agent=args.user_agent,
+        include_approved=args.include_approved,
     )

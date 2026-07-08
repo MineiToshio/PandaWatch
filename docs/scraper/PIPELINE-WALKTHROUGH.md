@@ -85,16 +85,16 @@ incrementales: solo tocan lo que falta).
 | **0** | **Adquisición** (scrape) | `scrape_full.sh` / `scrape_delta.sh` (automático) | filas crudas en `items.jsonl` |
 | **0.5** | **Descubrimiento extra** (opcional) | `search_discovery.py` + `expand_*` | items nuevos vía Gemini/Tavily/DDG |
 | **1** | **Transformación / limpieza** | retrofits de cleanup (dentro del scrape, Fase 3) | títulos limpios, filtros, `cluster_key`, `sources[]` |
-| **2** | **Estandarización** 🧠 | skill `/watch-standardize-catalog` | `series_key`, `edition_key`, `volume`, `standardized_at` |
+| **2** | **Estandarización** 🧠 | skill `/watch-standardize-catalog` | `series_key`, `edition_key`, `volume`, `standardized_at` (o `standardize_attempts` si queda pendiente) |
 | **3** | **Aliases de series** 🧠 | skill `/watch-enrich-series-aliases` | `series_aliases.yml` + backfill |
 | **4** | **Slugs** | `generate_slugs.py` (último paso del skill #2) | `slug` |
-| **5** | **Traducción** | `translate_descriptions.py` (último paso del skill #2) | `description_es` |
+| **5** | **Traducción** | `translate_descriptions.py` (último paso del skill #2) | `description_es` + `description_es_src_hash` (staleness) |
 | **6** | **Imágenes / portadas** | sub-pipeline de 7 pasos (ver §3.6) | `images[]` en hi-res (`images[0]` = portada; cada entry con `url`+`local`) |
 | **7** | **Rareza** | `set_rarity.py` + skill `/watch-validate-rarity` 🧠 | `rarity`, `rarity_verified_at` |
 | **8** | **Feedback** 🧠 | skill `/watch-review-feedback` | corrige errores reportados (👎) |
 | **9** | **Aprobación humana** | dashboard → `approved_at` + `apply_approvals.py` | golden records congelados |
 | **★** | **Build / publish** | `consolidate_sources.py` + `build_web.py` | `web/index.html` + web-next |
-| **✔** | **Validación estructural** | `validate_corpus.py` (gate DURO, PHASE 4 de scrape_*.sh — **ANTES** del build, 2026-07-07) | reporte de invariantes (0 violaciones duras = corpus válido) + warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX (gotchas #69/#70/#71); exit 2 = violaciones duras → el build (PHASE 5) se OMITE (gotcha #111) |
+| **✔** | **Validación estructural** | `validate_corpus.py` (gate DURO, PHASE 4 de scrape_*.sh — **ANTES** del build, 2026-07-07) | reporte de invariantes (0 violaciones duras = corpus válido) + warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX (gotchas #69/#70/#71) + 10 invariantes WARN nuevas (2026-07-07): DATEISO/PTYPE_ENUM/LANG_ENUM/VOLRANGE/EKMALFORMED/SLUGUNIQ/SLUGFMT/STDKEYS/MIRRORREF/SRCURL (ver §3.★); exit 2 = violaciones duras → el build (PHASE 5) se OMITE (gotcha #111) y el corpus va a cuarentena + restore automático desde el backup pre-scrape si es válido (ver recuadro PHASE 4 abajo) |
 
 🧠 = LLM-driven (skill). **Nunca corre solo** — el owner lo invoca por nombre (policy de tokens, CLAUDE.md).
 
@@ -114,6 +114,20 @@ incrementales: solo tocan lo que falta).
 > de la corrida (no solo el gate), impreso también en el FINAL SUMMARY: con `set +e` un
 > paso que crashea a mitad de la cadena era antes invisible. Crítico para el LaunchAgent
 > nocturno.
+>
+> **Cuarentena + restore automático (2026-07-07).** "Se omite el build" NO alcanza:
+> `serve.py` hace `fetch()` EN VIVO de `data/items.jsonl` (decisión #5) — un corpus
+> corrompido queda SERVIDO igual aunque no se reconstruya el HTML. Si `CORPUS_INVALID=1`
+> tras PHASE 4: (1) `data/items.jsonl` se mueve a
+> `data/quarantine/items-<TIMESTAMP>.jsonl`; (2) si hay backup pre-scrape (capturado al
+> INICIO del script, antes de tocar nada), se valida ese backup con `validate_corpus.py
+> --file <backup>` — si el backup ES válido, se copia a `data/items.jsonl` (RESTAURADO) y
+> se re-aplican las aprobaciones en vivo del dashboard hechas DURANTE esta misma corrida
+> (`apply_approvals.py`, porque el restore pisó `items.jsonl` con un backup que no las
+> tiene todavía); (3) si el backup TAMBIÉN es inválido, o no hay backup disponible
+> (primera corrida), NO se restaura nada — el corpus previo queda en cuarentena para
+> revisión manual. El resultado (`restaurado` / `backup_invalido` / `sin_backup` /
+> `sin_corpus`) se imprime en el FINAL SUMMARY junto a `CORPUS_INVALID`.
 
 **Regla de oro del flujo.** El scrape (Etapa 0/1) deja `items.jsonl` **crudo**
 (sin `standardized_at`/`slug`/`description_es`/`rarity`). Todo lo demás es una
@@ -169,7 +183,7 @@ flowchart TD
     F2 -->|FULL| FU2["listadomanga **lista** (~3432)<br/>+ **mangavariant sitemap** (~2700, todo)<br/>+ histórico de wikis (--wiki-from 2000/2013/2015)"]
     D2 --> F3
     FU2 --> F3
-    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["rescore → **clean_titles** →<br/>filter_non_manga → filter_collectible →<br/>backfill imágenes →[full] mirror →<br/>enforcer → consolidate_sources"]
+    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["rescore → **clean_titles** →<br/>normalize_release_dates →<br/>filter_non_manga → filter_collectible →<br/>backfill imágenes →[full] mirror →<br/>enforcer → consolidate_sources"]
     R --> F4{"FASE 4 · validate_corpus<br/>(gate DURO)"}
     F4 -->|✗ exit 2: violaciones duras| SKIP["build OMITIDO<br/>(build anterior intacto)"]
     F4 -->|✓ válido| F5["FASE 5 · build_web.py"]
@@ -211,7 +225,7 @@ flowchart TD
     T1 --> MERGE["Merge + canonical_series_key<br/>+ consistency + coleccion=edicion<br/>+ dedup (consolidate_by_cluster)"]
     T2 --> MERGE
     T3 --> MERGE
-    MERGE --> NM["no-manga → non_manga_blacklist.jsonl"]
+    MERGE --> NM["no-manga → PENDIENTE + unmapped_series.jsonl<br/>(llm_non_manga; gates deterministas expulsan después)"]
     MERGE --> SLUG["generate_slugs.py (ETAPA 4)"]
     SLUG --> TR["translate_descriptions.py (ETAPA 5)"]
     TR --> TEST["pytest test_extraction.py"]
@@ -264,7 +278,10 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
   consolidate y slugs — invariantes DUPSYN/TITLE/DUPVOL/ISBNDUP).
 - **PHASE 4 `validate_corpus.py`, ANTES del build (2026-07-07, gotcha #111)**: gate
   duro — exit 2 = violaciones duras → PHASE 5 (build) se OMITE, el build anterior
-  queda intacto. Ver el recuadro de "Gate de validación" arriba.
+  queda intacto. **Cuarentena + restore automático (2026-07-07)**: si el corpus queda
+  inválido, se mueve a `data/quarantine/items-<TS>.jsonl` y, si el backup pre-scrape
+  resulta válido, se restaura + se re-aplican las aprobaciones en vivo de la corrida.
+  Ver el recuadro de "Gate de validación" arriba.
 - **PHASE 6 `source_health.py --last-n 1 --metrics-file logs/metrics.jsonl
   --baseline-alert --mode delta|full`** al cierre de ambos: el resumen de fuentes con
   errores/0-candidatos de ESTE run queda en `logs/scrape-*/06-source-health.md`, y desde
@@ -360,6 +377,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 |---|---|---|
 | 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. **Guard gotcha #61 (2026-06-11)**: items con `standardized_at` se saltean por defecto (`--include-standardized` para override) — el paso es seguro sobre corpus estandarizado. |
 | 4b | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). **Reordenado ANTES de los filtros (2026-07-07, gotcha #110)**: antes corría al final (4d) y los gates de 4c/4d evaluaban el título SUCIO en un run y el LIMPIO recién en el siguiente — un título que solo pasa/rechaza tras limpiarse (ej. 한정판 recortado por `_strip_korean_retailer_tail`) daba resultado distinto según en qué run cayera. Ahora los filtros ven SIEMPRE el título ya limpio, en la misma corrida. |
+| 4b2 | `normalize_release_dates.py --all-formats` | **Automático desde 2026-07-07**: re-normaliza `release_date` legacy a ISO (`normalize_release_date()`, fuente única). `--all-formats` porque el backlog real (113 filas, invariante DATEISO) es casi todo datetime de tienda JP (`YYYY/MM/DD hh:mm:ss`), fuera de la familia DD/MM/YYYY que cubre el modo default. Barato (compute-only, sin red) y no-op cuando el corpus ya está limpio — `normalize_release_date()` ya es la guardia universal en el sink del scraper (`candidate_to_json`), así que items nuevos entran normalizados; este paso sólo limpia legacy que sobrevivió (backups restaurados, merges crudos). |
 | 4c | `filter_non_manga.py` | Re-aplica `is_likely_manga`+`is_pure_novel`+`is_comic_not_manga`; expulsa rechazados. |
 | 4d | `filter_collectible.py` | Re-aplica `is_collectible_edition`; expulsa tomos regulares. ⚠️ puede quitar referencias Mangavariant — el skill standardize las preserva. **Guard de estandarizados (gotcha #61)**: items con `standardized_at` solo pasan gates duros (junk de título, umbrella_magazine URL-gate), bucket `kept_standardized` — NO se les recomputa `signal_types` desde el texto. `rescore.py` tiene el mismo guard desde 2026-06-11 (salta `standardized_at` por defecto). |
 | 4e | `backfill_metadata.py --only image_url` | Rellena portadas faltantes (HTTP por item). |
@@ -369,6 +387,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 | 4f2 | `align_raw_to_std_coleccion.py` | Alinea items raw a la edición estandarizada de su MISMA coleccion (regla coleccion=edición). Evita el dup raw-vs-std al re-scrapear una colección ya conocida (ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1"). Corre ANTES del enforcer para que el merge los fusione. |
 | 4f3 | `enforce_listadomanga_rules.py --fast` | **Cadena COMPLETA de agrupación (2026-06-12)** — reemplaza a los pasos sueltos fix_edition_country / unify_coleccion / backfill_cluster_key / generate_slugs / consolidate / merge_isbn que el pipeline corría antes: el re-scrape del calendario sobre colecciones YA estandarizadas deja duplicados raw-vs-std (DUPSYN/DUPVOL/TITLE) que solo la cadena completa repara (la corrida real del delta del 2026-06-12 dejaba **53 violaciones duras** con la cadena vieja; con el enforcer → 0). `--fast` salta el dedup de carrusel (corre aparte en 4h). Incluye: edition_display, país=edición, anomalías ek, unify/disambiguate/collapse/merge_crosssource, títulos lmc, canonicalize slugs, merge series/ISBN dups, publishers, cluster_key, dedup sintético, consolidate, slugs. Idempotente. |
 | 4g2 | `upgrade_image_resolution.py` | **[full only]** Re-descarga portadas en resolución completa: quita segmentos/params CDN de resize (Buscalibre `fit-in/`, Cultura `cdn-cgi/image/`, Whakoom `small→large`, Magento cache path, WP -NxM, Shopify _Nx, Rakuten `?_ex=`). Pasa Referer del item para evitar 403 anti-hotlink. Compara píxeles (`--min-gain 0.10`). Corre DESPUÉS de `consolidate_sources` (la portada canónica final ya está en su lugar) y ANTES de `dedup_carousel` (que puede necesitar la versión hi-res). |
+| 4g3/4g4 | `backfill_prh_covers.py` + `fetch_better_covers.py` | **[full only, OPT-IN 2026-07-07]** `RUN_COVER_BACKFILL=1` — portadas vía fuentes EXTERNAS (CDN de Penguin Random House por ISBN + búsqueda web Serper/Tavily), más allá de lo que 4g2 puede hacer intra-dominio. Default OFF (network-heavy). `fetch_better_covers` sin `--apply` no reemplaza nada — todo a `data/cover_preview.json` para aprobación manual. Ubicados entre 4g2 y 4h. Detalle: `docs/reference/images.md`. |
 | 4h | `dedup_carousel_images.py` | Quita la MISMA portada repetida en baja resolución del carrusel (hash perceptual; solo `kind=gallery`). Corre acá porque 4g une imágenes de fuentes hermanas → crea el dup. |
 | 4i | `purge_placeholder_images.py` | Quita de `images[]` las fotos que NO son portadas reales: placeholders que la fuente sirve sin tener carátula (1×1 de Amazon, blanco de listadomanga/CDNs, "Cover Coming Soon"/"Immagine non disponibile"/"Image coming soon"), pixeles 1×1 y archivos rotos → la card cae al 📚 por defecto. Detección via `image_store.placeholder_reason()` (estructural + firmas sha1 en `data/placeholder_signatures.json`). Quita la ENTRY completa y limpia `sources[]`; huérfanos a cuarentena `_orphans/`. Sin red, idempotente. Corre acá (último paso de imágenes, antes del build) para que un placeholder que reentre durante el scrape no llegue al build. Gotcha #97. |
 | 4j | `mirror_images.py --gc-only` | **GC rutinario** (delta y full): manda a cuarentena `data/images/_orphans/` los archivos del espejo que ningún item referencia (portadas reemplazadas por el skill/scripts, masters viejos). Reversible, NO toca `_originals/` (solo escanea archivos top-level). Evita que el espejo crezca con archivos muertos. Vaciar `_orphans/` (o `--gc-delete`) periódicamente para reclamar disco. |
@@ -401,7 +420,9 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 2. **Tier 1** — `standardize_apply.py tier1` aplica la heurística, marca `standardized_at`.
 3. **Tier 2** — subagentes paralelos validan/corrigen contra allowlists de **publisher slug** + **edition slug** (output schema-validado; reglas anti-compound, artbook-vs-special, 画集付き=bonus; tabla determinística término→slug de tipo de edición, gotcha #69).
 4. **Tier 3** — subagentes derivan todo desde cero.
-5. **Merge** — `standardize_apply.py merge`: **preserva el `edition_key` existente**, fallback a la propuesta heurística si el LLM devolvió keys vacías (sin keys usables → el item queda PENDIENTE y se reintenta), `canonical_series_key()` (consolida multilingüe), outliers de serie por /coleccion, no-manga → `non_manga_blacklist.jsonl` (Mangavariant **nunca**), recomputa `cluster_key`, **fusiona duplicados** con `consolidate_by_cluster` (no borra — preserva fuentes hermanas) y emite reporte INTEGRITY.
+5. **Merge** — `standardize_apply.py merge`: **preserva el `edition_key` existente**, fallback a la propuesta heurística si el LLM devolvió keys vacías (sin keys usables → el item queda PENDIENTE y se reintenta, con `standardize_attempts` +1 — ver abajo), `canonical_series_key()` (consolida multilingüe), recomputa `cluster_key`, **fusiona duplicados** con `consolidate_by_cluster` (no borra — preserva fuentes hermanas) y emite reporte INTEGRITY. `product_type` se valida contra un enum cerrado (nunca un edition-kind como special/deluxe — eso vive en `edition_key`); si el LLM devolvió algo fuera del enum, se re-deriva con `derive_product_type()`.
+   > **`is_manga=false` (2026-07-07, gotcha #122) YA NO expulsa a `non_manga_blacklist.jsonl`.** El item queda PENDIENTE (sin `standardized_at`) y se registra en `data/unmapped_series.jsonl` (reason `llm_non_manga`) para curación manual — son los gates DETERMINISTAS del pipeline (`filter_non_manga`/`filter_collectible`, Fase 3 del scrape) los que deciden la expulsión real en la próxima corrida, nunca el veredicto crudo del LLM. Excepción dura: Mangavariant NUNCA se expulsa (el veredicto se ignora con WARN).
+   > **Escalado de retry (`standardize_attempts`)**: cada vez que el merge deja un item pendiente por keys inusables, incrementa `item.standardize_attempts`. Al auditar la próxima vez (`standardize_audit.py`), un item Tier 2/3 con `standardize_attempts >= MAX_STANDARDIZE_ATTEMPTS` (3) se EXCLUYE de las proyecciones (no vuelve a gastar LLM) y se manda directo a `unmapped_series.jsonl` (reason `standardize_exhausted`) — evita el loop infinito de un título irromanizable.
 6. **Enforcer** — `enforce_listadomanga_rules.py` (Step 6b del skill): re-aplica determinísticamente TODAS las reglas duras de agrupación sobre lo que el LLM dejó. Desde 2026-06-11 incluye 5 pasos nuevos (3c1 `canonicalize_edition_slugs.py` #69, 3c2 `merge_duplicate_series.py` #70, 3c3 `normalize_edition_publishers.py`, 3c4 `fix_edition_key_prefix.py` #71, 3c5 `fix_title_edition_words.py` #72, antes de `backfill_cluster_key`) y **ya no es solo-listadomanga**: esos pasos aplican a todas las fuentes. Además el **paso 4b** re-corre `fix_lmc_display_titles` + `fix_especial_title_order` DESPUÉS de consolidate — el merge de filas podía revivir un título contaminado ya limpiado y el enforcer necesitaba 2 pasadas para converger; con 4b converge en UNA (verificado: 2ª corrida → items.jsonl byte-idéntico).
 7. **→ ETAPA 4 (slugs)** y **→ ETAPA 5 (traducción)**.
 8. `pytest tests/test_extraction.py` + `validate_corpus.py` (0 violaciones duras; warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX en 0 o justificados).
@@ -448,12 +469,30 @@ generate_slugs.py --only-missing --verbose
 
 ### 3.5 ETAPA 5 — Traducción · `translate_descriptions.py`
 Pobla `description_es` y `extras[].description_es`. **Último paso del skill #2** (`--workers 4`).
-- `langdetect` detecta idioma; si ya es ES → vacío (skip).
+- `langdetect` detecta idioma; si ya es ES → vacío (skip). `DetectorFactory.seed=0`
+  (2026-07-07) fija el determinismo — sin esto, el mismo texto borderline podía
+  detectarse "es" un día y "it" al siguiente.
 - PRIMARY: **Google Translate** (`deep-translator`, gratis, sin key, todos los idiomas). UPGRADE: **DeepL Free** si `DEEPL_API_KEY` (1M chars one-time), fallback a Google.
 - **`description` original NUNCA se modifica** (`detect_signals` lee de ahí). Naming `description_{ISO-639-1}` → multi-idioma a costo cero.
 - Sticky (`_CURATED_FIELDS`): un re-scrape no la pisa. Frontend muestra `description_es` si existe, si no cae a `description`.
+- **Tres estados separados (2026-07-07, gotcha #118)** — `description_es=""` YA NO
+  significa "ya-ES o falló, no importa cuál": ahora es RESERVADO exclusivamente para
+  "el original ya está en español / sin contenido traducible / no-op (la API devolvió
+  el mismo texto)". Si **TODOS** los servicios de traducción fallan (excepción o
+  resultado vacío), la key `description_es` **NO se escribe** — el item queda pendiente
+  y se reintenta solo, sin flag especial, en el próximo run + WARN por slug/servicio/
+  error a stderr. Flag `--retry-empty` recupera los fallos de API que quedaron mal
+  marcados como "ya-ES" ANTES de este fix (reprocesa sólo `description_es==""` cuya
+  `description` NO detecta como español).
+- **`description_es_src_hash` (staleness, 2026-07-07)** — junto a cada `description_es`
+  se escribe `sha1(description)[:12]`. En el merge/upsert del scraper, si un re-scrape
+  trae una `description` cuyo hash no coincide con el guardado, la traducción vieja NO
+  se preserva por el sticky (se deja re-traducir) — evita mostrar una traducción de un
+  texto que ya cambió. Backward-compatible: rows sin el hash (traducciones previas a
+  este cambio) nunca se consideran stale. Detalle: `docs/reference/architecture.md`.
 ```bash
 translate_descriptions.py --workers 4
+translate_descriptions.py --retry-empty          # recupera fallos de API viejos mal marcados
 ```
 
 ---
@@ -471,8 +510,8 @@ El scrape ya baja la portada de items nuevos (Fase 1 del espejo), **ya estandari
 3. **`promote_hires_cover.py`** — sin red: cuando `images[0]` es un thumbnail (<90 000 px) y la misma portada en hi-res ya existe en `images[1+]` (vino de otra fuente del cluster, ej. Panini/Norma/Whakoom vs listadomanga), intercambia `images[0] ↔ images[k]`. Usa criterio thumbnail↔full relajado (aHash ≤ 14 bits + aspect ±12%) porque el thumbnail degrada tanto el hash que no pasa `_same_cover` estricto. El thumbnail queda en la galería; correr `dedup_carousel_images.py` después si se quiere eliminar el dup. Flags: `--dry-run`.
 4. **`backfill_prh_covers.py`** — items EN con ISBN-13 (978-0/978-1) → URL determinística `images.penguinrandomhouse.com/cover/{isbn13}`. Valida ≥80k px, dedup por ISBN.
 5. **`fetch_better_covers.py`** — items con imagen <100k px: (1) ISBN → Amazon/PRH CDN; (2) sin ISBN → **Tavily Search** (`TAVILY_API_KEY`, 1000/mes gratis). Verifica aspect ratio ±25% + aHash Hamming ≤12. Salta `variant_cover`/`retailer_exclusive`.
-6. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). Requiere `brew install waifu2x-ncnn-vulkan`.
-7. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida identidad `_same_cover` (misma portada, mejor resolución) **+ calidad de display `_is_soft_image`** (descarta candidatas chicas+blandas que se verían pixeladas aunque tengan más px, gotcha #94), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`. La cola previa al gate se limpia 1× con `prune_soft_cover_candidates.py`.
+6. **`upscale_images.py`** — AI upscale (waifu2x/realesrgan) para thumbnails JP <200k px sin hi-res en origen (sumikko, booksprivilege, Rakuten, animeclick). El resultado pasa por `image_store.normalize_image` (AVIF, 2026-07-07 — antes guardaba el PNG lossless crudo) y cada entry reemplazada queda marcada `upscaled: true` en `images[]` (idempotencia + señal para scripts downstream de que es un upscale de IA, no una foto hi-res real). Guard `approved_at` a nivel de ARCHIVO compartido (`--include-approved`). Requiere `brew install waifu2x-ncnn-vulkan`.
+7. **🧠 `/watch-search-covers`** — para lo que sigue malo (típico: **listadomanga** capa a ~150px, gotcha #39): busca en **Chrome** (Google udm=2 + Yandex reverse-image), valida identidad `_same_cover` (misma portada, mejor resolución) **+ calidad de display `_is_soft_image`** (descarta candidatas chicas+blandas que se verían pixeladas aunque tengan más px, gotcha #94), escribe candidatas a `data/cover_preview.json` con `status:"pending"`. **NUNCA toca `items.jsonl`** — la aprobación es **manual** vía `web/cover-preview.html`, que desde 2026-07-07 muestra un banner con las candidatas `status:"approved"` que TODAVÍA no se aplicaron al catálogo (badge `approved_unapplied`, P24; "aprobar" y "aplicar" son pasos desacoplados) + botón "Aplicar ahora". La cola previa al gate se limpia 1× con `prune_soft_cover_candidates.py`.
 8. **`sync_cover_images.py`** — saneamiento integral: portadas placeholder/banner, `images[0]` desincronizado de la card, duplicados/junk (avatares, íconos, banners), galerías que son otros tomos. Idempotente, salta aprobados.
 9. **`purge_placeholder_images.py`** — **determinístico y automático ([4i] del pipeline)**: quita las imágenes-placeholder que las fuentes sirven sin tener carátula (1×1, blanco, "no disponible"/"coming soon") + 1×1 + rotas, vía `image_store.placeholder_reason()` (estructural: `tiny`/`solid`/`broken` + firmas sha1 en `data/placeholder_signatures.json`). Quita la ENTRY completa (incluida la `url`, si no la card cargaría el placeholder remoto), limpia `sources[]`, huérfanos a `_orphans/`. NO borra por imagen repetida (cross-cover queda intacto). Complementa a `sync_cover_images` (heurístico/manual) con reglas duras sin falsos positivos. Sin red. Gotcha #97.
 
@@ -590,6 +629,21 @@ corre el script ahí mismo con progreso en vivo y re-audita al terminar; los pas
 con IA muestran el **skill** a correr en Claude. Cómputo en `_compute_readiness()`
 de [`scripts/audit/data_quality.py`](../../scripts/audit/data_quality.py); UI en
 [`docs/web-html/PRD.md`](../web-html/PRD.md) → "Panel de Calidad de datos".
+
+**Cambios 2026-07-07 (auditoría post-scrape)**:
+- **`rarity_verify` alineado al criterio REAL del skill** (156→127 en el corpus de
+  referencia): el filtro viejo confundía "boxset/artbook de publisher grande" con "rare
+  por INCERTIDUMBRE" — ahora replica 1:1 el Step 0 de `watch-validate-rarity/SKILL.md`
+  (rare sin `rarity_verified_at`, sin `approved_at`, cuyo `rare` viene de fallback de
+  fuente de referencia o `retailer_exclusive` sin stock verificado — nunca de evidencia
+  ESTRUCTURAL, que el skill no toca).
+- **Traducción partida en dos filas**: `translate` (pendiente_traduccion — descripción
+  en idioma extranjero de verdad) y `translate_mark_es` (pendiente_marca_es — fuente
+  hispanohablante cuyo contenido YA está en español, sólo falta backfillear la key). El
+  viejo `trans_pending` único inflaba el conteo mezclando ambos casos.
+- **Filas nuevas**: `dates_iso` (release_date que no matchea el patrón ISO — mismo
+  criterio que la invariante `DATEISO` de `validate_corpus.py`) y `no_image` (items sin
+  portada NI foto de galería, script sugerido: `/watch-search-covers`).
 
 ### 4.5 Sanity check tras cualquier cambio
 ```bash

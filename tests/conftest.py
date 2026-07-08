@@ -15,7 +15,7 @@ if str(SCRIPTS) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def _isolate_serve_data_dir(tmp_path, monkeypatch):
-    """Aísla TODAS las escrituras de serve.py a un tmp por test.
+    """Aísla TODAS las escrituras de serve.py (y de series_aliases.py) a un tmp por test.
 
     `scripts/serve.py` deriva sus paths de escritura (items/feedback/approvals/
     edits/dup_decisions) de la env var MANGA_WATCH_DATA_DIR. Sin esto, los tests
@@ -24,6 +24,13 @@ def _isolate_serve_data_dir(tmp_path, monkeypatch):
     (urls "https://a"/"https://x", reasons "dup"/"regroup") corrida tras corrida.
     El fixture corre ANTES del cuerpo del test, así el `_load_serve()` interno
     re-importa serve y lee esta env var → nunca toca los datos reales.
+
+    `scripts/series_aliases.py::log_unmapped_series` reusa la MISMA env var
+    (vía `_unmapped_target()`, leída en cada llamada — no cacheada a nivel
+    módulo, así no necesita reload) para resolver `data/unmapped_series.jsonl`
+    (2026-07-07): sin esto, cualquier test que ejercite `candidate_to_json`
+    (manga_watch.py) con una series NO canónica ensuciaba el archivo real
+    (+1 línea por corrida de suite, detectado en la auditoría Lote B).
     """
     data_dir = tmp_path / "_serve_data"
     data_dir.mkdir(exist_ok=True)

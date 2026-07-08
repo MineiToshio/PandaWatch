@@ -1668,7 +1668,23 @@ function mangaApp() {
           // Sin esto, mergedImages quedaba en orden de archivo y el carrusel
           // podía empezar con la foto de otra fuente (bug card != carrusel a
           // nivel cluster).
-          const imgKey = (u) => (u || "").split("?")[0].replace(/^https?:\/\//, "").toLowerCase();
+          // Clave de dedup de imágenes — MISMA semántica que
+          // manga_watch._img_stem (Python, fuente canónica) y
+          // web-next/lib/images.ts `imageKey`. Si tocás una, tocá las tres
+          // (docs/reference/images.md#carrusel-cluster; tests en
+          // tests/test_audit_wo_g.py / web-next/__tests__/images.test.ts).
+          // Sólo sufijos de tamaño de CDN con GUION BAJO (Shopify
+          // `_600x600.jpg`, `_grande.jpg`) se stripean para que el thumb
+          // dedupee contra la full — los de WordPress con guion medio
+          // (`-800x600.jpg`) NO se stripean: es una limitación conocida de
+          // la referencia Python (su docstring menciona "WP -NxM" pero la
+          // regex nunca lo implementó; ver tests/test_audit_wo_g.py).
+          const IMG_KEY_SUFFIX_RE = /_(?:\d+x\d+|small|medium|grande|large|master|compact|original|x\d+|pico|icon|thumb|mini|crop_center)(?=\.(?:jpe?g|png|webp|gif|avif)(?:\?|$))/gi;
+          const imgKey = (u) => (u || "")
+            .replace(IMG_KEY_SUFFIX_RE, "")
+            .split(/[?#]/)[0]
+            .replace(/^https?:\/\//, "")
+            .toLowerCase();
           const seenImg = new Set();
           const mergedImages = [];
           const pushImg = (im) => {

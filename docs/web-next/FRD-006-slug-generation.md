@@ -52,9 +52,15 @@ get the same `slug` value.
 **Priority order:**
 
 ```
-1. cluster_key = "isbn:{isbn13}"
+1. [LEGACY, 2026-07-07] cluster_key = "isbn:{isbn13}"
    → slug = "isbn-{isbn13}"
    → example: isbn-9781506721910
+   → cluster_key no longer generates the "isbn:" tier (derive_cluster_key removed it
+     2026-07-07 — an ISBN alone is not a reliable merge key in manga: variant covers,
+     special vs. regular editions, and some retailers reuse a single ISBN across their
+     whole catalog). This rule only fires for historical rows still carrying an old
+     "isbn:" cluster_key that hasn't been re-derived yet. New/re-derived rows fall
+     through to rule 2 (edition_key) or rule 4 (isbn field) below.
 
 2. edition_key + volume (numeric or alphanumeric)
    → slug = "{edition_key}-{formatted_volume}"
@@ -74,7 +80,12 @@ get the same `slug` value.
 
 4. no edition_key + has isbn (pre-standardization items with ISBN)
    → slug = "isbn-{isbn}"
-   → (same as rule 1, isbn field used directly)
+   → (same shape as rule 1, but the ISBN is normalized SIEMPRE to ISBN-13 via
+     `manga_watch.isbn13()` before building the slug — fix 2026-07-07. Without this,
+     the same cluster could oscillate between "isbn-{isbn10}" and "isbn-{isbn13}"
+     depending on which row happened to be the cluster's representative on a given
+     run (measured churn: 71 items). If `isbn` is not a valid ISBN (partial
+     identifier), falls back to the raw cleaned string — same behavior as before.
 
 5. fallback (no edition_key, no isbn)
    → slug = "item-{sha1(canonical_url)[:12]}"
@@ -109,6 +120,14 @@ fields are unchanged, skip that item (no re-write). Only update when:
 - `volume` changed since last slug generation
 
 This prevents URL rot for already-deployed/indexed pages.
+
+**Note (2026-07-07):** the script always recomputes the candidate slug for a cluster
+from scratch (`_derive_base_slug`) and only writes when it differs from the stored
+`slug` — there's no separate "did the inputs change" flag. This means the ISBN-13
+normalization fix (rule 1/4 above, via `_isbn_slug_part()`) self-heals: a historical
+row whose slug was built from a non-normalized ISBN gets corrected exactly ONCE (the
+computed slug differs from the stored one that one time), and from then on the
+derivation is deterministic and idempotent — no further churn.
 
 ### FR-4: Volume number formatting
 

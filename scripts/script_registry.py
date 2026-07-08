@@ -1257,6 +1257,140 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "fix_product_types",
+        "category": "Mantenimiento",
+        "icon": "🏷️",
+        "name": "Re-derivar product_type fuera de enum",
+        "tagline": "Arregla product_type='special'/'deluxe'/'variant' (eso va en edition_key, no acá).",
+        "what": (
+            "Re-deriva product_type con derive_product_type() (título + "
+            "descripción + signal_types) para items cuyo valor no pertenece "
+            "al enum manga/artbook/fanbook/guidebook/boxset/novel/magazine/"
+            "audiobook — resabio de la estandarización vieja que confundía "
+            "el TIPO de edición con el TIPO de producto. Si la re-derivación "
+            "también cae fuera del enum, usa 'manga' como fallback. Es "
+            "seguro correrlo varias veces."
+        ),
+        "when": (
+            "Si validate_corpus.py reporta violaciones PTYPE_ENUM (product_type "
+            "fuera del enum). Los scrapes/estandarizaciones nuevas ya validan "
+            "contra el enum (standardize_apply.py) y no lo generan de nuevo."
+        ),
+        "command": [PYTHON, "scripts/retrofit/fix_product_types.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Cuenta cuántos cambiarían sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Arreglar",
+                "desc": "Aplica la re-derivación con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Cuenta cuántos product_type cambiarían sin guardar nada.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también los items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "normalize_languages",
+        "category": "Mantenimiento",
+        "icon": "🌐",
+        "name": "Normalizar idioma al canon español",
+        "tagline": "'Deutsch'/'English'/'ja'/'en'/… → 'Alemán'/'Inglés'/'Japonés'/…",
+        "what": (
+            "Normaliza el campo language al set canónico en ESPAÑOL del "
+            "proyecto (los 14 idiomas) usando un mapa de sinónimos explícito "
+            "(nombres en inglés, códigos ISO-639-1 sueltos, y 'Deutsch' de "
+            "mangapassion). Valores sin mapeo conocido quedan intactos y se "
+            "reportan agrupados — nunca inventa un idioma. Es seguro "
+            "correrlo varias veces."
+        ),
+        "when": (
+            "Si validate_corpus.py reporta violaciones LANG_ENUM (language "
+            "fuera del canon). Los scrapes nuevos de mangapassion ya entran "
+            "con 'Alemán' desde el fix de _virtual_source()."
+        ),
+        "command": [PYTHON, "scripts/retrofit/normalize_languages.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Reporta qué cambiaría sin escribir.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Normalizar",
+                "desc": "Aplica la normalización con backup.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Reporta qué language cambiarían sin guardar nada.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también los items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "queue_regular_shielded",
+        "category": "Mantenimiento",
+        "icon": "🚩",
+        "name": "Encolar tomos regulares sospechosos",
+        "tagline": "Items estandarizados con pinta de tomo regular sin bonus → cola de revisión.",
+        "what": (
+            "Detecta items ya estandarizados (standardized_at) cuyo "
+            "edition_key/edition_display tiene pinta de tomo REGULAR ('-regular-' "
+            "o 'Regular') pero SIN ninguna señal de bonus/extra (sin "
+            "store_bonus, sin signal_types='bonus') — posible mala "
+            "clasificación aguas arriba. NO borra ni reclasifica nada: solo "
+            "encola a data/unmapped_series.jsonl (reason "
+            "'regular_shielded_review') para revisión manual o del skill de "
+            "standardize. Por defecto solo LISTA/cuenta; --apply escribe la cola."
+        ),
+        "when": (
+            "Después de una estandarización grande, para chequear que no se "
+            "colaron tomos sin extras reales al catálogo de coleccionables."
+        ),
+        "command": [PYTHON, "scripts/retrofit/queue_regular_shielded.py"],
+        "presets": [
+            {
+                "id": "list",
+                "label": "🧪 Listar",
+                "desc": "Cuenta y lista los candidatos sin escribir la cola.",
+                "values": {},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Encolar",
+                "desc": "Escribe los candidatos a unmapped_series.jsonl.",
+                "values": {"--apply": True},
+            },
+        ],
+        "flags": [
+            _flag("--apply", "Encolar de verdad",
+                  "Escribe a data/unmapped_series.jsonl. Sin este flag solo lista.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Encola también items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
         "id": "normalize_isbn",
         "category": "Mantenimiento",
         "icon": "🔢",
@@ -2753,6 +2887,57 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Solo imprime el reporte humano, sin actualizar "
                   "data/quality_report.json.",
                   type="bool", default=False, advanced=True),
+        ],
+    },
+    {
+        "id": "split_edition_buckets",
+        "category": "Auditoría",
+        "icon": "🔀",
+        "name": "Ediciones sospechosas de partirse solo por el tipo",
+        "tagline": "Reporte de candidatas a duplicado por slug de tipo inconsistente. Solo lectura.",
+        "what": (
+            "Agrupa filas fuera de listadomanga por (serie, país, volumen) y "
+            "aísla los casos donde 2+ edition_keys tienen EXACTAMENTE el mismo "
+            "prefijo serie+editorial+país y sólo difieren en el slug de TIPO "
+            "(special/limited/collector/deluxe/ultimate/perfect/master/boxset/"
+            "variant/cofanetto…). Por cada caso muestra los edition_keys, sus "
+            "fuentes, si comparten ISBN (señal fuerte de duplicado real) y un "
+            "título de muestra. NO fusiona nada — el auto-merge fue vetado "
+            "(deluxe y regular, por ejemplo, NO son el mismo producto); esto "
+            "es evidencia para revisión humana."
+        ),
+        "when": (
+            "Cuando quieras revisar candidatas a duplicado que "
+            "consolidate_sources no agarra (cluster_key ya distinto a "
+            "propósito). Los buckets con ISBN compartido son la señal más "
+            "confiable — priorizalos."
+        ),
+        "command": [PYTHON, "scripts/audit/split_edition_buckets.py"],
+        "presets": [
+            {
+                "id": "resumen",
+                "label": "📋 Resumen (stdout)",
+                "desc": "Imprime el resumen; los buckets con ISBN compartido siempre completos.",
+                "values": {},
+            },
+            {
+                "id": "json",
+                "label": "🧾 Reporte JSON completo",
+                "desc": "Guarda TODOS los buckets a un archivo para revisión offline.",
+                "values": {"--json": "data/diagnostics/split-edition-buckets.json"},
+            },
+        ],
+        "flags": [
+            _flag("--examples", "Buckets sin ISBN a mostrar (stdout)",
+                  "Cuántos buckets SIN isbn compartido imprimir en pantalla. "
+                  "Los que SÍ comparten ISBN siempre se listan todos.",
+                  type="int", default=20, advanced=True),
+            _flag("--json", "Guardar reporte completo a archivo",
+                  "Si lo dejás vacío, sólo imprime en pantalla. Si ponés una "
+                  "ruta, guarda ahí el JSON con TODOS los buckets.",
+                  type="str", default="",
+                  placeholder="data/diagnostics/split-edition-buckets.json",
+                  advanced=True),
         ],
     },
 ]

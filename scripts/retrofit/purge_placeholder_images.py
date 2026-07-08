@@ -40,6 +40,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import image_store  # noqa: E402  (fuente única de placeholder_reason + placeholders conocidos)
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import is_approved  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import is_approved  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -173,6 +177,10 @@ def main() -> int:
     ap.add_argument("--cross-series-min", type=int, default=_CROSS_SERIES_MIN,
                     help=f"umbral de la regla genérica: misma foto en ≥N series "
                          f"distintas ⇒ placeholder (default {_CROSS_SERIES_MIN})")
+    ap.add_argument("--include-approved", action="store_true",
+                    help="También purga placeholders de items aprobados (golden records). "
+                         "Por defecto se saltean: purgar quita/reordena entries de images[] "
+                         "(images[0], la portada, incluida) de una fila que el owner confirmó.")
     args = ap.parse_args()
 
     items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
@@ -185,6 +193,7 @@ def main() -> int:
     removed_entries = 0
     items_changed = 0
     items_now_empty = 0
+    skipped_approved = 0
     reasons = Counter()
     removed_locals: set[str] = set()
     removed_urls: set[str] = set()
@@ -195,6 +204,17 @@ def main() -> int:
     for it in items:
         imgs = it.get("images") or []
         slug = it.get("slug") or ""
+        if is_approved(it) and not args.include_approved:
+            skipped_approved += 1
+            # No tocamos sus entries, pero sus archivos locales SÍ cuentan como
+            # "sobrevivientes" — si no, el GC podría mandarlos a cuarentena
+            # cuando otro item (no aprobado) que comparte el mismo archivo lo
+            # pierde en su propia pasada.
+            for im in imgs:
+                loc = (im.get("local") or "").strip()
+                if loc:
+                    surviving_locals.add(loc)
+            continue
         kept = []
         dropped = []
         for idx, im in enumerate(imgs):
@@ -248,6 +268,14 @@ def main() -> int:
     # (con removed_locals/removed_urls ya COMPLETOS) y juntar las que sobreviven.
     for it in items:
         slug = it.get("slug") or ""
+        if is_approved(it) and not args.include_approved:
+            # Igual que en la Pasada 1: no tocamos sources[] de un item aprobado,
+            # pero protegemos sus locals del GC.
+            for src in it.get("sources") or []:
+                sloc = (src.get("image_local") or "").strip()
+                if sloc:
+                    surviving_locals.add(sloc)
+            continue
         for src in it.get("sources") or []:
             sloc = (src.get("image_local") or "").strip()
             surl = (src.get("image_url") or "").strip()
@@ -270,6 +298,8 @@ def main() -> int:
     print(f"[purge] items afectados: {items_changed} | entries quitadas: {removed_entries}")
     print(f"[purge] por razón: {dict(reasons)}")
     print(f"[purge] items que quedan SIN imagen (mostrarán 📚): {items_now_empty}")
+    if skipped_approved:
+        print(f"[purge] items aprobados saltados (usar --include-approved): {skipped_approved}")
     print(f"[purge] archivos huérfanos a {'(cuarentena)' if not args.keep_files else '(conservados)'}: {len(orphaned)}")
     for title, reason, ref in examples:
         print(f"   {title:34} [{reason:18}] {ref}")

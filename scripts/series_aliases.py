@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -225,10 +226,36 @@ def canonical_series_key(
         "celebration", "steelbox", "slipcase", "color", "regular", "lore",
         "hardcover", "softcover", "premium", "exclusive", "bundle", "pack",
         "box", "set", "edition", "edicion", "edizione",
+        "definitive", "definitiva", "complete",
+    })
+    # Sufijos de edición de DOS tokens: el loop de un-token nunca podía matchear
+    # entradas multi-palabra (chequeaba `parts[end]` suelto). Se chequean como
+    # par contra los ÚLTIMOS 2 tokens, con el MISMO guard estructural (prefijo
+    # acortado ha de matchear EXACTO una canónica + piso min_parts 60%).
+    _EDITION_SUFFIXES_2 = frozenset({
+        ("full", "color"),
+        ("edicao", "definitiva"),
     })
     if current_series_key and "-" in current_series_key:
         parts = current_series_key.split("-")
         min_parts = max(1, len(parts) * 3 // 5)
+
+        # (b) sufijo de dos tokens (más específico → primero).
+        if len(parts) >= 3 and (
+            parts[-2].lower(), parts[-1].lower()
+        ) in _EDITION_SUFFIXES_2:
+            end2 = len(parts) - 2
+            if end2 >= min_parts:
+                prefix = "-".join(parts[:end2])
+                if len(prefix) >= 3:
+                    n_prefix = _normalize(prefix)
+                    if n_prefix in lookup:
+                        return lookup[n_prefix]
+                    slug_prefix = re.sub(r"\s+", "-", n_prefix)
+                    if slug_prefix in lookup:
+                        return lookup[slug_prefix]
+
+        # (a) sufijo de un token.
         for end in range(len(parts) - 1, min_parts - 1, -1):
             dropped = parts[end]
             if dropped.lower() not in _EDITION_SUFFIXES:
@@ -255,6 +282,29 @@ def is_canonical_key(series_key: str) -> bool:
     if not series_key:
         return False
     return series_key in _load_aliases()
+
+
+def _unmapped_target() -> Path:
+    """Resuelve el path de escritura de unmapped_series.jsonl en cada llamada.
+
+    Override vía `MANGA_WATCH_DATA_DIR` (mismo patrón que `scripts/serve.py`:
+    `_DATA_DIR = Path(os.environ.get("MANGA_WATCH_DATA_DIR") or (ROOT / "data"))`),
+    pero leído acá EN CADA LLAMADA (no cacheado a nivel módulo) — evita el
+    problema de orden de import que tiene `serve.py` (constante congelada al
+    primer import, necesita `importlib.reload`). Así el fixture autouse de
+    `tests/conftest.py` que ya setea esta env var para aislar `serve.py`
+    aísla GRATIS también esta cola, sin que la suite ensucie
+    `data/unmapped_series.jsonl` real (leak detectado 2026-07-07: la suite
+    completa dejaba +1 línea por corrida vía `candidate_to_json` →
+    `log_unmapped_series`).
+
+    Sin la env var, cae al default `_UNMAPPED_FILE` — así un test también
+    puede seguir monkeypatcheando ese atributo directamente para un path ad-hoc.
+    """
+    data_dir = os.environ.get("MANGA_WATCH_DATA_DIR")
+    if data_dir:
+        return Path(data_dir) / "unmapped_series.jsonl"
+    return _UNMAPPED_FILE
 
 
 def log_unmapped_series(
@@ -295,8 +345,9 @@ def log_unmapped_series(
             "source": source or "",
             "detected_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         }
-        _UNMAPPED_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _UNMAPPED_FILE.open("a", encoding="utf-8") as fh:
+        target = _unmapped_target()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 

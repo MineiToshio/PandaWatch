@@ -1879,10 +1879,19 @@ def test_is_canonical_key():
 
 
 def test_log_unmapped_series_appends_only_non_canonical(tmp_path, monkeypatch):
-    """log_unmapped_series escribe solo series NO canónicas, dedupea por run."""
+    """log_unmapped_series escribe solo series NO canónicas, dedupea por run.
+
+    MANGA_WATCH_DATA_DIR ya está seteada por el fixture autouse
+    `_isolate_serve_data_dir` (conftest.py) — acá la re-seteamos a un dir
+    propio del test para poder aserts contra un path conocido; `_unmapped_target()`
+    la lee en cada llamada (no cacheada a nivel módulo), así el override toma
+    efecto sin reload de módulo.
+    """
     import series_aliases as sa
-    fake_log = tmp_path / 'unmapped.jsonl'
-    monkeypatch.setattr(sa, '_UNMAPPED_FILE', fake_log)
+    data_dir = tmp_path / 'unmapped_test_dir'
+    data_dir.mkdir()
+    monkeypatch.setenv('MANGA_WATCH_DATA_DIR', str(data_dir))
+    fake_log = data_dir / 'unmapped_series.jsonl'
     sa.reset_unmapped_run_state()
 
     # 1) Series canónica → NO se loguea

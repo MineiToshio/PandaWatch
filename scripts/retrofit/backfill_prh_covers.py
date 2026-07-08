@@ -35,7 +35,10 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import backup_and_rotate, make_session  # type: ignore
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate, make_session, is_approved  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, make_session, is_approved  # type: ignore  # noqa: E402
 
 DEFAULT_USER_AGENT = "manga-watch-personal/0.2 (+personal-use)"
 
@@ -140,11 +143,20 @@ def _write_items(dst: Path, items: list[dict]) -> None:
 
 # ── Target collection ─────────────────────────────────────────────────────────
 
-def _collect_targets(items: list[dict]) -> list[tuple[dict, str]]:
-    """Devuelve [(item, isbn13), …] para items EN con ISBN y sin PRH CDN."""
+def _collect_targets(
+    items: list[dict], *, include_approved: bool = False,
+) -> tuple[list[tuple[dict, str]], int]:
+    """Devuelve ([(item, isbn13), …], skipped_approved) para items EN con ISBN
+    y sin PRH CDN. Items aprobados (`approved_at`) se saltean por defecto: este
+    script reemplaza la portada auto-máticamente (sin cola de revisión) si la
+    candidata PRH gana en píxeles — no debe pisar un golden record."""
     out: list[tuple[dict, str]] = []
+    skipped_approved = 0
     for it in items:
         if "_raw" in it:
+            continue
+        if is_approved(it) and not include_approved:
+            skipped_approved += 1
             continue
         raw_isbn = it.get("isbn") or ""
         if not raw_isbn:
@@ -159,7 +171,7 @@ def _collect_targets(items: list[dict]) -> list[tuple[dict, str]]:
         if cur_url == PRH_CDN_BASE + isbn13:
             continue
         out.append((it, isbn13))
-    return out
+    return out, skipped_approved
 
 
 # ── Upgrade logic ─────────────────────────────────────────────────────────────
@@ -214,14 +226,17 @@ def run(
     min_gain: float,
     dry_run: bool,
     user_agent: str,
+    include_approved: bool = False,
 ) -> None:
     items = _load_items(items_path)
-    targets = _collect_targets(items)
+    targets, skipped_approved = _collect_targets(items, include_approved=include_approved)
     if limit > 0:
         targets = targets[:limit]
 
     total = len(targets)
     print(f"Items EN candidatos (ISBN sin PRH CDN): {total}")
+    if skipped_approved:
+        print(f"Items aprobados saltados (usar --include-approved): {skipped_approved}")
 
     if dry_run:
         print("[DRY-RUN] No se harán cambios.")
@@ -310,6 +325,10 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--limit", type=int, default=0, help="Limitar a los primeros N targets")
     p.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
+    p.add_argument("--include-approved", action="store_true",
+                    help="También reemplaza la portada de items aprobados (golden records). "
+                         "Por defecto se saltean: este script auto-aplica la mejora sin cola "
+                         "de revisión.")
     return p.parse_args()
 
 
@@ -325,4 +344,5 @@ if __name__ == "__main__":
         min_gain=args.min_gain,
         dry_run=args.dry_run,
         user_agent=args.user_agent,
+        include_approved=args.include_approved,
     )

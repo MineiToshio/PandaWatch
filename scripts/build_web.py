@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +36,19 @@ SCRIPT_TAG_REGEX = re.compile(
     r'(<script id="manga-data" type="application/json">).*?(</script>)',
     re.DOTALL,
 )
+
+
+def _run_validate_corpus(input_path: Path) -> int:
+    """Corre scripts/validate_corpus.py como subprocess sobre `input_path` y
+    devuelve su exit code (0 válido, 2 violaciones DURAS, otro = error del
+    validador). Fuente única del validador — NO se reimplementan acá sus
+    invariantes; sólo se invoca (mismo contrato que el gate de scrape_delta/
+    full.sh, PHASE 4). Usa `--file` (WO-F) para poder validar cualquier input,
+    no sólo data/items.jsonl. No captura stdout/stderr: el reporte del
+    validador se imprime directo (hereda los file descriptors del padre)."""
+    script = Path(__file__).resolve().parent / "validate_corpus.py"
+    proc = subprocess.run([sys.executable, str(script), "--file", str(input_path)])
+    return proc.returncode
 
 
 def load_items(path: Path) -> list[dict]:
@@ -160,7 +174,37 @@ def main() -> int:
                              "Por defecto el embed queda vacío y la página usa el fetch en vivo.")
     parser.add_argument("--clear", action="store_true",
                         help="Sólo vacía el embed (deja [] en el script) sin tocar los aliases.")
+    parser.add_argument("--force", action="store_true",
+                        help="Salta el gate de validate_corpus (override consciente). Construye "
+                             "igual aunque --input tenga violaciones estructurales DURAS. "
+                             "Los .sh del pipeline (scrape_delta/full) NO usan este flag: tienen "
+                             "su propio gate + cuarentena/restore en PHASE 4; --force es para "
+                             "invocación MANUAL deliberada de build_web.py.")
     args = parser.parse_args()
+
+    # ── Gate pre-build: build_web.py invocado manualmente (fuera de scrape_delta/
+    # full.sh) no validaba nada — un corpus corrompido por un retrofit suelto se
+    # embebía / exportaba a aliases igual. Mismo contrato que el gate del pipeline
+    # (validate_corpus.py, fuente única): exit 2 = violaciones DURAS → abortar.
+    input_path = Path(args.input)
+    if args.force:
+        print("[WARN] --force: se salta el gate de validate_corpus (build sin validar).")
+    elif not input_path.exists():
+        print(f"[WARN] {input_path} no existe — se salta el gate de validate_corpus (nada que validar).")
+    else:
+        rc = _run_validate_corpus(input_path)
+        if rc == 2:
+            print(f"\n[ERROR] {input_path} tiene violaciones ESTRUCTURALES DURAS "
+                  f"(validate_corpus.py exit=2) — build_web ABORTADO. Corregí el corpus "
+                  f"(ver el reporte arriba) o corré con --force para construir igual "
+                  f"(no recomendado: embebería/exportaría el corpus corrupto).",
+                  file=sys.stderr)
+            return 2
+        if rc != 0:
+            print(f"\n[ERROR] validate_corpus.py falló con rc={rc} (error del propio validador) "
+                  f"— build_web ABORTADO por precaución. Corré con --force para saltear este gate.",
+                  file=sys.stderr)
+            return rc
 
     output = Path(args.output)
     if not output.exists():
@@ -194,7 +238,6 @@ def main() -> int:
         print("     Para embeber el catálogo (fallback file://) corré con --embed.")
         return 0
 
-    input_path = Path(args.input)
     items = load_items(input_path)
     deduped = dedupe_by_url(items)
 

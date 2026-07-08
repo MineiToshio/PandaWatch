@@ -128,7 +128,14 @@ scripts/
                                title = clean_title(title_original) — nombre OFICIAL,
                                sin traducir ni renombrar — y retira title_standardized.
                                Marca title_restored_at; re-corridas son no-op.
-    normalize_release_dates.py normaliza release_date legacy a ISO (DD/MM/YYYY → YYYY-MM-DD; --all-formats para 年月日/datetime/textual). Gotcha #80.
+    normalize_release_dates.py normaliza release_date legacy a ISO (DD/MM/YYYY → YYYY-MM-DD; --all-formats para 年月日/datetime/textual). Automático [4b2] con --all-formats. Gotcha #80.
+    fix_product_types.py       re-deriva product_type fuera del enum (special/deluxe/variant →
+                               manga_watch.derive_product_type; fallback "manga"). Invariante PTYPE_ENUM.
+    normalize_languages.py     normaliza language al canon español (14 idiomas) vía mapa de
+                               sinónimos explícito (Deutsch/English/ja/en/…). Invariante LANG_ENUM.
+    queue_regular_shielded.py  encola a unmapped_series.jsonl (reason regular_shielded_review) tomos
+                               regulares estandarizados sin señal de bonus. Reusa
+                               standardize_apply.append_unmapped_from_item. Default = lista; --apply escribe.
     normalize_isbn.py          limpia el campo isbn del corpus histórico vía mw.normalize_isbn()
                                (conserva solo dígitos/X; descarta prefijos basura como "： "
                                fullwidth JP). Compute-only, salta approved salvo --include-approved.

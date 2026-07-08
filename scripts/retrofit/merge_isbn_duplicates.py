@@ -45,8 +45,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import manga_watch as mw  # noqa: E402
+from series_aliases import is_canonical_key  # noqa: E402  (fuente única del resolver)
 
 ITEMS = ROOT / "data" / "items.jsonl"
+
+# series_key con pinta de basura de extracción: cortito y puramente numérico,
+# a lo sumo con un sufijo de 1-3 letras (ej. "4-2-ss", "12-3"). Un series_key así
+# NUNCA debe ganar la selección de ganador de un grupo ISBN (guard del red team).
+_JUNK_SK_RE = re.compile(r"^\d+(-\d+)*(-[a-z]{1,3})?$")
+
+
+def _is_junk_series_key(series_key: str) -> bool:
+    sk = (series_key or "").strip().lower()
+    return bool(sk) and bool(_JUNK_SK_RE.match(sk))
 
 
 def _norm_isbn(it: dict) -> str:
@@ -120,12 +131,32 @@ def plan_groups(items: list[dict]) -> tuple[list[list[dict]], list[str]]:
         return total
 
     for group in mergeable:
+        # series_key que más se repite DENTRO del grupo: señal de identidad real
+        # frente a un slug que aparece en una sola fila (red team, criterio b).
+        sk_group: Counter = Counter(
+            (it.get("series_key") or "") for it in group if it.get("series_key")
+        )
         # Scores precomputados: list.sort() vacía la lista mientras ordena,
         # así que _evidence NO puede iterar `group` dentro del key=.
+        # Todos los criterios: MAYOR = mejor (sort reverse=True).
         scores = {
             id(it): (
                 bool(it.get("approved_at")),
-                "unknown" not in (it.get("edition_key") or "").split("-"),
+                # (b) nunca elegir un series_key con pinta de junk como ganador.
+                not _is_junk_series_key(it.get("series_key") or ""),
+                # (a) edition_key VACÍO = PEOR candidato: no puede ganar contra
+                # una fila con keys reales (el bug era que ek vacío puntuaba como
+                # "sin unknown" = True y ganaba).
+                bool((it.get("edition_key") or "").strip()),
+                # editorial real (sin 'unknown' en el ek): sólo desempata entre
+                # los que YA tienen ek — los sin-ek ya perdieron en el criterio
+                # anterior, así que el True vacuo de "".split('-') es inocuo.
+                bool((it.get("edition_key") or "").strip())
+                and "unknown" not in (it.get("edition_key") or "").split("-"),
+                # (b) series_key canónico en series_aliases (fuente única).
+                is_canonical_key(it.get("series_key") or ""),
+                # (b) series_key que aparece en más filas del grupo.
+                sk_group.get(it.get("series_key") or "", 0),
                 round(_evidence(it.get("series_key") or "", group), 2),
                 ek_counts[it.get("edition_key") or ""],
                 (it.get("edition_key") or "").startswith(
@@ -139,21 +170,24 @@ def plan_groups(items: list[dict]) -> tuple[list[list[dict]], list[str]]:
     return mergeable, skipped
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+def apply_merges(items: list[dict]) -> dict:
+    """Planifica y aplica las fusiones ISBN sobre `items` (mutación in-place de
+    las filas + consolidación por cluster). PURA: no lee ni escribe archivos.
 
+    Idempotente / CONVERGENTE: correr `apply_merges` sobre su propia salida
+    consolidada → `changed == 0` (el grupo ISBN queda con 1 fila y se saltea; y
+    aunque quedaran filas, sólo se cuenta un cambio cuando el row REALMENTE
+    cambia — comparación before/after —, no incondicionalmente como antes).
+
+    Devuelve `{items, changed, skipped, rewrites, mergeable}`.
+    """
     mergeable, skipped = plan_groups(items)
-    for msg in skipped:
-        print(f"[isbn-dup] SKIP {msg}")
-
     changed = 0
+    rewrites: list[str] = []
     for group in mergeable:
         winner, losers = group[0], group[1:]
         # volumen unificado: el del ganador si está approved; si no, el único
-        # no-vacío del grupo.
+        # no-vacío del grupo (plan_groups garantiza <=1 volumen distinto).
         vols = {(it.get("volume") or "").strip() for it in group} - {""}
         if winner.get("approved_at"):
             vol = (winner.get("volume") or "").strip()
@@ -166,29 +200,61 @@ def main() -> int:
         for it in losers:
             if it.get("approved_at"):
                 continue
-            print(f"[isbn-dup]   {it.get('edition_key')}|{it.get('volume','')}"
-                  f"  →  {winner.get('edition_key')}|{vol}"
-                  f"  ({(it.get('title') or '')[:50]!r})")
+            before = (
+                it.get("edition_key"), it.get("series_key"),
+                it.get("series_display"), (it.get("volume") or "").strip(),
+                it.get("cluster_key"),
+            )
+            old_ek, old_vol = it.get("edition_key"), it.get("volume", "")
             for field in ("edition_key", "series_key", "series_display"):
                 if winner.get(field):
                     it[field] = winner[field]
             it["volume"] = vol
             it["cluster_key"] = mw.derive_cluster_key(it)
-            changed += 1
+            after = (
+                it.get("edition_key"), it.get("series_key"),
+                it.get("series_display"), (it.get("volume") or "").strip(),
+                it.get("cluster_key"),
+            )
+            if before != after:
+                rewrites.append(
+                    f"{old_ek}|{old_vol}  →  {winner.get('edition_key')}|{vol}"
+                    f"  ({(it.get('title') or '')[:50]!r})")
+                changed += 1
+    if changed:
+        items = mw.consolidate_by_cluster(items)
+    return {
+        "items": items, "changed": changed, "skipped": skipped,
+        "rewrites": rewrites, "mergeable": len(mergeable),
+    }
 
-    print(f"[isbn-dup] grupos fusionables: {len(mergeable)} | items reescritos: "
-          f"{changed} | grupos saltados: {len(skipped)}")
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+
+    before_n = len(items)
+    result = apply_merges(items)
+    for msg in result["skipped"]:
+        print(f"[isbn-dup] SKIP {msg}")
+    for msg in result["rewrites"]:
+        print(f"[isbn-dup]   {msg}")
+
+    changed = result["changed"]
+    print(f"[isbn-dup] grupos fusionables: {result['mergeable']} | items reescritos: "
+          f"{changed} | grupos saltados: {len(result['skipped'])}")
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        before = len(items)
-        items = mw.consolidate_by_cluster(items)
-        print(f"[isbn-dup] consolidate: {before} → {len(items)}")
+        new_items = result["items"]
+        print(f"[isbn-dup] consolidate: {before_n} → {len(new_items)}")
         shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-isbndup-bak"))
         tmp = ITEMS.with_suffix(".jsonl.tmp")
         with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
+            for it in new_items:
                 fh.write(json.dumps(it, ensure_ascii=False) + "\n")
         tmp.replace(ITEMS)
         print(f"[isbn-dup] escrito {ITEMS}.")

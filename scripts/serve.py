@@ -366,6 +366,41 @@ def build_command(
 _ITEMS_LOCK = threading.Lock()
 
 
+# ── Lock de scrape en curso (data/.scrape.lock/, mismo formato que acquire_lock()
+# en scripts/scrape_delta.sh y scrape_full.sh: mkdir atómico + PID en un archivo
+# "pid" dentro). Un scrape corriendo re-escribe data/items.jsonl al final de cada
+# retrofit (append_jsonl / _atomic_write); si un endpoint de curación escribe
+# AL MISMO TIEMPO, el que termine último gana y el otro desaparece silenciosamente
+# (lost update). _ITEMS_LOCK (arriba) sólo serializa entre requests DE ESTE
+# proceso — no protege contra el proceso *separado* del scrape. Por eso los
+# handlers que escriben items.jsonl chequean este lock ANTES de escribir y
+# devuelven 423 en vez de arriesgar la pérdida (nunca esperan/bloquean: colgaría
+# la UI hasta que el scrape — que puede tardar horas — termine).
+_SCRAPE_LOCK_DIR = _DATA_DIR / ".scrape.lock"
+
+
+def _scrape_lock_pid() -> int | None:
+    """PID del scrape en curso, o None si no hay lock activo.
+
+    Un lock STALE (el PID que lo creó ya no existe) se trata como "sin lock" —
+    igual que el fallback de acquire_lock() en los .sh (ellos lo re-adquieren
+    solos; acá simplemente no bloqueamos, no tocamos el directorio del lock)."""
+    pid_file = _SCRAPE_LOCK_DIR / "pid"
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None  # stale: el proceso que lo creó ya no existe
+    except PermissionError:
+        return pid   # existe pero es de otro usuario — lo tratamos como vivo
+    except OSError:
+        return None
+    return pid
+
+
 def _serialized(fn):
     """Serializa la ejecución de la función con _ITEMS_LOCK (read-modify-write
     atómico sobre items.jsonl)."""
@@ -514,6 +549,27 @@ def _log_feedback(url: str, reason: str, action: str = "feedback",
     FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with FEEDBACK_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _count_approved_unapplied(entries: list[dict]) -> int:
+    """Candidatas status=approved que siguen en la cola (P24).
+
+    apply_preview() (fetch_better_covers.py) QUITA del JSON las candidatas
+    aprobadas apenas las aplica (ver su docstring). Que una candidata approved
+    siga en `entries` significa, por construcción, que "aprobar" y "aplicar"
+    quedaron desacoplados: el owner tocó 👍 en el dashboard (o algo escribió
+    status=approved) pero nadie corrió POST /api/apply-cover-preview después
+    — el catálogo (items.jsonl) todavía tiene la portada VIEJA. Cuenta ambos
+    schemas: multi-candidato (candidates[].status) y el legado plano
+    (status a nivel de entry)."""
+    n = 0
+    for e in entries:
+        cands = e.get("candidates")
+        if isinstance(cands, list):
+            n += sum(1 for c in cands if isinstance(c, dict) and c.get("status") == "approved")
+        elif e.get("status") == "approved":
+            n += 1
+    return n
 
 
 def _search_editions(query: str, limit: int = 15) -> list[dict]:
@@ -1291,6 +1347,22 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             raise ValueError("body vacío u oversized")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def _reject_if_scrape_locked(self) -> bool:
+        """423 si hay un scrape corriendo (data/.scrape.lock activo).
+
+        Llamar ANTES de escribir data/items.jsonl en cualquier handler de
+        curación/aprobación. Si devuelve True, ya mandó la respuesta 423 — el
+        caller debe `return` sin seguir. NO espera al lock (no queremos colgar
+        la UI hasta que un scrape de horas termine); el owner reintenta después."""
+        pid = _scrape_lock_pid()
+        if pid is None:
+            return False
+        self._json(423, {
+            "error": "scrape en curso, reintentá al terminar",
+            "pid": pid,
+        })
+        return True
+
     # Prefijos top-level servibles como estáticos. Todo lo demás → 403.
     _STATIC_ALLOW_TOP = {"web", "data", "reports"}
 
@@ -1655,6 +1727,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     def _handle_curation_move(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=100_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1673,6 +1747,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_curation_merge(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=100_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1691,6 +1767,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_curation_remove(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=100_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1708,6 +1786,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_item_update(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=200_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1725,6 +1805,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": "Item no encontrado o sin campos válidos"})
 
     def _handle_approve(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=100_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1743,6 +1825,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_approve_edition(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=100_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1761,6 +1845,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_batch_approve(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=2_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1783,6 +1869,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": result})
 
     def _handle_batch_move(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=2_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1852,6 +1940,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_dup_merge(self) -> None:
         """Fusiona las fichas de un grupo de duplicados en una sola.
         Body: {signature, dup_key, urls}."""
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=200_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1878,14 +1968,17 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         y si hubo cambios los persiste atómicamente ANTES de responder (bajo
         @_serialized para no pisar un save concurrente).
 
-        Responde: {"entries": [...], "mtime": "<st_mtime_ns post-sync>", "synced": {<stats>}}
-        El mtime viaja como STRING (token opaco): st_mtime_ns excede 2^53 y un
-        Number de JS lo redondearía (409 espurio). El frontend lo devuelve tal
-        cual como expected_mtime del guard anti-race.
+        Responde: {"entries": [...], "mtime": "<st_mtime_ns post-sync>", "synced": {<stats>},
+        "approved_unapplied": <int>}. `approved_unapplied` (P24) es el contador
+        AUTORITATIVO (server-side) de candidatas aprobadas que todavía no se
+        aplicaron a items.jsonl — ver _count_approved_unapplied(). El mtime viaja
+        como STRING (token opaco): st_mtime_ns excede 2^53 y un Number de JS lo
+        redondearía (409 espurio). El frontend lo devuelve tal cual como
+        expected_mtime del guard anti-race.
         """
         dst = ROOT / "data" / "cover_preview.json"
         if not dst.exists():
-            self._json(200, {"entries": [], "mtime": "0", "synced": {}})
+            self._json(200, {"entries": [], "mtime": "0", "synced": {}, "approved_unapplied": 0})
             return
 
         try:
@@ -1909,7 +2002,12 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(dst)
 
-        self._json(200, {"entries": synced, "mtime": _mtime_token(dst), "synced": stats})
+        self._json(200, {
+            "entries": synced,
+            "mtime": _mtime_token(dst),
+            "synced": stats,
+            "approved_unapplied": _count_approved_unapplied(synced),
+        })
 
     def _handle_item_get(self) -> None:
         """GET /api/item?slug=<slug>[&cluster=1]
@@ -1996,6 +2094,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         Acepta body opcional {"expected_mtime": "<token>"} con el mismo guard
         optimista del save: si la cola en disco no es la que el owner estaba
         viendo (otro proceso la reescribió), responde 409 sin aplicar nada."""
+        if self._reject_if_scrape_locked():
+            return
         expected_mtime = None
         if int(self.headers.get("Content-Length") or 0) > 0:
             try:
@@ -2026,6 +2126,8 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
     # ---------- Image manager handlers ----------
 
     def _handle_image_save(self) -> None:
+        if self._reject_if_scrape_locked():
+            return
         try:
             payload = self._read_json(max_bytes=1_000_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:

@@ -24,6 +24,18 @@ Image storage Fase 1, pasos restantes (ver "Image storage" en CLAUDE.md):
 Idempotente: re-correrlo no re-descarga imágenes ya en disco (el nombre
 de archivo es determinístico). Seguro de correr en el overnight.
 
+Items aprobados (`approved_at`, golden records) — matiz WO-D (2026-07-07): el
+BACKFILL de este script es ADITIVO (solo rellena un `local` faltante; nunca
+quita, reordena ni reemplaza una entry existente), así que se aplica IGUAL a
+items aprobados por defecto — un golden record necesita su espejo local tanto
+como cualquier otro (si lo saltáramos, un item aprobado nunca conseguiría su
+`local`). `--include-approved` se acepta por consistencia de CLI con el resto
+de los retrofits de imagen, pero no cambia el comportamiento del backfill; el
+summary igual reporta cuántas de las entries rellenadas eran de items
+aprobados, a título informativo. El GC (mark-and-sweep de archivos huérfanos)
+no muta `images[]` de ningún item — opera solo sobre archivos en disco — así
+que tampoco necesita saltear aprobados.
+
 Uso:
     python scripts/retrofit/mirror_images.py                # backfill + GC
     python scripts/retrofit/mirror_images.py --dry-run      # solo reporta
@@ -48,7 +60,10 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import make_session, backup_and_rotate  # type: ignore
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import make_session, backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import make_session, backup_and_rotate, is_approved  # type: ignore  # noqa: E402
 
 # MISMO User-Agent que usa el scraper (`manga_watch.py --user-agent`).
 # Algunas fuentes (Manga-Sanctuary, p.ej.) sirven 404 a UAs desconocidos
@@ -128,8 +143,14 @@ def _run_backfill(
 
     n_targets = len(img_targets)
     n_covers = sum(1 for _, idx in img_targets if idx == 0)
+    # Informativo, no gating (ver matiz WO-D en el docstring): cuántos targets
+    # pertenecen a items aprobados — el fill se hace igual, es aditivo.
+    n_approved = sum(1 for it, _ in img_targets if is_approved(it))
     print(f"[BACKFILL] {n_targets} imágenes sin local ({n_covers} portadas, "
           f"{n_targets - n_covers} galería) — {len(by_url)} URLs únicas.")
+    if n_approved:
+        print(f"[BACKFILL]   de ellas, {n_approved} en items aprobados (fill aditivo, "
+              f"siempre permitido — ver docstring).")
     if not by_url:
         return 0
     if dry_run:
@@ -283,6 +304,11 @@ def main() -> int:
                         help="Solo GC, sin descargar nada.")
     parser.add_argument("--gc-delete", action="store_true",
                         help="GC borra los orphans en vez de mandarlos a cuarentena.")
+    parser.add_argument("--include-approved", action="store_true",
+                        help="Aceptado por consistencia de CLI con el resto de los retrofits "
+                             "de imagen; no cambia el comportamiento (el backfill de este "
+                             "script es aditivo y ya se aplica a items aprobados — ver "
+                             "docstring del módulo).")
     parser.add_argument("--connect-timeout", type=int, default=10)
     parser.add_argument("--read-timeout", type=int, default=30)
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)

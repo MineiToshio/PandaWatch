@@ -16,7 +16,14 @@ Cada proyección Tier 2/3 incluye además:
     publisher+tipo+país en vez de acuñar una variante nueva (special vs
     limited partía la misma edición en dos).
 
-Markers de salida (los parsea el workflow): TOTAL / PENDING / TIER1/2/3.
+ESCALADO DE RETRY (WO-C): un item Tier 2/3 con `standardize_attempts` >=
+MAX_STANDARDIZE_ATTEMPTS (el merge lo incrementa cuando lo deja pendiente por
+keys inusables) se EXCLUYE de las proyecciones y se manda a curación manual
+appendeando a data/unmapped_series.jsonl (reason "standardize_exhausted", dedup
+cross-run). Así un título irromanizable no gasta Tier 3 para siempre.
+
+Markers de salida (los parsea el workflow): TOTAL / PENDING / TIER1/2/3 /
+EXHAUSTED.
 
 Uso:
   .venv/bin/python scripts/standardize_audit.py [--limit N] [--force-all]
@@ -34,6 +41,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from manga_watch import Candidate, derive_series_metadata  # noqa: E402
 from series_aliases import aggressive_series_norm  # noqa: E402
+from standardize_apply import (  # noqa: E402
+    MAX_STANDARDIZE_ATTEMPTS,
+    _existing_unmapped_keys,
+    append_unmapped_from_item,
+)
 
 ITEMS = ROOT / "data" / "items.jsonl"
 DEFAULT_BASE = Path("/tmp/manga-standardize-run")
@@ -84,6 +96,10 @@ def main() -> int:
 
     known = _known_keys_index(items)
 
+    # Identidades ya en unmapped_series.jsonl (dedup cross-run del escalado).
+    unmapped_seen = _existing_unmapped_keys()
+    exhausted_logged = 0
+
     tiers: dict[int, list[dict]] = {1: [], 2: [], 3: []}
     for it in pending:
         c = Candidate(
@@ -97,6 +113,19 @@ def main() -> int:
         )
         md = derive_series_metadata(c) or {}
         tier = md.get("confidence_tier", 3) or 3
+        # ESCALADO DE RETRY (WO-C): un item que ya gastó MAX_STANDARDIZE_ATTEMPTS
+        # sin key usable no vuelve a proyectarse para el LLM (Tier 2/3) — se saca
+        # de la cola y se manda a curación manual (unmapped_series.jsonl). Tier 1
+        # es determinístico (no gasta LLM), así que no se escala.
+        attempts = it.get("standardize_attempts", 0) or 0
+        if attempts >= MAX_STANDARDIZE_ATTEMPTS and tier in (2, 3):
+            if append_unmapped_from_item(
+                it, "standardize_exhausted",
+                note=f"tier{tier}; {attempts} intentos sin key usable",
+                seen=unmapped_seen,
+            ):
+                exhausted_logged += 1
+            continue
         projected = {
             "url": it.get("url", ""), "title": it.get("title", ""),
             "title_original": it.get("title_original", ""),
@@ -133,6 +162,7 @@ def main() -> int:
     print(f"TIER1:{len(tiers[1])}")
     print(f"TIER2:{len(tiers[2])}")
     print(f"TIER3:{len(tiers[3])}")
+    print(f"EXHAUSTED:{exhausted_logged}")
     print(f"Proyecciones escritas en {args.base}/tier{{1,2,3}}.json")
     return 0
 

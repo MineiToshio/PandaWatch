@@ -1,15 +1,32 @@
 import type { ItemImage } from './types'
 
+// Sufijos de tamaño de CDN a stripear ANTES de la extensión, para que un
+// thumb (`img_600x600.jpg`, `img_grande.jpg`) dedupee contra la imagen full
+// (`img.jpg`). Sólo cubre sufijos con GUION BAJO estilo Shopify — los de
+// WordPress con GUION MEDIO (`img-800x600.jpg`) NO se stripean: es una
+// limitación conocida de la referencia canónica en Python
+// (scripts/manga_watch.py `_gallery_url_normalize` / `_img_stem`; su
+// docstring menciona "WP -NxM" pero la regex nunca lo implementó). Ver
+// __tests__/images.test.ts / tests/test_audit_wo_g.py (WO-G).
+const IMG_KEY_SUFFIX_RE =
+  /_(?:\d+x\d+|small|medium|grande|large|master|compact|original|x\d+|pico|icon|thumb|mini|crop_center)(?=\.(?:jpe?g|png|webp|gif|avif)(?:\?|$))/gi
+
 /**
- * Clave normalizada de una imagen: sin esquema, sin query/hash, lowercase.
- * Dos URLs que sólo difieren en http/https o en params de tracking son la
- * misma imagen. Única definición — ItemHero y el carrusel deben dedupear con
- * el mismo criterio o la portada puede duplicarse en la galería.
+ * Clave normalizada de una imagen: sin sufijo de tamaño de CDN conocido, sin
+ * esquema, sin query/hash, lowercase. Dos URLs que sólo difieren en
+ * http/https, en params de tracking, o en el sufijo de miniatura Shopify son
+ * la misma imagen.
+ *
+ * MISMA semántica que `manga_watch._img_stem` (Python, fuente canónica) y
+ * `web/index.html` `imgKey` — si tocás una, tocá las tres
+ * (docs/reference/images.md#carrusel-cluster). Única definición acá — ItemHero
+ * y el carrusel deben dedupear con el mismo criterio o la portada puede
+ * duplicarse en la galería.
  */
 export function imageKey(url?: string): string {
   return (url ?? '')
-    .split('?')[0]
-    .split('#')[0]
+    .replace(IMG_KEY_SUFFIX_RE, '')
+    .split(/[?#]/)[0]
     .replace(/^https?:\/\//, '')
     .toLowerCase()
 }

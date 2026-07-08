@@ -68,13 +68,6 @@
 2dk-g-pen-mezamashi:
   aliases: []
   display: 2DK、Gペン、目覚まし時計。
-30-sai-made-daro-mahou-tsukai:
-  aliases:
-  - 30-sai made Daro Mahou Tsukai ni Narerashii
-  - 30-sai-made-daro-mahou-tsukai
-  - 30歳まで童貞だと魔法使いになれるらしい
-  - Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!
-  display: 30-sai made Daro Mahou Tsukai ni Narerashii
 30-sai-made-datto-mahoutsukai-ni-nareru-rashii:
   aliases: []
   display: 30-sai made... dato Mahou Tsukai ni Nareru Rashii
@@ -178,6 +171,9 @@ a-condition-called-love:
   - Hananoi-kun to Koi no Yamai
   - I'm addicted to you
   - Una enfermedad llamada amor
+  - a sickness called love
+  - enfermedad llamada amor
+  - enfermedad-llamada-amor
   - una-enfermedad-llamada-amor
   - 花野井くんと恋の病
   display: A Condition Called Love
@@ -293,15 +289,6 @@ act-age:
 adabana:
   aliases: []
   display: Adabana
-adolf:
-  aliases:
-  - Adolf
-  - Adolf ni Tsugu
-  - L'Histoire des 3 Adolf
-  - La Storia dei Tre Adolf
-  - Message to Adolf
-  - アドルフに告ぐ
-  display: Message to Adolf
 adou:
   aliases: []
   display: Adou
@@ -744,10 +731,12 @@ ao-haru-ride:
   display: Ao Haru Ride
 ao-no-hako:
   aliases:
+  - Ao no Hako
   - Blue Box
+  - blue-box
   - アオのハコ
   - 青色之箱
-  display: Ao no Hako
+  display: Blue Box
 aoashi:
   aliases:
   - Ao Ashi
@@ -889,7 +878,8 @@ ase-to-sekken:
   aliases:
   - Ase to Sekken
   - Sudore e sapone
-  - ase-to-sekken
+  - Sweat and Soap
+  - sweat-and-soap
   - あせとせっけん
   display: Sweat and Soap
 ashiarai-tei-no-juunin-tachi:
@@ -1537,11 +1527,6 @@ bloom-into-you:
   - Yagate Kimi ni Naru
   - やがて君になる
   display: Bloom Into You
-blue-box:
-  aliases:
-  - Ao no Hako
-  - アオのハコ
-  display: Blue Box
 blue-dragon-ralgrad:
   aliases:
   - Blue Dragon RalΩGrad
@@ -1700,7 +1685,7 @@ bottom-tier-character-tomozaki:
   - Nhân vật hạ cấp Tomozaki
   - 弱キャラ友崎くん
   display: Bottom-Tier Character Tomozaki
-boukensha-no-chiryou-wo-hajimetara-juujin-no-ts番-ni-tsukamari-mashita:
+boukensha-no-chiryou-wo-hajimetara-juujin-no-tsban-ni-tsukamari-mashita:
   aliases: []
   display: Boukensha no Chiryou wo Hajimetara Juujin no Ban ni Tsukamari Mashita
 boyish-kanojo-ga-kawaisugiru:
@@ -2015,7 +2000,9 @@ cherry-blossoms-after-winter:
   display: Cherry Blossoms After Winter
 cherry-magic:
   aliases:
+  - 30-sai made Daro Mahou Tsukai ni Narerashii
   - 30-sai made Doutei da to Mahou Tsukai ni Nareru Rashii
+  - 30-sai-made-daro-mahou-tsukai
   - 30歳まで童貞だと魔法使いになれるらしい
   - Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!
   - チェリまほ
@@ -2122,9 +2109,6 @@ choukyou-seikatu:
 chouritsu-soukou-zyklus-code:
   aliases: []
   display: Chouritsu Soukou Zyklus;CODE
-chouritsusoko-zyklus-code:
-  aliases: []
-  display: Zyklus;CODE
 chrome-breaker:
   aliases: []
   display: Chrome Breaker
@@ -2295,11 +2279,6 @@ compass:
 compiler-magazine:
   aliases: []
   display: Compiler Magazine
-confuso-primer-amor:
-  aliases:
-  - Confusing First Love
-  - Konna Hazu ja Nakatta Hatsukoi
-  display: Confuso Primer Amor
 console-2073:
   aliases: []
   display: Console, 2073
@@ -2419,6 +2398,10 @@ dahlia-in-bloom:
   aliases:
   - 'Dahlia in Bloom: Crafting a Fresh Start with Magical Tools'
   - Madougushi Dahlia wa Utsumukanai
+  - Magic Artisan Dahlia Wilts No More
+  - Magic Artisan Dahliya Won't Hang Her Head
+  - madoushi-daria
+  - magic-artisan-dahlia-wilts-no-more
   - 魔導具師ダリヤはうつむかない
   display: Dahlia in Bloom
 dai-dark:
@@ -2510,10 +2493,9 @@ dark-metro:
   aliases: []
   display: Dark Metro
 darkness-officer-kenshiro:
-  aliases: []
-  display: Darkness Officer Kenshiro Tsubanari
-darkness-officer-kenshiro-tsubanari:
-  aliases: []
+  aliases:
+  - Darkness Officer Kenshiro Tsubanari
+  - darkness-officer-kenshiro-tsubanari
   display: Darkness Officer Kenshiro Tsubanari
 darling-in-the-franxx:
   aliases: []
@@ -4199,16 +4181,6 @@ go-nagai-artbook:
   - Go Nagai
   - go-nagai
   display: Go Nagai Artbook
-go-toubun-no-hanayome:
-  aliases:
-  - 5-toubun no hanayome
-  - gotobun no hanayome
-  - gotobun-no-hanayome
-  - gotoubun no hanayome
-  - las quintillizas
-  - the quintessential quintuplets
-  - 五等分の花嫁
-  display: The Quintessential Quintuplets
 go-with-the-clouds-north-by-northwest:
   aliases:
   - Dans le sens du vent Nord, Nord-Ouest
@@ -4351,13 +4323,6 @@ great-mazinger-ota:
 great-pretender:
   aliases: []
   display: GREAT PRETENDER
-great-teacher-onizuka:
-  aliases:
-  - GTO
-  - 'GTO: Great Teacher Onizuka'
-  - Great Teacher Onizuka
-  - グレート・ティーチャー・オニヅカ
-  display: Great Teacher Onizuka
 green-garden:
   aliases: []
   display: Green Garden
@@ -4387,6 +4352,7 @@ gto:
   - GTO
   - 'GTO: Great Teacher Onizuka'
   - Great Teacher Onizuka
+  - great-teacher-onizuka
   - グレート・ティーチャー・オニヅカ
   display: 'GTO: Great Teacher Onizuka'
 gto-paradise-lost:
@@ -4841,7 +4807,7 @@ henge-joshi-amakuri-chiko:
 henkyo-hakke-jiman-wa-tensei-cheat-life-wo-tanoshimitai:
   aliases: []
   display: Henkyou Hakke Jinan wa Tensei Cheat Life wo Tanoshimitai
-henkyo-ryoshu-wa-daikizoку-ni-nariagaru:
+henkyo-ryoshu-wa-daikizoku-ni-nariagaru:
   aliases: []
   display: Henkyou Ryoushu wa Daikizoku ni Nariagaru
 hentai-stalker-ni-nerawaretemasu:
@@ -5436,7 +5402,9 @@ idolmaster-sidem-struggle-heart:
   aliases: []
   display: THE IDOLM@STER SideM Struggle Heart
 if-my-favorite-pop-idol-budokan:
-  aliases: []
+  aliases:
+  - If My Favorite Pop Idol Made It to the Budokan
+  - oshi-no-ko-budokan
   display: If My Favorite Pop Idol Made It to the Budokan
 if-you-insist:
   aliases: []
@@ -5648,7 +5616,9 @@ inuyashiki:
   aliases: []
   display: Inuyashiki
 inventos-de-peace-electronics:
-  aliases: []
+  aliases:
+  - Los Inventos de Peace Electronics
+  - peace-electronics
   display: Los Inventos de Peace Electronics
 io-sakisaka-illustrations:
   aliases:
@@ -5855,7 +5825,9 @@ jojo-no-kimyou-na-bouken:
   aliases: []
   display: JoJo's Bizarre Adventure
 jojo-stardust-crusaders:
-  aliases: []
+  aliases:
+  - 'JoJo''s Bizarre Adventure: Stardust Crusaders'
+  - jojos-bizarre-adventure-part-3
   display: 'JoJo''s Bizarre Adventure: Stardust Crusaders'
 jojolion:
   aliases:
@@ -5874,22 +5846,9 @@ jojolion:
 jojos-bizarre-adventure-crazy-d:
   aliases: []
   display: 'JoJo''s Bizarre Adventure: Crazy D'
-jojos-bizarre-adventure-part-3:
-  aliases: []
-  display: 'JoJo''s Bizarre Adventure: Stardust Crusaders'
 jojos-bizarre-adventure-phantom-blood:
   aliases: []
   display: 'JoJo''s Bizarre Adventure: Phantom Blood'
-jojos-bizarre-adventure-steel-ball-run:
-  aliases:
-  - 'jojo no kimyou na bouken: steel ball run'
-  - jojo sbr
-  - jojo's bizarre adventure - steel ball run
-  - 'jojo''s bizarre adventure: part 7–steel ball run'
-  - jojo-sbr
-  - 'le bizzarre avventure di jojo: steel ball run'
-  - steel ball run
-  display: 'JoJo''s Bizarre Adventure: Steel Ball Run'
 jojos-bizarre-adventure-stone-ocean:
   aliases: []
   display: 'JoJo''s Bizarre Adventure: Stone Ocean'
@@ -6905,14 +6864,13 @@ kouu-to-ryuho-ato-tanaka:
   aliases: []
   display: 項羽と劉邦、あと田中
 kowamote-no-rinjin-ga-omega:
-  aliases: []
+  aliases:
+  - Kowamote no Rinjin ga Omega
+  - kowamote-no-rinjin-omega
   display: Kowamote no Rinjin ga Omega Datta Toki no Taishohou
 kowamote-no-rinjin-ga-omega-datta-toki:
   aliases: []
   display: Kowamote no Rinjin ga Omega Datta Toki no Taishoho
-kowamote-no-rinjin-omega:
-  aliases: []
-  display: Kowamote no Rinjin ga Omega
 kowamoto-no-rinjin-ga-omega:
   aliases: []
   display: コワモテの隣人がΩだった時の対処法
@@ -6940,10 +6898,12 @@ kuma-kuma-kuma-bear:
   display: Kuma Kuma Kuma Bear
 kumichou-musume-to-sewagakari:
   aliases:
-  - kumicho-musume-to-sewagakari
   - Kumicho Musume to Sewagakari
-  - kumichomusume-to-sewagakari
   - Kumichomusume to Sewagakari
+  - The Yakuza's Guide to Babysitting
+  - kumicho-musume-to-sewagakari
+  - kumichomusume-to-sewagakari
+  - the-yakuzas-guide-to-babysitting
   display: The Yakuza's Guide to Babysitting
 kunizaki-izumo-no-jijou:
   aliases: []
@@ -7146,11 +7106,6 @@ la-passion-du-manga:
 la-peste:
   aliases: []
   display: La Peste
-la-professoressa-mente:
-  aliases:
-  - professor's white lies
-  - sensei no shiroi uso
-  display: La Professoressa Mente
 la-reina-demonia:
   aliases: []
   display: La Reina Demonia
@@ -7278,10 +7233,9 @@ lets-destroy-the-idol-dream:
   aliases: []
   display: Let's destroy the Idol Dream
 leviathan:
-  aliases: []
-  display: Leviathan
-leviathan-kuroi:
-  aliases: []
+  aliases:
+  - Leviathan
+  - leviathan-kuroi
   display: Leviathan
 liaison-kodomo-no-kokoro-shinryojo:
   aliases: []
@@ -7535,13 +7489,6 @@ magi:
 magi-sinbad-no-bouken:
   aliases: []
   display: 'Magi: Adventure of Sinbad'
-magic-artisan-dahlia-wilts-no-more:
-  aliases:
-  - Madougushi Dahlia wa Utsumukanai
-  - Magic Artisan Dahliya Won't Hang Her Head
-  - madoushi-daria
-  - 魔導具師ダリヤはうつむかない
-  display: Magic Artisan Dahlia Wilts No More
 magic-kaito:
   aliases: []
   display: Magic Kaito
@@ -7975,6 +7922,11 @@ merry-marbling:
   display: Merry Marbling
 message-to-adolf:
   aliases:
+  - Adolf
+  - Adolf ni Tsugu
+  - L'Histoire des 3 Adolf
+  - La Storia dei Tre Adolf
+  - Message to Adolf
   - adolf
   - adolf ni tsugu
   - adolf-tezuka
@@ -8480,13 +8432,11 @@ my-dress-up-darling:
   - Sexy Cosplay Doll
   - Sono Bisque Doll wa Koi wo Suru
   - Sono Kisekae Ningyou wa Koi wo suru
+  - my-dress-up-darling-bisque-doll
   - その着せ替え人形は恋をする
   - 戀上換裝娃娃
   - 更衣人偶坠入爱河
   display: My Dress-Up Darling
-my-dress-up-darling-bisque-doll:
-  aliases: []
-  display: My Dress-Up Darling | Bisque Doll
 my-ex-husbands-mad-dog:
   aliases: []
   display: My Ex-Husband's Mad Dog
@@ -8545,9 +8495,13 @@ my-life-as-an-internet-novel:
   display: My Life as an Internet Novel
 my-love-mix-up:
   aliases:
+  - Confusing First Love
+  - Confuso Primer Amor
   - Confuso primer amor
   - Faded First Love
   - Kieta Hatsukoi
+  - Konna Hazu ja Nakatta Hatsukoi
+  - confuso-primer-amor
   - kieta-hatsukoi
   - 消えた初恋
   display: My Love Mix-Up!
@@ -8915,6 +8869,7 @@ no-5:
   aliases:
   - Number 5
   - Number Five
+  - number-5
   - ナンバーファイブ
   - ナンバーファイブ 吾
   - ナンバー吾
@@ -9029,9 +8984,6 @@ nuestras-preciosas-conversaciones:
   - Nuestras preciosas conversaciones
   - preciosas-conversaciones
   display: Nuestras preciosas conversaciones
-number-5:
-  aliases: []
-  display: Number 5
 nurarihyon-no-mago:
   aliases:
   - 'Nura: Le Seigneur des Yokai'
@@ -9320,14 +9272,11 @@ onigoroshi:
 oniichan-dakedo-ai-sae-areba:
   aliases: []
   display: Oniichan dakedo Ai sae Areba Kankeinai yo ne!
-oniichan-wa-oshimai:
-  aliases: []
-  display: Onii-chan wa Oshimai!
 onimai:
   aliases:
   - Onii-chan wa Oshimai!
   - 'Onimai: I''m Now Your Sister!'
-  - onimai
+  - oniichan-wa-oshimai
   - おにいちゃんはおしまい！
   display: 'Onimai: I''m Now Your Sister!'
 only-sense-online:
@@ -9472,9 +9421,6 @@ oshi-no-ko:
   - 【我推的孩子】
   - 【推しの子】
   display: '[Oshi no Ko]'
-oshi-no-ko-budokan:
-  aliases: []
-  display: If My Favorite Pop Idol Made It to the Budokan
 oshiete-gyaruko-chan:
   aliases: []
   display: Oshiete! Gyaruko-chan
@@ -9687,9 +9633,6 @@ paredes-que-nos-separan:
 passion:
   aliases: []
   display: Passion
-peace-electronics:
-  aliases: []
-  display: Los Inventos de Peace Electronics
 peace-hame:
   aliases: []
   display: Peace Hame
@@ -10853,7 +10796,7 @@ sasakure-impact:
 saseba-naru:
   aliases: []
   display: Saseba Naru
-sassen-deshitara-yorokonде:
+sassen-deshitara-yorokonde:
   aliases: []
   display: Sassen Deshitara Yorokonde!
 sato-kun-to-tanaka-san:
@@ -11083,10 +11026,14 @@ sensei-no-kaban:
 sensei-no-shiroi-uso:
   aliases:
   - En proie au silence
+  - La Professoressa Mente
   - Las Mentiras de la Profesora
   - Sensei no Shiroi Uso
   - Teacher's White Lie
+  - la-professoressa-mente
   - las-mentiras-de-la-profesora
+  - professor's white lies
+  - sensei no shiroi uso
   - 先生の白い噓
   display: Sensei's Pious Lie
 seraph-of-the-end:
@@ -11273,13 +11220,6 @@ shintaro-kago:
   - Shintaro Kago
   - 駕籠真太郎
   display: Shintaro Kago
-ship-of-theseus:
-  aliases:
-  - El Barco de Teseo
-  - Theseus no Fune
-  - el-barco-de-teseo
-  - テセウスの船
-  display: Ship of Theseus
 shippuu-densetsu-takkun-gaiden:
   aliases: []
   display: Takkun no Takusen Gaiden Early Days
@@ -11833,8 +11773,17 @@ steel-ball-run:
   - 'JoJo no Kimyou na Bouken: Steel Ball Run'
   - 'JoJo''''s Bizarre Adventure Part 7: Steel Ball Run'
   - 'JoJo''''s Bizarre Adventure: Part 7–Steel Ball Run'
+  - 'JoJo''s Bizarre Adventure: Steel Ball Run'
   - 'Le bizzarre avventure di JoJo: Steel Ball Run'
   - Steel Ball Run
+  - 'jojo no kimyou na bouken: steel ball run'
+  - jojo sbr
+  - jojo's bizarre adventure - steel ball run
+  - 'jojo''s bizarre adventure: part 7–steel ball run'
+  - jojo-sbr
+  - jojos-bizarre-adventure-steel-ball-run
+  - 'le bizzarre avventure di jojo: steel ball run'
+  - steel ball run
   - ジョジョの奇妙な冒険 スティール・ボール・ラン
   display: Steel Ball Run
 steins-gate:
@@ -12025,9 +11974,6 @@ suzume:
 swallows-box-sato-tsubame-sakuhinshuu:
   aliases: []
   display: SWALLOW'S BOX 里つばめ作品集
-sweat-and-soap:
-  aliases: []
-  display: Sweat and Soap
 sweet-paprika:
   aliases:
   - 'Sweet Paprika: Open for Business'
@@ -12731,6 +12677,7 @@ the-promised-neverland:
 the-quintessential-quintuplets:
   aliases:
   - 5-toubun no Hanayome
+  - 5-toubun no hanayome
   - As Quíntuplas
   - Eşsiz Beşizler
   - Go-toubun no Hanayome
@@ -12739,6 +12686,13 @@ the-quintessential-quintuplets:
   - Somos quintillizas
   - Sposób na pięcioraczki
   - The Five Wedded Brides
+  - The Quintessential Quintuplets
+  - go-toubun-no-hanayome
+  - gotobun no hanayome
+  - gotobun-no-hanayome
+  - gotoubun no hanayome
+  - las quintillizas
+  - the quintessential quintuplets
   - 五等分の花嫁
   - 五等分的新娘
   display: The Quintessential Quintuplets
@@ -12766,10 +12720,14 @@ the-seven-deadly-sins:
   display: The Seven Deadly Sins
 the-ship-of-theseus:
   aliases:
+  - El Barco de Teseo
   - La nave di Teseo
   - Le bateau de Thésée
+  - Ship of Theseus
   - Theseus no Fune
+  - el-barco-de-teseo
   - le-bateau-de-thesee
+  - ship-of-theseus
   - テセウスの船
   display: The Ship of Theseus
 the-summer-hikaru-died:
@@ -12813,9 +12771,6 @@ the-wrong-scents:
   - The Wrong Scents
   - the-wrong-scents
   display: The Wrong Scents
-the-yakuzas-guide-to-babysitting:
-  aliases: []
-  display: The Yakuza's Guide to Babysitting
 therapy-game:
   aliases: []
   display: Therapy Game
@@ -13159,9 +13114,13 @@ touhou-suzunaan-forbidden-scrollery:
   display: 'Touhou Suzunaan: Forbidden Scrollery'
 touken-ranbu-outdoor-ibun-touken-yaei:
   aliases:
+  - Touken Ranbu Outdoor Ibun Touken Yaei
+  - Touken Ranbu Yaei
+  - 'Touken Ranbu: Outdoor Tales'
   - touken ranbu outdoor
   - 'touken ranbu: outdoor ibun – touken camp'
   - touken-ranbu-outdoor
+  - touken-ranbu-yaei
   - 刀剣乱舞 あうとどあ異聞 刀剣野営
   display: 'Touken Ranbu: Outdoor Ibun Touken Yaei'
 touken-ranbu-outdoor-touken-yaei:
@@ -13170,12 +13129,6 @@ touken-ranbu-outdoor-touken-yaei:
 touken-ranbu-toukenyaei:
   aliases: []
   display: Touken Ranbu Toukenyaei
-touken-ranbu-yaei:
-  aliases:
-  - Touken Ranbu Outdoor Ibun Touken Yaei
-  - Touken Ranbu Yaei
-  - 刀剣乱舞 あうとどあ異聞 刀剣野営
-  display: 'Touken Ranbu: Outdoor Tales'
 toutes-les-raisons-de-saimer:
   aliases: []
   display: Toutes les Raisons de s'Aimer
@@ -13384,12 +13337,6 @@ uma-musume-pisu-pisu-supisu-pisu-golshi-chan:
 un-ete-inconnu-avec-toi:
   aliases: []
   display: Un Été vers l'Inconnu avec Toi
-una-enfermedad-llamada-amor:
-  aliases:
-  - a sickness called love
-  - enfermedad llamada amor
-  - enfermedad-llamada-amor
-  display: Una enfermedad llamada amor
 una-ragazza-alla-moda:
   aliases: []
   display: Una Ragazza Alla Moda
@@ -14310,5 +14257,7 @@ zx-code-reunion:
   aliases: []
   display: Z/X Code reunion
 zyklus-code:
-  aliases: []
-  display: Chorisso Zyklus;CODE
+  aliases:
+  - Zyklus;CODE
+  - chouritsusoko-zyklus-code
+  display: Zyklus;CODE

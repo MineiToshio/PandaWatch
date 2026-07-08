@@ -559,6 +559,9 @@ TITLE_JUNK_PREFIXES: tuple[re.Pattern[str], ...] = (
     # Lista de Deseos" (botón wishlist) cuando el selector toma el wrapper
     # completo. Strippear el prefijo entero.
     re.compile(r"^A[ñn]adir\s+a\s+la\s+Lista\s+de\s+Deseos\s+", re.IGNORECASE),
+    # Tiendanube/Cúspide AR — variante del botón wishlist: "Agregar a mi lista
+    # de deseos!" pegado al inicio del card. Mismo patrón que el de Panini ES.
+    re.compile(r"^Agregar\s+a\s+mi\s+lista\s+de\s+deseos!?\s*", re.IGNORECASE),
     # Pipoca & Nanquim (BR Magento) — botón "Lista de desejos" prefijo equivalente
     # al de Panini ES. También cubre "Adicionar à Lista" genérico de Magento BR.
     re.compile(r"^Lista\s+de\s+desejos\s+", re.IGNORECASE),
@@ -2904,13 +2907,29 @@ _ULTRA_RARE_PATTERNS: tuple[re.Pattern[str], ...] = (
 #   DE: "limitiert auf N Exemplare/exemplaren" (forma alemana)
 #   EN: "limited to N numbered copies" (adjetivo numbered opcional)
 #   Unidades nuevas: pezzi (IT), ejemplares (ES), exemplaren (DE)
+#   PT-BR: "cópias" (con acento en la o) además de "copias/copies/copie".
 _PRINT_RUN_RE = re.compile(
     r'(?:(?:limited|limitata?|limitée?|limitad[oa]|limitiert)\s+(?:a|to|à|auf|di)|in\s+sol[ei]|stampat[oa]\s+in\s+sol[ei])'
     r'\s+(\d[\d.,]*)\s*'
     r'(?:numbered\s+)?'
-    r'(?:cop[iíy]e?s?|exempla[ir]res?|exemplaren?|esemplari|pezzi|st[üu]ck|unidades|ejemplares|pi[èe]ces)',
+    r'(?:c[óo]p[iíy]e?s?|exempla[ir]res?|exemplaren?|esemplari|pezzi|st[üu]ck|unidades|ejemplares|pi[èe]ces)',
     re.I,
 )
+
+# IT: "N copie numerate" (numbered copies) sin lead-in "limitat-": la sola
+# mención de copie NUMERATE es evidencia de tirada numerada. Se folda en
+# _extract_print_run para que aplique la cascada ≤500 (ultra) / ≤2500 (super).
+_PRINT_RUN_NUMERATE_RE = re.compile(r'\b(\d[\d.,]*)\s+copie\s+numerate\b', re.I)
+
+# Cupo de compra por persona (NO es tirada): "limited to 2 copies per person",
+# "par personne", "pro Person" y la forma JP "お一人様N点限り" / "お1人様…"
+# (donde el número va DESPUÉS del marcador). Un cupo por persona es un límite de
+# COMPRA, no evidencia de escasez de la edición (falso ultra_rare).
+_PER_PERSON_QUOTA_RE = re.compile(
+    r'(?:per|par|pro)\s+(?:person|persona|customer|order|household|personne)',
+    re.I,
+)
+_JP_PER_PERSON_RE = re.compile(r'お\s*(?:一|1)\s*人様')
 
 # Contexto inmediato que indica firma IMPRESA (en una lámina/postal de regalo),
 # no un ejemplar firmado a mano. Caso real: Capitán Harlock Letrablanka —
@@ -2949,6 +2968,9 @@ _SINGLE_RUN_KEYWORDS = (
     "no se reimprimirá", "no volverá a imprimirse",
     # ES: formulaciones directas de no-reimpresión
     "no habrá reimpresiones", "no se reimprime",
+    # ES: tirada limitada / sin reimpresión (con y sin acento; el text de
+    # derive_rarity_tier es lower() pero NO strip de acentos).
+    "tirada limitada", "sin reimpresión", "sin reimpresion",
     "single print run", "one print run only",
     "limited to a single print",
     # First-print-only bonuses (el libro se reimprime, el bonus no)
@@ -2968,6 +2990,11 @@ _SINGLE_RUN_KEYWORDS = (
     # FR: política editorial oficial (Pika FAQ 2026): "les éditions limitées et les
     # éditions collectors ne sont pas réimprimées" — misma convención que 限定版 JP.
     "édition collector", "coffret collector",
+    # KR: 한정판 (LE de fábrica con ISBN propio) / 초회한정 (first-print-only).
+    # NO 한정 a secas (sobre-matchea: aparece en frases no-escasez). El signal
+    # `limited` ya existe para estas keywords (ver detect signals KR), pero
+    # derive_rarity_tier no consume ese signal — la evidencia entra acá.
+    "한정판", "초회한정",
     # Explicit sold-out / agotado en editorial
     "verlagsvergriffen", "épuisé éditeur",
 )
@@ -3035,14 +3062,35 @@ def _is_reference_only_source(source: str) -> bool:
 
 
 def _extract_print_run(text: str) -> int | None:
-    """Extract explicit print run from text, e.g. 'limited to 216 copies' → 216."""
+    """Extract explicit print run from text, e.g. 'limited to 216 copies' → 216.
+
+    Guardas contra falsos positivos:
+    - Cupo de compra por persona ("limited to 2 copies per person", "par
+      personne", "お一人様2点限り"): es un límite de COMPRA, no la tirada → None.
+    - Backstop: descarta print runs < 10 (no existen tiradas retail de <10
+      ejemplares; un número tan chico casi siempre es un cupo/typo).
+
+    También reconoce "N copie numerate" (IT, sin lead-in "limitat-").
+    """
     m = _PRINT_RUN_RE.search(text)
     if not m:
+        m = _PRINT_RUN_NUMERATE_RE.search(text)
+    if not m:
+        return None
+    # Cupo por persona en el contexto inmediato del match → no es tirada.
+    # Latin: el marcador ("per person"…) va DESPUÉS del número; JP: お一人様 va
+    # ANTES (cubrimos ambas direcciones mirando una ventana alrededor del match).
+    tail = text[m.end():m.end() + 24]
+    window = text[max(0, m.start() - 16):m.end() + 24]
+    if _PER_PERSON_QUOTA_RE.search(tail) or _JP_PER_PERSON_RE.search(window):
         return None
     try:
-        return int(m.group(1).replace(",", "").replace(".", ""))
+        run = int(m.group(1).replace(",", "").replace(".", ""))
     except (ValueError, AttributeError):
         return None
+    if run < 10:
+        return None
+    return run
 
 
 def derive_rarity_tier(
@@ -3120,7 +3168,11 @@ def derive_rarity_tier(
         return "rare"
     if any(t in src for t in _TOKUTEN_SOURCES):
         return "rare"
-    if any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
+    # Keyword de no-reimpresión (_SINGLE_RUN_KEYWORDS): evidencia de escasez
+    # SALVO que el stock esté verificado in_stock (guard red team). Si podemos
+    # comprarlo hoy, la convención de "no se reimprime" no lo hace escaso:
+    # p. ej. un 限定版 JP todavía disponible en la tienda → common, no rare.
+    if stock_status != "in_stock" and any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
         return "rare"
     if any(p.search(text) for p in _SINGLE_RUN_PATTERNS):
         return "rare"
@@ -4731,20 +4783,39 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def backup_and_rotate(path: Path, label: str, max_keep: int = 3) -> Path:
+def backup_and_rotate(path: Path, label: str, max_keep: int = 3,
+                      timestamped: bool = False) -> Path:
     """Crea un backup de `path` en data/backups/<filename>/ y rota los más viejos.
 
-    El backup se guarda como data/backups/<filename>/<filename>.pre-<label>-bak.
-    Si ya hay `max_keep` o más backups en esa carpeta, borra los más viejos
-    hasta dejar exactamente max_keep (incluyendo el recién creado).
+    Default (`timestamped=False`, comportamiento histórico intacto): slot FIJO
+    `data/backups/<filename>/<filename>.pre-<label>-bak`. Cada llamada lo pisa y
+    la rotación ordena TODA la carpeta por mtime y deja max_keep — así los
+    backups rotativos del scrape no se acumulan.
+
+    Con `timestamped=True`: el nombre incluye timestamp
+    `<filename>.<YYYYmmdd-HHMMSS>.pre-<label>-bak`, así llamadas sucesivas NO se
+    pisan entre sí; la rotación poda SÓLO por el glob de ese patrón (mismo label)
+    conservando los max_keep más recientes, sin tocar los slots fijos de otros
+    labels. Útil para snapshots que deben conservarse (no pisarse) entre corridas.
+
     Crea las carpetas necesarias si no existen. Devuelve el Path del backup creado.
     """
     backups_dir = path.parent / "backups" / path.name
     backups_dir.mkdir(parents=True, exist_ok=True)
-    dest = backups_dir / f"{path.name}.pre-{label}-bak"
-    dest.write_bytes(path.read_bytes())
-    # Rotar: ordenar por mtime, borrar los más viejos
-    family = sorted(backups_dir.iterdir(), key=lambda f: f.stat().st_mtime)
+    if timestamped:
+        ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = backups_dir / f"{path.name}.{ts}.pre-{label}-bak"
+        dest.write_bytes(path.read_bytes())
+        # Rotar SÓLO los backups timestamped de este label (no los slots fijos).
+        family = sorted(
+            backups_dir.glob(f"{path.name}.*.pre-{label}-bak"),
+            key=lambda f: f.stat().st_mtime,
+        )
+    else:
+        dest = backups_dir / f"{path.name}.pre-{label}-bak"
+        dest.write_bytes(path.read_bytes())
+        # Rotar: ordenar por mtime, borrar los más viejos (toda la carpeta).
+        family = sorted(backups_dir.iterdir(), key=lambda f: f.stat().st_mtime)
     for old in family[:-max_keep]:
         old.unlink()
     return dest
@@ -4928,6 +4999,32 @@ def consolidate_by_cluster(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [merge_cluster(groups[k]) for k in order]
 
 
+def description_src_hash(description: str) -> str:
+    """Huella de la `description` fuente de una traducción: sha1(description)[:12].
+
+    FUENTE ÚNICA de la fórmula. La escribe translate_descriptions.py como
+    `description_es_src_hash` al traducir, y el upsert la verifica para invalidar
+    traducciones obsoletas: si un re-scrape trae una `description` cuyo hash no
+    coincide con el guardado, la traducción `description_es` vieja quedó stale y
+    NO se preserva (se deja re-traducir). No reimplementar la fórmula en otro lado.
+    """
+    return hashlib.sha1((description or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _translation_is_stale(old: dict[str, Any], new_description: str) -> bool:
+    """True si la `description_es` de `old` quedó obsoleta frente a `new_description`.
+
+    Compara `description_es_src_hash` (= sha1 de la description que se tradujo)
+    contra el hash de la description entrante. Backward-compatible: si el row
+    viejo NO tiene el hash (traducciones previas a WO-B) → False (nunca stale,
+    comportamiento sticky de siempre intacto).
+    """
+    old_hash = old.get("description_es_src_hash")
+    if not old_hash:
+        return False
+    return old_hash != description_src_hash(new_description)
+
+
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     """Upsert por URL normalizada: una línea por item único en disco.
 
@@ -5019,8 +5116,17 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # traducciones escritas por translate_descriptions.py. Las traducciones
         # también están en _CURATED_FIELDS (para items con standardized_at),
         # pero el sticky cubre TODOS los items independientemente del flag.
-        if old and old.get("description_es") and not row.get("description_es"):
+        # Guard de traducción stale (WO-B): si el re-scrape trae una
+        # `description` distinta de la que se tradujo (hash no coincide), NO
+        # preservamos la traducción vieja — se deja re-traducir (y se descarta el
+        # hash stale, que el row entrante no trae). Sin hash → sticky de siempre.
+        if old and old.get("description_es") and not row.get("description_es") \
+                and not _translation_is_stale(old, row.get("description") or ""):
             row["description_es"] = old["description_es"]
+            # Preservar el hash junto a la traducción para que futuros re-scrapes
+            # puedan volver a validar (el scraper crudo nunca lo trae).
+            if old.get("description_es_src_hash") and not row.get("description_es_src_hash"):
+                row["description_es_src_hash"] = old["description_es_src_hash"]
         # slug es sticky para TODOS los items (no sólo estandarizados): lo
         # asigna generate_slugs.py en curación y el scraper nunca lo trae.
         # Sin esto un re-scrape deja slug=None → violación SLUG (gotcha #65).
@@ -5113,9 +5219,20 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             existing[key] = merged
         elif old and old.get("standardized_at"):
             merged = dict(row)
+            # Guard de traducción stale (WO-B): si la description cambió, la
+            # description_es curada quedó obsoleta → no restaurarla ni su hash
+            # (se deja re-traducir). El resto de campos curados se preservan.
+            stale_tr = _translation_is_stale(old, row.get("description") or "")
             for field in _CURATED_FIELDS:
+                if field == "description_es" and stale_tr:
+                    continue
                 if old.get(field) not in (None, ""):
                     merged[field] = old[field]
+            # description_es_src_hash no está en _CURATED_FIELDS: preservarlo
+            # explícitamente cuando la traducción sigue vigente (para revalidar
+            # en el próximo re-scrape); descartarlo cuando quedó stale.
+            if not stale_tr and old.get("description_es_src_hash"):
+                merged["description_es_src_hash"] = old["description_es_src_hash"]
             # Gotcha #65: la fila cruda trae cluster_key de tier fuzzy/url:.
             # Con edition_key/volume curados ya restaurados, re-derivar acá
             # devuelve el tier edition: y mantiene la invariante CLKEY
@@ -7361,6 +7478,21 @@ def rebuild_edition_key_prefix(edition_key: str, series_key: str) -> str | None:
     return f"{series_key}-{pub}-{slug}-{country}{suffix}"
 
 
+# Rangos CJK + Hangul + Kana (para detectar títulos no-latinos en el tier guard).
+_CJK_RE = re.compile(
+    r'[぀-ヿ'   # Hiragana + Katakana
+    r'㐀-䶿'    # CJK Ext A
+    r'一-鿿'    # CJK Unified
+    r'豈-﫿'    # CJK Compatibility
+    r'가-힣]'   # Hangul
+)
+
+
+def _has_cjk(text: str) -> bool:
+    """True si el texto contiene ideogramas CJK, kana japonés o hangul coreano."""
+    return bool(_CJK_RE.search(text or ""))
+
+
 def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     """Asigna heurísticamente `series_key`, `edition_key`, etc. desde el title.
 
@@ -7471,6 +7603,23 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     else:
         confidence_tier = 3
 
+    # Guard red team (resolución CJK dudosa): si el título es CJK/Hangul pero la
+    # serie canónica salió de un token latino MINORITARIO del título, la
+    # resolución no es confiable para auto-estandarizar → sacarlo de Tier 1 a
+    # Tier 2 (que el LLM la valide). Caso real: "冴えない彼女の育てかた 深崎暮人画集
+    # 上 Flat." resolvía series_key='flat' (4 chars, el único latín del título).
+    # NO degrada bilingües con match latino sustancial ("ワンピース ONE PIECE" →
+    # 'one-piece' sigue Tier 1): el owner paga tokens solo con ambigüedad real.
+    if confidence_tier == 1 and _has_cjk(title):
+        key_latin = re.sub(r"[^a-z0-9]", "", series_key.lower())
+        title_latin = re.sub(r"[^a-z0-9]", "", title.lower())
+        minority = (
+            len(key_latin) < 5
+            or (bool(title_latin) and len(key_latin) / len(title_latin) < 0.30)
+        )
+        if minority:
+            confidence_tier = 2
+
     return {
         "series_key": series_key,
         "series_display": series_display,
@@ -7512,7 +7661,14 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "published_at": candidate.published_at,
         "description": candidate.description,
         "content_hash": candidate.content_hash,
-        "release_date": candidate.release_date,
+        # Guardia universal de fecha: normaliza en el sink de escritura para que
+        # NINGÚN camino (retailers JP, wikis Sumikko/Rakuten/KADOKAWA/Sanyodo…)
+        # deje una fecha cruda ("2025/04/25 10:00:00", "2026年04月08日") en el
+        # campo persistido (gotcha #80). Es idempotente y no rompe la excepción
+        # tienda-vs-発売日 de fetch_metadata_from_detail: esa decide QUÉ fecha
+        # usar (viendo el componente horario crudo) ANTES de llegar acá; este
+        # guard sólo la lleva a ISO.
+        "release_date": normalize_release_date(candidate.release_date),
         "product_type": candidate.product_type,
         "author": clean_author(candidate.author),
         "stock_type": candidate.stock_type,

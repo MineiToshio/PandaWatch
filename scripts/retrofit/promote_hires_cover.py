@@ -43,7 +43,10 @@ if str(_RETROFIT) not in sys.path:
     sys.path.insert(0, str(_RETROFIT))
 
 import fetch_better_covers as fbc  # noqa: E402
-from manga_watch import backup_and_rotate  # type: ignore  # noqa: E402
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
 
 ITEMS = Path(__file__).resolve().parents[2] / "data" / "items.jsonl"
 IMAGES = Path(__file__).resolve().parents[2] / "data" / "images"
@@ -200,13 +203,17 @@ def _best_hires_idx(item: dict) -> tuple[int, int] | None:
     return best_k, best_px
 
 
-def run(items_path: Path, dry_run: bool) -> None:
+def run(items_path: Path, dry_run: bool, *, include_approved: bool = False) -> None:
     items = _load_items(items_path)
     promoted = 0
     examined = 0
+    skipped_approved = 0
 
     for it in items:
         if "_raw" in it:
+            continue
+        if is_approved(it) and not include_approved:
+            skipped_approved += 1
             continue
         imgs = it.get("images") or []
         if len(imgs) < 2:
@@ -234,6 +241,9 @@ def run(items_path: Path, dry_run: bool) -> None:
     slug_str = f"  ({examined} con portada <{LOW_PX_THRESHOLD // 1000}k px examinadas)"
     print(f"\n[promote_hires_cover] items examinados: {examined}{slug_str}")
     print(f"[promote_hires_cover] promovidos:       {promoted}")
+    if skipped_approved:
+        print(f"[promote_hires_cover] items aprobados saltados (usar --include-approved): "
+              f"{skipped_approved}")
 
     if dry_run:
         print("[DRY-RUN] no se escribió nada.")
@@ -258,6 +268,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Ruta a items.jsonl (default: data/items.jsonl)")
     p.add_argument("--dry-run", action="store_true",
                    help="Muestra los cambios sin escribir.")
+    p.add_argument("--include-approved", action="store_true",
+                   help="También promueve la portada de items aprobados (golden records). "
+                        "Por defecto se saltean: promover intercambia images[0] (la portada) "
+                        "sin cola de revisión.")
     return p.parse_args()
 
 
@@ -267,4 +281,5 @@ if __name__ == "__main__":
     run(
         items_path=root / args.items,
         dry_run=args.dry_run,
+        include_approved=args.include_approved,
     )

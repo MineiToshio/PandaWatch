@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 116 known gotchas
+## The 125 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1107,3 +1107,131 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     <autor-BD>" SÍ matchea el STRONG hint `\bL['’]?art\s+de\b` de `is_likely_manga` y colaría;
     si aparece, agregar esa franquicia a `data/comics_blacklist.yml` (ficha:
     `docs/scraper/sources/fr-glenat-artbooks.md`).
+117. **Cupo de compra "por persona" simulaba tirada limitada (falso `ultra_rare`/`super_rare`,
+    2026-07-07).** `_extract_print_run()` tomaba cualquier "limited to N copies" sin mirar el
+    contexto — pero "limited to 2 copies **per person**" / "**par personne**" / お一人様2点限り
+    (JP, el marcador va ANTES del número) es un límite de COMPRA, no evidencia de escasez de
+    la EDICIÓN. Fix: ventana de contexto alrededor del match (`_PER_PERSON_QUOTA_RE` mira la
+    cola en latín, `_JP_PER_PERSON_RE` mira antes del número en JP) descarta el match si hay
+    marcador de cupo cerca. Piso adicional: print run < 10 se descarta (ninguna tirada retail
+    real es de <10 ejemplares, casi siempre es un cupo/typo). Complementario: la keyword de
+    no-reimpresión (`_SINGLE_RUN_KEYWORDS`, incluye 限定版/한정판/tirada limitada/sin
+    reimpresión) YA NO fuerza `rare` si `stock_status == "in_stock"` VERIFICADO — si se puede
+    comprar hoy, la convención "no se reimprime" no lo hace escaso. Tests: `test_audit_wo_a.py`.
+118. **`description_es=""` no distinguía "ya está en español" de "la API de traducción
+    falló" (2026-07-07).** `translate_descriptions.py` escribía `description_es=""` en ambos
+    casos — el original ya en ES (skip legítimo) Y un fallo total de DeepL+Google (excepción o
+    resultado vacío). Como la key queda "presente", el item se marcaba PROCESADO para siempre
+    y la traducción real nunca se reintentaba (fallos de red silenciosos se perdían). Fix:
+    `translate_to_es()` devuelve un `TranslationResult` tri-estado (`_ST_TRANSLATED` /
+    `_ST_ALREADY_ES` / `_ST_FAILED`); un fallo NO escribe la key (reintento natural en la
+    próxima corrida) + WARN por slug/servicio/error a stderr. Flag `--retry-empty` recupera los
+    items que ya habían quedado mal marcados como "ya-ES" antes del fix (reprocesa sólo
+    `description_es==""` cuya `description` NO detecta como español). Ver también gotcha #119
+    (mismo script, bug de la cola de este mismo texto). Tests: `test_audit_wo_b.py`.
+119. **Junk de tienda al INICIO de la description rompía la traducción — el regex asumía que
+    el botón de carrito siempre iba de COLA (2026-07-07, IT - Funside Variant).** El regex
+    viejo (`_IT_JUNK_SUFFIX`, ancla `$` + `.*` greedy con `re.DOTALL`) borraba desde el primer
+    match de "Aggiungi al Carrello" hasta el final — asumía que el botón siempre aparece al
+    FINAL del texto. Funside Variant antepone el botón al PRINCIPIO
+    ("Sconto Aggiungi al carrello Confrontare {título} Prezzo…"), así que el regex se comía la
+    description ENTERA y `description_es` quedaba como "Descuento" (o vacío). Fix:
+    `_strip_it_cart_suffix()` sólo corta el match si (1) arranca dentro de los últimos
+    `_IT_TAIL_WINDOW` (150) caracteres del texto Y (2) queda contenido sustancial
+    (`_IT_MIN_BODY_BEFORE`, 40 chars) ANTES del match — si el botón aparece temprano, se deja
+    intacto (no es cola real). Ficha: `docs/scraper/sources/it-funside-variant.md`. Tests:
+    `test_audit_wo_b.py`.
+120. **Canonicals DUPLICADAS en `series_aliases.yml` que colapsan a la MISMA forma normalizada
+    quedan sombreadas para siempre (2026-07-07, variante de #70 con detección nueva).** El
+    resolver (`series_aliases._build_lookup`) indexa cada canonical por su forma normalizada
+    EXACTA; si dos entradas canónicas distintas (acuñadas en corridas separadas del skill de
+    enrichment) normalizan idéntico, el lookup sólo puede mapear a la PRIMERA declarada — la
+    segunda queda invisible para siempre (silent data loss, sin error ni warning). Fix:
+    `unmapped_series.find_canonical_duplicates()` detecta los pares vía comparación EXACTA
+    post-`_normalize` (NO substring — "gto" y "gto-paradise-lost" no colisionan) y los reporta
+    en `unmapped_series.py --json` bajo `canonical_duplicates`; son insumo para un merge
+    gateado manual (Lote B), no se auto-fusionan. Snapshot de regresión con los 30 pares
+    conocidos del corpus real. Tests: `test_audit_wo_h.py`.
+121. **Guard `approved_at` faltante en UN paso de la cadena de agrupación fragmenta el cluster
+    de un golden record (2026-07-07).** Si un retrofit de la cadena de listadomanga (país=
+    edición, coleccion=edición, colisiones de título, dedup de carrusel…) saltea la fila
+    aprobada (correcto, no debe pisarla) pero re-deriva sus HERMANAS (misma edición, sin
+    aprobar), la fila aprobada termina con un `edition_key`/`cluster_key` VIEJO mientras sus
+    hermanas migran al esquema NUEVO — el mismo producto se fragmenta en 2 cards, y un delta
+    futuro que llegue con la identidad NUEVA ya no consolida contra la fila aprobada (el
+    `approved_at` queda huérfano en una fila stale). Fix: guard `is_approved()` homogéneo +
+    flag `--include-approved` en los 13 scripts de imagen/agrupación de listadomanga
+    (`mirror_images` es la única excepción real — su backfill es aditivo, nunca reordena/
+    reemplaza, así que se aplica igual a aprobados) + test estructural anti-drift que verifica
+    que los 13 mencionen `approved`/`is_approved` y expongan `--include-approved` + **paso 7
+    nuevo del enforcer** (`apply_approvals.py` al FINAL de la cadena): re-materializa el log
+    durable `data/approvals.jsonl` matcheando primero por `cluster_key` y, si cambió, fallback
+    por `url` — así el `approved_at` siempre termina en la fila que HOY representa ese
+    producto. Es best-effort (no vuelve a FUSIONAR dos filas ya fragmentadas — eso requeriría
+    re-clusterizar), pero evita que la aprobación quede huérfana. Tests: `test_audit_wo_d.py`.
+122. **El LLM de standardize expulsaba items a `non_manga_blacklist.jsonl` por su propio
+    veredicto, sin pasar por los gates deterministas (2026-07-07).** Un `is_manga=false` del
+    LLM (falso negativo en un título ambiguo/CJK) borraba el item del corpus directamente —
+    sin que `filter_non_manga`/`is_likely_manga` (los gates deterministas y auditables) lo
+    hubieran rechazado nunca. Fix: **el LLM ya NO expulsa** — `is_manga=false` deja el item
+    PENDIENTE (sin `standardized_at`) y lo registra en `unmapped_series.jsonl` (reason
+    `llm_non_manga`) para curación manual; son los gates deterministas del pipeline los que
+    deciden la expulsión real en la próxima corrida. Excepción dura: un item con source
+    Mangavariant NUNCA se expulsa — el veredicto se ignora (WARN) y sigue el flujo normal
+    (regla ya existente, ahora también blindada acá). Complementario: `standardize_attempts`
+    escala a curación manual (reason `standardize_exhausted`) tras
+    `MAX_STANDARDIZE_ATTEMPTS=3` intentos sin key usable, para que un título irromanizable no
+    gaste Tier 3 en loop infinito. Tests: `test_audit_wo_c.py`.
+123. **`normalize_release_date()` existía pero no era guardia UNIVERSAL — fechas crudas
+    seguían colándose por caminos nuevos (regresión de #80, 2026-07-07, 113 filas).** La
+    normalización a ISO se aplicaba en varios puntos de asignación específicos, pero no como
+    guardia en el SINK final de escritura (`candidate_to_json`) — cualquier fuente/wiki nueva
+    (KADOKAWA, Rakuten, wikis JP) que asignara `release_date` por un camino no cubierto colaba
+    una fecha cruda (`"2025/04/25 10:00:00"`, `"2026年04月08日"`) directo al campo persistido.
+    Fix: `candidate_to_json` ahora envuelve INCONDICIONALMENTE `candidate.release_date` en
+    `normalize_release_date()` — es idempotente (una fecha ya ISO no cambia) y no pisa la
+    excepción tienda-vs-発売日 de `fetch_metadata_from_detail` (esa decide QUÉ fecha usar,
+    viendo el componente horario crudo, ANTES de llegar acá; este guard sólo la lleva a ISO).
+    Detectado por la invariante WARN nueva `DATEISO` de `validate_corpus.py`. Tests:
+    `test_audit_wo_a.py`.
+124. **`upscale_images.py` rechazaba TODO upscale sobre el espejo normalizado — el parser de
+    píxeles caía a un proxy de TAMAÑO DE ARCHIVO para formatos que no reconoce (2026-07-07,
+    P27).** Desde que el espejo normaliza toda imagen a AVIF Q60 (2026-06-15), la salida del
+    upscaler (que ahora pasa por `image_store.normalize_image` antes de escribirse, en vez de
+    guardar el PNG lossless crudo) es AVIF — un formato que el parser de píxeles por bytes NO
+    sabe leer, así que caía al fallback final (`len(data)`, tamaño de archivo como proxy). Un
+    AVIF comprimido pesa sistemáticamente MENOS bytes que sus píxeles reales, así que el gate
+    de ganancia (`new_px <= old_px`) rechazaba el upscale SIEMPRE, aunque la imagen fuera
+    objetivamente más grande. Fix: `_pixels_from_bytes()` agrega un fallback a PIL
+    (`Image.open(io.BytesIO(data)).size`) para AVIF y cualquier otro formato no cubierto por
+    el parser binario, ANTES de caer al proxy de tamaño de archivo. Cada entry upscaleada de
+    `images[]` se marca `upscaled: true` (idempotencia: nunca se re-upscalea un upscale, señal
+    primaria — más robusta que inferir por tamaño). Tests: `test_audit_wo_e.py`.
+125. **Serie resuelta desde un token LATINO MINORITARIO de un título CJK pasaba Tier 1 (0
+    tokens LLM) con series_key potencialmente equivocada (2026-07-07).** Caso real: "冴えない
+    彼女の育てかた 深崎暮人画集 上 Flat." resolvía `series_key='flat'` — el ÚNICO fragmento
+    latino del título (4 caracteres) — y el resto del título es japonés puro; como la
+    resolución "tenía éxito" (encontró algo en `series_aliases.yml`), `confidence_tier=1`
+    mandaba el item directo a auto-standardize SIN revisión LLM, arriesgando una key
+    incorrecta silenciosa. Fix: guard en `derive_series_metadata()` — si el título contiene
+    CJK/Hangul/Kana (`_has_cjk()`) Y la key resuelta viene de un token latino MINORITARIO
+    (`< 5 chars` o `< 30%` de la longitud del título en latín), degrada `confidence_tier` de 1
+    a 2 para que el LLM la valide. NO degrada bilingües con match latino sustancial
+    ("ワンピース ONE PIECE" → `one-piece` sigue Tier 1) — el owner paga tokens sólo con
+    ambigüedad real. Tests: `test_audit_wo_a.py`.
+126. **`series_aliases.py::log_unmapped_series` también escribía a `data/unmapped_series.jsonl`
+    REAL desde los tests — mismo patrón que el gotcha #105 de `serve.py`, distinto archivo
+    (2026-07-07).** Cualquier test que ejercite `candidate_to_json` (manga_watch.py) con un
+    `series_key` NO canónico (ej. un `Candidate` de fixture con título "Some Manga 1") dispara
+    `log_unmapped_series()`, y `_UNMAPPED_FILE` era una constante de módulo fija a
+    `data/unmapped_series.jsonl` — sin override, cada corrida de la suite completa dejaba +1
+    línea fantasma en el archivo real (confirmado: 2924→2925 líneas tras una sola corrida de
+    `test_audit_wo_a.py`). Fix: `_unmapped_target()` en `series_aliases.py` resuelve el path
+    en CADA llamada leyendo `MANGA_WATCH_DATA_DIR` — la MISMA env var que ya usa `serve.py`
+    (#105) — en vez de una constante congelada al import; así el fixture autouse existente
+    (`_isolate_serve_data_dir` en `tests/conftest.py`) aísla GRATIS también esta cola, sin
+    necesitar `importlib.reload` (a diferencia de `serve.py`, que sí lo necesita porque su
+    `_DATA_DIR` se congela al importar el módulo). Sin la env var, cae al `_UNMAPPED_FILE`
+    default — un test también puede seguir monkeypatcheando ese atributo directamente para un
+    path ad-hoc. Tests: `test_log_unmapped_series_appends_only_non_canonical` (test_extraction.py),
+    `tests/test_audit_loteb_prep.py`.

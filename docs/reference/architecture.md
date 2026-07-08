@@ -76,7 +76,7 @@ items.jsonl si necesitás precisión.
 
 | Métrica | Valor aprox. |
 |---|---|
-| Total items (1 fila por producto) | **13 421** (2026-06-12 pasada mundial 2: +HK 216, +TW 559, +VN 346, +TH 93, +CZ 4, +TR 10; antes 12 391 tras sesiones 3-4: +Seven Seas 111, +Kodansha US 108, +VIZ ~59, +PL 278, +KR 404, +DE ~100) |
+| Total items (1 fila por producto) | **13 493** (2026-07-07, tras la auditoría post-scrape; antes 13 421 — 2026-06-12 pasada mundial 2: +HK 216, +TW 559, +VN 346, +TH 93, +CZ 4, +TR 10; antes 12 391 tras sesiones 3-4: +Seven Seas 111, +Kodansha US 108, +VIZ ~59, +PL 278, +KR 404, +DE ~100) |
 | Movidos a non_manga_blacklist.jsonl (acum.) | ~684 |
 | Removidos por umbrella URL-gate (ATOM FR) | 21 (revista Manga-Sanctuary; ver gotcha #62) |
 | Removidos quirúrgicamente (junk confirmado) | 5 (respaldados en `data/diagnostics/items.audit_fp_removed-20260610.jsonl`) |
@@ -174,6 +174,32 @@ de parser deje stale (el cluster_key lmc se deriva de la URL): correr `validate_
 después de cualquier reparación de URLs y cerrar con `backfill_cluster_key`.
 
 
+**Cambios 2026-07-07 (auditoría post-scrape exhaustiva, full+delta — 8 work orders)**:
+(a) **`cluster_key`**: tier `isbn:` ELIMINADO (ver decisión #4 arriba) — el ganador de
+`merge_isbn_duplicates.py` ya no puede ser una fila con `edition_key` vacío ni un
+`series_key` con pinta de junk (scoring corregido); `generate_slugs.py` deriva el slug
+ISBN SIEMPRE desde `isbn13()` normalizado (mata el churn 10↔13 de 71 items). (b)
+**standardize**: el LLM ya NO expulsa a `non_manga_blacklist.jsonl` (gotcha #122);
+`standardize_attempts` escala a curación tras 3 intentos sin key usable; `product_type`
+validado contra el enum. (c) **rareza**: guard `stock_status=="in_stock"` sobre las
+keywords de no-reimpresión, cupo "por persona" descartado como falso print run, piso
+<10, keywords KR (한정판/초회한정) — gotcha #117. (d) **golden records**: guard
+`approved_at` homogéneo (`--include-approved`) en 13 retrofits de imagen/agrupación de
+listadomanga + paso 7 nuevo del enforcer (`apply_approvals.py` al final, anti-
+fragmentación) — gotcha #121. (e) **imágenes**: `upscale_images.py` pasa por
+`normalize_image` (AVIF) y marca `upscaled:true`; clave de dedup unificada entre
+`manga_watch._img_stem`/`web/index.html`/`web-next/lib/images.ts` (gap conocido:
+sufijos WordPress `-NxM` con guion medio NO se strippean, sólo los de Shopify con
+guion bajo). (f) **traducción**: fallo de API ya no se confunde con "ya está en
+español" (gotcha #118); `description_es_src_hash` invalida la traducción sticky si la
+`description` cruda cambió. (g) **pipeline**: `validate_corpus.py` gana `--file` + 10
+invariantes WARN nuevas (DATEISO/PTYPE_ENUM/LANG_ENUM/VOLRANGE/EKMALFORMED/SLUGUNIQ/
+SLUGFMT/STDKEYS/MIRRORREF/SRCURL); `scrape_delta.sh`/`scrape_full.sh` cuarentenan +
+restauran el corpus automáticamente si `validate_corpus` detecta violaciones duras
+post-run; `build_web.py` gana su propio gate (`--force` para saltearlo). Detalle
+completo: [PIPELINE-WALKTHROUGH.md](../scraper/PIPELINE-WALKTHROUGH.md), gotchas
+#117-#125.
+
 ## Modelo de rareza — `derive_rarity_tier()` en `set_rarity.py`
 
 Rediseño 2026-06-10: **default-common** (antes default-rare con 54% de precisión medida).
@@ -184,7 +210,7 @@ Rediseño 2026-06-10: **default-common** (antes default-rare con 54% de precisi�
 |---|---|
 | `ultra_rare` | Numerado/firmado A MANO (`_has_hand_signed` con guard de firma impresa), lotería-evento, o print run ≤ 500 |
 | `super_rare` | Print run ≤ 2500, o `retailer_exclusive` + `out_of_stock` |
-| `rare` | Print run > 2500 y confirmado agotado; o `retailer_exclusive` sin verificar (con `in_stock` VERIFICADO sigue la cascada → normalmente common; decisión owner, caso Ichi the Witch); o tokuten; o keyword de no-reimpresión (`_SINGLE_RUN_KEYWORDS`: incluye 限定版, 特装版 y similares; se removió la familia genérica "limited edition" para evitar FP); o patrón de tirada única (`_SINGLE_RUN_PATTERNS`); o **fallback de fuente de referencia** (ver abajo) |
+| `rare` | Print run > 2500 y confirmado agotado; o `retailer_exclusive` sin verificar (con `in_stock` VERIFICADO sigue la cascada → normalmente common; decisión owner, caso Ichi the Witch); o tokuten; o keyword de no-reimpresión (`_SINGLE_RUN_KEYWORDS`: incluye 限定版, 特装版, 한정판/초회한정 KR y similares; se removió la familia genérica "limited edition" para evitar FP) **SALVO `stock_status == "in_stock"` VERIFICADO** (guard 2026-07-07, gotcha #117 — si se puede comprar hoy, la convención "no se reimprime" no lo hace escaso: un 限定版 JP todavía en stock → `common`, no `rare`); o patrón de tirada única (`_SINGLE_RUN_PATTERNS`); o **fallback de fuente de referencia** (ver abajo) |
 | `common` | **Default** — sin evidencia de escasez |
 
 ### Fallback de fuentes de referencia (2026-06-10, decisión owner)
@@ -217,6 +243,12 @@ basta el param `source`.
   excluido — significa "de autoría"), "convention exclusive", 会場限定/イベント限定 JP.
 - `set_rarity.py` NUNCA recalcula items con `rarity_verified_at` (ground truth de la
   skill watch-validate-rarity), ni siquiera con `--force`; override: `--include-verified`.
+- **Guards de `_extract_print_run()` (2026-07-07, gotcha #117)**: descarta un match si
+  el contexto inmediato es un cupo de compra "por persona" (`_PER_PERSON_QUOTA_RE` EN/
+  FR/DE, `_JP_PER_PERSON_RE` お一人様N点限り — el marcador va ANTES del número en JP) y
+  descarta cualquier print run < 10 (ninguna tirada retail real es tan chica). También
+  reconoce IT "N copie numerate" sin el lead-in "limitat-" (`_PRINT_RUN_NUMERATE_RE`) y
+  PT "cópias" (con acento).
 
 ### Campo `stock_status`
 `''` | `'in_stock'` | `'out_of_stock'` (+ `stock_checked_at` ISO UTC). Hoy lo escribe
@@ -241,6 +273,25 @@ el fallback de fuentes de referencia movió otros 996 (Mangavariant-only sin evi
 El piloto de `/watch-validate-rarity` (2026-06-11) verificó 12 ediciones italianas:
 6 exclusivas agotadas promovidas a super_rare, 1 democión a common, 5 rare confirmados.
 
+
+## Política de `description_es` — staleness por hash (2026-07-07)
+
+`translate_descriptions.py` es sticky por diseño (`_CURATED_FIELDS`): un re-scrape no
+pisa `description_es` con vacío. El problema: si la `description` CRUDA de la fuente
+cambia (re-scrape trae texto nuevo), la traducción vieja queda obsoleta pero el sticky
+la preservaba igual — mostrando una traducción de un texto que ya no es el actual.
+
+**Fuente única de la fórmula**: `description_src_hash(text) = sha1(text)[:12]`, definida
+en `manga_watch.py` (la escribe también `translate_descriptions.py` bajo el mismo
+nombre/formato — contrato entre ambos). Al traducir (o marcar `description_es=""` por
+"ya está en español"), se escribe `description_es_src_hash` junto al resultado. En el
+merge/upsert (`append_jsonl`), antes de aplicar el sticky de `description_es`,
+`_translation_is_stale(old, new_description)` compara el hash guardado contra
+`sha1(new_description)`: si no coincide, la traducción vieja NO se preserva (se deja
+re-traducir) y el hash stale se descarta. **Backward-compatible**: un row sin el hash
+(traducciones previas a este cambio) nunca se considera stale — comportamiento sticky
+de siempre intacto. El mismo guard aplica en el camino de items `standardized_at`
+(`_CURATED_FIELDS` salta `description_es` si `stale_tr`).
 
 ## The 7 design decisions you MUST understand
 
@@ -308,24 +359,47 @@ build_web (`_group_by_cluster_key`) y el JS `dedupByUrl()`. La agregación se
 materializa al ingestar (decisión #1) pero la presentación igual agrupa por
 cluster_key como red de seguridad y une los `sources[]` guardados.
 
-Cuatro shapes, en orden de prioridad:
+**Tiers REALES (verificado en código, 2026-07-07): `lmc:` > `edition:` > `fuzzy:` >
+`url:`. NO hay tier `isbn:`** — se ELIMINÓ (ver abajo); si ves un doc o slug viejo que
+lo menciona, está desactualizado.
+
+0. **`lmc:<coleccion>:<kind>:<vol>`** — SOLO items de listadomanga (`coleccion.php?id=N`).
+   Tier 0 porque se evalúa ANTES que `edition_key`: toda `/coleccion` es una edición
+   (regla dura #48) y el dedup interno de listadomanga necesita distinguir variantes
+   del mismo volumen (regular-34 vs especial-34) que compartirían `edition_key` — el
+   `kind` viene del synthetic URL (`&item=<kind>-<vol>`) o de `lm_kind` (legacy). Los
+   items de listadomanga NUNCA se fusionan cross-fuente (verificado: 0 sources
+   externas), así que usar `lmc:` en vez de `edition_key` acá no rompe ningún merge
+   multi-fuente.
 1. **`edition:<edition_key>|<volume>`** — mismo edition_key + volume = mismo producto
    físico. **Prioritario sobre ISBN**: si una fuente tiene ISBN (PRH) y otra no (Dark
    Horse), mergean igual. El edition_key ya codifica publisher/market en su slug
    (`gon-norma-collector`). Crucial para boxes/artbooks sin volumen.
-2. **`isbn:<X>`** — fallback para items sin edition_key (legacy).
-3. **`fuzzy:<country>|<series>|<vol>|<variant_tier>|<publisher>`** — sin ISBN ni
-   edition_key. Los 5 componentes deben ser significativos (series ≥3 chars, country
-   non-empty, volume detectado); si no → standalone. **Discriminante = país, NO idioma
-   (fix 2026-07-07, gotcha #109)**: antes usaba `language`, y dos ediciones que
-   comparten idioma pero son mercados distintos (ES-España vs ES-México) podían
-   fusionarse en este tier ANTES de que el skill de estandarización les asigne
-   `edition_key` — la regla dura "país=edición" (#46) no debería tener una ventana sin
-   aplicar. Guard: `country` vacío → NO genera clave fuzzy (evita que todos los items
-   sin país detectado caigan en el mismo bucket) → cae al tier `url:`. Corpus actual: 0
-   claves fuzzy (todo lo existente ya tiene edition_key/ISBN); el fix protege scrapes
-   futuros antes de su primera pasada de estandarización, no requirió backfill.
-4. **`url:<url>`** — standalone, nunca agrupa (mejor 1 card por fuente que mergear cosas no relacionadas).
+2. **`fuzzy:<country>|<series>|<vol>|<variant_tier>|<publisher>`** — sin edition_key.
+   Los 5 componentes deben ser significativos (series ≥3 chars, country non-empty,
+   volume detectado); si no → standalone. **Discriminante = país, NO idioma (fix
+   2026-07-07, gotcha #109)**: antes usaba `language`, y dos ediciones que comparten
+   idioma pero son mercados distintos (ES-España vs ES-México) podían fusionarse en
+   este tier ANTES de que el skill de estandarización les asigne `edition_key` — la
+   regla dura "país=edición" (#46) no debería tener una ventana sin aplicar. Guard:
+   `country` vacío → NO genera clave fuzzy (evita que todos los items sin país
+   detectado caigan en el mismo bucket) → cae al tier `url:`. Corpus actual: 0 claves
+   fuzzy (todo lo existente ya tiene edition_key); el fix protege scrapes futuros
+   antes de su primera pasada de estandarización, no requirió backfill.
+3. **`url:<url>`** — standalone, nunca agrupa (mejor 1 card por fuente que mergear cosas no relacionadas).
+
+**ISBN NO se usa como criterio de fusión (removido 2026-07-07).** La premisa "un ISBN
+= una edición" es FALSA en manga: portadas variantes comparten ISBN, especial y normal
+comparten ISBN, y varios retailers (ej. Mangaline MX) reusan un mismo ISBN en toda su
+línea — caso real: `9788419177629` aparece tanto en *Devilman #3* como en *Mao Dante
+#1*, dos series distintas. Usar el ISBN pelado como clave de cluster fusionaba
+destructivamente ediciones/series distintas. El ISBN se CONSERVA en el row como
+metadata (búsqueda, enrichment); un item con `isbn` pero sin `edition_key` cae a la
+cascada fuzzy → url, que sí respeta la regla dura país+serie+volumen+tier+publisher.
+Consecuencia aguas abajo: `generate_slugs.py` Regla 1 (`cluster_key.startswith("isbn:")`
+→ `isbn-{X}`) es código LEGACY que ya no dispara para clusters nuevos (nunca se genera
+un `cluster_key` `isbn:` desde 2026-07-07); sigue en el código para no romper filas
+históricas que aún lo lleven sin re-derivar. Detalle: [FRD-006-slug-generation.md](../web-next/FRD-006-slug-generation.md).
 
 **Variant tier**: distintas fuentes detectan signal_types ligeramente distintos para
 el mismo producto, así que el set completo no serviría como discriminante.

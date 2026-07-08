@@ -21,6 +21,26 @@ duras y determinísticas. Este enforcer es la ÚNICA fuente de verdad de:
 Corré esto SIEMPRE DESPUÉS del skill de standardize (y el pipeline lo corre solo).
 Idempotente.
 
+Items aprobados y el paso 7 (WO-D, 2026-07-07): varios pasos de esta cadena
+(edition_display, fix_edition_country, unify_coleccion_edition,
+fix_listadomanga_title_collisions, dedup_carousel_images — ver `is_approved` en
+cada uno) SALTEAN las filas con `approved_at` (golden records) para no pisar
+metadata que el owner confirmó a mano. Riesgo: si esos pasos saltean la fila
+aprobada pero re-derivan sus HERMANAS (misma edición, sin aprobar), la fila
+aprobada puede terminar con un `edition_key`/`cluster_key` viejo mientras sus
+hermanas migran al nuevo esquema — el cluster se fragmenta en 2 cards para la
+misma edición, y un delta futuro que llegue con la identidad NUEVA ya no
+consolida contra la fila aprobada. El paso 7 (`apply_approvals.py`, fuente
+única — se invoca, no se copia su lógica) re-materializa el log durable de
+aprobaciones (`data/approvals.jsonl`) al FINAL de la cadena: matchea primero
+por `cluster_key` y, si cambió, hace fallback por `url` — así el flag
+`approved_at` siempre termina en la fila que HOY representa ese producto,
+aunque el cluster_key haya derivado durante la cadena. Es best-effort (no
+vuelve a FUSIONAR dos filas ya fragmentadas — eso requeriría re-clusterizar),
+pero evita que la aprobación quede huérfana en una fila stale. Idempotente
+(confirmado en apply_approvals.py: last-wins por clave, no-op si el estado ya
+coincide).
+
 Uso:
   .venv/bin/python scripts/retrofit/enforce_listadomanga_rules.py
 """
@@ -34,16 +54,26 @@ ITEMS = ROOT / "data" / "items.jsonl"
 RETRO = ROOT / "scripts" / "retrofit"
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from manga_watch import backup_and_rotate  # noqa: E402
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate, is_approved  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, is_approved  # noqa: E402
 
 
-def _recover_edition_display() -> int:
+def _recover_edition_display(include_approved: bool = False) -> tuple[int, int]:
     """edition_display = título oficial de la coleccion, recuperado del
-    `description` (`collection_title · edition · …`). Determinístico, sin red."""
+    `description` (`collection_title · edition · …`). Determinístico, sin red.
+
+    Items aprobados (`approved_at`) se saltean por defecto (WO-D 2026-07-07):
+    devuelve (n_recuperados, n_aprobados_saltados)."""
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
     n = 0
+    skipped_approved = 0
     for it in items:
         if "coleccion.php" not in (it.get("url", "") or ""):
+            continue
+        if is_approved(it) and not include_approved:
+            skipped_approved += 1
             continue
         desc = it.get("description", "") or ""
         official = desc.split(" · ")[0].strip()
@@ -57,7 +87,7 @@ def _recover_edition_display() -> int:
             for it in items:
                 fh.write(json.dumps(it, ensure_ascii=False) + "\n")
         tmp.replace(ITEMS)
-    return n
+    return n, skipped_approved
 
 
 def _run(script: str, *args: str) -> None:
@@ -79,7 +109,18 @@ def main() -> int:
                     help="Salta el dedup de portadas del carrusel (network-heavy). "
                          "Para el pipeline delta/full, que ya corre su propio "
                          "dedup_carousel_images en [4h].")
+    ap.add_argument("--include-approved", action="store_true",
+                    help="También re-deriva items aprobados (golden records) en los pasos "
+                         "de esta cadena que lo soportan (edition_display, país=edición, "
+                         "coleccion=edición, colisiones de título, dedup de portadas). Por "
+                         "defecto se saltean. Ver WO-D (2026-07-07) y el paso final "
+                         "'apply_approvals' más abajo.")
     args = ap.parse_args()
+    # Flag propagado a los pasos de ESTA cadena que ya soportan el guard is_approved
+    # (WO-D 2026-07-07). Los pasos que no son dominio de WO-D (fix_edition_key_anomalies,
+    # disambiguate_coleccion_editions, etc.) no lo reciben — su propio guard, si lo
+    # tienen, es responsabilidad de la ronda que los toque.
+    _approved_flag = ("--include-approved",) if args.include_approved else ()
     # Backup pre-enforce (convención del repo: data/backups/items.jsonl/, rota máx 3).
     # El enforcer reescribe items.jsonl vía su cadena de retrofits; un snapshot al
     # inicio permite restaurar si la cadena aborta a media pasada.
@@ -87,14 +128,14 @@ def main() -> int:
         bak = backup_and_rotate(ITEMS, "enforce-lmc")
         print(f"[enforce] 0) backup → {bak}")
     print("[enforce] 1) edition_display oficial (desde description, sin red)")
-    n = _recover_edition_display()
-    print(f"    edition_display recuperados: {n}")
+    n, skipped = _recover_edition_display(include_approved=args.include_approved)
+    print(f"    edition_display recuperados: {n}" + (f" (aprobados saltados: {skipped})" if skipped else ""))
     print("[enforce] 2) país = edición")
-    _run("fix_edition_country.py")
+    _run("fix_edition_country.py", *_approved_flag)
     print("[enforce] 2b) anomalías de edition_key (panini-es→panini, xx→país inferido)")
     _run("fix_edition_key_anomalies.py")
     print("[enforce] 3) una /coleccion = una edición (incl. fichas de tienda cross-source)")
-    _run("unify_coleccion_edition.py")
+    _run("unify_coleccion_edition.py", *_approved_flag)
     print("[enforce] 3-0) coleccion distinta = edición distinta (desambiguar -cNNNN, #57)")
     _run("disambiguate_coleccion_editions.py")
     print("[enforce] 3-1) colapsar filas base-url phantom en su tomo sintético (#56)")
@@ -106,7 +147,7 @@ def main() -> int:
     print("[enforce] 3a2) orden de Edición Especial: '{serie} {vol} Edición Especial'")
     _run("fix_especial_title_order.py")
     print("[enforce] 3b) desambiguar títulos de display que colisionan")
-    _run("fix_listadomanga_title_collisions.py")
+    _run("fix_listadomanga_title_collisions.py", *_approved_flag)
     print("[enforce] 3c1) slug de TIPO de edición por término del título (#69, no-lmc)")
     _run("canonicalize_edition_slugs.py")
     print("[enforce] 3c2) fusionar series_keys mecánicamente duplicadas (#70)")
@@ -135,9 +176,11 @@ def main() -> int:
         print("[enforce] 5) dedup de portadas del carrusel — SALTADO (--fast)")
     else:
         print("[enforce] 5) dedup de portadas del carrusel")
-        _run("dedup_carousel_images.py", "--all")
+        _run("dedup_carousel_images.py", "--all", *_approved_flag)
     print("[enforce] 6) slugs")
     _run("generate_slugs.py")
+    print("[enforce] 7) re-aplicar aprobaciones (anti-fragmentación)")
+    _run("apply_approvals.py")
     print("[enforce] LISTO — reglas de agrupación re-aplicadas.")
     return 0
 

@@ -398,10 +398,16 @@ Once all approved changes are applied, back up and clear the queue:
 .venv/bin/python -c "
 from scripts.manga_watch import backup_and_rotate
 from pathlib import Path
-backup_and_rotate(Path('data/feedback.jsonl'), 'review')
+backup_and_rotate(Path('data/feedback.jsonl'), 'review', timestamped=True)
 "
 : > data/feedback.jsonl
 ```
+
+`timestamped=True` (2026-07-07): cada corrida del skill guarda su backup con su
+PROPIO timestamp en vez de pisar el slot fijo `feedback.jsonl.pre-review-bak` — así
+no se pierde el histórico de corridas anteriores del skill (rota por el mismo label,
+conserva los 3 más recientes). Ver `docs/reference/conventions.md` y
+`scripts/retrofit/README.md` § Backups.
 
 **Do NOT truncate before all changes are applied.**
 

@@ -3,7 +3,7 @@
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Es una fuente **wiki** (módulo propio, sin entrada en `sources.yml`).
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -157,6 +157,15 @@ Parser: [`scripts/wikis/sumikko.py`](../../../scripts/wikis/sumikko.py).
   caracteres alfanuméricos/CJK. Auditado contra los 2671 items sumikko existentes: el
   gate sólo excluye los 2 falsos positivos confirmados (cero riesgo de falso negativo).
   Tests en `tests/test_wiki_parser_fixes.py` (`test_sk_*`).
+- **Churn de slug ISBN-10 ↔ ISBN-13 resuelto (2026-07-07)**: Sumikko identifica sus
+  productos por ISBN (§5.1) y su `cluster_key` cae en la cascada fuzzy/url (no tiene
+  `edition_key` propio hasta que el skill lo asigna) — el slug generado
+  (`generate_slugs.py`) podía oscilar entre `isbn-{10}` e `isbn-{13}` según qué fila
+  del cluster fuera el representante en cada corrida (churn medido: 71 items en TODO
+  el corpus, buena parte de origen Sumikko por su volumen). Fix (no específico de esta
+  fuente, aplica a `generate_slugs.py` en general): el slug ISBN ahora se deriva
+  SIEMPRE del ISBN-13 normalizado vía `manga_watch.isbn13()`, idempotente sin importar
+  qué variante de ISBN traiga la fila. Ver `docs/web-next/FRD-006-slug-generation.md`.
 
 ---
 

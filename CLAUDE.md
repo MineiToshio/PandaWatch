@@ -169,8 +169,10 @@ cambio estructural, leé esa doc.
    SOFT → default). El orden importa.
 3. **Source purity `manga_only` vs `mixed`**: en mixed, sólo pasa lo que tiene STRONG
    manga hint (la comics blacklist aplica siempre).
-4. **Agrupación multi-fuente por `cluster_key`** (tier-based: `edition:` > `isbn:` >
-   `fuzzy:` > `url:`). Si cambiás la derivación → `backfill_cluster_key.py`.
+4. **Agrupación multi-fuente por `cluster_key`** (tier-based: `lmc:` > `edition:` >
+   `fuzzy:` > `url:`; `isbn:` ELIMINADO 2026-07-07 — el ISBN pelado repite entre
+   ediciones/series distintas en manga, fusionarlo era destructivo). Si cambiás la
+   derivación → `backfill_cluster_key.py`.
 5. **Live-fetch, no data embebida**: el dashboard hace `fetch()` de items.jsonl;
    correr siempre `serve.py` (no `file://`).
 6. **Concurrencia con ThreadPoolExecutor, NO asyncio** (`--workers` + `--per-host-limit`
@@ -258,9 +260,11 @@ strictly to prevent autocompact thrashing.
 
 ---
 
-Last updated: 2026-07-07. CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
+Last updated: 2026-07-07 (auditoría post-scrape exhaustiva full+delta — gist de la
+decisión #4 corregido: tiers reales `lmc:`>`edition:`>`fuzzy:`>`url:`, `isbn:`
+eliminado). CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
 histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 116 gotchas, convenciones, dashboard,
+referencia (file map, las 7 decisiones, las 125 gotchas, convenciones, dashboard,
 imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,

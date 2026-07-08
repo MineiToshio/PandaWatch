@@ -29,6 +29,10 @@ if "manga_watch" not in sys.modules or not hasattr(sys.modules.get("manga_watch"
     _mw_stub = types.ModuleType("manga_watch")
     _mw_stub.backup_and_rotate = _mock.MagicMock()  # type: ignore[attr-defined]
     _mw_stub.make_session = _mock.MagicMock()  # type: ignore[attr-defined]
+    # is_approved: WO-D (2026-07-07) agregó el guard de items aprobados al script;
+    # el import de nivel de módulo lo necesita aunque este archivo solo pruebe
+    # las funciones puras (derive_original_url / needs_same_cover_validation).
+    _mw_stub.is_approved = _mock.MagicMock(return_value=False)  # type: ignore[attr-defined]
     sys.modules["manga_watch"] = _mw_stub
 
 if "image_store" not in sys.modules:

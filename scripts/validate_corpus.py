@@ -42,6 +42,34 @@ Invariantes (cada una con su id corto):
          fila (cofre/posavasos/miniartbook de otro volumen; gotcha #99). [warning
          — lo corrige remove_phantom_calendar_editions.py]
 
+  Invariantes agregadas 2026-07-07 (auditoría post-scrape, WO-F) — TODAS warning
+  a propósito: nacen con violaciones vivas en el corpus real (backlog conocido),
+  promoverlas a dura ahora frenaría el build indefinidamente.
+  DATEISO release_date presente que no matchea el patrón ISO parcial (año,
+         año-mes o fecha completa: r"^\\d{4}(-\\d{2}(-\\d{2})?)?$"). [warning]
+  PTYPE_ENUM product_type fuera del enum de `derive_product_type()`
+         (manga_watch.py:3841-3872 + PRODUCT_TYPE_KEYWORDS:1679 + audiobook
+         directo:2077-2078): {manga, artbook, fanbook, guidebook, boxset,
+         novel, magazine, audiobook}. [warning]
+  LANG_ENUM language fuera del set canónico de 14 idiomas del proyecto (nombres
+         completos en español, ver CLAUDE.md "14 idiomas" + sources.yml). Reporta
+         el TOP de valores no-canónicos (backlog de normalización — nombres en
+         inglés, códigos ISO-639-1 sueltos, variantes no unificadas como
+         "Deutsch" vs "Alemán"). [warning]
+  VOLRANGE volume numérico fuera de (0, 350], con pinta de año (1990-2035), o
+         absurdo (basura de research-import: 4000000000, 10089…). [warning]
+  EKMALFORMED sufijo final del edition_key NO es un país conocido NI `xx`
+         (separado de PAIS: PAIS también flaggea `xx` legítimo; EKMALFORMED
+         sólo sufijos realmente rotos, ej. `glob`). [warning]
+  SLUGUNIQ slug duplicado entre cluster_keys DISTINTOS (dos productos != con
+         la misma URL). [warning]
+  SLUGFMT slug que viola `^[a-z0-9][a-z0-9-]*[a-z0-9]$`. [warning]
+  STDKEYS standardized_at presente con series_key o edition_key vacíos
+         (procesado pero incompleto). [warning]
+  MIRRORREF images[].local que no existe en `data/images/` (espejo local roto).
+         [warning]
+  SRCURL sources[] vacío, o con alguna entrada sin url. [warning]
+
 Exit codes (contrato para el gate pre-build de scrape_delta/full):
   0  corpus VÁLIDO — 0 violaciones DURAS (los warnings NO fallan).
   2  hay violaciones DURAS — corpus INVÁLIDO (el pipeline OMITE el build).
@@ -51,10 +79,11 @@ Exit codes (contrato para el gate pre-build de scrape_delta/full):
 Uso:
   .venv/bin/python scripts/validate_corpus.py
   .venv/bin/python scripts/validate_corpus.py --examples 10
+  .venv/bin/python scripts/validate_corpus.py --file data/backups/items.jsonl/items-2026-07-07.jsonl.bak
 """
 from __future__ import annotations
-import json, re, sys, argparse
-from collections import defaultdict
+import json, os, re, sys, argparse
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +105,45 @@ _CANON = {"especial": "special", "alternativa": "variant", "limitada": "limited"
 # sufijos de país válidos en edition_key (gotcha #46). Se derivan del MISMO mapa
 # que usa el scraper para no desincronizarse; `xx` (desconocido) NO es válido.
 _COUNTRIES = set(mw._COUNTRY_SLUG_MAP.values())
+
+# --- WO-F (2026-07-07): constantes de las invariantes nuevas -----------------
+
+IMAGES_DIR = ROOT / "data" / "images"
+
+# Enum de derive_product_type() — manga_watch.py:3841-3872 usa PRODUCT_TYPE_KEYWORDS
+# (línea 1679: artbook/fanbook/guidebook/boxset/novel), el chequeo directo de
+# "Magazine" en el título (línea 3849→magazine) y el set directo de audiobook
+# (líneas 2077-2078, por book_format). No hay una constante exportada con el
+# enum completo — se define ACÁ, apuntando a la fuente (no reimplementa lógica,
+# sólo enumera los valores posibles que esa lógica puede devolver).
+_PTYPE_ENUM = {
+    "manga", "artbook", "fanbook", "guidebook", "boxset", "novel", "magazine",
+    "audiobook",
+}
+
+_DATEISO_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
+
+# Set canónico de `language`: los 14 idiomas del proyecto (ver CLAUDE.md, "20
+# países y 14 idiomas") tal como los declara sources.yml — nombre completo en
+# ESPAÑOL (single-user app en español; gotcha: "Deutsch" viene hardcodeado por
+# wikis/mangapassion.py en vez de "Alemán" — backlog de normalización, no se
+# corrige acá). "Español / Catalán" es un valor compuesto legítimo declarado en
+# sources.yml (0 filas hoy, pero válido). WARN — nunca dura: hay ~1200 filas con
+# nombres en inglés, códigos ISO-639-1 sueltos ("ja","en","fr","es","de","it") o
+# la variante "Deutsch" a la fecha de esta auditoría.
+_LANG_CANON = {
+    "Español", "Inglés", "Francés", "Japonés", "Italiano", "Portugués",
+    "Alemán", "Polaco", "Turco", "Coreano", "Chino", "Checo", "Vietnamita",
+    "Tailandés", "Español / Catalán",
+}
+
+# volume numérico válido: (0, 350]. 0 EXCLUIDO a propósito (algunos "volumen 0"
+# reales de la industria quedan warn — el rango del research-import es la
+# prioridad: 4000000001, 10089, años 1990-2035 colados como volumen).
+_VOL_MIN, _VOL_MAX = 0, 350
+_VOL_YEAR_MIN, _VOL_YEAR_MAX = 1990, 2035
+
+_SLUGFMT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
 
 def _urls(it):
@@ -179,8 +247,16 @@ def isbn_dup_violations(items):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--examples", type=int, default=6)
+    ap.add_argument("--file", default=str(ITEMS),
+                    help="corpus a validar (default data/items.jsonl); "
+                         "interfaz consumida por auditorías de backups — "
+                         "mismos exit codes que el modo normal.")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    file_path = Path(args.file)
+    if not file_path.exists():
+        print(f"[ERROR] no existe {file_path}", file=sys.stderr)
+        return 1
+    items = [json.loads(l) for l in file_path.open() if l.strip()]
     N = len(items)
 
     V = defaultdict(list)          # id -> list[str ejemplos]
@@ -195,6 +271,9 @@ def main():
     cl_owner = defaultdict(list)
     syn_owner = defaultdict(list)
     cole_editions = defaultdict(set)
+    slug_owner = defaultdict(set)   # slug -> cluster_keys distintos (SLUGUNIQ)
+    lang_bad_counter = Counter()    # valores no-canónicos de `language` (LANG_ENUM)
+    mirror_checked = 0              # entries de images[].local revisadas (MIRRORREF)
     ev_owner = defaultdict(list)  # (edition_key, volume) -> items (para DUPVOL)
     sk_by_norm = defaultdict(set)  # aggressive_norm -> series_keys (SERIESDUP)
     ek_pubs = defaultdict(set)     # edition_key -> publisher strings (PUBMIX)
@@ -294,6 +373,78 @@ def main():
                     flag("EDSLUG", f"{ek!r} pero el título dice {evidence!r} | "
                                    f"{(it.get('title_original') or title)[:60]!r}")
 
+        # --- WO-F (2026-07-07): invariantes nuevas, todas WARN -------------
+
+        # SLUGFMT + acumulación para SLUGUNIQ (post-loop).
+        item_slug = (it.get("slug") or "").strip()
+        if item_slug:
+            slug_owner[item_slug].add(ck)
+            if not _SLUGFMT_RE.match(item_slug):
+                flag("SLUGFMT", f"{item_slug!r} | {ck}")
+
+        # DATEISO
+        rdate = (it.get("release_date") or "").strip()
+        if rdate and not _DATEISO_RE.match(rdate):
+            flag("DATEISO", f"{rdate!r} | {title!r}")
+
+        # PTYPE_ENUM
+        ptype = (it.get("product_type") or "").strip()
+        if ptype and ptype not in _PTYPE_ENUM:
+            flag("PTYPE_ENUM", f"{ptype!r} | {title!r}")
+
+        # LANG_ENUM — el conteo total se lleva acá; el TOP de valores no-canónicos
+        # se arma después del loop (más útil que N ejemplos repetidos del mismo
+        # valor, ej. "Deutsch" x cientos).
+        lang = (it.get("language") or "").strip()
+        if lang and lang not in _LANG_CANON:
+            counts["LANG_ENUM"] += 1
+            lang_bad_counter[lang] += 1
+
+        # VOLRANGE — (0, 350] es el rango válido; 0 EXCLUIDO a propósito (basura
+        # real del research-import: años colados como volumen, 4000000001…).
+        # OJO: no reusar `vol` (arriba) — el bloque LMCKIND lo pisa con
+        # mcole.group(3) para items lmc, así que acá se relee fresco del item.
+        vol_val = (it.get("volume") or "").strip()
+        if vol_val:
+            try:
+                vf = float(vol_val)
+            except ValueError:
+                vf = None
+            if vf is not None and (vf <= _VOL_MIN or vf > _VOL_MAX):
+                if _VOL_YEAR_MIN <= vf <= _VOL_YEAR_MAX:
+                    reason = "pinta de año"
+                elif vf > 100000:
+                    reason = "absurdo"
+                else:
+                    reason = "fuera de rango"
+                flag("VOLRANGE", f"{vol_val!r} ({reason}) | {title!r}")
+
+        # EKMALFORMED — separado de PAIS (arriba): PAIS también flaggea `xx`
+        # (desconocido pero TOLERADO como placeholder explícito); EKMALFORMED
+        # sólo sufijos rotos de verdad (caso real: "...-glob").
+        if ek:
+            last_ek = ek.rsplit("-", 1)[-1]
+            if last_ek not in _COUNTRIES and last_ek != "xx":
+                flag("EKMALFORMED", f"{ek!r} | sufijo {last_ek!r} | {title!r}")
+
+        # STDKEYS
+        if it.get("standardized_at") and (not sk or not ek):
+            flag("STDKEYS", f"{ck or item_slug or it.get('url', '')[-40:]} | {title!r}")
+
+        # MIRRORREF — cuenta también las entries revisadas (mirror_checked) para
+        # dar contexto de denominador (NOTES, impreso junto al conteo).
+        for img in (it.get("images") or []):
+            loc = img.get("local") if isinstance(img, dict) else None
+            if loc:
+                mirror_checked += 1
+                if not os.path.exists(IMAGES_DIR / loc):
+                    flag("MIRRORREF", f"{ck or item_slug} | falta {loc!r}")
+
+        # SRCURL
+        srcs = it.get("sources") or []
+        if not srcs or any(not (s.get("url") or "").strip() for s in srcs):
+            flag("SRCURL", f"{ck or item_slug or it.get('url', '')[-40:]} | {title!r}")
+
     # DUPCL
     for ck, group in cl_owner.items():
         if ck.startswith("url:"):
@@ -373,16 +524,32 @@ def main():
         if url and owners:
             flag("STOLENIMG", f"{it.get('slug')} portada = extra de {sorted(owners)} | {(it.get('title') or '')[:50]!r}")
 
+    # SLUGUNIQ — mismo slug en cluster_keys DISTINTOS (dos productos != con la
+    # misma URL de catálogo). No usa flag() en el loop principal porque necesita
+    # el set COMPLETO de cluster_keys por slug primero.
+    for s, cks in slug_owner.items():
+        if len(cks) > 1:
+            flag("SLUGUNIQ", f"{s!r} ×{len(cks)} cluster_keys: {sorted(cks)[:4]}")
+
+    # LANG_ENUM — el TOP de valores no-canónicos (más útil que N ejemplos
+    # repetidos del mismo valor). counts["LANG_ENUM"] ya se acumuló en el loop.
+    for val, cnt in lang_bad_counter.most_common(args.examples):
+        V["LANG_ENUM"].append(f"{val!r} ×{cnt}")
+
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
     order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
-             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG"]
+             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
+             "DATEISO", "PTYPE_ENUM", "LANG_ENUM", "VOLRANGE", "EKMALFORMED",
+             "SLUGUNIQ", "SLUGFMT", "STDKEYS", "MIRRORREF", "SRCURL"]
+    NOTES = {"MIRRORREF": f"(de {mirror_checked} refs con local revisadas)"}
     hard_fail = 0
     for k in order:
         n = counts[k]
         tag = "DURA" if k in HARD else "warn"
         mark = "✗" if (n and k in HARD) else ("⚠" if n else "✓")
-        print(f"  {mark} [{tag}] {k:8} violaciones: {n}")
+        note = f"  {NOTES[k]}" if k in NOTES else ""
+        print(f"  {mark} [{tag}] {k:8} violaciones: {n}{note}")
         for ex in V[k]:
             print(f"        - {ex}")
         if n and k in HARD:

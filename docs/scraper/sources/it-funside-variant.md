@@ -79,6 +79,19 @@ covers** de manga, un nicho de coleccionismo que otras fuentes IT no concentran.
   Fix: `clean_title` corta desde "Prezzo normale/di vendita/unitario", el prefijo del
   botón y el sufijo "FUNSIDE". **Pendiente**: afinar `title_selector` (hoy
   `a[href*='/products/']` arrastra toda la tarjeta en algunos productos).
+- **Junk del botón de carrito rompía la traducción de la `description` cuando aparecía
+  al PRINCIPIO en vez de al final (2026-07-07, gotcha #119)**: la `description` de
+  Funside a veces viene como "Sconto Aggiungi al carrello Confrontare {título} Prezzo…"
+  — el botón "Aggiungi al Carrello" pegado al INICIO, no al final como asumía el regex
+  de `translate_descriptions.py::_clean_description_for_translation`. El regex viejo
+  (ancla `$` + `.*` greedy) borraba desde el primer match hasta el final del texto SIN
+  chequear si el match estaba temprano — se comía la description entera y
+  `description_es` quedaba como "Descuento". Fix (en `translate_descriptions.py`, no en
+  el parser de esta fuente): `_strip_it_cart_suffix()` sólo trata el match como "cola
+  removible" si arranca dentro de los últimos 150 caracteres del texto Y queda cuerpo
+  sustancial (≥40 chars) antes — si el botón aparece temprano (como acá), se deja
+  intacto. Nota: distinto del fix de gotcha #115 (el badge "Sconto" pelado en el
+  `title`, más abajo) — éste es sobre la `description`, no el `title`.
 - **HTTP 429 en el primer delta real post-mejoras (2026-07-07, gotcha #114)**:
   `HTTP error 429 Client Error: Too Many Requests` al scrapear
   `/collections/a-caccia-di-variant`. Causa: `funside.it` resuelve al mismo borde

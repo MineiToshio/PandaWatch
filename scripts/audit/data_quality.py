@@ -19,7 +19,7 @@ Uso: .venv/bin/python scripts/audit/data_quality.py [--px 90000] [--examples 8]
                                                      [--no-measure] [--no-json]
 """
 from __future__ import annotations
-import argparse, hashlib, json, sys
+import argparse, hashlib, json, re, sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,11 +27,70 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
-from manga_watch import IMAGE_URL_BAD_PATTERNS, _cluster_completeness  # noqa: E402
+from manga_watch import (  # noqa: E402
+    IMAGE_URL_BAD_PATTERNS, _cluster_completeness,
+    _TOKUTEN_SOURCES, _SINGLE_RUN_KEYWORDS, _SINGLE_RUN_PATTERNS,
+    _extract_print_run, _is_reference_only_source, is_approved,
+)
 import image_store  # noqa: E402
 # Reusamos la MISMA derivación de slug que el retrofit (fuente única de verdad)
 # para detectar slugs "desincronizados" sin reimplementar la lógica.
 import generate_slugs as _slugs  # noqa: E402
+
+# Mismo patrón que scripts/validate_corpus.py::_DATEISO_RE (WO-F, 2026-07-07) —
+# fecha ISO parcial: año, año-mes o fecha completa.
+_DATEISO_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
+
+# Países/idiomas hispanohablantes — heurística BARATA (sin langdetect sobre
+# 13k filas) para separar traducción real de simple backfill de la key
+# `description_es` cuando el contenido YA está en español. Ver readiness
+# "translate" en _compute_readiness.
+_HISPANIC_LANG = {"Español", "es", "Español / Catalán"}
+_HISPANIC_COUNTRY = {
+    "España", "México", "Argentina", "Perú", "España / LatAm", "Chile",
+    "Colombia", "Uruguay", "Venezuela", "Ecuador", "Bolivia", "Paraguay",
+    "Guatemala", "Costa Rica", "Panamá", "Cuba", "República Dominicana",
+    "Honduras", "El Salvador", "Nicaragua",
+}
+
+
+def _is_hispanic_source(it: dict) -> bool:
+    """True si el país/idioma del item sugiere que su contenido YA está en
+    español (no necesita traducción, sólo backfillear la key `description_es`).
+    `language` manda si está presente; si no, cae a `country`."""
+    lang = (it.get("language") or "").strip()
+    if lang:
+        return lang in _HISPANIC_LANG
+    country = (it.get("country") or "").strip()
+    return country in _HISPANIC_COUNTRY
+
+
+def _uncertainty_reason(item: dict) -> str | None:
+    """'referencia' | 'retailer_exclusive' | None si el 'rare' del item tiene
+    evidencia ESTRUCTURAL (no incertidumbre). Replica EXACTAMENTE el Step 0 de
+    .claude/skills/watch-validate-rarity/SKILL.md (misma función, mismo orden
+    de ramas) para que el conteo de readiness coincida con el universo real
+    que el skill procesaría. Sólo se usa acá para CONTAR — nunca para escribir
+    ni re-derivar rareza (eso es dominio exclusivo del skill)."""
+    text = f"{item.get('title', '')} {item.get('description', '')}".lower()
+    src = (item.get("source") or "").lower()
+    if _extract_print_run(text) is not None:
+        return None
+    if item.get("stock_status") == "out_of_stock":
+        return None
+    if "retailer_exclusive" in (item.get("signal_types") or []):
+        return "retailer_exclusive"
+    if any(t in src for t in _TOKUTEN_SOURCES):
+        return None
+    if any(kw in text for kw in _SINGLE_RUN_KEYWORDS):
+        return None
+    if any(p.search(text) for p in _SINGLE_RUN_PATTERNS):
+        return None
+    names = [s.get("name") or s.get("source") or "" for s in (item.get("sources") or [])]
+    item_sources = [n for n in names if n] or [item.get("source") or ""]
+    if all(_is_reference_only_source(s) for s in item_sources):
+        return "referencia"
+    return None
 
 try:
     from PIL import Image
@@ -277,7 +336,7 @@ def _load_dup_decisions() -> set:
 #                   UI; el panel muestra el conteo + el nombre del skill a tipear.
 #   kind="link"   → requiere acción humana en otra página (aprobación manual).
 def _compute_readiness(items: list[dict], *, multi_clusters: int,
-                       card_ne_carrusel: int) -> list[dict]:
+                       card_ne_carrusel: int, sin_imagen: int = 0) -> list[dict]:
     DATA = ROOT / "data"
 
     def _count_lines(path: Path) -> int:
@@ -315,19 +374,49 @@ def _compute_readiness(items: list[dict], *, multi_clusters: int,
     except Exception:
         slug_stale = 0
 
-    # --- Traducción: misma condición que translate_descriptions (KEY ausente,
-    # no string vacío — un item ya procesado tiene description_es="" para ES). ---
-    trans_pending = 0
+    # --- Traducción: misma condición base que translate_descriptions (KEY
+    # ausente, no string vacío — un item ya procesado tiene description_es=""
+    # para ES). FIX (WO-F, 2026-07-07): la versión vieja inflaba "pendiente
+    # traducción" con items que YA están en español (fuentes hispanohablantes
+    # sin la key backfillada) — se separa en dos cubetas con una heurística
+    # BARATA (país/idioma del item; NO langdetect sobre 13k filas):
+    #   pendiente_traduccion = contenido genuinamente extranjero → traducir de
+    #                           verdad (translate_descriptions.py).
+    #   pendiente_marca_es   = fuente hispanohablante → el contenido YA está en
+    #                           español, sólo falta backfillear la key (mismo
+    #                           script, resultado ~instantáneo por LLM-skip).
+    pendiente_traduccion = 0
+    pendiente_marca_es = 0
     for it in items:
         if it.get("approved_at"):
             continue
+        needs_key = False
         if (it.get("description") or "") and "description_es" not in it:
-            trans_pending += 1
+            needs_key = True
+        if not needs_key:
+            for ex in (it.get("extras") or []):
+                if (ex.get("description") or "") and "description_es" not in ex:
+                    needs_key = True
+                    break
+        if not needs_key:
             continue
-        for ex in (it.get("extras") or []):
-            if (ex.get("description") or "") and "description_es" not in ex:
-                trans_pending += 1
-                break
+        if _is_hispanic_source(it):
+            pendiente_marca_es += 1
+        else:
+            pendiente_traduccion += 1
+    trans_pending = pendiente_traduccion + pendiente_marca_es
+
+    # --- Fechas no-ISO: release_date presente que no matchea el patrón ISO
+    # parcial (mismo criterio que validate_corpus.py::DATEISO). ---
+    dates_non_iso = sum(
+        1 for it in items
+        if (it.get("release_date") or "").strip()
+        and not _DATEISO_RE.match((it.get("release_date") or "").strip())
+    )
+
+    # --- Sin ninguna imagen: mismo criterio que la categoría "sin_imagen" de
+    # audit_items() (cover_url/cover_local/images[] todos vacíos); se pasa por
+    # parámetro para no recorrer el corpus dos veces. ---
 
     # --- Aliases de series: series_key distintos en la cola unmapped ---
     unmapped: set[str] = set()
@@ -345,12 +434,22 @@ def _compute_readiness(items: list[dict], *, multi_clusters: int,
     except Exception:
         pass
 
-    # --- Rareza: asignar (sin campo) + verificar ambiguas (boxset/artbook rare) ---
+    # --- Rareza: asignar (sin campo) + verificar rares por INCERTIDUMBRE ---
+    # FIX (WO-F, 2026-07-07): el filtro viejo (product_type in boxset/artbook)
+    # no tenía nada que ver con el criterio real del skill — mezclaba rares con
+    # evidencia ESTRUCTURAL (que el skill NO toca, ver SKILL.md intro) con
+    # boxsets/artbooks de cualquier origen. El universo correcto es el Step 0
+    # del skill: rare sin rarity_verified_at, sin approved_at, y cuyo 'rare'
+    # viene de INCERTIDUMBRE (fuente de referencia o retailer_exclusive sin
+    # stock verificado) — ver _uncertainty_reason() arriba (réplica 1:1).
     rarity_assign = sum(1 for it in items if not it.get("rarity"))
-    rarity_verify = sum(1 for it in items
-                        if it.get("rarity") == "rare"
-                        and not it.get("rarity_verified_at")
-                        and it.get("product_type") in ("boxset", "artbook"))
+    rarity_verify = sum(
+        1 for it in items
+        if it.get("rarity") == "rare"
+        and not it.get("rarity_verified_at")
+        and not is_approved(it)
+        and _uncertainty_reason(it) is not None
+    )
 
     # --- Feedback y portadas candidatas ---
     feedback_pending = _count_lines(DATA / "feedback.jsonl")
@@ -386,19 +485,28 @@ def _compute_readiness(items: list[dict], *, multi_clusters: int,
          "stale": slug_stale, "kind": "script", "skill": "",
          "script_id": "generate_slugs", "flags": {}, "link": "", "severity": "error",
          "hint": "Pendientes = sin slug. Desincronizados = cambió la edición y el slug viejo no coincide. El botón regenera todo."},
-        {"id": "translate", "label": "Traducción al español", "pending": trans_pending,
+        {"id": "dates_iso", "label": "Fechas fuera de formato ISO",
+         "pending": dates_non_iso, "stale": 0, "kind": "script", "skill": "",
+         "script_id": "normalize_release_dates", "flags": {}, "link": "",
+         "severity": "warn",
+         "hint": "release_date no matchea AAAA / AAAA-MM / AAAA-MM-DD (ej. viene con hora tipo '2025/04/25 10:00:00'). Normaliza al formato ISO."},
+        {"id": "translate", "label": "Traducción al español", "pending": pendiente_traduccion,
          "stale": 0, "kind": "script", "skill": "",
          "script_id": "translate_descriptions", "flags": {}, "link": "", "severity": "warn",
-         "hint": "Items con descripción extranjera y sin description_es."},
+         "hint": "Descripción en idioma extranjero (fuente no hispanohablante) sin description_es. Traducción real."},
+        {"id": "translate_mark_es", "label": "Traducción — sólo marcar como ES",
+         "pending": pendiente_marca_es, "stale": 0, "kind": "script", "skill": "",
+         "script_id": "translate_descriptions", "flags": {}, "link": "", "severity": "info",
+         "hint": "Descripción de fuente hispanohablante (ya está en español) sin la key description_es backfillada. Mismo script; no traduce de verdad, sólo copia."},
         {"id": "rarity", "label": "Rareza — asignar", "pending": rarity_assign,
          "stale": 0, "kind": "script", "skill": "", "script_id": "set_rarity",
          "flags": {}, "link": "", "severity": "warn",
          "hint": "Items sin campo rarity. Asignación mecánica determinística."},
-        {"id": "rarity_verify", "label": "Rareza — verificar ambiguas (opcional)",
+        {"id": "rarity_verify", "label": "Rareza — verificar rares por incertidumbre (opcional)",
          "pending": rarity_verify, "stale": 0, "kind": "skill",
          "skill": "/watch-validate-rarity", "script_id": "", "flags": {}, "link": "",
          "severity": "info",
-         "hint": "Boxsets/artbooks 'rare' de publishers grandes — confirmar stock real. Opcional."},
+         "hint": "Rares SIN evidencia estructural (fuente de referencia, o retailer_exclusive sin stock verificado) — confirmar stock real. Opcional."},
         {"id": "consolidate", "label": "Unir fichas del mismo producto",
          "pending": multi_clusters, "stale": 0, "kind": "script", "skill": "",
          "script_id": "consolidate_sources", "flags": {}, "link": "", "severity": "error",
@@ -407,6 +515,10 @@ def _compute_readiness(items: list[dict], *, multi_clusters: int,
          "pending": 0, "stale": card_ne_carrusel, "kind": "script", "skill": "",
          "script_id": "sync_cover_images", "flags": {}, "link": "", "severity": "warn",
          "hint": "La portada de la card no coincide con la 1ª del carrusel. Saneo mecánico."},
+        {"id": "no_image", "label": "Sin ninguna imagen", "pending": sin_imagen,
+         "stale": 0, "kind": "skill", "skill": "/watch-search-covers",
+         "script_id": "", "flags": {}, "link": "", "severity": "warn",
+         "hint": "Items sin portada ni foto de galería. El skill busca portadas en internet (candidatas quedan para aprobación manual)."},
         {"id": "feedback", "label": "Feedback del dashboard (👎)",
          "pending": feedback_pending, "stale": 0, "kind": "skill",
          "skill": "/watch-review-feedback", "script_id": "", "flags": {}, "link": "",
@@ -644,6 +756,7 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
         items,
         multi_clusters=len(multi),
         card_ne_carrusel=len(cat["card_ne_carrusel"]),
+        sin_imagen=len(cat["sin_imagen"]),
     )
 
     return {

@@ -36,10 +36,29 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import FULLWIDTH_DIGITS_TABLE, backup_and_rotate  # type: ignore
+from manga_watch import FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13  # type: ignore
 
 
 _SLUG_VALID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
+
+
+def _isbn_slug_part(raw: str) -> str:
+    """Normaliza cualquier ISBN (10 o 13, con o sin guiones) a su ISBN-13 puro
+    para un slug ESTABLE.
+
+    Sin esto un mismo cluster oscila entre `isbn-{10}` e `isbn-{13}` según qué
+    fila sea el representante del cluster (churn real de 71 items:
+    `isbn-9784799777046` ↔ `isbn-4799777041`). Derivando SIEMPRE del ISBN-13
+    normalizado (`manga_watch.isbn13`, fuente única) el slug es idempotente sin
+    importar si la fila guarda el ISBN-10 o el ISBN-13.
+
+    Si `raw` no es un ISBN válido (identificador parcial) cae al limpiado crudo
+    para no perder el slug — el mismo comportamiento previo para esos casos.
+    """
+    thirteen = isbn13(raw or "")
+    if thirteen:
+        return thirteen
+    return re.sub(r"[^0-9x]", "", (raw or "").lower())
 
 # Strips leading volume markers (Vol., Tome, #, 第, etc.)
 _VOL_PREFIX_RE = re.compile(
@@ -107,12 +126,13 @@ def _derive_base_slug(item: dict) -> str:
     url = (item.get("url") or "").strip()
 
     # Rule 1: isbn cluster key → "isbn-{isbn13}"
-    # Lowercase handles ISBN-10 check digit 'X'. Strip non-alnum handles edge cases
-    # like full-width colons in cluster keys (e.g. isbn:： 9784847037412).
+    # Normaliza SIEMPRE a ISBN-13 (via _isbn_slug_part) para que un cluster con
+    # el ISBN-10 y otro con el ISBN-13 no oscilen. Maneja el check digit 'X' del
+    # ISBN-10 y colones full-width pegados (e.g. isbn:： 9784847037412).
     if cluster_key.startswith("isbn:"):
-        isbn13 = re.sub(r"[^a-z0-9]", "", cluster_key[5:].strip().lower())
-        if isbn13:
-            return f"isbn-{isbn13}"
+        part = _isbn_slug_part(cluster_key[5:])
+        if part:
+            return f"isbn-{part}"
 
     # Rule 2: edition_key + volume → "{edition_key}-{vol}"
     if edition_key and volume:
@@ -135,8 +155,10 @@ def _derive_base_slug(item: dict) -> str:
             return sanitized
 
     # Rule 4: no edition_key but has isbn field
+    # Derivado SIEMPRE del ISBN-13 normalizado (idempotente 10↔13); si no es un
+    # ISBN válido cae al limpiado crudo, igual que antes.
     if isbn:
-        isbn_clean = re.sub(r"[^0-9x]", "", isbn.lower())
+        isbn_clean = _isbn_slug_part(isbn)
         if isbn_clean and len(isbn_clean) >= 2:
             return f"isbn-{isbn_clean}"
 

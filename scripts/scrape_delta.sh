@@ -28,8 +28,8 @@
 #      booksprivilege, sumikko, mangapassion DE, animeclick IT,
 #      prhcomics US/CA, kinokuniya US, yenpress US,
 #      mangavariant incremental)
-#   3. Cleanup retrofits (rescore → filter_non_manga → filter_collectible →
-#      clean_titles → backfill_metadata)
+#   3. Cleanup retrofits (rescore → clean_titles → normalize_release_dates →
+#      filter_non_manga → filter_collectible → backfill_metadata)
 #   4. Build web final
 #
 # Tiempo estimado: 30-60 min (vs 2-4 horas del full).
@@ -186,11 +186,19 @@ record_step() {
 # ── Backup pre-scrape de items.jsonl (convención backup_and_rotate del repo:
 # escribe en data/backups/items.jsonl/, rota máx 3). Un snapshot ANTES de que
 # el run toque nada permite restaurar si algo corrompe el corpus.
+# Capturamos el PATH del backup (no solo lo logueamos): PHASE 4 lo usa para
+# restaurar automáticamente si el corpus post-run queda inválido.
+PRESCRAPE_BACKUP=""
 if [ -s data/items.jsonl ]; then
     echo ">>> Backup pre-scrape de data/items.jsonl"
-    env PYTHONUNBUFFERED=1 "$VENV_PY" -u -c \
-        "import sys; sys.path.insert(0,'scripts'); from pathlib import Path; from manga_watch import backup_and_rotate; print('    backup →', backup_and_rotate(Path('data/items.jsonl'), 'scrape-delta'))" \
-        || echo "    ⚠ backup pre-scrape falló (continúa)"
+    PRESCRAPE_BACKUP=$(env PYTHONUNBUFFERED=1 "$VENV_PY" -u -c \
+        "import sys; sys.path.insert(0,'scripts'); from pathlib import Path; from manga_watch import backup_and_rotate; print(backup_and_rotate(Path('data/items.jsonl'), 'scrape-delta'))")
+    if [ -n "$PRESCRAPE_BACKUP" ] && [ -f "$PRESCRAPE_BACKUP" ]; then
+        echo "    backup → $PRESCRAPE_BACKUP"
+    else
+        echo "    ⚠ backup pre-scrape falló (continúa)"
+        PRESCRAPE_BACKUP=""
+    fi
     echo
 fi
 
@@ -528,6 +536,24 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     record_step "clean_titles" $?
     echo "    items: $(count_lines)"
 
+    # [4b2] normalize_release_dates: barato (compute-only, sin red) y no-op
+    # cuando el corpus ya está normalizado — se corre acá porque
+    # `normalize_release_date()` ya es la guardia universal en el sink del
+    # scraper (candidate_to_json), así que items NUEVOS entran limpios; este
+    # paso solo re-normaliza legacy que sobrevivió (backups restaurados,
+    # merges de fuentes con formato crudo). `--all-formats` (no solo
+    # DD/MM/YYYY) porque la auditoría DATEISO real (113 filas) es casi toda
+    # datetime de tienda JP (`YYYY/MM/DD hh:mm:ss`) — sin el flag el paso
+    # queda no-op y el backlog nunca converge. Antes de los filtros por el
+    # mismo motivo que 4b: no debería afectarlos, pero mantiene el orden
+    # estable.
+    echo ">>> [4b2] normalize_release_dates --all-formats"
+    _run_timed 120 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/retrofit/normalize_release_dates.py \
+        --all-formats \
+        > "$LOG_DIR/04b2-normalize-release-dates.log" 2>&1
+    record_step "normalize_release_dates" $?
+    echo "    items: $(count_lines)"
+
     echo ">>> [4c] filter_non_manga"
     "$VENV_PY" scripts/retrofit/filter_non_manga.py > "$LOG_DIR/04c-filter-non-manga.log" 2>&1
     record_step "filter_non_manga" $?
@@ -637,6 +663,53 @@ elif [ "$VAL_RC" -ne 0 ]; then
     echo " ⚠ validate_corpus falló con rc=$VAL_RC (error del validador) — se OMITE el build por precaución."
 fi
 
+# ── Corpus inválido: cuarentena + restore automático desde el backup pre-scrape.
+# "Se omite el build" NO alcanza: serve.py hace fetch() EN VIVO de data/items.jsonl
+# (decisión #5) — un corpus corrupto quedaría SERVIDO igual aunque no se reconstruya
+# el HTML. Por eso hay que sacarlo de items.jsonl (cuarentena) y, si el backup
+# pre-scrape resulta válido, restaurarlo — así el dashboard vuelve a servir el
+# último corpus bueno conocido en vez del corrupto.
+RESTORE_STATUS=""
+if [ "$CORPUS_INVALID" -ne 0 ]; then
+    mkdir -p data/quarantine
+    QUARANTINE_PATH="data/quarantine/items-${TIMESTAMP}.jsonl"
+    if [ -f data/items.jsonl ]; then
+        mv data/items.jsonl "$QUARANTINE_PATH"
+        echo " ⚠ corpus inválido → cuarentena: $QUARANTINE_PATH"
+        if [ -n "$PRESCRAPE_BACKUP" ] && [ -f "$PRESCRAPE_BACKUP" ]; then
+            echo ">>> Validando backup pre-scrape antes de restaurar: $PRESCRAPE_BACKUP"
+            if "$VENV_PY" scripts/validate_corpus.py --file "$PRESCRAPE_BACKUP" \
+                > "$LOG_DIR/04b-validate-backup.log" 2>&1; then
+                cp "$PRESCRAPE_BACKUP" data/items.jsonl
+                echo " ✓ backup válido — RESTAURADO a data/items.jsonl"
+                # Las aprobaciones hechas en vivo (dashboard) durante esta misma
+                # corrida viven en data/approvals.jsonl (log durable); el restore
+                # pisó items.jsonl con el backup pre-scrape, que no las tiene
+                # todavía — re-aplicarlas las recupera.
+                echo ">>> Re-aplicando aprobaciones en vivo (data/approvals.jsonl) sobre el corpus restaurado"
+                "$VENV_PY" scripts/retrofit/apply_approvals.py \
+                    > "$LOG_DIR/04c-reapply-approvals.log" 2>&1
+                record_step "apply_approvals (post-restore)" $?
+                RESTORE_STATUS="restaurado"
+            else
+                echo " ✗ el backup pre-scrape TAMBIÉN es inválido (ver $LOG_DIR/04b-validate-backup.log)"
+                echo " ⚠⚠⚠ NO se restaura — corpus previo NO disponible. Revisar manualmente:"
+                echo "     cuarentena: $QUARANTINE_PATH"
+                echo "     backup:     $PRESCRAPE_BACKUP"
+                RESTORE_STATUS="backup_invalido"
+            fi
+        else
+            echo " ⚠ no hay backup pre-scrape disponible (primera corrida o el backup falló)"
+            echo " ⚠⚠⚠ NO se puede restaurar — corpus previo NO disponible. Revisar cuarentena:"
+            echo "     $QUARANTINE_PATH"
+            RESTORE_STATUS="sin_backup"
+        fi
+    else
+        echo " ⚠ data/items.jsonl no existe — nada que mover a cuarentena."
+        RESTORE_STATUS="sin_corpus"
+    fi
+fi
+
 # ============================================================
 # PHASE 5: Build web (sólo si el corpus es válido)
 # ============================================================
@@ -685,7 +758,23 @@ printf " %-30s %s\n" "items.jsonl antes:"   "$BEFORE_COUNT"
 printf " %-30s %s\n" "items.jsonl después:" "$AFTER_COUNT"
 printf " %-30s %s\n" "delta:" "$((AFTER_COUNT - BEFORE_COUNT))"
 if [ "${CORPUS_INVALID:-0}" -ne 0 ]; then
-    printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — violaciones DURAS (ver $LOG_DIR/04-validate-corpus.log) · build OMITIDO"
+    case "${RESTORE_STATUS:-}" in
+        restaurado)
+            printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO → cuarentena + RESTAURADO desde backup (aprobaciones re-aplicadas)"
+            ;;
+        backup_invalido)
+            printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO → cuarentena, backup TAMBIÉN inválido, corpus previo NO disponible"
+            ;;
+        sin_backup)
+            printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO → cuarentena, sin backup pre-scrape, corpus previo NO disponible"
+            ;;
+        sin_corpus)
+            printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — data/items.jsonl no existía, nada que restaurar"
+            ;;
+        *)
+            printf " %-30s %s\n" "corpus:" "⚠ INVÁLIDO — violaciones DURAS (ver $LOG_DIR/04-validate-corpus.log) · build OMITIDO"
+            ;;
+    esac
 else
     printf " %-30s %s\n" "corpus:" "✓ válido"
 fi

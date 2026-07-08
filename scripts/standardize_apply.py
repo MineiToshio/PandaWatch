@@ -14,8 +14,17 @@ desincronizada) en SKILL.md y en el workflow. Dos subcomandos:
               items que NO tienen una.
             - Fallback a la propuesta heurística (tier{2,3}.json) si el LLM
               devolvió keys vacías; sin keys usables → el item queda PENDIENTE
-              (se reintenta en la próxima corrida, nunca huérfanos).
-            - is_manga=false → data/non_manga_blacklist.jsonl (dedup por url).
+              con `standardize_attempts` +1 (WO-C); a los MAX_STANDARDIZE_ATTEMPTS
+              el audit lo saca de las proyecciones y lo manda a curación.
+            - EL LLM NO EXPULSA (WO-C): is_manga=false NO borra la fila ni la
+              manda a non_manga_blacklist.jsonl. El item queda PENDIENTE y se
+              registra en data/unmapped_series.jsonl (reason "llm_non_manga");
+              los gates deterministas del pipeline (filter_non_manga /
+              filter_collectible) deciden la expulsión real en la próxima
+              corrida. Excepción: un item con source Mangavariant NUNCA se
+              expulsa — el veredicto se ignora (WARN) y sigue el flujo normal.
+            - product_type SIEMPRE del enum (manga/artbook/…); un edition-kind
+              del LLM (special/deluxe/…) se descarta y se re-deriva (WO-C).
             - Re-chequeo canónico de serie (canonical_series_key) + outliers
               de serie dentro de una misma /coleccion.
             - Recomputa cluster_key y consolida (merge_cluster, fuente única).
@@ -42,6 +51,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from manga_watch import (  # noqa: E402
     consolidate_by_cluster,
     derive_cluster_key,
+    derive_product_type,
     rebuild_edition_key_prefix,
     sanitize_key_ascii,
 )
@@ -52,8 +62,21 @@ from series_aliases import (  # noqa: E402
 )
 
 ITEMS = ROOT / "data" / "items.jsonl"
-BLACKLIST = ROOT / "data" / "non_manga_blacklist.jsonl"
+UNMAPPED = ROOT / "data" / "unmapped_series.jsonl"
 DEFAULT_BASE = Path("/tmp/manga-standardize-run")
+
+# Tope de intentos de estandarización LLM antes de mandar el item a curación
+# manual (unmapped_series.jsonl). Evita el retry infinito de títulos con keys
+# irromanizables que gastarían Tier 3 para siempre (WO-C).
+MAX_STANDARDIZE_ATTEMPTS = 3
+
+# Enum válido de product_type (ver derive_product_type en manga_watch.py). El
+# KIND de edición (special/deluxe/variant/limited/collector) NUNCA va acá — vive
+# en edition_key. Si el LLM devuelve un edition-kind en product_type, se descarta.
+VALID_PRODUCT_TYPES = frozenset({
+    "manga", "artbook", "fanbook", "guidebook",
+    "boxset", "novel", "magazine", "audiobook",
+})
 
 
 def _load_items() -> list[dict]:
@@ -66,6 +89,108 @@ def _write_items(items: list[dict]) -> None:
         for it in items:
             fh.write(json.dumps(it, ensure_ascii=False) + "\n")
     tmp.replace(ITEMS)
+
+
+def _item_has_mangavariant(it: dict) -> bool:
+    """¿Alguna source del item es Mangavariant? Regla dura del repo:
+    Mangavariant NUNCA se expulsa (ni a blacklist ni por veredicto LLM)."""
+    if "mangavariant" in (it.get("source") or "").lower():
+        return True
+    for s in (it.get("sources") or []):
+        if not isinstance(s, dict):
+            continue
+        blob = f"{s.get('name', '')} {s.get('source', '')} {s.get('url', '')}"
+        if "mangavariant" in blob.lower():
+            return True
+    return False
+
+
+def _existing_unmapped_keys() -> set[tuple[str, str]]:
+    """Set de identidades `(series_key|sample_url, reason)` ya presentes en
+    unmapped_series.jsonl, para dedup cross-run al appendear."""
+    seen: set[tuple[str, str]] = set()
+    if not UNMAPPED.exists():
+        return seen
+    for line in UNMAPPED.open(encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        reason = rec.get("reason", "")
+        sk = (rec.get("series_key") or "").strip()
+        url = (rec.get("sample_url") or "").strip()
+        if sk:
+            seen.add((sk, reason))
+        if url:
+            seen.add((url, reason))
+    return seen
+
+
+def append_unmapped_from_item(it: dict, reason: str, *, note: str = "",
+                              seen: set[tuple[str, str]] | None = None) -> bool:
+    """Appendea una entrada a data/unmapped_series.jsonl para curación manual.
+
+    Mismo shape que `series_aliases.log_unmapped_series`
+    (series_key/series_display/sample_title/sample_url/source/detected_at) +
+    `reason` + `note`. Es la ÚNICA cola de "registro incierto" del repo: NO se
+    crean colas paralelas (regla del owner). Dedup cross-run por
+    `(series_key, reason)` y `(sample_url, reason)`; devuelve True si escribió.
+
+    `seen` (mutable) evita re-leer el archivo por item dentro de una corrida:
+    se construye una vez con `_existing_unmapped_keys()` y se actualiza acá.
+    """
+    sk = (it.get("series_key") or "").strip()
+    url = (it.get("url") or "").strip()
+    if seen is None:
+        seen = _existing_unmapped_keys()
+    if (sk and (sk, reason) in seen) or (url and (url, reason) in seen):
+        return False
+    record = {
+        "series_key": sk,
+        "series_display": it.get("series_display", "") or "",
+        "sample_title": it.get("title", "") or "",
+        "sample_url": url,
+        "source": it.get("source", "") or "",
+        "detected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "reason": reason,
+        "note": note or "",
+    }
+    UNMAPPED.parent.mkdir(parents=True, exist_ok=True)
+    with UNMAPPED.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if sk:
+        seen.add((sk, reason))
+    if url:
+        seen.add((url, reason))
+    return True
+
+
+def _apply_clean_product_type(it: dict, r: dict) -> None:
+    """Asegura que `product_type` sea SIEMPRE un valor del enum, nunca un
+    edition-kind (special/deluxe/variant/limited/collector).
+
+    Cascada: (1) si el LLM devolvió un product_type válido del enum → se aplica;
+    (2) si no, se conserva el product_type existente del item si es válido;
+    (3) si no hay uno válido → se re-deriva con `derive_product_type`
+    (importada de manga_watch, no se copia la lógica). El kind de edición ya
+    vive en edition_key.
+    """
+    llm_pt = (r.get("product_type") or "").strip().lower()
+    if llm_pt in VALID_PRODUCT_TYPES:
+        it["product_type"] = llm_pt
+        return
+    cur = (it.get("product_type") or "").strip().lower()
+    if cur in VALID_PRODUCT_TYPES:
+        it["product_type"] = cur
+        return
+    it["product_type"] = derive_product_type(
+        it.get("title", "") or "",
+        it.get("description", "") or "",
+        it.get("signal_types", []) or [],
+    )
 
 
 def cmd_tier1(base: Path, force_all: bool) -> int:
@@ -138,8 +263,12 @@ def cmd_merge(base: Path, force_all: bool) -> int:
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     pending_before = sum(1 for it in items if not it.get("standardized_at"))
     left_pending = 0
+    llm_non_manga = 0
+    mangavariant_ignored = 0
 
-    non_manga: list[dict] = []
+    # Identidades ya registradas en unmapped_series.jsonl (dedup cross-run).
+    unmapped_seen = _existing_unmapped_keys()
+
     final: list[dict] = []
     for it in items:
         if it.get("approved_at"):
@@ -153,19 +282,35 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             final.append(it)
             continue
         if not r.get("is_manga", True):
-            non_manga.append({
-                "url": it.get("url", ""), "title": it.get("title", ""),
-                "source": it.get("source", ""), "publisher": it.get("publisher", ""),
-                "reason": r.get("non_manga_reason", "flagged_by_review"),
-                "reviewed_at": now_iso,
-            })
-            continue
+            # EL LLM NO EXPULSA (WO-C). El veredicto no borra la fila ni la
+            # manda a non_manga_blacklist.jsonl: son los gates deterministas
+            # del pipeline (filter_non_manga / filter_collectible, Fase 3 del
+            # scrape) los que deciden en la próxima corrida. Acá el item queda
+            # PENDIENTE (sin standardized_at) y se registra para curación.
+            if _item_has_mangavariant(it):
+                # Regla dura del repo: Mangavariant NUNCA se expulsa. Se ignora
+                # el veredicto y se sigue el flujo normal de estandarización.
+                print("WARN: LLM marcó no-manga un item Mangavariant "
+                      f"(ignorado): {it.get('url', '')}")
+                mangavariant_ignored += 1
+            else:
+                append_unmapped_from_item(
+                    it, "llm_non_manga",
+                    note=(r.get("non_manga_reason", "") or "flagged_by_review"),
+                    seen=unmapped_seen,
+                )
+                llm_non_manga += 1
+                final.append(it)
+                continue
         prop = proposals.get(it.get("url", ""), {})
         sk = (r.get("series_key", "") or "").strip() or prop.get("proposed_series_key", "")
         # Claves acuñadas por el LLM: forzar ASCII kebab (gotcha #81). Si la
         # sanitización la vacía (clave íntegramente CJK), queda pending.
         sk = sanitize_key_ascii(sk)
         if not sk:
+            # Keys inusables → el item queda pendiente. Contamos el intento
+            # para escalar a curación tras MAX_STANDARDIZE_ATTEMPTS (WO-C).
+            it["standardize_attempts"] = (it.get("standardize_attempts", 0) or 0) + 1
             left_pending += 1
             final.append(it)
             continue
@@ -180,6 +325,8 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             ek = (r.get("edition_key", "") or "").strip() or prop.get("proposed_edition_key", "")
             ek = sanitize_key_ascii(ek)
             if not ek:
+                # Keys inusables → pendiente + intento contabilizado (WO-C).
+                it["standardize_attempts"] = (it.get("standardize_attempts", 0) or 0) + 1
                 left_pending += 1
                 final.append(it)
                 continue
@@ -213,6 +360,8 @@ def cmd_merge(base: Path, force_all: bool) -> int:
                                              it["series_key"])
         if rebuilt:
             it["edition_key"] = rebuilt
+        # product_type SIEMPRE del enum, nunca un edition-kind (WO-C).
+        _apply_clean_product_type(it, r)
         it["standardized_at"] = now_iso
         final.append(it)
 
@@ -252,25 +401,18 @@ def cmd_merge(base: Path, force_all: bool) -> int:
 
     _write_items(deduped)
 
-    # 5) Blacklist de non-manga (dedup por url).
-    existing_bl = set()
-    if BLACKLIST.exists():
-        for line in BLACKLIST.open():
-            try:
-                existing_bl.add(json.loads(line).get("url", ""))
-            except Exception:
-                pass
-    new_bl = [nm for nm in non_manga if nm["url"] not in existing_bl]
-    with BLACKLIST.open("a", encoding="utf-8") as fh:
-        for nm in new_bl:
-            fh.write(json.dumps(nm, ensure_ascii=False) + "\n")
+    # NOTA: el LLM NO expulsa (WO-C). Los items marcados no-manga por el LLM
+    # NO van a non_manga_blacklist.jsonl: quedan pendientes y registrados en
+    # unmapped_series.jsonl. La expulsión real la hacen los gates deterministas
+    # (filter_non_manga / filter_collectible) en la próxima corrida del scrape.
 
     still_pending = sum(1 for it in deduped if not it.get("standardized_at"))
     orphans = sum(1 for it in deduped
                   if it.get("standardized_at")
                   and not (it.get("series_key") and it.get("edition_key")))
     print(f"Items: {len(items)} -> {len(deduped)}")
-    print(f"Non-manga: {len(new_bl)}")
+    print(f"LLM non-manga (a unmapped, NO blacklist): {llm_non_manga}")
+    print(f"Mangavariant no-manga ignorados: {mangavariant_ignored}")
     print(f"Deduped: {before - len(deduped)}")
     print(f"Outliers de serie corregidos: {outliers}")
     print(f"INTEGRITY: pending_before={pending_before} "

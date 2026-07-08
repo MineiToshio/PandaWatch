@@ -52,6 +52,32 @@ su copia con criterio distinto y una URL http vs https pasaba un dedup pero no e
 Tocás uno → tocá los tres. El gestor de imágenes opera igual
 a nivel cluster (`_update_item_images` propaga el set editado a todas las filas del cluster).
 
+### Clave de dedup de imágenes — paridad de 3 lugares (2026-07-07)
+
+La CLAVE que decide "son la misma foto" para el dedup del carrusel debe tener la
+MISMA semántica en los tres lugares de arriba — si diverge, la misma imagen en dos
+tamaños distintos pasa el dedup en un lugar pero no en otro (thumb y full quedan
+ambas en la galería). Referencia canónica: `manga_watch._img_stem`, que delega en
+`manga_watch._gallery_url_normalize` — la usa `merge_cluster` para unir `images[]`
+cross-fuente. `web/index.html` (`imgKey`) y `web-next/lib/images.ts` (`imageKey`)
+replican la MISMA regex:
+
+- Strippea el esquema (`http://`/`https://`), query string y fragment.
+- Lowercase.
+- **Strippea sufijos de tamaño de CDN con GUION BAJO** (estilo Shopify:
+  `_600x600.jpg`, `_grande.jpg`, `_small.jpg`, `_master.jpg`, etc. — lista completa
+  en el regex `IMG_KEY_SUFFIX_RE`/`_img_stem`) para que un thumb dedupee contra la
+  imagen full del mismo producto.
+
+**Gap conocido (documentado, no arreglado)**: sufijos de tamaño estilo WordPress con
+GUION MEDIO (`img-800x600.jpg`) **NO se strippean** en NINGUNO de los tres lugares —
+el docstring viejo de la función Python mencionaba "WP -NxM" como aspiracional, pero
+la regex nunca lo implementó. Si aparece un caso real de thumb/full WordPress sin
+dedupear, hay que agregar el patrón a los TRES lugares a la vez (nunca a uno solo).
+Tests: `tests/test_audit_wo_g.py` (Python) / `web-next/__tests__/images.test.ts`
+(TypeScript) — comparten la misma tabla de fixtures URL→clave esperada; si agregás un
+caso a un archivo, agregalo también al otro.
+
 **`kind` sólo tiene 2 valores**: `gallery` (foto del producto: portada, contraportada,
 lomo, interior, variant cover) y `extra` (bonus/regalo que viene CON el producto: postal,
 shikishi, acrylic stand). ELIMINADOS, NO reintroducir: `cover` (→ usar posición 0),
@@ -109,7 +135,14 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   el JSONL guarda sólo el filename → cambia sólo la base de la URL (local hoy, R2 en Fase 2).
 - Retrofits: `backfill_metadata.py --only images` (re-fetch carrusel de items con <2 imágenes,
   fase `[4e2]` del scrape_full); `mirror_images.py` (backfill del histórico + GC mark-and-sweep
-  → cuarentena `data/images/_orphans/` o `--gc-delete`).
+  → cuarentena `data/images/_orphans/` o `--gc-delete`). **Excepción al guard `approved_at`
+  (2026-07-07)**: `mirror_images.py` es ADITIVO (sólo rellena un `local` faltante; nunca
+  quita/reordena/reemplaza una entry existente), así que se aplica IGUAL a items aprobados
+  por defecto — un golden record también necesita su espejo local. Acepta `--include-approved`
+  por consistencia de CLI con el resto de retrofits de imagen, pero no cambia el
+  comportamiento del backfill (sólo reporta a título informativo cuántas entries rellenadas
+  eran de items aprobados). El GC (huérfanos) tampoco necesita el guard: opera sobre archivos
+  en disco, no muta `images[]` de ningún item.
 
 **Fase 2 — subir el espejo a Cloudflare R2 (PLANEADA).** Al desplegar, sincronizar
 `data/images/ → R2` (boto3, S3-compatible). **Bucket R2 propio** (no un prefijo dentro del
@@ -199,6 +232,28 @@ Patrones **no agregados** (verificados como no viables): Amazon (los modificador
 
 El download pasa `referer=<url del item>` para evitar 403 de CDNs con anti-hotlink. La comparación de píxeles (umbral `--min-gain 0.10`) evita reemplazar por la misma imagen o peor.
 
+**Guard `approved_at` (2026-07-07, gotcha #121)**: por defecto saltea items aprobados
+(golden records) — el script reemplaza `url`/`local` de una entry existente sin cola
+de revisión. `--include-approved` fuerza. Mismo guard homogéneo en los 13 scripts de
+imagen/agrupación de listadomanga (ver `docs/reference/conventions.md`).
+
+## Backfill de portadas externas en `scrape_full.sh` — `RUN_COVER_BACKFILL=1` (opt-in, 2026-07-07)
+
+`backfill_prh_covers.py` (CDN determinístico de Penguin Random House, ISBN EN) y
+`fetch_better_covers.py` (búsqueda web ISBN/Tavily/Serper) van MÁS ALLÁ de lo que
+`upgrade_image_resolution.py` puede hacer (ese sólo re-pide la misma URL sin params de
+resize, mismo dominio; estos buscan portadas hi-res en OTRAS fuentes). Pasos **[4g3]/
+[4g4]** de `scrape_full.sh`, ubicados DESPUÉS de `[4g2]` (que ya agotó la mejora
+"gratis" intra-dominio) y ANTES de `[4h]` `dedup_carousel_images` (que necesita ver el
+estado FINAL de portadas). **Default OFF** — son network-heavy (`fetch_better_covers`
+hace hasta 1 búsqueda web por item candidato) y `fetch_better_covers` necesita
+`SERPER_API_KEY` o `TAVILY_API_KEY` en `.env` para buscar (sin key, sólo corre el
+fallback CDN/ISBN, funciona igual pero acotado). Activar con `RUN_COVER_BACKFILL=1
+./scripts/scrape_full.sh`. **Seguro por defecto**: `fetch_better_covers` sin `--apply`
+no reemplaza nada — todo queda en `data/cover_preview.json` para aprobación manual
+(ver "Búsqueda de portadas hi-res" abajo y `cover-preview.html`). NO está en
+`scrape_delta.sh` (sólo full).
+
 ## Promoción de hi-res intra-cluster — `promote_hires_cover.py`
 
 Caso: un item tiene su portada en `images[0]` como thumbnail de listadomanga (<90 000 px,
@@ -214,11 +269,44 @@ menor ≤ 170 px y la candidata es ≥ 2× más grande → par thumbnail↔full 
 + aspect ratio ≤ 12%. Si no cumple ese par, se aplica `_same_cover` estricto (AND-gate).
 
 El thumbnail queda en la galería; ejecutar `dedup_carousel_images.py` después si se quiere
-eliminarlo. Tests: `tests/test_promote_hires_cover.py`. Flags: `--dry-run`.
+eliminarlo. Tests: `tests/test_promote_hires_cover.py`. Flags: `--dry-run`,
+`--include-approved` (por defecto saltea aprobados — promover intercambia `images[0]`
+sin cola de revisión).
 
 Cuándo usarlo: después de `upgrade_image_resolution.py` (paso 3 del sub-pipeline de imágenes)
 y antes de cualquier retrofit que necesite ir a la red, ya que resuelve el problema sin costo
 de red cuando la hi-res ya está en el cluster.
+
+## AI upscale de portadas pixeladas — `upscale_images.py`
+
+AI upscaling (waifu2x/realesrgan) ×2 para thumbnails JP pequeños (sumikko,
+booksprivilege, Rakuten, animeclick — típicamente <200k px sin hi-res en origen).
+
+**Pasa por `image_store.normalize_image` (fuente única, P27, 2026-07-07)** — antes
+guardaba el PNG lossless crudo del upscaler directo al espejo, pesando órdenes de
+magnitud más que sus pares; ahora el resultado se normaliza igual que cualquier otra
+imagen que entra al corpus (AVIF Q60, lado largo ≤1600px). El nombre de archivo pasa a
+ser content-addressed (`sha256(bytes normalizados)[:16]`), igual que
+`fetch_better_covers`/`image_store.download_image`.
+
+**Marca `upscaled: true`** en cada entry de `images[]` que reemplaza — permite a
+scripts downstream (ej. `fetch_better_covers`) distinguir un upscale de IA de una foto
+hi-res real y preferir reemplazarla si aparece una candidata mejor. Es también la señal
+PRIMARIA de idempotencia: una entry con `upscaled: true` se saltea SIEMPRE (nunca se
+re-upscalea un upscale — degradaría más la imagen), más robusta que inferir por tamaño
+de archivo (el criterio viejo).
+
+**Guard `approved_at`**: por defecto saltea el archivo ENTERO (no sólo el item) si
+CUALQUIERA de los items que referencian ese `local` está aprobado — un mismo archivo
+puede ser compartido por varios items y no se quiere actualizar unos sí y otros no.
+`--include-approved` fuerza.
+
+**Gotcha cerrada (P27, #124)**: el parser de píxeles por bytes no reconoce AVIF: caía
+al fallback de tamaño de archivo, que es sistemáticamente MENOR que los píxeles reales
+para una imagen comprimida — el gate de ganancia (`new_px <= old_px`) rechazaba TODO
+upscale sobre el espejo ya normalizado. Fix: fallback a PIL (`Image.open(...).size`)
+para AVIF y cualquier formato no cubierto por el parser binario, antes del proxy de
+tamaño de archivo.
 
 ## Dedup de portada en el carrusel — `dedup_carousel_images.py`
 
@@ -227,7 +315,9 @@ la cover hi-res del publisher + la misma como thumbnail de baja calidad de
 listadomanga), `scripts/retrofit/dedup_carousel_images.py` la deduplica por hash
 perceptual (aHash 8×8, Hamming ≤6 + aspect ±12%), conservando la de MAYOR
 resolución. Solo toca `kind=gallery` (los `extra` —cofres/tomos del box— son
-contenido curado y nunca se tocan) y exige dims válidas. Ver retrofit README.
+contenido curado y nunca se tocan) y exige dims válidas. Por defecto saltea items
+aprobados (`--include-approved` fuerza) — el dedup puede reordenar `images[0]` (la
+portada) de un golden record. Ver retrofit README.
 
 ## Purga de placeholders / 1×1 / rotas — `purge_placeholder_images.py`
 
@@ -288,7 +378,11 @@ intacta (std 66) porque borra solo por reglas estructurales/firma, nunca por rep
   (reversible; protege los referenciados por `cover_preview.json`). `--keep-files` lo evita.
 - Optimización: solo evalúa archivos ≤ 200 KB (un placeholder pesa pocos KB; una portada
   real > 200 KB jamás es casi-sólida ni matchea firma) → no decodifica los 14 GB de espejo.
-- Idempotente. Flags: `--dry-run`, `--keep-files`, `--cross-series-min N`. Tests: `tests/test_purge_placeholder_images.py`.
+- Idempotente. Flags: `--dry-run`, `--keep-files`, `--cross-series-min N`,
+  `--include-approved` (por defecto saltea items aprobados; sus locals SIGUEN contando
+  como "sobrevivientes" para el GC aunque no se toque la entry, para no mandarlos a
+  cuarentena si otro item no-aprobado que comparte el mismo archivo lo pierde en su
+  propia pasada). Tests: `tests/test_purge_placeholder_images.py`.
 
 Corre como paso **[4i]** del pipeline canónico (delta y full), después de
 `dedup_carousel_images` y antes de `build_web`, así un placeholder que reentre durante un
@@ -396,6 +490,13 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
   `_same_cover` contra la imagen actual, o **⚠ sin verificar** (ámbar) cuando no fue posible
   verificar (p.ej. items sin imagen con `--include-no-image`). El badge aparece tanto en la
   card compacta como en el modal de comparación.
+- **Badge "aprobadas SIN APLICAR" (P24, 2026-07-07)**: aprobar una candidata (👍) y
+  aplicarla a `items.jsonl` son pasos DESACOPLADOS (guardar `status=approved` no toca el
+  catálogo; sólo `POST /api/apply-cover-preview` lo hace). Si quedan candidatas
+  `approved` sin aplicar, `cover-preview.html` muestra un banner verde prominente al
+  cargar con el conteo y un botón "✓ Aplicar ahora" — el contador (`approved_unapplied`)
+  es AUTORITATIVO server-side, viene en `GET /api/cover-preview`. Detalle en
+  [dashboard.md](dashboard.md).
 - **NUNCA** modifica `items.jsonl`. La aprobación es manual vía `cover-preview.html`.
 - Flags: `--limit N`, `--slug SLUG`, `--gallery-only`, `--include-gallery`, `--include-no-image`,
   `--retry-failed`, `--query-extra "texto"`.

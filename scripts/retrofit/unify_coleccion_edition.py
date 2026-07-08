@@ -120,6 +120,12 @@ def _with_slug(ek: str, new_slug: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--include-approved", action="store_true",
+                     help="También reasigna edition_key/series_key de items aprobados "
+                          "(golden records). Por defecto se saltean por completo (ni "
+                          "siquiera se les recalcula lm_kind — eso alimenta el cluster_key "
+                          "que tampoco se toca). Riesgo de fragmentación: ver el paso final "
+                          "'apply_approvals' en enforce_listadomanga_rules.py.")
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
 
@@ -129,14 +135,21 @@ def main() -> int:
         if c:
             by_cole[c].append(it)
 
-    changed, diffs = 0, []
+    changed, diffs, skipped_approved = 0, [], 0
     for c, grp in by_cole.items():
-        # 1) persistir lm_kind en cada item (para el cluster de old-format)
+        # 1) persistir lm_kind en cada item NO aprobado (para el cluster de
+        # old-format; alimenta derive_cluster_key, así que un item aprobado no
+        # lo recibe — no queremos que su cluster_key derive distinto sin que
+        # nosotros lo hayamos decidido explícitamente).
         for it in grp:
+            if mw.is_approved(it) and not args.include_approved:
+                continue
             it["lm_kind"] = _kind_of(it)
         # 2) separar BOX SETS (= edición aparte, gotcha #58) de los tomos. El base
         # de la edición se calcula SÓLO con los NO-box; los box van a su propia
-        # edición (slug `boxset`).
+        # edición (slug `boxset`). Lee TODOS los items del grupo (aprobados
+        # incluidos) — es solo lectura, y excluir aprobados de esta agregación
+        # sesgaría la elección del edition_key base de la coleccion.
         box = [it for it in grp if _is_box(it)]
         rest = [it for it in grp if not _is_box(it)]
         # candidatos del base: los NO-box; preferir país CONOCIDO (no `-xx`, #46).
@@ -166,6 +179,9 @@ def main() -> int:
 
         # 3) asignar: tomos → base_ek; box sets → box_ek (misma serie, su display propio)
         for it in grp:
+            if mw.is_approved(it) and not args.include_approved:
+                skipped_approved += 1
+                continue
             is_box = _is_box(it)
             tgt_ek = box_ek if is_box else base_ek
             if it.get("edition_key") == tgt_ek and it.get("series_key") == base_sk:
@@ -183,14 +199,15 @@ def main() -> int:
             changed += 1
 
     print(f"[unify-coleccion] items re-asignados al edition_key de su coleccion: {changed}")
+    if skipped_approved:
+        print(f"[unify-coleccion] items aprobados saltados (usar --include-approved): {skipped_approved}")
     for c, oek, nek, t in diffs[:40]:
         print(f"    cole {c}: {oek}  →  {nek}   ({t!r})")
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
-    from manga_watch import consolidate_by_cluster
     before = len(items)
-    items = consolidate_by_cluster(items)
+    items = mw.consolidate_by_cluster(items)
     print(f"[unify-coleccion] consolidate: {before} → {len(items)}")
     shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-unifycole-bak"))
     tmp = ITEMS.with_suffix(".jsonl.tmp")

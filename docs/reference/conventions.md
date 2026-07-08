@@ -93,12 +93,77 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   contexto de Claude). NO `tee` (buffering). Claude programa un `ScheduleWakeup` (~20 min)
   para revisar el log, ya que nohup desacopla el proceso.
 
+### Guard `approved_at` homogéneo + test anti-drift (2026-07-07)
+
+Los 13 retrofits de imagen/agrupación de listadomanga (`mirror_images` [aditivo,
+excepción — ver docs/reference/images.md], `dedup_carousel_images`,
+`purge_placeholder_images`, `upgrade_image_resolution`, `backfill_prh_covers`,
+`fetch_better_covers` [sólo paths que MUTAN, no la generación de candidatas hacia
+`cover_preview.json`], `upscale_images` [guard a nivel de ARCHIVO compartido —
+si CUALQUIER item que referencia el `local` está aprobado, se saltea el archivo
+entero], `promote_hires_cover`, `align_raw_to_std_coleccion`, `fix_edition_country`,
+`unify_coleccion_edition`, `fix_listadomanga_title_collisions`, y
+`_recover_edition_display` dentro de `enforce_listadomanga_rules.py`) siguen el MISMO
+patrón: `if is_approved(it) and not args.include_approved: skip`. Un script NUEVO que
+reescribe metadata descriptiva/agrupación debe seguir el mismo patrón desde el día 1
+(no agregarlo después como parche).
+
+**Test estructural anti-drift**: en vez de confiar en que cada unit test cubra el
+guard, un test dedicado (`tests/test_audit_wo_d.py`) verifica MECÁNICAMENTE que los 13
+scripts del dominio mencionen `approved`/`is_approved` en su código y expongan el flag
+`--include-approved` en su `argparse` — si alguien agrega un script nuevo al dominio
+(o le rompe el guard existente a uno viejo) sin el patrón, el test lo detecta sin
+depender de qué tan exhaustivos sean los tests unitarios de ese script en particular.
+Extendé la lista del test si agregás un script nuevo a este dominio.
+
+**Por qué importa (gotcha #121)**: si un paso saltea la fila aprobada pero re-deriva sus
+HERMANAS (misma edición, sin aprobar), la fila aprobada queda con un `edition_key`/
+`cluster_key` VIEJO mientras sus hermanas migran al esquema nuevo — el mismo producto
+se fragmenta en 2 cards. El paso 7 nuevo del enforcer (`apply_approvals.py` al FINAL de
+la cadena de `enforce_listadomanga_rules.py`) es la red de seguridad: re-materializa
+`data/approvals.jsonl` matcheando por `cluster_key` con fallback a `url`, así el
+`approved_at` termina siempre en la fila que HOY representa ese producto (best-effort —
+no vuelve a fusionar filas ya fragmentadas, eso requeriría re-clusterizar).
+
+### El LLM propone, el determinismo dispone (backstops de standardize, 2026-07-07)
+
+El LLM del skill `/watch-standardize-catalog` NUNCA es la autoridad final sobre nada
+estructural — sólo propone, y un backstop determinista en `standardize_apply.py`/
+`standardize_audit.py` valida o corrige antes de persistir:
+
+- **`is_manga`**: el LLM YA NO expulsa items a `non_manga_blacklist.jsonl` por su
+  propio veredicto (gotcha #122). Un `is_manga=false` deja el item PENDIENTE +
+  registrado en `data/unmapped_series.jsonl` (reason `llm_non_manga`) para que los
+  gates deterministas (`filter_non_manga`/`filter_collectible`) decidan en la próxima
+  corrida. Excepción dura: Mangavariant nunca se expulsa (el veredicto se ignora, WARN).
+- **`product_type`**: se valida contra un enum cerrado (`VALID_PRODUCT_TYPES` en
+  `standardize_apply.py` — manga/artbook/fanbook/guidebook/boxset/novel/magazine/
+  audiobook). Si el LLM devuelve un edition-kind (special/deluxe/variant/limited/
+  collector — esos van en `edition_key`, no en `product_type`), se descarta y se
+  re-deriva con `derive_product_type()` (fuente única, importada de `manga_watch.py`,
+  nunca reimplementada).
+- **Escalado de retry**: `standardize_attempts` cuenta cada vez que el merge deja un
+  item pendiente por keys inusables (sanitización vacía); al llegar a
+  `MAX_STANDARDIZE_ATTEMPTS=3`, el audit lo excluye de las proyecciones Tier 2/3 y lo
+  manda a curación manual (`unmapped_series.jsonl`, reason `standardize_exhausted`) en
+  vez de reintentarlo para siempre.
+
+Regla general al agregar un campo nuevo que el LLM del skill pueda emitir: si el campo
+tiene un enum/regla estructural conocida, el backstop determinista SIEMPRE va en
+`standardize_apply.py`/`standardize_audit.py` (fuente única) — nunca confiar en que el
+prompt del LLM sea suficiente.
+
 ### Flagear un registro incierto
 
 SIEMPRE a `data/unmapped_series.jsonl` (única fuente). NUNCA archivos paralelos
 (uncertain_X/review_X). Contexto extra vía campos opcionales del schema (`flagged_by`,
 `reason`, `notes`, `proposed_canonical_*`). Para flags automáticos desde el pipeline usá
-`log_unmapped_series()` en `series_aliases.py`. Schema completo en el File map.
+`log_unmapped_series()` en `series_aliases.py`. Para flags de CURACIÓN post-hoc con `reason`
++ dedup cross-run por `(series_key, reason)`/`(sample_url, reason)` (retrofits, el merge del
+skill de standardize) usá `append_unmapped_from_item(item, reason, note=...)` en
+`standardize_apply.py` (fuente única — no reimplementar el writer/dedup; ver
+`queue_regular_shielded.py` para un ejemplo de retrofit que la reusa). Schema completo en el
+File map.
 
 ### Script nuevo (o flag nuevo) en el Panel de Control
 

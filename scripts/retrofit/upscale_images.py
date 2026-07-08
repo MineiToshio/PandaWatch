@@ -16,18 +16,27 @@ Instalación (macOS, Homebrew):
 
 Comportamiento:
   - Escala ×2 por default (--scale 2). Imágenes de ~150×220 → ~300×440.
-  - Salida en PNG (lossless). Si el archivo original era .jpg y la salida
-    es .png, actualiza `image_local` en items.jsonl. La función
-    `existing_local_image()` de image_store hace glob `<stem>.*`, así que
-    futuros scrapes del mismo URL usan el PNG sin re-descargar.
+  - El upscaler produce un PNG lossless, pero NO se guarda crudo: pasa por
+    `image_store.normalize_image` (fuente única, P27 2026-07-07) antes de
+    escribirse al espejo — mismo tratamiento (AVIF Q60, lado largo ≤1600px)
+    que cualquier otra imagen que entra al corpus, así una portada upscaleada
+    no pesa órdenes de magnitud más que sus pares. El nombre de archivo es
+    content-addressed (sha256 de los bytes normalizados), igual que
+    fetch_better_covers/image_store.download_image.
+  - Marca cada entry de `images[]` afectada con `upscaled: true` — permite a
+    scripts downstream (ej. fetch_better_covers) distinguir un upscale de IA
+    de una foto hi-res real y preferir reemplazarla si aparece una mejor.
+  - Idempotente: una entry con `upscaled: true` se saltea SIEMPRE (no se
+    re-upscalea un upscale — degradaría más la imagen); es la señal primaria
+    de idempotencia, más robusta que inferir por tamaño de archivo.
+  - Items aprobados (`approved_at`, golden records) se saltean por defecto
+    (`--include-approved` para forzar): upscalear reemplaza el archivo
+    referenciado por `images[i].local` sin cola de revisión.
   - Procesa los archivos en serie (el upscaler ya paraleliza internamente
-    en GPU). --workers controla cuántos ítems del JSONL se actualizan en
-    lotes pero no lanza upscalers en paralelo (evita contención de GPU).
-  - Idempotente: si el archivo ya fue upscaleado (píxeles ≥ threshold ×
-    scale²), lo saltea.
+    en GPU).
   - GC-friendly: el archivo original (.jpg) queda en su lugar y se elimina
-    sólo si el PNG nuevo reemplazó exitosamente. Si algo falla, el original
-    sigue disponible.
+    sólo si el reemplazo normalizado se escribió exitosamente. Si algo falla,
+    el original sigue disponible.
 
 Uso:
     # Instalar primero: brew install waifu2x-ncnn-vulkan
@@ -43,12 +52,14 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import uuid
 from collections import Counter
 from pathlib import Path
 
@@ -57,7 +68,10 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import backup_and_rotate  # type: ignore
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
 
 
 # ── Upscaler detection ────────────────────────────────────────────────────────
@@ -117,12 +131,8 @@ def _upscale_file(
 
 # ── Image dimensions ──────────────────────────────────────────────────────────
 
-def _pixels(path: Path) -> int | None:
-    """Cuenta píxeles totales de una imagen sin dependencias externas."""
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
+def _pixels_from_bytes(data: bytes) -> int | None:
+    """Cuenta píxeles totales de una imagen ya en memoria."""
     if len(data) < 24:
         return None
 
@@ -167,8 +177,33 @@ def _pixels(path: Path) -> int | None:
             i += 2 + length
         return None
 
-    # Fallback: file size as rough proxy
+    # AVIF (y cualquier otro formato que el parser de bytes no cubre): fallback
+    # a PIL — sin esto, la salida normalizada (P27, siempre AVIF) medía por
+    # tamaño de archivo (proxy), que para AVIF comprimido es sistemáticamente
+    # MENOR que los píxeles reales y el gate de ganancia rechazaba TODO upscale.
+    try:
+        import io
+
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+            if w > 0 and h > 0:
+                return w * h
+    except Exception:
+        pass
+
+    # Fallback final: file size as rough proxy
     return len(data)
+
+
+def _pixels(path: Path) -> int | None:
+    """Cuenta píxeles totales de una imagen sin dependencias externas."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return _pixels_from_bytes(data)
 
 
 # ── IO ────────────────────────────────────────────────────────────────────────
@@ -199,16 +234,29 @@ def _collect_targets(
     items: list[dict],
     images_dir: Path,
     max_pixels: int,
-) -> list[tuple[str, Path, list[dict]]]:
+    *,
+    include_approved: bool = False,
+) -> tuple[list[tuple[str, Path, list[dict]]], int, int]:
     """Agrupa por `image_local` los items que tienen imágenes pequeñas.
 
-    Devuelve [(local, path, [items_that_reference_it]), ...] sólo
-    para archivos que existen y tienen píxeles < max_pixels.
+    Devuelve ([(local, path, [items_that_reference_it]), ...], skipped_already_upscaled,
+    skipped_approved) sólo para archivos que existen y tienen píxeles < max_pixels.
 
     Agrupa por cada `local` de images[] (la portada es images[0], el resto
     galería). Un mismo archivo lo pueden referenciar varios items (cross-source).
+
+    Dos guards, ambos a nivel de ARCHIVO (no de item — un mismo `local` puede
+    ser compartido por varios items y no queremos actualizar unos sí y otros no,
+    dejando una referencia colgando si el original se borra):
+      - `upscaled: true` en cualquier entry que apunte a este `local` → ya es un
+        upscale de IA, no se re-procesa (idempotencia, P27).
+      - cualquier item referenciando este `local` está aprobado (`approved_at`)
+        y no se pasó `--include-approved` → se saltea el archivo COMPLETO (no
+        solo ese item), para no reemplazar un archivo que un golden record
+        todavía necesita.
     """
     local_to_items: dict[str, list[dict]] = {}
+    local_upscaled: set[str] = set()
     for it in items:
         if "_raw" in it:
             continue
@@ -217,12 +265,24 @@ def _collect_targets(
             if not isinstance(im, dict):
                 continue
             local = im.get("local") or ""
-            if local and local not in seen_locals:
+            if not local:
+                continue
+            if im.get("upscaled"):
+                local_upscaled.add(local)
+            if local not in seen_locals:
                 seen_locals.add(local)
                 local_to_items.setdefault(local, []).append(it)
 
     targets = []
+    skipped_already_upscaled = 0
+    skipped_approved = 0
     for local, refs in local_to_items.items():
+        if local in local_upscaled:
+            skipped_already_upscaled += 1
+            continue
+        if any(is_approved(it) for it in refs) and not include_approved:
+            skipped_approved += 1
+            continue
         path = images_dir / local
         if not path.is_file():
             continue
@@ -231,7 +291,7 @@ def _collect_targets(
             continue
         targets.append((local, path, refs))
 
-    return targets
+    return targets, skipped_already_upscaled, skipped_approved
 
 
 def run(
@@ -244,6 +304,7 @@ def run(
     limit: int,
     dry_run: bool,
     delete_original: bool,
+    include_approved: bool = False,
 ) -> None:
     upscaler = _find_upscaler()
     if upscaler is None:
@@ -259,13 +320,21 @@ def run(
     print(f"Upscaler: {upscaler_kind} ({upscaler_path})")
 
     items = _load_items(items_path)
-    targets = _collect_targets(items, images_dir, max_pixels)
+    targets, skipped_already_upscaled, skipped_approved = _collect_targets(
+        items, images_dir, max_pixels, include_approved=include_approved,
+    )
 
     if limit > 0:
         targets = targets[:limit]
 
     total = len(targets)
     print(f"Imágenes candidatas (< {max_pixels:,} px): {total}")
+    if skipped_already_upscaled:
+        print(f"  ya upscaleadas (marcadas `upscaled: true`, no se re-procesan): "
+              f"{skipped_already_upscaled}")
+    if skipped_approved:
+        print(f"  archivos de items aprobados saltados (usar --include-approved): "
+              f"{skipped_approved}")
 
     if dry_run:
         print("[DRY-RUN] No se harán cambios.")
@@ -282,20 +351,10 @@ def run(
 
     backup_and_rotate(items_path, "upscale")
     counter: Counter = Counter()
+    counter["already_done"] = skipped_already_upscaled
     items_changed = False
 
     for i, (local, src_path, refs) in enumerate(targets, 1):
-        stem = src_path.stem
-        dst_path = images_dir / (stem + ".png")
-
-        # Si ya existe un PNG (upscaleo previo) y tiene más píxeles, saltar.
-        if dst_path.exists() and dst_path != src_path:
-            existing_px = _pixels(dst_path) or 0
-            src_px = _pixels(src_path) or 0
-            if existing_px >= src_px * (scale ** 2) * 0.5:
-                counter["already_done"] += 1
-                continue
-
         print(f"  [{i}/{total}] {local} ({_pixels(src_path) or 0:,} px) → ×{scale}…", end=" ", flush=True)
 
         # Upscalear a un .tmp primero para atomicidad
@@ -311,29 +370,40 @@ def run(
             counter["errors"] += 1
             continue
 
-        new_px = _pixels(tmp_path) or 0
+        raw_data = tmp_path.read_bytes()
+        tmp_path.unlink(missing_ok=True)
+
+        # P27: pasa por normalize_image (fuente única en image_store) en vez de
+        # escribir el PNG lossless crudo del upscaler al espejo — mismo formato/
+        # tamaño (AVIF Q60, lado largo ≤1600px) que el resto del corpus.
+        norm_data, norm_ext = image_store.normalize_image(raw_data)
+        new_px = _pixels_from_bytes(norm_data) or 0
         old_px = _pixels(src_path) or 0
         if new_px <= old_px:
-            tmp_path.unlink(missing_ok=True)
             print(f"sin ganancia ({new_px:,} px)")
             counter["no_gain"] += 1
             continue
 
-        # Reemplazar: mover tmp → dst_path
-        tmp_path.replace(dst_path)
+        # Nombre content-addressed (misma convención que download_image/_save_image):
+        # la imagen normalizada reusa archivo si dos upscales dan el mismo resultado.
+        new_local = hashlib.sha256(norm_data).hexdigest()[:16] + norm_ext
+        dst_path = images_dir / new_local
+        if not dst_path.exists():
+            tmp2 = dst_path.with_name(f"{dst_path.name}.{uuid.uuid4().hex}.tmp")
+            tmp2.write_bytes(norm_data)
+            tmp2.replace(dst_path)
         print(f"{old_px:,} → {new_px:,} px ✓")
         counter["upscaled"] += 1
 
-        # Si el extension cambió (jpg → png), actualizar el `local` en cada entry
-        # de images[] que apunte al archivo viejo (la portada es images[0]).
-        new_local = dst_path.name
-        if new_local != local:
-            for it in refs:
-                imgs = it.get("images") or []
-                for img in imgs:
-                    if isinstance(img, dict) and img.get("local") == local:
-                        img["local"] = new_local
-            items_changed = True
+        # Actualizar el `local` (y marcar `upscaled: true`, P27) en cada entry de
+        # images[] que apunte al archivo viejo (la portada es images[0]).
+        for it in refs:
+            imgs = it.get("images") or []
+            for img in imgs:
+                if isinstance(img, dict) and img.get("local") == local:
+                    img["local"] = new_local
+                    img["upscaled"] = True
+        items_changed = True
 
         # Eliminar original si se pidió
         if delete_original and src_path != dst_path:
@@ -385,7 +455,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(
         "--no-delete-original", action="store_true",
-        help="No borrar el .jpg original cuando se guarda el .png upscaleado",
+        help="No borrar el .jpg original cuando se guarda el reemplazo normalizado",
+    )
+    p.add_argument(
+        "--include-approved", action="store_true",
+        help="También upscalea archivos referenciados por items aprobados (golden "
+             "records). Por defecto se saltea el archivo ENTERO si alguno de sus "
+             "referenciantes está aprobado (`approved_at`), para no reemplazar una "
+             "imagen que un golden record todavía necesita.",
     )
     return p.parse_args()
 
@@ -402,4 +479,5 @@ if __name__ == "__main__":
         limit=args.limit,
         dry_run=args.dry_run,
         delete_original=not args.no_delete_original,
+        include_approved=args.include_approved,
     )

@@ -20,8 +20,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
+sys.path.insert(0, str(ROOT / "scripts"))
 import fetch_better_covers as fbc  # noqa: E402  (reusa _ahash/_hamming/_get_dims_from_bytes)
 import requests  # noqa: E402
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import is_approved  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import is_approved  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -77,13 +82,21 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--all", action="store_true",
                     help="todos los items (default: solo los que tienen una imagen de listadomanga)")
+    ap.add_argument("--include-approved", action="store_true",
+                    help="También dedupea items aprobados (golden records). Por defecto se "
+                         "saltean: dedup puede REORDENAR images[0] (la portada) de un item "
+                         "aprobado si la portada actual cae como duplicado de menor resolución.")
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open() if l.strip()]
 
     removed_total = 0
     items_changed = 0
+    skipped_approved = 0
     examples = []
     for it in items:
+        if is_approved(it) and not args.include_approved:
+            skipped_approved += 1
+            continue
         imgs = it.get("images") or []
         if len(imgs) < 2:
             continue
@@ -147,6 +160,8 @@ def main() -> int:
                              [(d.get("kind"), (d.get("url", "") or "").split("/")[-1][:18]) for d in dropped]))
 
     print(f"[dedup] items con duplicados de portada: {items_changed} | imágenes quitadas: {removed_total}")
+    if skipped_approved:
+        print(f"[dedup] items aprobados saltados (usar --include-approved): {skipped_approved}")
     for t, dr in examples:
         print(f"   {t:34} drop={dr}")
     if args.dry_run:

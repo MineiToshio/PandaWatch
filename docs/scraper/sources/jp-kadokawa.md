@@ -5,7 +5,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-07-07.
 
 ---
 
@@ -77,6 +77,16 @@ oficial**, además del catálogo editorial de manga.
 - **#9 (signals sobre CJK)**: los detectores de signals usan substring para CJK (no
   word-boundary ASCII). Tenerlo presente si se agrega cualquier detector que toque títulos
   japoneses.
+- **Fechas crudas colándose en `release_date` (2026-07-07, gotcha #123, regresión de #80)**:
+  KADOKAWA Store (extractor genérico, sin parser propio) es una de las fuentes que aportó
+  filas a las **113 fechas no-ISO** detectadas por la nueva invariante WARN `DATEISO` de
+  `validate_corpus.py` — formatos como `"2026年04月08日"` llegaban crudos porque
+  `normalize_release_date()` se aplicaba en puntos de asignación específicos pero no como
+  guardia UNIVERSAL. Fix (no específico de esta fuente, aplica a TODO el pipeline):
+  `candidate_to_json` ahora envuelve incondicionalmente `release_date` en
+  `normalize_release_date()` en el sink final de escritura. Idempotente; no requiere backfill
+  específico de KADOKAWA (el warning se resuelve solo en el próximo re-scrape de las filas
+  afectadas, o corriendo `normalize_release_dates.py --all-formats` sobre el corpus).
 
 ---
 

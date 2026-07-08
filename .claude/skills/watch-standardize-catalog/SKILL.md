@@ -399,9 +399,30 @@ If missing > 0, process inline (≤10) or spawn a retry subagent (>10).
 La lógica de merge vive en `scripts/standardize_apply.py` (fuente única — NO
 embebas una copia acá). Lee los `result_*.jsonl`, aplica los veredictos
 preservando el `edition_key` existente (el LLM no re-agrupa), usa la propuesta
-heurística como fallback de keys vacías (sin keys usables → el item queda
-PENDIENTE, nunca huérfano), manda los non-manga a la blacklist, corrige
-outliers de serie por /coleccion, recomputa cluster_key y consolida:
+heurística como fallback de keys vacías, corrige outliers de serie por
+/coleccion, recomputa cluster_key y consolida:
+
+- **Keys vacías → PENDIENTE, nunca huérfano.** Sin keys usables, el item queda sin
+  `standardized_at` y se reintenta en la próxima corrida; se le suma 1 a
+  `standardize_attempts`. Al llegar a `MAX_STANDARDIZE_ATTEMPTS=3` (contado en
+  `standardize_audit.py` la próxima vez que se audite), el item se EXCLUYE de las
+  proyecciones Tier 2/3 (no gasta más LLM en loop) y se manda a
+  `data/unmapped_series.jsonl` (reason `standardize_exhausted`) para curación manual.
+- **`is_manga=false` YA NO EXPULSA a `non_manga_blacklist.jsonl` (2026-07-07).** El
+  veredicto del LLM NO borra la fila ni la manda a blacklist — el item queda PENDIENTE
+  (sin `standardized_at`) y se registra en `data/unmapped_series.jsonl` (reason
+  `llm_non_manga`) para curación manual. Son los gates DETERMINISTAS del pipeline
+  (`filter_non_manga`/`filter_collectible`, Fase 3 del scrape) los que deciden la
+  expulsión real en la próxima corrida — no el veredicto del LLM directamente (un falso
+  negativo del LLM en un título ambiguo/CJK ya no puede borrar un item real del
+  corpus). **Excepción dura**: un item con source Mangavariant NUNCA se expulsa — si el
+  LLM lo marca `is_manga=false`, se IGNORA el veredicto (WARN en consola) y sigue el
+  flujo normal de estandarización.
+- **`product_type` siempre del enum** (manga/artbook/fanbook/guidebook/boxset/novel/
+  magazine/audiobook). Si el LLM devuelve un edition-kind (special/deluxe/variant/
+  limited/collector — eso va en `edition_key`, nunca en `product_type`), se descarta y
+  se re-deriva con `derive_product_type()` (importada de `manga_watch.py`, fuente
+  única).
 
 ```bash
 .venv/bin/python scripts/standardize_apply.py merge     # [--force-all]
@@ -463,7 +484,10 @@ Report to the user:
 - Tier 1 auto-standardized (0 tokens).
 - Tier 2+3 processed by LLM.
 - Distinct new series_keys.
-- Non-manga removed.
+- Non-manga flagged by the LLM (pending + registered to `unmapped_series.jsonl`,
+  reason `llm_non_manga` — NOT removed from the corpus; see the note in Step 6).
+- Items with `standardize_attempts` reaching the cap (escalated to
+  `unmapped_series.jsonl`, reason `standardize_exhausted`).
 - Items deduplicated.
 - Items translated.
 - Suggest running `/watch-enrich-series-aliases` if new series_keys appeared.

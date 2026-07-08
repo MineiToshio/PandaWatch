@@ -72,9 +72,9 @@ if str(_SCRIPTS) not in __import__("sys").path:
 # El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
 # (no expone estos símbolos) → fallback al módulo real, como sync_cover_images.
 try:
-    from manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+    from manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved  # noqa: E402
 except ImportError:
-    from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+    from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved  # noqa: E402
 import image_store  # noqa: E402
 _ITEMS_PATH = _HERE / "data" / "items.jsonl"
 _IMAGES_DIR = _HERE / "data" / "images"
@@ -1868,6 +1868,7 @@ def run(
     preview: bool = True,   # SEGURO por defecto: nada se aplica sin aprobación
     limit: int = 0,
     verbose: bool = False,
+    include_approved: bool = False,
 ) -> None:
     _load_dotenv()
     if not serper_key:
@@ -1942,6 +1943,7 @@ def run(
     skipped = 0
     errors = 0
     flush_count = 0
+    skipped_approved_direct = 0  # alta confianza que hubiera auto-aplicado, pero el item está aprobado
     hits_by_engine: dict[str, int] = {}  # candidatas APROBADAS por via (cdn/lens/text/…)
 
     # Acumulación de preview (schema multi-candidato). Sembramos desde el
@@ -1992,7 +1994,12 @@ def run(
                 # equivocadas (un kit de magia para "Negima", etc.).
                 old_local = image_store.cover_local(item)
                 old_url = image_store.cover_url(item)
-                if confidence == "high" and not preview and not dry_run:
+                # WO-D (2026-07-07) matiz (b): el guard de aprobados aplica SOLO a los
+                # paths que MUTAN el item (este auto-apply y apply_preview()) — NO a la
+                # generación de candidatas hacia cover_preview.json (más abajo), que es
+                # una cola de revisión, no una escritura directa.
+                item_is_approved = is_approved(item) and not include_approved
+                if confidence == "high" and not preview and not dry_run and not item_is_approved:
                     applied_high += 1
                     _apply_improvement(item, new_url, new_local)
                     _atomic_write(items_path, items)
@@ -2005,6 +2012,11 @@ def run(
                     # (misma slug), agregamos la candidata a su candidates[] en
                     # vez de crear una entry duplicada. Default action=replace_cover
                     # (el owner elige otra en la UI antes de aprobar).
+                    if item_is_approved and confidence == "high" and not preview and not dry_run:
+                        # Hubiera auto-aplicado (alta confianza + --apply) de no ser
+                        # por el guard de aprobados — cae a preview igual (la
+                        # generación de candidatas no es una mutación, matiz b).
+                        skipped_approved_direct += 1
                     previewed += 1
                     slug = item.get("slug", "")
                     # new_pixels del archivo YA NORMALIZADO (AVIF ≤1600px), no del original
@@ -2071,6 +2083,9 @@ def run(
     print(f"  En preview (esperan tu aprobación):  {previewed}")
     print(f"  Sin mejora:                          {skipped}")
     print(f"  Errores:                             {errors}")
+    if skipped_approved_direct:
+        print(f"  Aprobados saltados (habrían auto-aplicado, usar --include-approved): "
+              f"{skipped_approved_direct}")
     if not dry_run:
         print(f"  Guardados:  {flush_count} flushes a items.jsonl")
     total_hits = applied_high + previewed
@@ -2085,7 +2100,7 @@ def run(
         print(f"  Después:    .venv/bin/python scripts/retrofit/fetch_better_covers.py --apply-preview")
 
 
-def apply_preview(items_path: Path, images_dir: Path) -> None:
+def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool = False) -> None:
     """
     Procesa el preview JSON (schema multi-candidato). Cada producto puede tener
     N candidatas, cada una con su `action` y `status`:
@@ -2144,6 +2159,7 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
     reverted = 0
     skipped_missing_file = 0
     redownloaded = 0
+    skipped_approved = 0  # items aprobados excluidos de `targets` (golden records)
     _redl_session = None   # sesión lazy para re-descargas del guard self-healing
     # Archivos candidatos a borrar tras aplicar (se filtran por orphan-check).
     old_to_drop: set = set()   # portadas viejas reemplazadas
@@ -2153,7 +2169,13 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
 
     for entry in preview:
         slug = entry.get("slug", "")
-        targets = items_by_slug.get(slug, [])
+        # WO-D (2026-07-07): apply_preview MUTA items.jsonl (aplica o revierte una
+        # candidata) — items aprobados se excluyen de `targets` por defecto para no
+        # pisar un golden record sin cola de revisión (la generación de la candidata
+        # en run() ya pasó por acá arriba sin tocar el item, matiz b).
+        raw_targets = items_by_slug.get(slug, [])
+        targets = [it for it in raw_targets if include_approved or not is_approved(it)]
+        skipped_approved += len(raw_targets) - len(targets)
         old_url = entry.get("old_url", "")
         old_image = entry.get("old_image", "")
         # Mapa url→local de la galería actual (para borrar el archivo de la
@@ -2295,6 +2317,8 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
         print(f"  Re-descargadas (self-heal):   {redownloaded} (archivo faltante recuperado desde new_url)")
     if skipped_missing_file:
         print(f"  Omitidas (archivo faltante):  {skipped_missing_file} (re-descarga falló; siguen en preview)")
+    if skipped_approved:
+        print(f"  Items aprobados excluidos (usar --include-approved): {skipped_approved}")
 
     # Conservar SOLO las candidatas pendientes de cada entry; las decididas
     # (aplicadas/revertidas) se quitan del JSON aunque la entry siga viva.
@@ -2360,6 +2384,7 @@ def apply_preview(items_path: Path, images_dir: Path) -> None:
         "cleaned_new": cleaned_new,
         "skipped_missing_file": skipped_missing_file,
         "redownloaded": redownloaded,
+        "skipped_approved": skipped_approved,
     }
 
 
@@ -2437,6 +2462,13 @@ def main() -> None:
         "--verbose", "-v", action="store_true",
         help="Mostrar detalle de cada item procesado",
     )
+    ap.add_argument(
+        "--include-approved", action="store_true",
+        help="También muta items aprobados (golden records): auto-aplica (--apply) o "
+             "aplica/revierte del preview (--apply-preview) sobre ellos. Por defecto se "
+             "excluyen — la generación de candidatas hacia cover_preview.json no se ve "
+             "afectada (siempre las incluye, es una cola de revisión).",
+    )
     args = ap.parse_args()
 
     if args.max_hash_dist > DEFAULT_MAX_HASH_DIST:
@@ -2445,7 +2477,7 @@ def main() -> None:
               f"aHash. dHash/pHash/NCC/entropía siguen aplicando igual.", flush=True)
 
     if args.apply_preview:
-        apply_preview(Path(args.items), Path(args.images_dir))
+        apply_preview(Path(args.items), Path(args.images_dir), include_approved=args.include_approved)
         return
 
     run(
@@ -2462,6 +2494,7 @@ def main() -> None:
         dry_run=args.dry_run,
         limit=args.limit,
         verbose=args.verbose,
+        include_approved=args.include_approved,
     )
 
 
