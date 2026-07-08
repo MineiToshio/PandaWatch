@@ -24,6 +24,7 @@ import requests
 from manga_watch import backup_and_rotate, append_jsonl
 import image_store
 from image_store import download_image
+from op_series_guard import is_one_piece_title
 
 ROOT = Path(__file__).resolve().parent.parent
 ITEMS = ROOT / "data" / "items.jsonl"
@@ -298,6 +299,13 @@ def main(dry_run: bool = False):
     for d in NEW_ITEMS_DATA:
         item = build_item(d)
         local = image_store.cover_local(item)
+        # Guarda anti-contaminación (WO-2 GRUPO 3, 2026-07-07): rechaza
+        # cualquier item cuyo título no matchee la serie objetivo antes de
+        # escribirlo (ver op_series_guard.py — mismo bug de fondo que coló
+        # 地獄楽/RURIDRAGON/etc. a través de import_op_remix.py).
+        if not is_one_piece_title(item.get("title", ""), item.get("title_original", "")):
+            print(f"  ⚠ REJECTED (no matchea serie One Piece): {item['title']!r}")
+            continue
         print(f"  {item['title']:50s} | img={'✓ ' + local if local else '❌'}")
         new_items.append(item)
 

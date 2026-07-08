@@ -7310,9 +7310,14 @@ _EDITION_TYPE_TERM_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"特装版|同梱版"), "special"),
     (re.compile(r"愛蔵版"), "deluxe"),
     (re.compile(r"完全版"), "kanzenban"),
-    # Occidente — tipo nombrado explícito en el título
+    # Occidente — tipo nombrado explícito en el título. OJO al orden: "especial
+    # limitada" y "edición limitada" son LIMITED (van ANTES que la regla de
+    # `edición especial`→special) para que "Edición Especial Limitada" resuelva a
+    # limited y no a special. Se anclan a la FRASE completa ("edición especial",
+    # "especial limitada"), NUNCA a "especial" suelto (rozaría nombres de serie).
     (
         re.compile(
+            r"\bespecial\s+limitada\b|"
             r"\bedici[oó]n\s+limitada\b|\bedizione\s+limitata\b|"
             r"\b[ée]dition\s+limit[ée]e\b|\blimited\s+edition\b",
             re.I,
@@ -7325,6 +7330,8 @@ _EDITION_TYPE_TERM_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "deluxe",
     ),
+    # `edición especial` → special (DESPUÉS de la regla limited, ver nota arriba).
+    (re.compile(r"\bedici[oó]n\s+especial\b", re.I), "special"),
 )
 
 

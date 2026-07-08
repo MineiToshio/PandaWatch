@@ -60,6 +60,13 @@ except ImportError:
         score_candidate,
     )
 
+# Reusa la MISMA señal de folleto gratuito que el parser canónico de
+# colecciones (gotcha #103) — nunca copiar el pattern, importarlo.
+try:
+    from scripts.wikis.listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[import-not-found]
+except ImportError:
+    from listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[no-redef]
+
 
 BASE_URL = "https://www.listadomanga.es/"
 CALENDAR_URL_TEMPLATE = "https://www.listadomanga.es/calendario.php?mes={month}&ano={year}"
@@ -71,6 +78,32 @@ DATE_PATTERN = re.compile(
 )
 # Meses adyacentes: solo "Mes YYYY" (sin día de semana).
 MONTH_HEADER_PATTERN = re.compile(r"^\w+\s+\d{4}$", re.UNICODE)
+
+# Guarda anti-folleto (WO-2 GRUPO 4, 2026-07-07, mismo origen que gotcha
+# #103). Este módulo legacy sólo ve el texto del enlace del día (título +
+# autor) — NO la línea de precio, así que `FREE_PRICE_PATTERN` casi nunca
+# matchea acá (se reusa igual, defensivo, por si algún día el título trae
+# literalmente "Gratuito"/"Número Gratuito"). La señal que SÍ está al alcance
+# de este módulo es el texto "Edición Promocional" cuando aparece en el
+# título/autor del enlace — folletos regalados por la editorial que
+# ListadoManga rotula así en el calendario. Limitación documentada: sin la
+# línea de precio, este módulo NO puede detectar TODOS los free preview que
+# el parser canónico de colecciones sí atrapa (gotcha #103) — cobertura
+# parcial, mejor que nada para el módulo fuera del pipeline.
+PROMOTIONAL_EDITION_PATTERN = re.compile(r"edici[óo]n\s+promocional", re.IGNORECASE | re.UNICODE)
+
+
+def _is_free_or_promotional(text: str) -> bool:
+    """True si `text` indica un folleto promocional/gratuito (no un producto
+    comprable). Ver `PROMOTIONAL_EDITION_PATTERN` / `FREE_PRICE_PATTERN`."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    if PROMOTIONAL_EDITION_PATTERN.search(text):
+        return True
+    if FREE_PRICE_PATTERN.match(text):
+        return True
+    return False
 
 # Para convertir nombre de mes español → número.
 SPANISH_MONTHS = {
@@ -151,6 +184,10 @@ def _extract_items_from_table(
             continue
         title = clean_text(anchor.get_text(" ", strip=True))
         if not title or len(title) < 3:
+            continue
+        if _is_free_or_promotional(title):
+            # Folleto promocional/gratuito (ver PROMOTIONAL_EDITION_PATTERN /
+            # gotcha #103) — no es un producto comprable ni coleccionable.
             continue
 
         # Author: link a autor.php que sigue al de coleccion

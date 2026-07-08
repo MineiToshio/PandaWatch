@@ -234,7 +234,7 @@ re-aplica EN ORDEN todas las reglas duras, sobreescribiendo al LLM. **Es idempot
 | 1 | (interno) | `edition_display` = nombre oficial de la /coleccion (desde `description`, sin red) (#49) |
 | 2 | `fix_edition_country` | sufija país en `edition_key` (#46) |
 | 2b | `fix_edition_key_anomalies` | `panini-es`→`panini`; `xx`→país si la editorial es mono-país |
-| 3 | `unify_coleccion_edition` | una /coleccion = un `edition_key` (incl. fichas de tienda cross-source) (#48) |
+| 3 | `unify_coleccion_edition` | una /coleccion = una edición (incl. fichas de tienda cross-source) (#48); **auto-corta las variantes especiales con evidencia fuerte de título en su propia edición del tipo — sin tocar el cluster_key (#127)** |
 | 3-0 | `disambiguate_coleccion_editions` | si un `edition_key` abarca >1 cole → `-c{cole}` (#57) |
 | 3-1 | `collapse_baseurl_tomos` | fusiona fila base-url phantom en su tomo sintético (#56) |
 | 3-2 | `merge_crosssource_into_lmc` | fusiona ficha de tienda en su tomo lmc por edition_key+vol+título (#56) |
@@ -309,6 +309,53 @@ recuperar requiere re-scrape + enforcer.
   `_parse_item_table` → devuelve `None` (descarta POR ITEM; conserva números de pago de la misma
   colección). Limpieza: `remove_free_preview_editions.py` (13 borrados, regla A description +
   regla B legacy calendario verificado por fetch).
+- #127: **`unify_coleccion_edition` plegaba las VARIANTES ESPECIALES al regular** (2026-07-08,
+  WO-1). Por "coleccion=edición" el unify plegaba TODOS los tomos no-box de una /coleccion al
+  `edition_key` base `…-regular-…`; las variantes que se venden APARTE con bonus físico (título
+  "Edición Especial/Especial Limitada/Edición Limitada/Edición de Lujo") perdían su tipo — el
+  tipo sobrevivía SOLO en el cluster_key (`lmc:cole:special:N`). Blast radius ~28 items (todos
+  especiales reales con bonus enumerado y precio €8-17; 0 folletos promocionales — esos ya los
+  descarta #103). Agravante: `_EDITION_TYPE_TERM_RULES` (manga_watch) no tenía la frase "Edición
+  Especial"/"Especial Limitada", así que `edition_slug_from_text` devolvía "". ✅ Fix: (a) la
+  tabla reconoce esas frases → special/limited (ancladas a la FRASE, nunca "especial" suelto);
+  (b) `unify_coleccion_edition._carve_slug` CARVA la variante en su propia edición del tipo por
+  evidencia FUERTE de título, **sin tocar el cluster_key** (dedup sigue por cluster), respetando
+  **cofre 1ª ed = regular** (bonus suelto no dispara) y **folleto promocional fuera**
+  (`FREE_PRICE_PATTERN`/"Edición Promocional"); namespacea `-c{cole}` sólo ante colisión
+  cross-coleccion (ej. Las Quintillizas cole 3406 vs "Mini libro" cole 5028, evita DUPVOL). (c)
+  `_kind_of` lee el kind del cluster para no derivar `lm_kind` en la 2ª pasada (idempotencia
+  byte-idéntica). Invariante nueva `validate_corpus.SPECIALREG` (título de tipo ⇒ ek no-regular);
+  ~28 hoy → 0 tras el carve. Tests: `tests/test_audit_wo1_grupo1.py`.
+- **#128 "category" inyectada en el calendario
+  LEGACY marcaba tomos regulares como artbook/boxset (bug pre-2026-05-23, auditoría WO-2
+  GRUPO 2, 2026-07-08).** `scripts/wikis/listadomanga.py::_extract_items_from_table`
+  (parser plano viejo, fuera del pipeline canónico desde 2026-05-23) inyectaba la
+  `category` del `<u>` de la tabla ("Artbook"...) directamente en la `description` de
+  CADA item de esa tabla, aunque el `<u>` perteneciera a otro contexto (autor, sección
+  adyacente, item vecino) — `detect_signals` la interpretaba como señal premium real.
+  Casos reales (2026-05-19): Chainsaw Man 1, Black Butler 27, Fire Force 9, Tokyo
+  Ghoul:re 14 quedaron `product_type=artbook`/`signal_types=['artbook']` pese a ser tomos
+  manga regulares. El fix upstream (2026-05-23, `_extract_items_from_table` ya NO inyecta
+  `category` en la description) evita casos nuevos, pero los ~17 residuos que ya habían
+  entrado antes del fix quedaron BLINDADOS por `standardized_at` (gotcha #61: los gates
+  no re-evalúan items estandarizados). Limpieza: `scripts/retrofit/purge_false_artbook_residuals.py`
+  — desblinda (remueve `standardized_at`) **y además limpia el token de categoría inyectado de
+  la `description`** (por posición, 2º segmento del split por " · " si coincide con el tag
+  `category:<X>`): sin esto la description crudo sobrevive a la estandarización y `rescore`
+  re-deriva la señal falsa (la description NUNCA se limpió al estandarizar). Recién con la
+  description limpia, `rescore.py` dropea el signal y `filter_collectible.py` los expulsa como
+  `regular_tomo`; NO borra directamente. 17 expulsados en la aplicación 2026-07-08.
+- **#129 El calendario LEGACY no puede detectar
+  folletos "Número Gratuito" — sólo ve el texto del enlace, no la línea de precio
+  (limitación documentada, auditoría WO-2 GRUPO 4, 2026-07-08).** A diferencia del parser
+  canónico de colecciones (`FREE_PRICE_PATTERN` sobre la línea de precio, gotcha #103),
+  `scripts/wikis/listadomanga.py` sólo procesa el `<a href="coleccion.php...">` del día —
+  nunca ve el precio. Cobertura parcial agregada: `PROMOTIONAL_EDITION_PATTERN`
+  (`edición\s+promocional`, case-insensitive) sobre el título del enlace, + reuso
+  defensivo de `FREE_PRICE_PATTERN` (importado de `listadomanga_collections.py`, nunca
+  copiado) por si el título llega a ser literalmente "Gratuito"/"Número Gratuito". Sigue
+  sin poder atrapar TODOS los free preview que el parser canónico sí detecta (el módulo
+  legacy está fuera del pipeline y sólo se invoca a mano).
 
 **Agrupación / dedup (la raíz de casi todos los duplicados):**
 - #46 país=edición, #48 coleccion=edición, #49 edition_display oficial, #52 cluster_key

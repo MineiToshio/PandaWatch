@@ -2940,6 +2940,103 @@ SCRIPTS: list[dict[str, Any]] = [
                   advanced=True),
         ],
     },
+
+    {
+        "id": "purge_false_artbook_residuals",
+        "category": "Mantenimiento",
+        "icon": "🖼️",
+        "name": "Desblindar falsos artbook (calendario legacy)",
+        "tagline": "Tomos regulares marcados artbook/boxset por el bug viejo de 'category' inyectada.",
+        "what": (
+            "Detecta residuos del bug (pre-2026-05-23) del calendario legacy de "
+            "ListadoManga que inyectaba la 'category' del día ('Artbook'...) en la "
+            "description de items cercanos, marcando tomos REGULARES como "
+            "product_type=artbook/boxset (Chainsaw Man 1, Black Butler 27, Fire "
+            "Force 9, Tokyo Ghoul:re 14, etc.). Blast radius acotado: "
+            "product_type∈{artbook,boxset} + standardized_at + edition_key/display "
+            "con pinta de Regular + signal_types==['artbook'] SOLO + título SIN "
+            "keyword real de artbook. NO borra ni reclasifica: sólo remueve "
+            "standardized_at (desblindar) para que rescore.py + filter_collectible.py "
+            "los reevalúen y expulsen en la próxima corrida. Por defecto solo "
+            "LISTA/cuenta; sin --dry-run escribe de verdad."
+        ),
+        "when": (
+            "One-shot, tras la auditoría post-scrape 2026-07-07 (GRUPO 2). Correr "
+            "también si reaparecen residuos similares de una fuente que inyecta "
+            "'category' como signal."
+        ),
+        "command": [PYTHON, "scripts/retrofit/purge_false_artbook_residuals.py"],
+        "presets": [
+            {
+                "id": "dry-run",
+                "label": "🧪 Dry-run",
+                "desc": "Cuenta y lista los candidatos sin escribir nada.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Desblindar",
+                "desc": "Remueve standardized_at de los candidatos.",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Solo listar",
+                  "No escribe nada, sólo reporta los candidatos.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Desblinda también items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "purge_op_import_foreign",
+        "category": "Mantenimiento",
+        "icon": "🏴‍☠️",
+        "name": "Purgar residuos ajenos del import de One Piece",
+        "tagline": "Series ajenas coladas por ISBN mal resuelto en el import manual de One Piece.",
+        "what": (
+            "Detecta items con source 'Research import (One Piece ...)' (import "
+            "manual one-shot, scripts/import_op_remix.py / fix_op_special_vols.py) "
+            "cuyo título/title_original NO referencia a One Piece (keywords: 'one "
+            "piece', 'ワンピース', '尾田') — ~11 series ajenas coladas por un ISBN mal "
+            "resuelto (地獄楽, RURIDRAGON, 青の祓魔師, etc.). Con --apply: remueve "
+            "standardized_at (desblindar, mismo mecanismo que GRUPO 2) Y encola a "
+            "data/unmapped_series.jsonl (reason 'op_import_foreign') para curación "
+            "manual — dato corrompido (título/ISBN no coinciden entre sí), así que "
+            "la expulsión determinista es best-effort y un humano debe confirmar. "
+            "Por defecto solo LISTA/cuenta."
+        ),
+        "when": (
+            "One-shot, tras la auditoría post-scrape 2026-07-07 (GRUPO 3). La "
+            "prevención estructural (op_series_guard.py) ya evita que un re-run de "
+            "los scripts de import vuelva a colar series ajenas."
+        ),
+        "command": [PYTHON, "scripts/retrofit/purge_op_import_foreign.py"],
+        "presets": [
+            {
+                "id": "list",
+                "label": "🧪 Listar",
+                "desc": "Cuenta y lista los candidatos sin escribir nada.",
+                "values": {},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Desblindar + encolar",
+                "desc": "Remueve standardized_at y encola a unmapped_series.jsonl.",
+                "values": {"--apply": True},
+            },
+        ],
+        "flags": [
+            _flag("--apply", "Aplicar de verdad",
+                  "Desblinda + encola. Sin este flag solo lista.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
 ]
 
 

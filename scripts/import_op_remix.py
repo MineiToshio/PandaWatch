@@ -27,6 +27,7 @@ import requests
 from manga_watch import backup_and_rotate, append_jsonl
 import image_store
 from image_store import download_image
+from op_series_guard import is_one_piece_title
 
 ROOT = Path(__file__).resolve().parent.parent
 ITEMS = ROOT / "data" / "items.jsonl"
@@ -272,7 +273,21 @@ def main(dry_run: bool = False):
         print(f"  Vol {vol:2d} ({char_en}): {isbn13} | img={local or '❌'}")
         new_items.append(item)
 
-    print(f"\nTotal: {len(new_items)} items to ingest")
+    # Guarda anti-contaminación (WO-2 GRUPO 3, 2026-07-07): un re-run manual
+    # con datos seed corregidos no debe volver a colar un item de OTRA serie
+    # (ver op_series_guard.py — mismo bug que arrastró 地獄楽/RURIDRAGON/etc.
+    # a través de un import distinto). Rechaza y loguea, no aborta el resto.
+    accepted_items = []
+    for item in new_items:
+        if is_one_piece_title(item.get("title", ""), item.get("title_original", "")):
+            accepted_items.append(item)
+        else:
+            print(f"  ⚠ REJECTED (no matchea serie One Piece): {item.get('title')!r}")
+    rejected_count = len(new_items) - len(accepted_items)
+    new_items = accepted_items
+
+    print(f"\nTotal: {len(new_items)} items to ingest"
+          + (f" ({rejected_count} rechazados por guarda anti-serie-ajena)" if rejected_count else ""))
 
     if dry_run:
         print("\n[DRY RUN] Skipping write.")

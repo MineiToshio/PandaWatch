@@ -370,7 +370,15 @@ lo menciona, está desactualizado.
    `kind` viene del synthetic URL (`&item=<kind>-<vol>`) o de `lm_kind` (legacy). Los
    items de listadomanga NUNCA se fusionan cross-fuente (verificado: 0 sources
    externas), así que usar `lmc:` en vez de `edition_key` acá no rompe ningún merge
-   multi-fuente.
+   multi-fuente. **Refinamiento coleccion=edición (2026-07-08, WO-1):** "una /coleccion
+   = una edición" NO significa "un solo edition_key". El `unify_coleccion_edition`
+   AUTO-CORTA en su propia edición (edition_key con el slug del tipo) las variantes que
+   se venden APARTE con bonus físico — evidencia FUERTE de tipo en el TÍTULO ("Edición
+   Especial/Limitada/de Lujo") — en vez de plegarlas al `regular`. Sólo separa el
+   edition_key (display); el **cluster_key sigue intacto** (`lmc:cole:special:N`), así
+   que el dedup no cambia. Reglas duras respetadas: **cofre 1ª ed = regular** (una
+   palabra de bonus suelta no dispara; sólo la frase de tipo) y **folleto promocional
+   fuera** (#103/#127). Box sets siguen siendo edición aparte (#58).
 1. **`edition:<edition_key>|<volume>`** — mismo edition_key + volume = mismo producto
    físico. **Prioritario sobre ISBN**: si una fuente tiene ISBN (PRH) y otra no (Dark
    Horse), mergean igual. El edition_key ya codifica publisher/market en su slug

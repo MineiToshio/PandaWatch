@@ -25,6 +25,11 @@ Invariantes (cada una con su id corto):
   EDSLUG el slug de TIPO del edition_key no contradice el término del título
          (tabla edition_slug_from_text, gotcha #69; special/limited/collector/
          deluxe). [warning — lo corrige canonicalize_edition_slugs.py]
+  SPECIALREG título con FRASE fuerte de tipo especial (Edición Especial/Especial
+         Limitada/Edición Limitada/Edición de Lujo/Coleccionista/kanzenban) ⇒ el
+         edition_slug NO debe ser `regular`: la variante especial se plegó al
+         regular de su coleccion. [warning — lo corta el carve de
+         unify_coleccion_edition.py; aplica también a lmc]
   SERIESDUP series_keys distintos que colapsan bajo aggressive_series_norm
          (gotcha #70: "the-", apóstrofes, vocales largas romaji). [warning —
          lo corrige merge_duplicate_series.py / curación del YAML]
@@ -144,6 +149,20 @@ _VOL_MIN, _VOL_MAX = 0, 350
 _VOL_YEAR_MIN, _VOL_YEAR_MAX = 1990, 2035
 
 _SLUGFMT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
+
+# SPECIALREG: keywords FUERTES de tipo especial en el título ⇒ el edition_slug NO
+# debe ser `regular` (la variante especial/limitada se pliega al regular = el bug
+# que unify_coleccion_edition auto-corta con el carve). Lista ESTRICTA de FRASES —
+# NUNCA "especial" suelto (rozaría nombres de serie). En sync con
+# manga_watch._EDITION_TYPE_TERM_RULES (special/limited/deluxe/kanzenban).
+_SPECIALREG_RE = re.compile(
+    r"\bedici[oó]n\s+especial\b|\bespecial\s+limitada\b|\bedici[oó]n\s+limitada\b|"
+    r"\bedici[oó]n\s+de\s+lujo\b|\bcoleccionista\b|\bkanzenban\b|完全版", re.I)
+
+# Slugs de TIPO que son una edición APARTE legítima dentro de una /coleccion
+# (box set + variantes especiales carvadas por unify_coleccion_edition). COLED sólo
+# exige unicidad de la edición REGULAR-family por coleccion, no de estas.
+_CARVED_SLUGS = {"boxset", "special", "limited", "deluxe"}
 
 
 def _urls(it):
@@ -373,6 +392,23 @@ def main():
                     flag("EDSLUG", f"{ek!r} pero el título dice {evidence!r} | "
                                    f"{(it.get('title_original') or title)[:60]!r}")
 
+        # SPECIALREG (WO-1): título con FRASE fuerte de tipo especial ⇒ edition_slug
+        # NO debe ser `regular`. Detecta la variante especial/limitada plegada al
+        # regular de su coleccion (el bug que carva unify_coleccion_edition). Aplica
+        # también a lmc (a diferencia de EDSLUG) — es justo el caso de listadomanga.
+        # No audita approved (curados). WARN — nace con backlog vivo; la limpieza de
+        # datos (el carve) corre aparte.
+        # OJO: se mira `title` (el display) Y `title_original` — en listadomanga la
+        # FRASE de tipo vive en el display estandarizado ("… Edición Especial"),
+        # mientras que title_original es el crudo ("… nº34"). El carve keyea igual
+        # sobre `title`.
+        if ek and not it.get("approved_at") and _edition_slug(it) == "regular":
+            if (_SPECIALREG_RE.search(title or "")
+                    or _SPECIALREG_RE.search(it.get("title_original") or "")):
+                flag("SPECIALREG",
+                     f"{ek!r} slug=regular pero el título es de tipo especial | "
+                     f"{(title or it.get('title_original'))[:60]!r}")
+
         # --- WO-F (2026-07-07): invariantes nuevas, todas WARN -------------
 
         # SLUGFMT + acumulación para SLUGUNIQ (post-loop).
@@ -471,10 +507,13 @@ def main():
         if dup_kind or dup_title:
             flag("DUPVOL", f"{ek} vol{vol}: kinds={kinds} titles={[g.get('title') for g in group][:3]}")
 
-    # COLED — un box set es una edición APARTE legítima (gotcha #58); sólo flag si
-    # hay >1 edición NO-box compartiendo la colección.
+    # COLED — box set y variantes especiales (special/limited/deluxe) carvadas son
+    # ediciones APARTE legítimas dentro de la coleccion (gotcha #58 + WO-1: la
+    # variante especial se vende aparte con bonus físico). Sólo flag si hay >1
+    # edición REGULAR-family compartiendo la colección (dos regulares distintos = el
+    # cruce que COLED protege).
     for cole, eks in cole_editions.items():
-        non_box = {ek for ek in eks if _slug_of_ek(ek) != "boxset"}
+        non_box = {ek for ek in eks if _slug_of_ek(ek) not in _CARVED_SLUGS}
         if len(non_box) > 1:
             flag("COLED", f"cole {cole}: {sorted(eks)}")
 
@@ -539,7 +578,7 @@ def main():
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
     order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
-             "COLED", "PAIS", "EDSLUG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
+             "COLED", "PAIS", "EDSLUG", "SPECIALREG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
              "DATEISO", "PTYPE_ENUM", "LANG_ENUM", "VOLRANGE", "EKMALFORMED",
              "SLUGUNIQ", "SLUGFMT", "STDKEYS", "MIRRORREF", "SRCURL"]
     NOTES = {"MIRRORREF": f"(de {mirror_checked} refs con local revisadas)"}

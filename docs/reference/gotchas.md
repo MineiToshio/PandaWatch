@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 125 known gotchas
+## The 130 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1235,3 +1235,66 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     default — un test también puede seguir monkeypatcheando ese atributo directamente para un
     path ad-hoc. Tests: `test_log_unmapped_series_appends_only_non_canonical` (test_extraction.py),
     `tests/test_audit_loteb_prep.py`.
+127. **`unify_coleccion_edition` (coleccion=edición) plegaba las VARIANTES ESPECIALES al
+    regular — se perdía el tipo del título (2026-07-08, WO-1).** El unify pliega TODOS los
+    tomos no-box de una /coleccion al `edition_key` base `…-regular-…` (para agruparlos en
+    una página), y el tipo sobrevivía SOLO en el cluster_key (`lmc:cole:special:N`). Las
+    variantes que se venden APARTE con bonus físico (título "Edición Especial"/"Especial
+    Limitada"/"Edición Limitada"/"Edición de Lujo") quedaban con edition_slug `regular` y el
+    display de la serie — perdían su identidad de edición (~28 items). Agravante: la tabla
+    `manga_watch._EDITION_TYPE_TERM_RULES` no tenía la frase "Edición Especial"/"Especial
+    Limitada", así que `edition_slug_from_text` devolvía "". Fix en tres piezas: (a) la tabla
+    ahora reconoce esas frases → special/limited (ancladas a la FRASE, NUNCA "especial"
+    suelto: rozaría nombres de serie); (b) `unify_coleccion_edition` CARVA esas variantes en
+    su propia edición (`_with_slug(base_ek, tipo)`) por EVIDENCIA FUERTE de título
+    (`_carve_slug`), en vez de plegarlas al regular — **sin tocar el cluster_key** (el dedup
+    sigue por cluster) y respetando dos reglas duras: **cofre 1ª ed = regular** (una palabra
+    de bonus suelta —cofre/caja/lámina/chapas— NO dispara; sólo la frase de tipo) y **folleto
+    promocional gratuito fuera** (guarda anti #103: `FREE_PRICE_PATTERN` importado del parser
+    + "Edición Promocional" ≠ "Edición Especial"); (c) idempotencia: `_kind_of` lee el kind
+    del cluster_key existente (no del edition_slug carvado) para que `lm_kind` no derive y
+    mueva el cluster en la 2ª pasada. Dos colecciones de la misma serie+publisher carvadas al
+    mismo tipo colisionarían en un edition_key (DUPVOL cross-coleccion, ej. Las Quintillizas
+    cole 3406 vs "Mini libro" cole 5028) → el carve namespacea con `-c{cole}` SÓLO cuando el
+    ek plano ya lo reclama OTRA coleccion (si no, se deja plano; no se churnea al resto del
+    corpus). Invariante nueva `validate_corpus.SPECIALREG` marca el estado defectuoso (título
+    de tipo fuerte ⇒ edition_slug regular). Tests: `tests/test_audit_wo1_grupo1.py`.
+128. **La `category` inyectada por el calendario legacy sobrevivía a la estandarización y
+    re-contaminaba `rescore` (2026-07-08, WO-2).** El parser legacy del calendario
+    (`scripts/wikis/listadomanga.py`, pre-2026-05-23) inyectaba la categoría del día
+    ("Artbook", "Cofre") como 2º segmento de la `description` (`{publisher} · {category} ·
+    {título}…`). `detect_signals` la leía como señal premium real ⇒ tomos REGULARES marcados
+    `product_type="artbook"` (17 residuos: Fire Force 9, Black Butler 27, Tokyo Ghoul:re 14…).
+    El bug upstream ya estaba arreglado, pero los residuos quedaron **blindados** por
+    `standardized_at` (#61). El retrofit `purge_false_artbook_residuals.py` los desblinda —
+    pero desblindar NO alcanza: la `description` NUNCA se limpió en la estandarización (guarda
+    el texto crudo del calendario), así que `rescore` VOLVÍA a leer "Artbook" y re-derivaba la
+    misma señal. Fix del mecanismo: el retrofit **también** quita el token de categoría
+    inyectado de la `description` (por POSICIÓN — el 2º segmento del split por " · " sólo si
+    coincide con el tag `category:<X>`; nunca substring ciego); recién entonces `rescore`
+    dropea la señal y `filter_collectible` los expulsa como `regular_tomo`. Tests:
+    `tests/test_audit_wo2_grupos23.py`.
+129. **El calendario legacy NO ve precio ⇒ los folletos promocionales gratuitos entraban como
+    ítems; cobertura sólo parcial vía "Edición Promocional" (2026-07-08, WO-2).** A diferencia
+    del parser de colecciones (`listadomanga_collections.py`, que descarta precio 0 con
+    `FREE_PRICE_PATTERN`, #103), el módulo del calendario no extrae precio, así que no podía
+    filtrar folletos gratis por señal de precio. La guarda que sí aplica es textual: se saltea
+    el enlace cuyo título es "Edición Promocional" (≠ "Edición Especial"), reusando
+    `FREE_PRICE_PATTERN` importado del parser de colecciones (fuente única, no redefinir). Es
+    cobertura PARCIAL — un folleto gratis sin esa frase en el título aún puede colarse; la
+    señal de precio sólo existe en la vía de colecciones. Tests:
+    `tests/test_audit_wo2_grupos23.py`.
+130. **Import manual one-shot de One Piece con ISBN mal resuelto arrastró ~11 series ajenas
+    (2026-07-08, WO-2).** El import de publicaciones especiales/Jump Remix
+    (`import_op_remix.py` / `fix_op_special_vols.py`) resolvía ISBNs de índices de antología
+    Jump Remix/GIGA a "volúmenes de One Piece", metiendo series completamente ajenas (地獄楽,
+    終末のハーレム, RURIDRAGON, 青の祓魔師, 遊☆戯☆王, 逃げ上手の若君…) bajo edition_keys
+    `one-piece-*-special-jp`. Prevención estructural: `op_series_guard.is_one_piece_title()` —
+    fuente ÚNICA reusada por los dos scripts de import (guard ANTES de escribir) y por el
+    retrofit `purge_op_import_foreign.py` (detección de residuos). Un título es "de One Piece"
+    sólo si contiene una keyword dura (`one piece`/`ワンピース`/`尾田`) o está en la
+    allowlist de spin-offs oficiales (`ONE_PIECE_SPINOFF_ALLOWLIST`: "Shokugeki no Sanji",
+    que como spin-off legítimo NO debe expulsarse — falso positivo del matcher corregido en el
+    mecanismo, no relajando la regla genérica). Los residuos se desblindan + encolan a
+    `data/unmapped_series.jsonl` (reason `op_import_foreign`), no se borran. Tests:
+    `tests/test_audit_wo2_grupos23.py`.
