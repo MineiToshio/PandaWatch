@@ -31,7 +31,13 @@ ITEMS_PATH = ROOT / "data" / "items.jsonl"
 PREVIEW_PATH = ROOT / "data" / "cover_preview.json"
 IMAGES_DIR = ROOT / "data" / "images"
 
-LOW_QUALITY_PX = 90_000  # mismo umbral del skill / panel de calidad
+sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
+import fetch_better_covers as fbc  # noqa: E402  (fuente única del umbral)
+
+# F16 — umbral ÚNICO de baja calidad: se IMPORTA del motor, no se redefine.
+# La banda 90k-100k generaba churn (el motor buscaba candidatas que sync podaba
+# al instante); por eso los tres consumidores comparten el mismo valor.
+LOW_QUALITY_PX = fbc.LOW_QUALITY_PX  # mismo umbral del skill / panel de calidad
 
 
 # ---------------------------------------------------------------------------
@@ -58,10 +64,39 @@ def _get_local_pixels(local: str | None, images_dir: Path) -> int:
 # Función principal importable
 # ---------------------------------------------------------------------------
 
+def _ledger_record_from_candidate(entry: dict, cand: dict, images_dir: Path) -> dict:
+    """Arma el record del ledger de rechazos desde una candidata rechazada
+    (mismo formato que apply_preview; a_hash del archivo local si existe)."""
+    new_local = cand.get("new_image", "")
+    a_hash_hex = None
+    if new_local and new_local != "[dry-run]":
+        f = images_dir / new_local
+        if f.exists():
+            try:
+                a_hash_hex = fbc._ahash_hex(f.read_bytes())
+            except OSError:
+                a_hash_hex = None
+    return {
+        "slug": entry.get("slug", ""),
+        "action": cand.get("action", "replace_cover"),
+        "target": cand.get("target", ""),
+        "rejected_url": cand.get("new_url", ""),
+        "a_hash": a_hash_hex,
+        "match_dist": cand.get("match_dist"),
+        "ref_pixels": entry.get("old_pixels"),
+        "new_pixels": cand.get("new_pixels"),
+        "page_title": cand.get("page_title", ""),
+        "query": cand.get("query", ""),
+        "reason": cand.get("reject_reason"),
+        "rejected_at": fbc._now_iso(),
+    }
+
+
 def sync_preview(
     preview: list[dict],
     items_by_slug: dict[str, dict],
     images_dir: Path,
+    write_ledger: bool = True,
 ) -> tuple[list[dict], dict[str, int]]:
     """Sincroniza la cola de candidatas con el estado actual del catálogo.
 
@@ -106,8 +141,16 @@ def sync_preview(
         slug = entry.get("slug", "")
         item = items_by_slug.get(slug)
 
-        # Regla 1: slug no existe → eliminar
+        # Regla 1: slug no existe → eliminar. Antes de dropear la entry, si
+        # contiene candidatas rechazadas, apendearlas al ledger de rechazos para
+        # que no se re-propongan (ITEM 1).
         if item is None:
+            if write_ledger:
+                for cand in entry.get("candidates", []):
+                    if cand.get("status") == "rejected":
+                        fbc.ledger_append(
+                            _ledger_record_from_candidate(entry, cand, images_dir)
+                        )
             stats["dropped_missing_item"] += 1
             continue
 
@@ -261,7 +304,9 @@ def main(argv: list[str] | None = None) -> int:
     items_by_slug = _load_items_by_slug(ITEMS_PATH)
     print(f"Items en catálogo: {len(items_by_slug)} (con slug)")
 
-    synced, stats = sync_preview(preview, items_by_slug, IMAGES_DIR)
+    # En dry-run no se toca el ledger de rechazos (side-effect-free).
+    synced, stats = sync_preview(preview, items_by_slug, IMAGES_DIR,
+                                 write_ledger=not args.dry_run)
 
     total_pruned = (
         stats["pruned_cover_ok"]

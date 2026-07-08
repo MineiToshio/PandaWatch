@@ -3,7 +3,7 @@
 > Catálogo de fuentes de PandaWatch. Esta es la ficha de **ListadoManga** — la fuente
 > más importante y delicada del proyecto. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-07.
+> Última revisión: 2026-07-08.
 
 ---
 
@@ -432,8 +432,21 @@ cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
 ## 9. Pendientes / limitaciones conocidas (NO resuelto)
 
 - **Imágenes de baja calidad**: la mayoría de portadas malas vienen de listadomanga
-  (thumbnails). Hay flag de baja calidad + dedup de carrusel que prefiere hi-res de otra
-  fuente, pero NO hay forma confirmada de sacar hi-res desde la misma página. Pendiente.
+  (thumbnails ~96×150, ~10 000-16 000 px — `static.listadomanga.com`, namespace plano
+  `/<md5>.jpg`, sin `srcset`/og:image/página por-volumen). Hay flag de baja calidad + dedup
+  de carrusel que prefiere hi-res de otra fuente, pero NO hay forma confirmada de sacar
+  hi-res desde la misma página. **Verificado que Yandex reverse-image NO sirve** (thumbnails
+  no indexados). **Verificado 2026-07-08 (piloto e2e, Step 5 del skill `/watch-search-covers`,
+  `--serper-fallback`) que Google Lens vía Serper TAMPOCO sirve**: 0 candidatas en el 100% de
+  los targets de listadomanga/aladin/rakuten del piloto (10 items, `data/cover_search_attempts.jsonl`
+  con `engines.lens: 0` en toda la corrida) — la referencia es demasiado chica para que Lens haga
+  matching visual. La vía efectiva verificada para esta fuente es el **TEXT SEARCH localizado**
+  (Step 3 del skill: queries con contexto en Google Imágenes `udm=2`) que llega directo a los CDNs
+  de las editoriales ES por nombre/serie/tomo, sin depender de la calidad de la imagen de
+  referencia (produjo matches en el mismo piloto donde Lens no encontró nada). La mejora de fondo
+  pendiente para esta fuente es la futura "ficha de editorial" (ver `project_images_overhaul_20260611`
+  en la memoria del owner) — no reverse-image. Detalle del piloto en
+  [docs/reference/images.md § "Búsqueda de portadas hi-res"](../../reference/images.md).
 - **Portadas censuradas (adult content)**: algunos tomos muestran un modal "aceptar
   contenido adulto"; el scraper ve el placeholder. Requeriría Playwright o cookie
   injection. Diferido. **MATIZ (gotcha #40)**: para algunas ediciones el sitio sirve el

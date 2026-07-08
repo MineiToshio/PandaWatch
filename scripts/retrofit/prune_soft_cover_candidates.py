@@ -7,7 +7,7 @@ upscales). El px count las hacía ganar aunque se vieran feas/pixeladas
 
 El criterio es la MISMA función que ahora bloquea estas candidatas upstream en
 el validador del skill (`sc_validate.py`) y en el pipeline de producción
-(`fetch_better_covers._try_candidates`): `fetch_better_covers._is_soft_image`.
+(`fetch_better_covers._process_item`): `fetch_better_covers._is_soft_image`.
 Fuente ÚNICA — este retrofit solo re-aplica el gate a lo que ya estaba en la
 cola antes de que el gate existiera (no reimplementa el criterio).
 

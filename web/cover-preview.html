@@ -103,6 +103,17 @@
                                           color: var(--green); font-weight: 600; }
   .cand-controls button.outline-reject { background: transparent; border: 1px solid var(--red);
                                          color: var(--red); font-weight: 600; }
+  /* chips de motivo de rechazo — opcionales, 1 clic; aparecen tras rechazar */
+  .reject-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+                  margin-top: 0.45rem; }
+  .chip { background: transparent; border: 1px solid var(--border); color: var(--muted);
+          font-size: 0.62rem; font-weight: 600; padding: 0.15rem 0.55rem; border-radius: 10px;
+          cursor: pointer; white-space: nowrap; }
+  .chip:hover { border-color: var(--red); color: var(--text); }
+  .chip.chip-active { background: var(--red); border-color: var(--red); color: #fff; }
+  .chip-otros-input { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                      border-radius: 6px; font-size: 0.68rem; padding: 0.15rem 0.4rem;
+                      max-width: 130px; }
   /* flechas de navegación del modal de comparación — hit area grande */
   .nav-arrow { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                border-radius: 8px; font-size: 1.1rem; line-height: 1; font-weight: 400;
@@ -250,6 +261,7 @@
 
       <p style="font-size:0.72rem; color:var(--muted); margin-bottom:0.75rem;">
         Tip: abre la comparación y usa <kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">A</kbd>/<kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">R</kbd> para decidir,
+        <kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">1</kbd>-<kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">5</kbd> para rechazar con motivo,
         <kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">N</kbd>/<kbd style="background:var(--border);border-radius:3px;padding:0.05rem 0.3rem;">P</kbd> para saltar de producto.
       </p>
 
@@ -389,10 +401,10 @@
                               style="background:var(--green);color:#000;margin-left:0.4rem;"
                               title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
                       </template>
-                      <template x-if="currentCand(e).verified === false">
+                      <template x-if="isUnverified(currentCand(e))">
                         <span class="card-badge"
                               style="background:var(--yellow);color:#000;margin-left:0.4rem;"
-                              title="No se pudo verificar contra la imagen actual — revisar con cuidado">⚠ sin verificar</span>
+                              title="No pasó verificación de identidad — revisar con cuidado">⚠ sin verificar</span>
                       </template>
                       <br>
                       <template x-if="currentCand(e).domain">
@@ -417,6 +429,25 @@
                             :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'rejected')">✕</button>
                   </div>
+                  <!-- chips de motivo de rechazo — opcionales, 1 clic; el rechazo ya está
+                       persistido antes de que aparezcan (no bloquean el flujo). -->
+                  <div class="reject-chips" x-show="currentCand(e).status === 'rejected'">
+                    <template x-for="r in REJECT_REASONS" :key="r.key">
+                      <button type="button" class="chip" :class="rejectReasonKey(currentCand(e)) === r.key ? 'chip-active' : ''"
+                              :disabled="isSaving"
+                              @click="pickReason(e, currentCand(e), r.key, $event)"
+                              x-text="r.label"></button>
+                    </template>
+                    <!-- x-show (no template x-if): cerrar el input en su propio blur/enter no
+                         debe removerlo del DOM a mitad del evento (Alpine tira "Cannot set
+                         properties of undefined" si el nodo enfocado desaparece en el mismo tick). -->
+                    <input type="text" class="chip-otros-input" x-show="currentCand(e)._otrosOpen"
+                           x-model="currentCand(e)._otrosText"
+                           placeholder="Detalle (opcional)"
+                           @keydown.enter="confirmOtros(e, currentCand(e))"
+                           @blur="confirmOtros(e, currentCand(e))"
+                           @keydown.stop @keyup.stop>
+                  </div>
                 </div>
               </div>
             </div>
@@ -435,7 +466,8 @@
          @keydown.a.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && setStatus(compareEntry, currentCand(compareEntry), 'approved')"
          @keydown.r.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && setStatus(compareEntry, currentCand(compareEntry), 'rejected')"
          @keydown.n.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && jumpToNextEntry(1)"
-         @keydown.p.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && jumpToNextEntry(-1)">
+         @keydown.p.window="compareEntry && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName) && jumpToNextEntry(-1)"
+         @keydown.window="handleReasonKey($event)">
       <!-- flex column: header + nav + footer FIJOS; solo el área de imágenes scrollea -->
       <div style="background:var(--card); border:1px solid var(--border); border-radius:12px;
                   max-width:90vw; width:900px; max-height:90vh;
@@ -513,33 +545,52 @@
                     style="background:var(--green);color:#000;margin-left:0.5rem;"
                     title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
             </template>
-            <template x-if="currentCand(compareEntry).verified === false">
+            <template x-if="isUnverified(currentCand(compareEntry))">
               <span class="card-badge"
                     style="background:var(--yellow);color:#000;margin-left:0.5rem;"
-                    title="No se pudo verificar contra la imagen actual — revisar con cuidado">⚠ sin verificar</span>
+                    title="No pasó verificación de identidad — revisar con cuidado">⚠ sin verificar</span>
             </template>
           </div>
         </div>
 
         <!-- controles de la candidata visible: acción + aprobar / rechazar — FIJOS -->
-        <div class="cand-controls" style="flex:0 0 auto; padding:0.8rem 1rem;
+        <div style="flex:0 0 auto; padding:0.8rem 1rem;
                     border-top:1px solid var(--border); background:var(--card);">
-          <select x-model="currentCand(compareEntry)._choice"
-                  @change="applyChoice(compareEntry, currentCand(compareEntry))"
-                  :disabled="isSaving">
-            <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
-              <option :value="opt.value" x-text="opt.label"></option>
+          <div class="cand-controls" style="margin-top:0;">
+            <select x-model="currentCand(compareEntry)._choice"
+                    @change="applyChoice(compareEntry, currentCand(compareEntry))"
+                    :disabled="isSaving">
+              <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
+                <option :value="opt.value" x-text="opt.label"></option>
+              </template>
+            </select>
+            <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
+                    :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                    @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
+            <button :class="currentCand(compareEntry).status === 'rejected' ? 'active-reject' : 'outline-reject'"
+                    :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                    @click="setStatus(compareEntry, currentCand(compareEntry), 'rejected')">✕ Rechazar</button>
+            <span style="margin-left:auto; font-size:0.68rem; color:var(--muted); white-space:nowrap; align-self:center;">
+              A aprobar · R rechazar · 1-5 motivo · N/P producto
+            </span>
+          </div>
+          <!-- chips de motivo de rechazo — opcionales, 1 clic (o teclas 1-5); el
+               rechazo ya está persistido antes de que aparezcan. -->
+          <div class="reject-chips" x-show="currentCand(compareEntry).status === 'rejected'">
+            <template x-for="r in REJECT_REASONS" :key="r.key">
+              <button type="button" class="chip" :class="rejectReasonKey(currentCand(compareEntry)) === r.key ? 'chip-active' : ''"
+                      :disabled="isSaving"
+                      @click="pickReason(compareEntry, currentCand(compareEntry), r.key, $event)"
+                      x-text="r.label"></button>
             </template>
-          </select>
-          <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
-                  :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
-                  @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
-          <button :class="currentCand(compareEntry).status === 'rejected' ? 'active-reject' : 'outline-reject'"
-                  :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
-                  @click="setStatus(compareEntry, currentCand(compareEntry), 'rejected')">✕ Rechazar</button>
-          <span style="margin-left:auto; font-size:0.68rem; color:var(--muted); white-space:nowrap; align-self:center;">
-            A aprobar · R rechazar · N/P producto
-          </span>
+            <!-- x-show (no template x-if) — ver comentario equivalente en la card compacta. -->
+            <input type="text" class="chip-otros-input" x-show="currentCand(compareEntry)._otrosOpen"
+                   x-model="currentCand(compareEntry)._otrosText"
+                   placeholder="Detalle (opcional)"
+                   @keydown.enter="confirmOtros(compareEntry, currentCand(compareEntry))"
+                   @blur="confirmOtros(compareEntry, currentCand(compareEntry))"
+                   @keydown.stop @keyup.stop>
+          </div>
         </div>
       </div>
     </div>
@@ -702,6 +753,18 @@ function previewApp() {
     // Panel de Calidad). Sin el param, vuelve al catálogo.
     returnUrl: '',
 
+    // Motivos de rechazo — chips opcionales de 1 clic (o teclas 1-5 en el modal).
+    // El rechazo YA está persistido antes de elegir motivo; esto es 100% opcional
+    // y nunca bloquea el flujo. "otros" abre un input de texto libre inline.
+    REJECT_REASONS: [
+      { key: 'otro_tomo', label: 'Otro tomo' },
+      { key: 'otra_edicion', label: 'Otra edición' },
+      { key: 'arte_sin_logo', label: 'Arte sin logo' },
+      { key: 'no_es_la_obra', label: 'No es la obra' },
+      { key: 'mala_calidad', label: 'Mala calidad' },
+      { key: 'otros', label: 'Otros…' },
+    ],
+
     // Construye la galería actual a partir de la entry (current_images del JSON,
     // o un fallback con la portada vieja para entries del schema viejo).
     buildCurrentImages(e) {
@@ -736,6 +799,13 @@ function previewApp() {
         ...(c.verified !== undefined ? { verified: c.verified } : {}),
         ref_pixels: c.ref_pixels ?? null,
         match_dist: c.match_dist ?? null,
+        // Motivo de rechazo — 100% opcional, null si nunca se tocó el chip.
+        // "otros:<texto>" cuando el owner escribe motivo libre.
+        reject_reason: c.reject_reason ?? null,
+        // Estado UI-only del input de "otros" (nunca viaja al servidor — ver
+        // cleanPayload). Se precarga con el texto existente si ya había uno.
+        _otrosOpen: false,
+        _otrosText: (c.reject_reason || '').startsWith('otros:') ? c.reject_reason.slice(6) : '',
       });
       if (Array.isArray(e.candidates)) {
         base.candidates = e.candidates.map(wrap);
@@ -787,6 +857,31 @@ function previewApp() {
       return '← Catálogo';
     },
 
+    // Orden best-first de la cola: primero las entries con alguna candidata
+    // PENDIENTE que tenga match_dist numérico (ascendente por el mínimo — más
+    // seguras primero), después las de match_dist null (sin verificar), al
+    // final las que ya no tienen pendientes. Estable (desempata por posición
+    // original) para no reordenar en cada recarga sin motivo real.
+    sortBestFirst(list) {
+      const rank = (e) => {
+        if (this.pendingInEntry(e) === 0) return 2;
+        const dists = e.candidates
+          .filter(c => (c.status || 'pending') === 'pending' && c.match_dist != null)
+          .map(c => c.match_dist);
+        return dists.length ? 0 : 1;
+      };
+      const minDist = (e) => {
+        const dists = e.candidates
+          .filter(c => (c.status || 'pending') === 'pending' && c.match_dist != null)
+          .map(c => c.match_dist);
+        return dists.length ? Math.min(...dists) : Infinity;
+      };
+      return list
+        .map((e, i) => ({ e, i, r: rank(e), md: minDist(e) }))
+        .sort((a, b) => (a.r - b.r) || (a.md - b.md) || (a.i - b.i))
+        .map(x => x.e);
+    },
+
     // Carga (o recarga) la cola. Usa GET /api/cover-preview (un solo request:
     // entries + mtime + synced stats). Fallback al fetch estático si el endpoint
     // no está disponible (servidor viejo sin el endpoint).
@@ -796,7 +891,8 @@ function previewApp() {
         if (resp.ok) {
           const body = await resp.json();
           const data = Array.isArray(body.entries) ? body.entries : [];
-          this.entries = data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0);
+          this.entries = this.sortBestFirst(
+            data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0));
           this.entries.forEach((e, i) => {
             this.collapsed[e.slug || i] = this.entryDone(e);
           });
@@ -830,7 +926,8 @@ function previewApp() {
         ]);
         if (dataResp.ok) {
           const data = await dataResp.json();
-          this.entries = data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0);
+          this.entries = this.sortBestFirst(
+            data.map(e => this.normalizeEntry(e)).filter(e => e.candidates.length > 0));
           this.entries.forEach((e, i) => {
             this.collapsed[e.slug || i] = this.entryDone(e);
           });
@@ -1298,6 +1395,82 @@ function previewApp() {
       }
     },
 
+    // Badge "sin verificar": además de verified === false (falló _same_cover),
+    // una candidata con match_dist == null nunca pasó verificación de identidad
+    // (hoy ~339 candidatas de la cola no tienen match_dist). verified === true
+    // manda siempre — si pasó la verificación explícita, no hay advertencia.
+    isUnverified(c) {
+      if (!c) return false;
+      if (c.verified === true) return false;
+      return c.verified === false || c.match_dist == null;
+    },
+
+    // --- Chips de motivo de rechazo (opcionales, 1 clic) ---------------------
+    // El rechazo YA quedó persistido al pulsar ✕/R/1-5; el motivo es un extra
+    // que se guarda por separado y nunca bloquea ni agrega un paso al rechazo.
+
+    // Clave del chip activo para una candidata ('otros' si reject_reason
+    // empieza con "otros:", '' si no tiene motivo todavía).
+    rejectReasonKey(c) {
+      if (!c || !c.reject_reason) return '';
+      return c.reject_reason.startsWith('otros:') ? 'otros' : c.reject_reason;
+    },
+
+    // Click en un chip: 'otros' abre el input de texto inline (sin guardar
+    // todavía — se guarda al confirmar); el resto setea el motivo y guarda ya.
+    async pickReason(entry, cand, key, ev) {
+      if (!cand) return;
+      if (key === 'otros') {
+        cand._otrosOpen = true;
+        if (!cand._otrosText && (cand.reject_reason || '').startsWith('otros:')) {
+          cand._otrosText = cand.reject_reason.slice(6);
+        }
+        // Foco solo porque ESTE click lo pidió (nunca al abrirse por teclado,
+        // ya que las teclas 1-5 mapean a los otros 5 motivos, no a "otros").
+        this.$nextTick(() => {
+          const container = ev && ev.target && ev.target.closest('.reject-chips');
+          const input = container && container.querySelector('.chip-otros-input');
+          if (input) input.focus();
+        });
+        return;
+      }
+      cand._otrosOpen = false;
+      cand.reject_reason = key;
+      await this.save((entry.title || entry.slug) + ' → motivo: ' + key);
+    },
+
+    // Confirma el texto libre de "otros" (Enter o blur) y guarda.
+    async confirmOtros(entry, cand) {
+      if (!cand || !cand._otrosOpen) return;
+      const txt = (cand._otrosText || '').trim();
+      const next = 'otros:' + txt;
+      cand._otrosOpen = false;
+      if (cand.reject_reason === next) return;   // sin cambios — no re-guardar
+      cand.reject_reason = next;
+      await this.save((entry.title || entry.slug) + ' → motivo: otros');
+    },
+
+    // Teclas 1-5 del modal de comparación → rechazar (si estaba pendiente, con
+    // el mismo avance automático que R) o cambiar el motivo (si ya estaba
+    // rechazada). Respeta el guard de foco en INPUT/TEXTAREA/SELECT.
+    handleReasonKey(ev) {
+      if (!this.compareEntry) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+      const idx = ['1', '2', '3', '4', '5'].indexOf(ev.key);
+      if (idx < 0) return;
+      const reason = this.REJECT_REASONS[idx].key;
+      const entry = this.compareEntry;
+      const cand = this.currentCand(entry);
+      if (!cand) return;
+      if ((cand.status || 'pending') === 'pending') {
+        cand.reject_reason = reason;
+        this.setStatus(entry, cand, 'rejected');   // rechaza + guarda + avanza
+      } else if (cand.status === 'rejected') {
+        cand.reject_reason = reason;
+        this.save((entry.title || entry.slug) + ' → motivo: ' + reason);
+      }
+    },
+
     // 👎 Dislike con motivo libre — misma funcionalidad que el dislike del
     // dashboard (POST /api/feedback con un reason que escribe el owner). A
     // diferencia de "Excluir" (flagIrrelevant), NO saca el item de la cola de
@@ -1407,7 +1580,8 @@ function previewApp() {
       });
     },
 
-    // Payload limpio: quita los campos UI-only (_choice) antes de guardar.
+    // Payload limpio: quita los campos UI-only (_choice, _otrosOpen, _otrosText)
+    // antes de guardar. reject_reason SÍ viaja — lo consume el ledger de rechazos.
     cleanPayload() {
       return this.entries.map(e => ({
         slug: e.slug, title: e.title, title_original: e.title_original,
@@ -1422,6 +1596,7 @@ function previewApp() {
           ...(c.verified !== undefined ? { verified: c.verified } : {}),
           ref_pixels: c.ref_pixels ?? null,
           match_dist: c.match_dist ?? null,
+          reject_reason: c.reject_reason ?? null,
         })),
       }));
     },

@@ -1,0 +1,200 @@
+[
+  {
+    "slug": "baki-ivrea-kanzenban-es-1",
+    "ref_path": "data/images/58a820123a488cf5.avif",
+    "cand_path": "data/images/6dc3b01b667f55ad.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=0, España)"
+  },
+  {
+    "slug": "baki-ivrea-kanzenban-es-13",
+    "ref_path": "data/images/115b7c3aa9033e89.avif",
+    "cand_path": "data/images/f6e4e15678daa536.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=0, España)"
+  },
+  {
+    "slug": "barbara-planeta-deluxe-es",
+    "ref_path": "data/images/01e05f1acb9a7b69.avif",
+    "cand_path": "data/images/beb7e12d808b53f2.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=1, España)"
+  },
+  {
+    "slug": "batman-el-hijo-de-los-suenos-ecc-deluxe-es",
+    "ref_path": "data/images/f7c17d05904585b6.avif",
+    "cand_path": "data/images/67a813ed7c6c7f3f.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=1, España)"
+  },
+  {
+    "slug": "baki-ivrea-kanzenban-es-11",
+    "ref_path": "data/images/2ed26263c37f0278.avif",
+    "cand_path": "data/images/10343dab9f48653b.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=2, España)"
+  },
+  {
+    "slug": "black-paradox-planeta-deluxe-es",
+    "ref_path": "data/images/66d78ac2b9d9ccc8.avif",
+    "cand_path": "data/images/0c5df0753c1d45c7.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=2, España)"
+  },
+  {
+    "slug": "bakemonogatari-milkyway-special-es-22",
+    "ref_path": "data/images/f184e722ff27bedd.avif",
+    "cand_path": "data/images/0e37d365ec4dea3f.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=3, España)"
+  },
+  {
+    "slug": "cats-eye-arechi-omnibus-es-2",
+    "ref_path": "data/images/6f9854bb91e92b98.avif",
+    "cand_path": "data/images/e896d8032fb4e97a.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=3, España)"
+  },
+  {
+    "slug": "city-hunter-arechi-omnibus-es-18",
+    "ref_path": "data/images/cbdcb32d96540ccb.avif",
+    "cand_path": "data/images/bf19a86730636bc8.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=4, España)"
+  },
+  {
+    "slug": "city-hunter-arechi-omnibus-es-13",
+    "ref_path": "data/images/5f9b7d29915b2f3c.avif",
+    "cand_path": "data/images/5f9967e4820bbba4.avif",
+    "label": "positive",
+    "category": "positive",
+    "source": "real",
+    "notas": "misma portada, mejor resolución (match_dist=5, España)"
+  },
+  {
+    "slug": "baki-ivrea-kanzenban-es-2",
+    "ref_path": "data/images/679249ec659f34db.avif",
+    "cand_path": "data/images/289db77cbc417639.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "'New Grappler Baki' — otra edición del vol.2, arte distinto"
+  },
+  {
+    "slug": "cardcaptor-sakura-glenat-special-es-3",
+    "ref_path": "data/images/74c4b6b7d34ffc34.avif",
+    "cand_path": "data/images/c6003c3376fd8031.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "edición japonesa original (カードキャプターさくら), no la edición del item"
+  },
+  {
+    "slug": "city-hunter-arechi-omnibus-es-30",
+    "ref_path": "data/images/1c9983382a9d6179.avif",
+    "cand_path": "data/images/64ee2b504e5ba9dc.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "'Complete Edition' vol.30 — arte reutilizado en otra edición; NCC lo separa"
+  },
+  {
+    "slug": "demon-slayer-norma-artbook-c4809-es",
+    "ref_path": "data/images/55f99f7947b371e1.avif",
+    "cand_path": "data/images/eca45b6cdfb40da3.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "'Libro para colorear' — producto distinto de la misma obra"
+  },
+  {
+    "slug": "el-almanaque-de-mi-padre-planeta-integral-es",
+    "ref_path": "data/images/46bb99cc2a505eef.avif",
+    "cand_path": "data/images/fd6ee15a8c94b5f5.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "otra edición, portada distinta de la misma obra"
+  },
+  {
+    "slug": "fairy-tail-salvat-integral-es-17",
+    "ref_path": "data/images/18528154711d7247.avif",
+    "cand_path": "data/images/dd9a75fed8acf9a0.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "edición Planeta del vol.17, el item es la Salvat"
+  },
+  {
+    "slug": "gantz-panini-maximum-es-18",
+    "ref_path": "data/images/64fa90db627eaaa7.avif",
+    "cand_path": "data/images/6df6281b2694fbaf.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "otra edición del vol.18, portada distinta"
+  },
+  {
+    "slug": "hokuto-no-ken-planeta-kanzenban-es-1",
+    "ref_path": "data/images/60664205070cb65a.avif",
+    "cand_path": "data/images/0ca8c5592e58a503.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "otra edición ('El Puño de la Estrella del Norte') del vol.1"
+  },
+  {
+    "slug": "is-katsura-planeta-kanzenban-es-12",
+    "ref_path": "data/images/fe96278425eb0978.avif",
+    "cand_path": "data/images/c6c81ae687e5b84a.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "otra edición del vol.12, muy parecida; NCC 0.43 la separa"
+  },
+  {
+    "slug": "kamikaze-norma-special-es-7",
+    "ref_path": "data/images/f2d139aeb57382bb.avif",
+    "cand_path": "data/images/01ca5688d05bd99a.avif",
+    "label": "negative",
+    "category": "unknown",
+    "source": "real",
+    "notas": "candidata de arte no relacionado; categoría incierta"
+  },
+  {
+    "slug": "marvel-miau-panini-deluxe-es",
+    "ref_path": "data/images/246481a21875dbb5.avif",
+    "cand_path": "data/images/446ef7b30ee1a8fb.avif",
+    "label": "negative",
+    "category": "5",
+    "source": "real",
+    "notas": "misma plantilla/trade dress (máscara de gato); aHash/dHash/pHash pasan, NCC 0.80 la atrapa"
+  },
+  {
+    "slug": "inuyasha-planeta-kanzenban-es-4",
+    "ref_path": "data/images/6d0b9ede3bf38746.avif",
+    "cand_path": "data/images/89b02e24fb50aa69.avif",
+    "label": "negative",
+    "category": "3",
+    "source": "real",
+    "notas": "otra edición del vol.4, portada distinta"
+  }
+]

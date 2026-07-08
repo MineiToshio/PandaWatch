@@ -166,6 +166,22 @@ scripts/
                                baja confianza). --apply (alta confianza) / --apply-preview.
                                sync_cover_preview.py: poda candidatas pending cuya premisa ya
                                no existe; invocado automáticamente por GET /api/cover-preview.
+    revalidate_cover_preview.py  re-valida OFFLINE candidatas pending viejas (match_dist null, del
+                               skill drifteado) contra el gate endurecido reusando _same_cover/
+                               _is_soft_image + sync_preview (moot). PASA→verified+match_dist;
+                               FALLA→rejected(auto_revalidation); sin-ref→verified:false. No escribe
+                               el ledger. Idempotente. --dry-run/--apply. Tests: test_revalidate_cover_preview.py.
+                               fetch_better_covers: además de --limit, acepta --slugs slug1,slug2
+                               (coma-sep y/o repetible) para acotar la corrida a slugs exactos; los
+                               pedidos que no son candidatos se reportan y se saltean.
+    scripts/eval/              harness de EVALUACIÓN reproducible (offline, sin red, determinístico).
+      eval_cover_gate.py       mide el gate de identidad de portadas (old aspect-only ±0.30 vs new
+                               _same_cover+_is_soft_image, delegación pura) sobre una muestra
+                               etiquetada + trampas sintéticas PIL; reporta matriz FP/FN por
+                               categoría de la taxonomía. --json/--synthetic-only. Ver images.md.
+      cover_gate_sample.json   manifest de la muestra (10 positivos + 12 negativos reales,
+                               paths a data/images/; las sintéticas se generan al vuelo).
+                               Test: test_eval_cover_gate.py.
     sync_cover_images.py       saneamiento integral de imágenes (#31): portada mala, images[0]
                                sync, basura UI, productos relacionados.
     translate_descriptions.py  description → description_es (Google Translate + DeepL opcional).

@@ -1,7 +1,7 @@
 ---
 name: watch-search-covers
-description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() (misma imagen) y _is_soft_image() (descarta escaneos chicos y blandos que se verían pixelados) para quedarse SOLO con la MISMA portada en mejor resolución y buena calidad. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto".
-argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-gallery] [--gallery-only] [--retry-failed] [--query-extra \"texto\"]"
+description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() (misma imagen) y _is_soft_image() (descarta escaneos chicos y blandos que se verían pixelados) para quedarse SOLO con la MISMA portada en mejor resolución y buena calidad. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto", --serper-fallback (paso final opcional que invoca el motor de producción para reverse-image via Google Lens en los targets que quedaron en 0 matches).
+argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-gallery] [--gallery-only] [--retry-failed] [--query-extra \"texto\"] [--serper-fallback]"
 ---
 
 # search-covers — Búsqueda de portadas hi-res con Chrome
@@ -28,12 +28,28 @@ manual en `http://localhost:8000/web/cover-preview.html`.
 >   Lens). Se extrae con el mismo regex sobre `innerHTML`. Es la mejor "búsqueda por foto" gratis.
 > - **Google texto `udm=2` (USADO, complemento)**: las queries con contexto pegan la edición
 >   exacta cuando existe (Frieren 14 → dist 7, que Yandex no logró). Por eso van juntas.
-> - **Google Lens (NO usado)**: accesible (regex sobre `innerHTML`, NO leas `location.href` que
->   dispara `[BLOCKED: Cookie/query string data]`), pero con un thumbnail de 150×150 cae en
->   matching "a nivel franquicia" → fan art, wikis, merch, Mercari, tomos equivocados. 0 matches.
-> - **Bing Visual Search (NO usable)**: redirige a búsqueda web de entidad y se bloquea.
-> - **Serper Lens (de pago)**: la reversa real de mejor calidad vive en producción
->   (`fetch_better_covers._search_serper_lens`), requiere `SERPER_API_KEY` (hoy comentada en `.env`).
+> - **Google Lens vía Chrome (NO usado)**: accesible (regex sobre `innerHTML`, NO leas
+>   `location.href` que dispara `[BLOCKED: Cookie/query string data]`), pero el widget web sube
+>   un THUMBNAIL de 150×150 y cae en matching "a nivel franquicia" → fan art, wikis, merch,
+>   Mercari, tomos equivocados. 0 matches. **No confundir con Serper Lens** (siguiente ítem):
+>   ese manda la URL completa de la imagen (no un thumbnail chico) y el matching corre
+>   server-side en Google — mucha mejor precisión. Por eso Serper Lens es el fallback
+>   recomendado (Step 5) y este NO.
+> - **Bing Visual Search (NO usable)**: el ícono de cámara / reverse-image de Bing redirige a
+>   una búsqueda web de entidad genérica y se bloquea. (Ojo: distinto de la Bing Visual Search
+>   **API**, que Microsoft discontinuó en agosto 2025 — nunca se usó esa API acá, esto es
+>   scraping del sitio vía Chrome; el "Fallback a Bing texto" de abajo también es scraping del
+>   sitio, no una API.)
+> - **Serper Lens (de pago, ACTIVA)**: la reversa real de mejor calidad vive en producción
+>   (`fetch_better_covers._search_serper_lens`, endpoint `/lens` de Serper — Google Lens
+>   server-side, sin necesitar que la imagen esté indexada por nadie) y requiere
+>   `SERPER_API_KEY`. **La key está configurada y ACTIVA en `.env`** (línea 20 al momento de
+>   escribir esto; la línea 19 comentada es una key vieja/residual, no la vigente — no
+>   confundir "hay una línea comentada" con "la key está deshabilitada"). Este skill (100%
+>   Chrome) no la llama directo, pero el motor de producción SÍ, y es la vía de fallback
+>   documentada en el **Step 5** — en particular para targets cuya imagen actual es un
+>   thumbnail de `static.listadomanga.com`: Yandex los omite (no indexados), pero Lens no
+>   necesita indexación — recibe la URL de la imagen y Google hace el matching visual él mismo.
 >
 > **Ojo (limitación de fondo)**: el catálogo son **ediciones especiales**, y tanto el texto como
 > la reversa tienden a devolver la edición **regular/hermana**, cuyo arte difiere → `_same_cover`
@@ -66,7 +82,7 @@ pHash ≤8 ∧ NCC ≥0.90 + gate de entropía + denylist de placeholders** (cap
 rechazo, default-deny); (2) `fetch_better_covers.candidate_metadata_conflict(item, url,
 page_title)` — si la URL/título de la candidata declara OTRO volumen u OTRO ISBN que el item,
 hard reject; y (3) `fetch_better_covers._is_soft_image(candidata)` — **gate de calidad de
-display (gotcha #94)**: la identidad no garantiza calidad. Una candidata se rechaza si es
+display (gotcha #98)**: la identidad no garantiza calidad. Una candidata se rechaza si es
 CHICA (`< SOFT_GUARD_PX` = 150k px) Y BLANDA (`_detail_ratio < DETAIL_RATIO_MIN` = 0.115):
 un escaneo blando/upscale tiene más px pero, mostrado agrandado, se ve pixelado. Las grandes
 pero blandas pasan (se muestran reducidas → nítidas). Otro volumen / otra edición / arte
@@ -74,6 +90,20 @@ distinto / escaneo blando chico → se descarta. Está bien que una candidata no
 pixel-idéntica (puede ser un escaneo mejor con el mismo arte), pero tiene que ser
 **visiblemente la misma portada Y verse bien**. Precisión > recall: mejor 0 candidatas que
 una no relacionada o fea. (Las tres viven en `sc_validate.py`, fuente única con producción.)
+
+**Denylist de rechazos (ledger, 2026-07-08)**: además de las tres verificaciones de arriba,
+`sc_validate.py` consulta `fetch_better_covers.is_rejected_candidate(slug, url, hash, ledger)`
+contra `data/cover_rejections.jsonl` — cada candidata que el owner rechazó alguna vez en la UI
+queda registrada ahí (URL, hash aHash, motivo, y metadata de la candidata) y **no vuelve a
+proponerse** en corridas futuras del skill (el índice externo no cambia entre corridas, así
+que sin esto se re-buscaría y re-ofrecería lo mismo ya descartado). El veto es por URL exacta
+(siempre) o por hash (solo si el motivo registrado es de IDENTIDAD — otro tomo, otra edición,
+etc. — nunca por motivo de calidad, para no vetar la MISMA candidata correcta en mejor
+resolución). Esto es 100% del motor (`fetch_better_covers.py`), delegado sin cambios de código
+en este skill. El owner puede etiquetar el motivo de rechazo opcionalmente en la UI
+(`cover-preview.html`) con los chips de un clic o las teclas `1`-`5` (Otro tomo / Otra edición /
+Arte sin logo / No es la obra / Mala calidad) que aparecen tras rechazar una candidata —
+etiquetar es opcional y nunca bloquea el flujo de aprobar/rechazar.
 
 **Regla absoluta**: NUNCA escribe ni modifica `data/items.jsonl`. Solo escribe a
 `data/cover_preview.json`. Todas las candidatas van con `confidence: "low"` y
@@ -96,6 +126,7 @@ una no relacionada o fea. (Las tres viven en `sc_validate.py`, fuente única con
 | `--include-no-image` | off | Por defecto se saltan items sin imagen (no hay portada actual con qué verificar `_same_cover`). Con este flag se incluyen, pero sus candidatas quedan **sin verificar** (`verified: false`). |
 | `--retry-failed` | off | Por defecto se omiten targets cuyo último intento (en `data/cover_search_attempts.jsonl`) tuvo 0 matches y fue hace menos de 30 días. Con este flag se procesan igual. |
 | `--query-extra "texto"` | — | Texto adicional al final de cada variante de query en Google. |
+| `--serper-fallback` | off | Paso FINAL opcional (Step 5): tras terminar el loop de Chrome, invoca el motor de producción (`fetch_better_covers.py`, ya con `SERPER_API_KEY` activa) para reverse-image vía Google Lens en los targets que terminaron en 0 matches. De pago (~US$0.30-1.00 / 1000 búsquedas Lens) — solo se corre si el owner lo pide explícitamente con este flag. |
 
 > **Por defecto solo se procesan portadas** (`img_idx == 0`). Las fotos de galería interior
 > (extras/bonus) son irrecuperables en la mayoría de casos — no existe copia externa de esa
@@ -135,8 +166,11 @@ from pathlib import Path
 sys.path.insert(0, 'scripts/retrofit')
 import fetch_better_covers as fbc
 
-# Umbral de "baja calidad": mismo valor que data_quality.py --px (default 90 000).
-LOW_QUALITY_PX = 90_000
+# Umbral de "baja calidad": SIEMPRE el mismo que fetch_better_covers.LOW_QUALITY_PX
+# (constante única del motor, 90 000 — antes había un DEFAULT_MIN_PIXELS de 100 000
+# separado que generaba churn entre motor y skill; unificado 2026-07-08).
+# Se importa de fbc en vez de hardcodear el número para que NUNCA pueda driftear.
+LOW_QUALITY_PX = fbc.LOW_QUALITY_PX
 
 # Umbral de "referencia usable": por debajo de esto la imagen actual es un
 # placeholder roto (típico: GIF de 1×1 px de Amazon "imagen no disponible") y NO
@@ -430,7 +464,7 @@ for t in targets:
 La validación vive en `scripts/retrofit/sc_validate.py` — un script PERMANENTE y
 testeado (`tests/test_sc_validate.py`) que delega todo el criterio en
 `fetch_better_covers`: identidad (`_same_cover` AND-gate + `candidate_metadata_conflict`)
-y calidad de display (`_is_soft_image`: descarta candidatas chicas+blandas, gotcha #94).
+y calidad de display (`_is_soft_image`: descarta candidatas chicas+blandas, gotcha #98).
 **No escribas ni copies código de validación en esta corrida**: las versiones
 anteriores de este skill regeneraban una copia embebida y esa copia drifteó de
 producción (umbral laxo, sin filtro de volumen/ISBN) — fue la causa de los falsos
@@ -686,7 +720,68 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
 > Es **esperable y correcto** que ahora haya menos candidatas que antes: el filtro `_same_cover`
 > descarta todo lo que no sea la misma portada. Items para los que Bing texto no tiene la portada
 > hi-res quedarán sin candidatas — eso es preferible a llenarte la cola de cosas no relacionadas.
-> Para esos casos la única vía mejor es la búsqueda reversa por foto (Serper Lens, requiere key).
+> Para esos casos existe un paso adicional opcional: **Step 5** (`--serper-fallback`), la
+> búsqueda reversa por foto vía Serper Lens (la key ya está activa, no hace falta conseguir una).
+
+---
+
+## Step 5 (opcional, `--serper-fallback`) — Fallback a Serper Lens vía el motor de producción
+
+Solo si el usuario invocó el skill con `--serper-fallback`. Corre DESPUÉS del Step 4, sobre los
+targets que este skill no pudo resolver: los que terminaron el Step 3 con 0 matches, y en
+particular los que el Step 1 saltó la variante Yandex por tener como referencia un thumbnail de
+`static.listadomanga.com` (Yandex no los tiene indexados — pero Google Lens hace el matching
+visual **server-side**, recibiendo la URL de la imagen, y NO necesita que esté indexada en
+ningún lado, así que esos targets SÍ son elegibles para este fallback).
+
+**Acotar por slug** (`--slugs`, agregado 2026-07-08): el motor YA acepta acotar la corrida a una
+lista exacta de slugs — `--slugs slug1,slug2` (coma-separado) y/o repetible (`--slugs a --slugs
+b`). Se aplica ADEMÁS de los filtros de candidatura: un slug pedido que no es candidato (px ya
+buenos, signal de skip, o inexistente) se reporta en el output y se saltea (no se fuerza su
+búsqueda). Esto cierra el gap anterior — para el fallback dirigido a los targets que este skill
+dejó en 0 matches, pasá exactamente esos slugs. (`--limit N` sigue disponible como filtro de
+alcance por cantidad; `--slugs` es el filtro por identidad exacta.) El motor usa el MISMO umbral
+de baja calidad que este skill (`fetch_better_covers.LOW_QUALITY_PX` == `LOW_QUALITY_PX` del
+Step 1, 90 000 px) y el mismo criterio de "necesita mejora".
+
+Invocación exacta (verificada contra el `argparse` real del motor — `--preview` es el
+comportamiento POR DEFECTO sin `--apply`):
+
+```bash
+# Toda la cola (acotando por cantidad):
+.venv/bin/python scripts/retrofit/fetch_better_covers.py --limit 50 --verbose
+
+# Solo los slugs que quedaron en 0 matches (acotando por identidad):
+.venv/bin/python scripts/retrofit/fetch_better_covers.py \
+    --slugs slug-que-fallo-1,slug-que-fallo-2 --verbose
+```
+
+- **Nunca pasar `--apply` ni `--apply-preview`**: sin `--apply`, `run()` recibe `preview=True`
+  (default real del código: `preview=not args.apply`) → TODO va a `data/cover_preview.json`
+  para aprobación manual, igual que el resto de este skill. Coherente con la Regla absoluta
+  (nunca toca `items.jsonl`).
+- `SERPER_API_KEY` se lee automáticamente de `.env` (está activa; no hace falta `--serper-key`).
+- Por item, el motor prueba en este orden: CDN determinístico (si hay ISBN) → **Serper Lens**
+  (si no hubo hit de CDN y hay `serper_key` + URL de imagen actual — YA es la estrategia
+  PRIMARIA de búsqueda web del motor, sin flag extra) → texto Serper/Tavily (solo si Lens no
+  encontró nada). Lo único gateado por `--serper-fallback` es que ESTE skill decida invocar el
+  motor como paso final; el motor en sí no necesita ningún flag especial para usar Lens.
+- Las candidatas de Lens con **referencia utilizable** (bytes descargables + px ≥ 10 000) pasan
+  por el MISMO AND-gate `_same_cover` que las candidatas de Chrome (bypass cerrado, fix
+  2026-07-08 / gotcha #131) → quedan `verified: true`, pero `confidence` sigue `"low"` (nunca
+  auto-aplican). Sin referencia utilizable, el gate queda fail-closed (aspect ±0.25 +
+  `candidate_metadata_conflict` + `_validate_page_content` con reintento, sin bypass abierto) y
+  quedan `verified: false`.
+- El motor también apendea a `data/cover_search_attempts.jsonl` (mismo formato que este skill +
+  campo `engines`), así que el skip de 30 días del Step 1 (`--retry-failed` para ignorarlo) ya
+  es coherente entre ambos caminos — no hace falta lógica extra en este documento.
+- **Costo**: ~US$0.30-1.00 por 1000 búsquedas Lens (key activa, de pago). **Piloto
+  recomendado**: primera corrida con `--limit 50`, revisar la cola en
+  `http://localhost:8000/web/cover-preview.html`, y solo después escalar el límite o correrlo
+  sin `--limit`.
+
+Al terminar, reportar cuántas candidatas nuevas aportó este paso (comparar `total_pending` de
+`cover_preview.json` antes/después de invocar el motor).
 
 ---
 
@@ -706,3 +801,9 @@ print(f"  Revisar y aprobar en:        http://localhost:8000/web/cover-preview.h
    automáticamente (no se re-busca lo ya adjudicado). Las candidatas del script python
    `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual sobre esos items.
 8. Borrar los `.tmp_sc_*` al finalizar (son temporales). `scripts/retrofit/sc_validate.py` y `scripts/retrofit/sc_flush.py` son PERMANENTES — nunca borrarlos ni regenerar su lógica inline. `sc_flush.py` rechaza con exit 1 cualquier candidata sin `new_image` o `new_url` (guarda anti-drift).
+9. Una candidata cuya URL (o hash con motivo de identidad) ya esté en `data/cover_rejections.jsonl`
+   (ledger de rechazos del owner) NUNCA se propone de nuevo — la denylist la consulta
+   `sc_validate.py` vía `fetch_better_covers.is_rejected_candidate()`, sin código propio en este
+   skill.
+10. El Step 5 (`--serper-fallback`, de pago) solo corre si el owner lo pide explícitamente con
+    ese flag — nunca por defecto, y nunca con `--apply`/`--apply-preview`.

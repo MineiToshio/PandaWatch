@@ -70,6 +70,11 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
     item       = data['item']
     candidates = data['candidate_urls']
     curr_px    = data.get('curr_px', 0)
+    slug       = item.get('slug', '')
+
+    # ITEM 1 — denylist de rechazos: se consulta vía fbc.is_rejected_candidate
+    # (fuente única, misma política que producción). Se carga una vez por llamada.
+    ledger = fbc.load_rejection_ledger()
 
     session = requests.Session()
     session.headers.update({'User-Agent': fbc._UA})
@@ -96,6 +101,9 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
         # Se evalúa sobre la URL ORIGINAL una sola vez, antes del loop de variantes.
         if fbc.candidate_metadata_conflict(item, orig_url, cand.get('page_title', '')):
             continue
+        # ITEM 1 — denylist: URL exacta vetada → saltar SIN descargar.
+        if fbc.is_rejected_candidate(slug, orig_url, None, ledger):
+            continue
 
         # Intentar variantes de URL en orden (hi-res primero, original como fallback).
         # La primera que devuelva imagen válida (≥5 000 bytes) gana; si falla, sigue.
@@ -113,6 +121,10 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
 
         if not img_bytes:
             continue
+        # ITEM 1 — denylist por HASH (o por URL de la variante efectivamente usada):
+        # sólo veta por hash con motivo de identidad (política en el motor).
+        if fbc.is_rejected_candidate(slug, used_url, fbc._ahash_hex(img_bytes), ledger):
+            continue
         new_px = fbc._get_pixels_from_bytes(img_bytes)
         if new_px < 10_000:
             continue
@@ -120,10 +132,11 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
         if curr_px > 0 and new_px < max(curr_px * fbc.DEFAULT_MIN_GAIN, 30_000):
             continue
 
-        # ─── Gate de detalle efectivo (gotcha #94) ───
+        # ─── Gate de detalle efectivo (gotcha #98) ───
         # Aunque pase el px-gain, una candidata "blanda" (escaneo comprimido /
         # upscale: muchos píxeles, poco detalle real) NO es upgrade. Misma
-        # función que producción (_try_candidates) → skill y pipeline no driftean.
+        # función que producción (fetch_better_covers._process_item) → skill y
+        # pipeline no driftean.
         if fbc._is_soft_image(img_bytes):
             continue
 

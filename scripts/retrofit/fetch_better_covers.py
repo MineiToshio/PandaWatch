@@ -78,9 +78,20 @@ except ImportError:
 import image_store  # noqa: E402
 _ITEMS_PATH = _HERE / "data" / "items.jsonl"
 _IMAGES_DIR = _HERE / "data" / "images"
+# Ledger de rechazos persistente (append-only, 1 JSON por línea) — fuente única
+# de la denylist de candidatas descartadas (ITEM 1, decisión post-red-team).
+REJECTION_LEDGER_PATH = _HERE / "data" / "cover_rejections.jsonl"
+# Registro de intentos de búsqueda (una fila por target procesado; el skill lo
+# usa para saltear targets con 0 matches en los últimos 30 días).
+_ATTEMPTS_PATH = _HERE / "data" / "cover_search_attempts.jsonl"
 
 # ── Parámetros de calidad ─────────────────────────────────────────────────────
-DEFAULT_MIN_PIXELS = 100_000   # imágenes por debajo de este umbral son candidatas
+# Umbral ÚNICO de baja calidad (F16): imágenes por debajo son candidatas a mejora.
+# Los consumidores (sync_cover_preview, promote_hires_cover) lo IMPORTAN de acá —
+# no lo redefinen. La banda 90k-100k generaba churn (el motor buscaba candidatas
+# que sync podaba al instante), por eso el valor quedó unificado en 90k.
+LOW_QUALITY_PX = 90_000
+DEFAULT_MIN_PIXELS = LOW_QUALITY_PX   # imágenes por debajo de este umbral son candidatas
 DEFAULT_MIN_GAIN = 1.5         # candidata debe tener >= 1.5× los píxeles actuales
 DEFAULT_MAX_HASH_DIST = 6      # aHash: distancia Hamming máxima (de 64 bits) para aceptar
 DHASH_MAX_DIST = 8             # dHash 8×8: cota fija (no configurable por CLI)
@@ -147,7 +158,14 @@ def _get_pixels_from_bytes(data: bytes) -> int:
             return w * h
     except Exception:
         pass
-    return 0
+    # Fallback a _get_dims_from_bytes (fuente única de las dimensiones): cubre
+    # AVIF, GIF, WebP lossless/VP8L y PNGs raros vía PIL. Sin esto, una REFERENCIA
+    # local AVIF (el espejo está normalizado a AVIF ≤1600px) medía 0 px → el motor
+    # la trataba como "sin referencia utilizable" (orig_px < 10_000) y mandaba
+    # TODAS las candidatas al gate degradado _passes_no_ref_gate, saltándose
+    # _same_cover (el gate de identidad fuerte). Ver gotcha AVIF-px.
+    w, h = _get_dims_from_bytes(data)
+    return w * h
 
 
 def _get_dims_from_bytes(data: bytes) -> tuple[int, int]:
@@ -803,7 +821,8 @@ def _candidates_from_isbn_google_books(isbn: str, session: requests.Session) -> 
 # Query builder — construye la búsqueda óptima por item
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Término "portada" según idioma del item
+# Término "portada" según idioma del item (nombre del idioma en español, como
+# viene en item["language"]). F11 — cobertura completa de los 14 idiomas.
 _COVER_TERM = {
     "Español":    "portada",
     "Francés":    "couverture",
@@ -811,21 +830,35 @@ _COVER_TERM = {
     "Japonés":    "表紙",
     "Portugués":  "capa",
     "Alemán":     "cover",
+    "Coreano":    "표지",
+    "Chino":      "封面",
+    "Tailandés":  "ปกหน้า",
+    "Vietnamita": "bìa",
+    "Polaco":     "okładka",
+    "Turco":      "kapak",
+    "Checo":      "obálka",
 }
 
 # Cómo referirse al tipo de edición según idioma
 # Clave = último segmento del edition_key (edition slug)
 _EDITION_HINT = {
-    "boxset":    {"Español": "box set",    "Francés": "coffret",   "Italiano": "cofanetto", "default": "box set"},
+    "boxset":    {"Español": "box set",    "Francés": "coffret",   "Italiano": "cofanetto",
+                  "Japonés": "BOX", "Coreano": "박스 세트", "Chino": "套装", "default": "box set"},
     "coffret":   {"default": "coffret"},
     "integral":  {"Español": "integral",   "Francés": "intégrale", "default": "integral"},
     "kanzenban": {"default": "kanzenban"},
-    "deluxe":    {"Español": "deluxe",     "Francés": "deluxe",    "Italiano": "deluxe",    "default": "deluxe"},
-    "collector": {"Español": "coleccionista", "Francés": "collector", "Italiano": "collector", "default": "collector"},
+    "deluxe":    {"Español": "deluxe",     "Francés": "deluxe",    "Italiano": "deluxe",
+                  "Japonés": "デラックス", "default": "deluxe"},
+    "collector": {"Español": "coleccionista", "Francés": "collector", "Italiano": "collector",
+                  "Japonés": "コレクターズ", "Coreano": "특별판", "Alemán": "Sammler",
+                  "Portugués": "colecionador", "default": "collector"},
     "hardcover": {"default": "hardcover"},
     "artbook":   {"default": "artbook"},
     "fanbook":   {"default": "fanbook"},
-    "limited":   {"Español": "limitada",   "Francés": "limitée",   "Italiano": "limitata",  "default": "limited edition"},
+    "limited":   {"Español": "limitada",   "Francés": "limitée",   "Italiano": "limitata",
+                  "Japonés": "限定版", "Coreano": "한정판", "Chino": "限定版",
+                  "Alemán": "Limitierte", "Portugués": "limitada", "Polaco": "limitowana",
+                  "Turco": "sınırlı", "Checo": "limitovaná", "default": "limited edition"},
     "omnibus":   {"default": "omnibus"},
     "cofanetto": {"default": "cofanetto"},
     "tankobon":  {"default": ""},
@@ -1001,11 +1034,23 @@ _LENS_LOW_QUALITY_DOMAINS = frozenset({
 })
 
 
-# Mapeo idioma → locale de Google (gl/hl) para Lens
+# Mapeo idioma → código de PAÍS de Google (gl) para Lens/Search. F11 — 14 idiomas.
 _LANG_TO_GL = {
     "Español": "es", "Francés": "fr", "Italiano": "it",
     "Japonés": "jp", "Portugués": "br", "Alemán": "de",
-    "Inglés": "us",
+    "Inglés": "us", "Coreano": "kr", "Chino": "cn",
+    "Tailandés": "th", "Vietnamita": "vn", "Polaco": "pl",
+    "Turco": "tr", "Checo": "cz",
+}
+
+# Mapeo idioma → código de IDIOMA de Google (hl). Distinto de gl (país): hl usa
+# BCP-47 (ja, ko, zh-CN, pt-BR…). Serper acepta `hl` en el payload de /lens.
+_LANG_TO_HL = {
+    "Español": "es", "Francés": "fr", "Italiano": "it",
+    "Japonés": "ja", "Portugués": "pt-BR", "Alemán": "de",
+    "Inglés": "en", "Coreano": "ko", "Chino": "zh-CN",
+    "Tailandés": "th", "Vietnamita": "vi", "Polaco": "pl",
+    "Turco": "tr", "Checo": "cs",
 }
 
 # Dominios preferidos por mercado — resultados de estos dominios van primero
@@ -1018,9 +1063,14 @@ _MARKET_PREFERRED_DOMAINS = {
            "amazon.fr", "fnac.com", "cultura.com", "bdfugue.com"],
     "it": ["starcomics.com", "panini.it", "jpopedizioni.com", "amazon.it",
            "mangadreams.it", "fumetto-online.it"],
-    "jp": ["amazon.co.jp", "rakuten.co.jp", "honto.jp", "kinokuniya.co.jp"],
+    "jp": ["amazon.co.jp", "rakuten.co.jp", "honto.jp", "kinokuniya.co.jp",
+           "books.shueisha.co.jp", "cdjapan.co.jp"],
     "de": ["amazon.de", "carlsen.de", "manga-passion.de"],
     "br": ["amazon.com.br", "panini.com.br"],
+    "kr": ["aladin.co.kr", "yes24.com"],
+    "pl": ["waneko.pl", "sklepwaneko.pl"],
+    "cz": ["obchod.crew.cz"],
+    "tr": ["dr.com.tr", "idefix.com"],
 }
 
 
@@ -1042,7 +1092,8 @@ def _search_serper_lens(
     gl = _LANG_TO_GL.get(language, "")
     if gl:
         payload["gl"] = gl
-        payload["hl"] = gl
+        # hl es el código de IDIOMA (ja/ko/zh-CN…), no el de país (F11).
+        payload["hl"] = _LANG_TO_HL.get(language, gl)
 
     try:
         r = session.post(
@@ -1267,17 +1318,154 @@ def _atomic_write(items_path: Path, rows: list[dict]) -> None:
         raise
 
 
+def _now_iso() -> str:
+    """Timestamp ISO-8601 en UTC (mismo formato que escribe el skill)."""
+    import datetime as _dt  # noqa: PLC0415
+
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
+def _append_attempt_row(item: dict, matches: int, engines: dict) -> None:
+    """ITEM 6 — apendea una fila a data/cover_search_attempts.jsonl por cada target
+    que el motor procesó. Formato COMPATIBLE con el que escribe el skill
+    (`{slug, action, target, attempted_at, matches}`) + un campo extra `engines`
+    con el conteo por motor. El motor sólo procesa portadas → action=replace_cover,
+    target="" (una fila por (slug,action,target), no por motor)."""
+    row = {
+        "slug": item.get("slug", ""),
+        "action": "replace_cover",
+        "target": "",
+        "attempted_at": _now_iso(),
+        "matches": matches,
+        "engines": engines,
+    }
+    try:
+        _ATTEMPTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _ATTEMPTS_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ledger de rechazos persistente + denylist (ITEM 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Motivos de rechazo que son de IDENTIDAD (la candidata NO es la obra / el tomo /
+# la edición correcta). SOLO estos habilitan el veto por HASH: toda candidata que
+# pasó _same_cover comparte aHash con la referencia, así que vetar por hash con un
+# motivo de CALIDAD (o sin motivo) descartaría la candidata correcta en mejor
+# resolución (lo demostró el red team).
+_IDENTITY_REJECT_REASONS = frozenset({
+    "otro_tomo", "otra_edicion", "no_es_la_obra", "arte_sin_logo", "auto_revalidation",
+})
+# Cota de aHash (Hamming) para el veto por hash cuando el motivo es de identidad.
+_LEDGER_HASH_MAX_DIST = 2
+
+
+def _ahash_hex(data: bytes) -> Optional[str]:
+    """aHash de la imagen como string hex de 16 dígitos (para persistir/leer del
+    ledger). None si no se puede computar."""
+    h = _ahash(data)
+    return format(h, "016x") if h is not None else None
+
+
+def ledger_append(record: dict) -> None:
+    """Apendea UNA línea JSON al ledger de rechazos (append atómico a nivel de
+    línea; crea el archivo/directorio si no existen)."""
+    REJECTION_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with REJECTION_LEDGER_PATH.open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def load_rejection_ledger() -> list[dict]:
+    """Lee el ledger completo. Tolerante a líneas corruptas (las saltea)."""
+    out: list[dict] = []
+    if not REJECTION_LEDGER_PATH.exists():
+        return out
+    try:
+        with REJECTION_LEDGER_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+    except OSError:
+        pass
+    return out
+
+
+def is_rejected_candidate(
+    slug: str,
+    url: str,
+    a_hash_hex: Optional[str] = None,
+    ledger: Optional[list[dict]] = None,
+) -> bool:
+    """True si la candidata (slug + url, opcionalmente su aHash) está vetada por el
+    ledger de rechazos. Política EXACTA (decisión de arquitectura post-red-team):
+
+      - Match por URL EXACTA (mismo slug + misma rejected_url) → True SIEMPRE.
+      - Match por HASH: SOLO si la entrada del ledger tiene un `reason` de
+        IDENTIDAD (_IDENTITY_REJECT_REASONS) Y la distancia de aHash ≤ 2. NUNCA
+        se veta por hash cuando el reason es null o de CALIDAD ("mala_calidad" /
+        "otros"): toda candidata que pasó _same_cover comparte aHash con la
+        referencia, así que ese veto tiraría la candidata correcta en mejor
+        resolución.
+    """
+    if ledger is None:
+        ledger = load_rejection_ledger()
+    cand_hash: Optional[int] = None
+    if a_hash_hex:
+        try:
+            cand_hash = int(a_hash_hex, 16)
+        except (ValueError, TypeError):
+            cand_hash = None
+    for rec in ledger:
+        if rec.get("slug") != slug:
+            continue
+        # URL exacta → veto incondicional.
+        if url and rec.get("rejected_url") == url:
+            return True
+        # Hash → sólo con motivo de identidad y aHash cercano.
+        if cand_hash is not None and rec.get("reason") in _IDENTITY_REJECT_REASONS:
+            rec_hash_hex = rec.get("a_hash")
+            if not rec_hash_hex:
+                continue
+            try:
+                rec_hash = int(rec_hash_hex, 16)
+            except (ValueError, TypeError):
+                continue
+            if _hamming(cand_hash, rec_hash) <= _LEDGER_HASH_MAX_DIST:
+                return True
+    return False
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Validación de página (scraping ligero para verificar publisher/volumen)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def _validate_page_content(page_url: str, item: dict, session: requests.Session,
-                           verbose: bool = False) -> bool:
+                           verbose: bool = False, fail_open: bool = True) -> bool:
     """
     Fetchea la página del resultado de Lens y verifica que el texto mencione
     el publisher o la serie del item. Descarta candidatas de editoriales equivocadas.
     Timeout corto (5s) para no frenar el pipeline.
+
+    F5 — modo `fail_open`:
+      - True (default): un error/timeout/status≠200 se ACEPTA (no penalizar). Es el
+        comportamiento para candidatas que YA pasaron _same_cover (verificación
+        visual hecha; esto es sólo un chequeo extra best-effort).
+      - False (FAIL-CLOSED): para candidatas SIN verificación visual (sin referencia
+        utilizable). Un error/timeout/status≠200 ⇒ RECHAZO, con 1 reintento corto
+        antes de rendirse. Sin esto, una candidata sin ref se colaba con sólo el
+        aspect ratio si la página no respondía.
     """
     if not page_url:
         return True  # sin URL de página, no podemos verificar → aceptar
@@ -1292,17 +1480,30 @@ def _validate_page_content(page_url: str, item: dict, session: requests.Session,
     # Palabras clave de la serie (al menos 1 debe aparecer)
     series_keywords = [w for w in series.split() if len(w) >= 4]
 
-    try:
-        r = session.get(page_url, timeout=(3, 5), headers={
-            "User-Agent": _UA,
-            "Accept": "text/html",
-        })
-        if r.status_code != 200:
-            return True  # no pudimos verificar → aceptar
-        # Solo leer los primeros 50KB de texto
-        text = r.text[:50_000].lower()
-    except Exception:
-        return True  # timeout/error → aceptar (no penalizar)
+    attempts = 1 if fail_open else 2  # fail-closed: 1 reintento corto
+    text: Optional[str] = None
+    for attempt in range(attempts):
+        try:
+            r = session.get(page_url, timeout=(3, 5), headers={
+                "User-Agent": _UA,
+                "Accept": "text/html",
+            })
+            if r.status_code != 200:
+                if fail_open:
+                    return True  # no pudimos verificar → aceptar
+                continue  # fail-closed: reintentar; si se agota → rechazo
+            # Solo leer los primeros 50KB de texto
+            text = r.text[:50_000].lower()
+            break
+        except Exception:
+            if fail_open:
+                return True  # timeout/error → aceptar (no penalizar)
+            continue
+    if text is None:
+        # fail-closed: no se pudo obtener contenido tras los reintentos → rechazo.
+        if verbose:
+            print("      page validation: sin contenido verificable (fail-closed)", flush=True)
+        return False
 
     # Verificar que la página mencione la serie
     if series_keywords:
@@ -1362,82 +1563,50 @@ def _get_current_bytes(item: dict, images_dir: Path) -> bytes:
 # Procesamiento por item
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _try_candidates(
-    item: dict,
-    candidates: list[str],
-    session: requests.Session,
-    images_dir: Path,
-    min_gain: float,
-    max_hash_dist: int,
-    dry_run: bool,
-    verbose: bool,
-) -> Optional[tuple[str, str]]:
-    """
-    Prueba cada URL candidata.
-    Devuelve (new_image_url, new_image_local) si se encontró mejora, None si no.
-    """
-    orig_bytes = _get_current_bytes(item, images_dir)
-    orig_px = _get_pixels_from_bytes(orig_bytes) if orig_bytes else _get_current_pixels(item, images_dir)
-
-    for url in candidates:
-        data = _fetch(url, session)
-        if not data:
-            continue
-        ext = _extension_from_magic(data)
-        if not ext:
-            continue
-        # R7: si la URL matchea un pattern de placeholder, registrar su hash
-        # exacto en la denylist y descartar.
-        if _maybe_register_placeholder(url, data):
-            if verbose:
-                print(f"    skip {url[:60]}: placeholder (URL pattern)")
-            continue
-        # R5: la candidata declara volumen/ISBN en conflicto con el item.
-        if candidate_metadata_conflict(item, url):
-            if verbose:
-                print(f"    skip {url[:60]}: metadata en conflicto (vol/ISBN)")
-            continue
-        cand_px = _get_pixels_from_bytes(data)
-        if cand_px <= 0:
-            continue
-        if orig_px > 0 and cand_px < orig_px * min_gain:
-            if verbose:
-                print(f"    skip {url[:60]}: {cand_px}px vs {orig_px}px (no mejora suficiente)")
-            continue
-
-        # Verificar que es la misma portada
-        if orig_bytes:
-            if not _same_cover(orig_bytes, data, max_hash_dist):
-                if verbose:
-                    print(f"    skip {url[:60]}: hash diff demasiado grande")
-                continue
-
-        # Gate de detalle efectivo (gotcha #94): aunque tenga más px, una
-        # candidata blanda (escaneo comprimido / upscale) NO es upgrade real.
-        if _is_soft_image(data):
-            if verbose:
-                print(f"    skip {url[:60]}: imagen blanda "
-                      f"(detalle {_detail_ratio(data):.3f} < {DETAIL_RATIO_MIN})")
-            continue
-
-        if verbose:
-            print(f"    MEJOR: {url[:60]} → {cand_px}px (vs {orig_px}px)")
-
-        if dry_run:
-            return (url, "[dry-run]")
-
-        # Guardar
-        filename = _save_image(data, images_dir)
-        if not filename:
-            continue
-        return (url, filename)
-
-    return None
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Procesamiento principal
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _passes_no_ref_gate(
+    item: dict,
+    cand: dict,
+    data: bytes,
+    orig_bytes: bytes,
+    session: requests.Session,
+    verbose: bool = False,
+) -> bool:
+    """Gate FAIL-CLOSED para candidatas SIN referencia utilizable — no se pudo
+    correr _same_cover (sin portada actual, o la actual < 10k px, donde _same_cover
+    deja de ser fiable). Exige TODO (F4/F7):
+
+      - aspect ratio ±0.25 contra la referencia (si la referencia da dimensiones),
+      - sin conflicto de metadata (volumen/ISBN) declarado por la candidata,
+      - `_validate_page_content` en modo FAIL-CLOSED (error/timeout/status≠200 ⇒
+        rechazo, con 1 reintento).
+    """
+    # Aspect ratio ±0.25 contra la referencia (si es medible).
+    if orig_bytes:
+        ow, oh = _get_dims_from_bytes(orig_bytes)
+        cw, ch = _get_dims_from_bytes(data)
+        if ow > 0 and oh > 0 and cw > 0 and ch > 0:
+            orig_ar = _aspect_ratio(ow, oh)
+            cand_ar = _aspect_ratio(cw, ch)
+            if abs(orig_ar - cand_ar) / orig_ar > 0.25:
+                if verbose:
+                    print("    skip: aspect ratio diff (sin ref utilizable)", flush=True)
+                return False
+    # Conflicto de metadata (ya se chequea para TODAS las candidatas antes de la
+    # rama por-vía; se re-verifica acá para dejar explícito el gate sin-ref).
+    if candidate_metadata_conflict(item, cand.get("url", ""), cand.get("page_title", "")):
+        return False
+    # Validación de página FAIL-CLOSED.
+    page_link = cand.get("link", "")
+    if not _validate_page_content(page_link, item, session, verbose, fail_open=False):
+        if verbose:
+            print("    skip: page content fail-closed (sin ref utilizable)", flush=True)
+        return False
+    return True
 
 def _text_matches_item(page_title: str, item: dict) -> bool:
     """Verifica que el título de la página de la candidata sea relevante al item."""
@@ -1472,13 +1641,20 @@ def _process_item(
     dry_run: bool,
     verbose: bool,
     preview: bool = False,
+    ledger: Optional[list[dict]] = None,
+    attempt_engines: Optional[dict] = None,
 ) -> Optional[dict]:
     """
     Busca una portada mejor para el item.
     Retorna un dict con los datos del resultado (para preview o aplicación directa).
     None si no encontró mejora.
+
+    `ledger`: denylist de rechazos (list[dict]); si None se carga en cada llamada.
+    `attempt_engines`: dict mutable {isbn,lens,text} que se rellena con la cantidad
+    de candidatas por motor (observabilidad, ITEM 6).
     """
     signals = item.get("signal_types", [])
+    slug = item.get("slug", "")
 
     if _SKIP_SIGNALS & set(signals):
         return None
@@ -1553,6 +1729,12 @@ def _process_item(
         sr.setdefault("via", "lens" if not query else "text")
         all_candidates.append(sr)
 
+    # ITEM 6 — observabilidad: contabilizar candidatas por motor (cdn→isbn).
+    if attempt_engines is not None:
+        for c in all_candidates:
+            eng = "isbn" if c.get("via") == "cdn" else c.get("via", "text")
+            attempt_engines[eng] = attempt_engines.get(eng, 0) + 1
+
     if not all_candidates:
         return None
 
@@ -1562,11 +1744,21 @@ def _process_item(
 
     for cand in all_candidates:
         url = cand["url"]
+        # ITEM 1 — denylist: URL exacta vetada → saltar SIN descargar.
+        if is_rejected_candidate(slug, url, None, ledger):
+            if verbose:
+                print(f"    skip {url[:60]}: en ledger de rechazos (URL)", flush=True)
+            continue
         data = _fetch(url, session)
         if not data:
             continue
         ext = _extension_from_magic(data)
         if not ext:
+            continue
+        # ITEM 1 — denylist por HASH (sólo motivos de identidad, dist ≤ 2).
+        if is_rejected_candidate(slug, url, _ahash_hex(data), ledger):
+            if verbose:
+                print(f"    skip {url[:60]}: en ledger de rechazos (hash identidad)", flush=True)
             continue
         # R7: placeholder conocido por URL pattern → denylist + descarte.
         if _maybe_register_placeholder(url, data):
@@ -1594,56 +1786,63 @@ def _process_item(
 
         via = cand.get("via", "text")
         confidence = "high"
+        verified = False
 
-        if via == "lens":
-            # Lens: Google ya hizo el matching visual.
-            # Verificación en 2 capas:
-            #   1. Aspect ratio (descarta banners, cuadrados, etc.)
-            #   2. Validación de página (fetchea la URL de la página y verifica
-            #      que mencione la serie/publisher — descarta editoriales equivocadas)
-            confidence = "low"
-            if orig_bytes:
-                ow, oh = _get_dims_from_bytes(orig_bytes)
-                cw, ch = _get_dims_from_bytes(data)
-                if ow > 0 and oh > 0 and cw > 0 and ch > 0:
-                    orig_ar = _aspect_ratio(ow, oh)
-                    cand_ar = _aspect_ratio(cw, ch)
-                    if abs(orig_ar - cand_ar) / orig_ar > 0.30:
-                        if verbose:
-                            print(f"    skip {url[:60]}: aspect ratio diff ({orig_ar:.2f} vs {cand_ar:.2f})", flush=True)
-                        continue
-            # Validar contenido de la página del resultado
-            page_link = cand.get("link", "")
-            if page_link and not _validate_page_content(page_link, item, session, verbose):
-                if verbose:
-                    print(f"    skip {url[:60]}: página no menciona serie/publisher", flush=True)
-                continue
-        elif via == "cdn":
-            # CDN determinístico (Amazon/PRH/OpenLibrary): hash confiable
-            if orig_bytes and orig_px > 0:
+        # ¿Hay referencia utilizable para verificar por _same_cover? Bytes
+        # descargables + px ≥ 10_000 (_same_cover es fiable hasta ~9.6k px; por
+        # debajo la referencia deja de servir → tratar como "sin referencia").
+        usable_ref = bool(orig_bytes) and orig_px >= 10_000
+
+        if via == "cdn":
+            # CDN determinístico (Amazon/PRH/OpenLibrary/Google Books): hash confiable.
+            if usable_ref:
                 if not _same_cover(orig_bytes, data, max_hash_dist):
                     if verbose:
                         print(f"    skip {url[:60]}: hash diff demasiado grande", flush=True)
                     continue
+                verified = True
+            else:
+                confidence = "low"
+                if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose):
+                    continue
+        elif via == "lens":
+            # F4 — Lens ya hizo el matching visual, pero ahora EXIGIMOS _same_cover
+            # cuando hay referencia utilizable (antes sólo aspect ±0.30 + page
+            # content: era una vía de falsos positivos). Verificada → verified=True,
+            # pero la confidence sigue "low" (no auto-aplicar Lens).
+            confidence = "low"
+            if usable_ref:
+                if not _same_cover(orig_bytes, data, max_hash_dist):
+                    if verbose:
+                        print(f"    skip {url[:60]}: _same_cover falló (lens)", flush=True)
+                    continue
+                verified = True
+            else:
+                if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose):
+                    continue
         else:
-            # Text search: hash si imagen grande, aspect ratio si chica
-            if orig_bytes and orig_px > 0:
-                if orig_px >= 30_000:
-                    if not _same_cover(orig_bytes, data, max_hash_dist):
-                        if verbose:
-                            print(f"    skip {url[:60]}: hash diff demasiado grande", flush=True)
-                        continue
-                else:
-                    confidence = "low"
-                    ow, oh = _get_dims_from_bytes(orig_bytes)
-                    cw, ch = _get_dims_from_bytes(data)
-                    if ow > 0 and oh > 0 and cw > 0 and ch > 0:
-                        orig_ar = _aspect_ratio(ow, oh)
-                        cand_ar = _aspect_ratio(cw, ch)
-                        if abs(orig_ar - cand_ar) / orig_ar > 0.25:
-                            if verbose:
-                                print(f"    skip {url[:60]}: aspect ratio diff", flush=True)
-                            continue
+            # F7 — text search: correr _same_cover SIEMPRE que haya referencia
+            # utilizable (antes: sólo si orig_px ≥ 30k; el bypass < 30k con aspect
+            # solo era un falso-positivo). Sin ref utilizable → gate fail-closed.
+            if usable_ref:
+                if not _same_cover(orig_bytes, data, max_hash_dist):
+                    if verbose:
+                        print(f"    skip {url[:60]}: hash diff demasiado grande", flush=True)
+                    continue
+                verified = True
+            else:
+                confidence = "low"
+                if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose):
+                    continue
+
+        # F6 — gate de detalle (gotcha #98): una candidata blanda (escaneo
+        # sobre-comprimido / upscale) NO es upgrade aunque tenga más px. Mismo
+        # criterio que sc_validate.py — fuente única.
+        if _is_soft_image(data):
+            if verbose:
+                print(f"    skip {url[:60]}: imagen blanda "
+                      f"(detalle {_detail_ratio(data)} < {DETAIL_RATIO_MIN})", flush=True)
+            continue
 
         if verbose:
             tag = "✓" if confidence == "high" else "⚠"
@@ -1651,6 +1850,17 @@ def _process_item(
 
         # Guardar la imagen (siempre — necesitamos el archivo para display/comparación)
         filename = _save_image(data, images_dir) if not dry_run else "[dry-run]"
+
+        # match_dist: misma métrica que sc_validate.py (aHash de referencia vs
+        # candidata) — sólo tiene sentido cuando hubo referencia utilizable y
+        # _same_cover ya pasó (verified=True); sin ref, queda null (fuente única
+        # con el schema del skill, gotcha #131/#132).
+        match_dist = None
+        if verified:
+            h1 = _ahash(orig_bytes)
+            h2 = _ahash(data)
+            if h1 is not None and h2 is not None:
+                match_dist = _hamming(h1, h2)
 
         return {
             "new_url": url,
@@ -1661,6 +1871,9 @@ def _process_item(
             "domain": cand.get("domain", ""),
             "query": query,
             "confidence": confidence,
+            "verified": verified,
+            "match_dist": match_dist,
+            "ref_pixels": orig_px,
             "via": cand.get("via", "text"),
         }
 
@@ -1670,13 +1883,83 @@ def _process_item(
 _PREVIEW_PATH = _HERE / "data" / "cover_preview.json"
 
 
-def _write_preview(entries: list[dict]) -> None:
+def _merge_preview_entries(
+    memory_entries: list[dict], disk_entries: list[dict]
+) -> list[dict]:
+    """Merge anti-carrera (F19): funde las entries en memoria del motor con las
+    que están en disco (que la UI/skill pudieron modificar durante la corrida).
+
+      (a) para cada candidata en memoria que exista en disco (mismo slug+new_url)
+          con status ≠ pending en disco → conservar el status y reject_reason de
+          disco (NUNCA resucitarla como pending — clause (c)),
+      (b) candidatas de disco que memoria no tiene (mismo slug) → conservarlas, y
+          entries de disco de slugs que memoria no tiene → conservarlas tal cual
+          (son trabajo del skill/UI durante la corrida),
+      (c) implícito en (a): una candidata decidida en disco jamás vuelve a pending.
+
+    Misma semántica de preservación de decisiones que sc_flush.py (dedup por
+    new_url, rescate de approved/rejected); acá aplicada al rewrite del motor.
+    """
+    disk_by_slug: dict[str, dict] = {}
+    for e in disk_entries:
+        s = e.get("slug")
+        if s:
+            disk_by_slug[s] = e
+
+    out: list[dict] = []
+    mem_slugs: set = set()
+    for e in memory_entries:
+        slug = e.get("slug")
+        mem_slugs.add(slug)
+        disk_e = disk_by_slug.get(slug) if slug else None
+        if disk_e:
+            disk_cands = {
+                c.get("new_url"): c
+                for c in disk_e.get("candidates", [])
+                if c.get("new_url")
+            }
+            mem_urls: set = set()
+            for c in e.get("candidates", []):
+                mem_urls.add(c.get("new_url"))
+                dc = disk_cands.get(c.get("new_url"))
+                if dc and dc.get("status", "pending") != "pending":
+                    # (a)/(c) — conservar la decisión de disco; nunca resucitar pending.
+                    c["status"] = dc.get("status")
+                    if "reject_reason" in dc:
+                        c["reject_reason"] = dc.get("reject_reason")
+            # (b) intra-slug — candidatas de disco que memoria no tiene.
+            for cu, dc in disk_cands.items():
+                if cu not in mem_urls:
+                    e["candidates"].append(dc)
+        out.append(e)
+
+    # (b) — entries de disco de slugs que memoria no tiene.
+    for slug, disk_e in disk_by_slug.items():
+        if slug not in mem_slugs:
+            out.append(disk_e)
+    return out
+
+
+def _write_preview(entries: list[dict], merge: bool = True) -> None:
     """Escribe cover_preview.json de forma ATÓMICA (tmp + os.replace).
 
     El preview se flushea después de CADA item: un crash a mitad de un
     write_text directo dejaba el JSON truncado y se perdía toda la cola
     de candidatas pendientes.
+
+    F19 — `merge=True` (default, usado por run()): antes de escribir, relee el
+    archivo de disco y funde las decisiones que la UI/skill guardaron durante la
+    corrida (el mtime-guard de serve.py no aplica al motor). `merge=False` lo usa
+    apply_preview(), que ya es autoritativo sobre el estado final del preview.
     """
+    if merge and _PREVIEW_PATH.exists():
+        try:
+            disk_raw = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
+            if isinstance(disk_raw, list):
+                disk = [_normalize_preview_entry(e) for e in disk_raw]
+                entries = _merge_preview_entries(entries, disk)
+        except (ValueError, OSError):
+            pass
     tmp = _PREVIEW_PATH.with_name(f"{_PREVIEW_PATH.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(
         json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1793,6 +2076,9 @@ def _normalize_preview_entry(entry: dict) -> dict:
             c.setdefault("page_title", "")
             c.setdefault("domain", "")
             c.setdefault("query", "")
+            c.setdefault("verified", False)
+            c.setdefault("match_dist", None)
+            c.setdefault("ref_pixels", None)
         if not isinstance(entry.get("current_images"), list) or not entry["current_images"]:
             entry["current_images"] = _fallback_current(entry)
         return entry
@@ -1804,6 +2090,9 @@ def _normalize_preview_entry(entry: dict) -> dict:
         "domain": entry.get("domain", ""),
         "query": entry.get("query", ""),
         "confidence": entry.get("confidence", "low"),
+        "verified": entry.get("verified", False),
+        "match_dist": entry.get("match_dist"),
+        "ref_pixels": entry.get("ref_pixels"),
         "action": entry.get("action", "replace_cover"),
         "target": entry.get("target", ""),
         "kind": entry.get("kind", "gallery"),
@@ -1854,6 +2143,28 @@ def _is_upscaled(item: dict, images_dir: Path) -> bool:
     return px >= 200_000
 
 
+def filter_candidates_by_slugs(
+    items: list[dict],
+    candidate_idx: list[int],
+    slugs: set[str],
+) -> tuple[list[int], list[tuple[str, str]]]:
+    """Filtra ``candidate_idx`` a los items cuyo slug está en ``slugs``.
+
+    Devuelve (idx_filtrado, salteados) donde ``salteados`` es una lista de
+    (slug, motivo) por cada slug PEDIDO que no quedó como candidato: o no existe
+    en items.jsonl, o existe pero no es candidato (px ya buenos / signal de skip).
+    Función pura (sin I/O) — testeable."""
+    candidate_slugs = {items[i].get("slug", "") for i in candidate_idx}
+    all_slugs = {it.get("slug", "") for it in items}
+    filtered = [i for i in candidate_idx if items[i].get("slug", "") in slugs]
+    skipped: list[tuple[str, str]] = []
+    for s in sorted(slugs - candidate_slugs):
+        reason = ("no existe en items.jsonl" if s not in all_slugs
+                  else "no es candidato (px ya buenos / signal de skip)")
+        skipped.append((s, reason))
+    return filtered, skipped
+
+
 def run(
     items_path: Path,
     images_dir: Path,
@@ -1869,6 +2180,7 @@ def run(
     limit: int = 0,
     verbose: bool = False,
     include_approved: bool = False,
+    slugs: Optional[set[str]] = None,
 ) -> None:
     _load_dotenv()
     if not serper_key:
@@ -1894,6 +2206,19 @@ def run(
         return False
 
     all_candidates_idx = [i for i in range(len(items)) if _is_candidate(i)]
+
+    # --slugs: acotar la corrida a slugs exactos (además de los filtros de
+    # candidatura). Un slug pedido que NO es candidato (px ya buenos, signal de
+    # skip, o inexistente) se reporta y se saltea — no se fuerza su búsqueda.
+    if slugs:
+        all_candidates_idx, skipped = filter_candidates_by_slugs(
+            items, all_candidates_idx, slugs
+        )
+        if skipped:
+            print(f"--slugs: {len(slugs) - len(skipped)}/{len(slugs)} son candidatos; "
+                  f"salteados {len(skipped)}:", flush=True)
+            for s, reason in skipped:
+                print(f"    · {s}: {reason}", flush=True)
 
     total = len(all_candidates_idx)
 
@@ -1938,6 +2263,9 @@ def run(
     session = requests.Session()
     session.headers.update({"User-Agent": _UA})
 
+    # ITEM 1 — denylist de rechazos (se carga una vez por corrida).
+    rejection_ledger = load_rejection_ledger()
+
     applied_high = 0  # alta confianza + --apply → aplicadas directo
     previewed = 0     # van a preview SIN aplicar (esperan aprobación manual)
     skipped = 0
@@ -1970,12 +2298,15 @@ def run(
             print(f"  {pos}/{len(candidates_idx)} procesados... "
                   f"({applied_high} aplicadas, {previewed} a preview)", flush=True)
 
+        result = None
+        attempt_engines = {"isbn": 0, "lens": 0, "text": 0}
         try:
             result = _process_item(
                 item, session, images_dir,
                 min_pixels, min_gain, max_hash_dist,
                 no_search, serper_key, tavily_key,
                 dry_run=dry_run, verbose=verbose,
+                ledger=rejection_ledger, attempt_engines=attempt_engines,
             )
             if result:
                 new_url = result["new_url"]
@@ -2036,6 +2367,9 @@ def run(
                         "domain": result.get("domain", ""),
                         "query": result.get("query", ""),
                         "confidence": confidence,
+                        "verified": result.get("verified", False),
+                        "match_dist": result.get("match_dist"),
+                        "ref_pixels": result.get("ref_pixels"),
                         "action": "replace_cover",
                         "target": "",
                         "kind": "gallery",
@@ -2077,6 +2411,12 @@ def run(
             if verbose:
                 print(f"  ERROR: {e}", flush=True)
 
+        # ITEM 6 — observabilidad: UNA fila por target procesado (no por motor;
+        # el dedup recently_failed del skill toma la última fila por
+        # (slug,action,target), una fila-por-motor rompería el skip de 30 días).
+        if not dry_run:
+            _append_attempt_row(item, 1 if result else 0, attempt_engines)
+
     print(flush=True)
     print(f"✓ Resultado:")
     print(f"  Aplicadas (alta confianza, --apply): {applied_high}")
@@ -2100,7 +2440,8 @@ def run(
         print(f"  Después:    .venv/bin/python scripts/retrofit/fetch_better_covers.py --apply-preview")
 
 
-def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool = False) -> None:
+def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool = False,
+                  dry_run: bool = False) -> None:
     """
     Procesa el preview JSON (schema multi-candidato). Cada producto puede tener
     N candidatas, cada una con su `action` y `status`:
@@ -2122,6 +2463,10 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
 
     Una entry se quita del preview cuando TODAS sus candidatas están decididas
     (approved/rejected). Si queda alguna pending, la entry se conserva entera.
+
+    `dry_run`: si True, NO escribe el ledger de rechazos (ITEM 1). El resto del
+    apply es igual (no hay caller de producción que pase dry_run=True; sirve para
+    tests y para inspección sin ensuciar la denylist).
     """
     if not _PREVIEW_PATH.exists():
         print(f"No hay preview en {_PREVIEW_PATH}.")
@@ -2269,6 +2614,32 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     if old_image and old_image != new_local:
                         old_to_drop.add(old_image)
             elif status == "rejected":
+                # ITEM 1 — registrar el rechazo en el ledger ANTES del bucle de
+                # unlink (acá el archivo todavía existe → podemos leer su aHash).
+                # En dry-run no se escribe el ledger.
+                if not dry_run:
+                    a_hash_hex = None
+                    if new_local and new_local != "[dry-run]":
+                        _lf = images_dir / new_local
+                        if _lf.exists():
+                            try:
+                                a_hash_hex = _ahash_hex(_lf.read_bytes())
+                            except OSError:
+                                a_hash_hex = None
+                    ledger_append({
+                        "slug": slug,
+                        "action": action,
+                        "target": target,
+                        "rejected_url": new_url,
+                        "a_hash": a_hash_hex,
+                        "match_dist": cand.get("match_dist"),
+                        "ref_pixels": entry.get("old_pixels"),
+                        "new_pixels": cand.get("new_pixels"),
+                        "page_title": cand.get("page_title", ""),
+                        "query": cand.get("query", ""),
+                        "reason": cand.get("reject_reason"),
+                        "rejected_at": _now_iso(),
+                    })
                 if action in ("replace_cover", "replace_and_add"):
                     # Revertir SOLO si la candidata rechazada es la portada
                     # vigente (una corrida previa la aplicó). Antes se revertía
@@ -2364,7 +2735,10 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
         remaining.append(e)
     n_rem = 0
     if remaining:
-        _write_preview(remaining)
+        # merge=False: apply_preview es autoritativo sobre el estado final del
+        # preview (ya releyó el disco arriba). Un merge acá re-agregaría las
+        # candidatas decididas que este apply acaba de quitar (F19).
+        _write_preview(remaining, merge=False)
         n_rem = sum(1 for e in remaining for c in e["candidates"]
                     if c.get("status", "pending") == "pending")
         print(f"  Pendientes:              {n_rem} candidatas (siguen en preview)")
@@ -2459,6 +2833,13 @@ def main() -> None:
         help="Procesar solo los primeros N candidatos (0 = todos)",
     )
     ap.add_argument(
+        "--slugs", action="append", default=[],
+        help="Acotar la corrida a slugs exactos (coma-separado y/o repetible): "
+             "--slugs slug1,slug2 --slugs slug3. Se aplica ADEMÁS de los filtros de "
+             "candidatura; un slug pedido que no es candidato (px ya buenos) se "
+             "reporta y se saltea.",
+    )
+    ap.add_argument(
         "--verbose", "-v", action="store_true",
         help="Mostrar detalle de cada item procesado",
     )
@@ -2470,6 +2851,11 @@ def main() -> None:
              "afectada (siempre las incluye, es una cola de revisión).",
     )
     args = ap.parse_args()
+
+    # --slugs: soportar coma-separado y/o repetido → set de slugs limpios.
+    slug_filter: set[str] = set()
+    for chunk in args.slugs:
+        slug_filter.update(s.strip() for s in chunk.split(",") if s.strip())
 
     if args.max_hash_dist > DEFAULT_MAX_HASH_DIST:
         print(f"⚠️  --max-hash-dist {args.max_hash_dist} > {DEFAULT_MAX_HASH_DIST} "
@@ -2495,6 +2881,7 @@ def main() -> None:
         limit=args.limit,
         verbose=args.verbose,
         include_approved=args.include_approved,
+        slugs=slug_filter or None,
     )
 
 

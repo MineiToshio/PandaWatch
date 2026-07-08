@@ -429,7 +429,7 @@ vive en el SKILL.md; el gist:
    difiere del item ⇒ hard reject. Otro volumen / otra edición / arte distinto → descarta.
    Precisión > recall: mejor 0 candidatas que una no relacionada. (Imagen corrupta →
    hash no computable → rechazar.)
-4b. **Gate de calidad de display (gotcha #94)**: la identidad NO garantiza calidad — un
+4b. **Gate de calidad de display (gotcha #98)**: la identidad NO garantiza calidad — un
    escaneo blando o upscale de la MISMA portada pasa el AND-gate pero se ve pixelado. El
    px count engaña (la casadellibro 80k mala y una whakoom 637k buena miden el mismo
    `_detail_ratio` ≈ 0.10); lo que distingue es el TAMAÑO. Una candidata se rechaza si es
@@ -437,10 +437,30 @@ vive en el SKILL.md; el gist:
    BLANDA** (`fetch_better_covers._detail_ratio < DETAIL_RATIO_MIN` = 0.115 → poca energía
    en la octava superior medida a 384px). Las grandes-pero-blandas pasan (se muestran
    reducidas → nítidas). Mismo gate (`_is_soft_image`) en el script de producción
-   (`_try_candidates`) y en `sc_validate.py` — fuente única. La cola ya armada se limpia con
-   `prune_soft_cover_candidates.py`. Tests: `tests/test_detail_ratio.py`.
+   (`fetch_better_covers._process_item`) y en `sc_validate.py` — fuente única. La cola ya
+   armada se limpia con `prune_soft_cover_candidates.py`. Tests: `tests/test_detail_ratio.py`.
 5. Guarda imágenes válidas en `data/images/` (nombre sha256) y flushea **atómico** a
    `data/cover_preview.json` después de cada item.
+
+**Step 5 del skill (`--serper-fallback`, opcional, de pago, 2026-07-08):** tras terminar el loop
+de Chrome (pasos 1-5 de arriba), invoca el MOTOR de producción (`fetch_better_covers.py`, con
+`SERPER_API_KEY`) para reverse-image vía Google Lens, sólo sobre los targets que terminaron en 0
+matches. Acotable a una lista exacta de slugs con `--slugs slug1,slug2` (repetible, agregado
+2026-07-08) — `--limit` sigue siendo el corte por cantidad, `--slugs` es el filtro por identidad
+exacta. Detalle completo (comando, costo, cuándo correrlo) en
+`.claude/skills/watch-search-covers/SKILL.md` § "Step 5".
+
+**Hallazgo del piloto e2e (2026-07-08, 10 items con 0 matches del Step 4):** Google Lens vía
+Serper devolvió **0 candidatas** partiendo de thumbnails ORIGEN chicos (~10 000-16 000 px:
+listadomanga, aladin, rakuten) — confirmado en `data/cover_search_attempts.jsonl` (`engines.lens`
+en 0 en toda la corrida). Lens necesita una imagen de consulta con detalle suficiente para el
+matching visual; una referencia diminuta no le da con qué. La vía efectiva para estos casos es
+el **TEXT SEARCH localizado** (Step 3, queries con contexto en Google Imágenes `udm=2`), que
+llega a los CDNs de las editoriales directamente por nombre/serie/tomo sin depender de la calidad
+de la imagen de referencia — en el mismo piloto produjo matches donde Lens no encontró nada
+(`engines.text` > 0 en varios slugs ES/KR). Conclusión: Lens no es palanca de mejora para
+referencias diminutas; la "ficha de editorial" (pendiente, ver CLAUDE.md § "Next things on the
+radar") es la vía de fondo para listadomanga.
 
 **Re-validación del corpus de candidatas (2026-06-10):** 459 candidatas de 200 items →
 154 `verified=true` / 305 `false`. Breakdown de causas de rechazo: `hash_dist` 92,
@@ -473,7 +493,58 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
 - **Memoria de intentos** (`data/cover_search_attempts.jsonl`): una línea JSON por intento
   con `{slug, action, target, attempted_at (ISO), matches (int)}`. Targets cuyo último intento
   tuvo `matches == 0` hace menos de 30 días se omiten automáticamente. Flag `--retry-failed`
-  para ignorar la exclusión. El archivo es local (`.gitignore`).
+  para ignorar la exclusión. El archivo es local (`.gitignore`). El **motor** (`run()` de
+  `fetch_better_covers.py`) ahora también escribe una fila por target procesado (mismo formato
+  + campo extra `engines: {isbn,lens,text}`); UNA fila por `(slug,action,target)` para no
+  romper el dedup del skill (ITEM 6).
+
+### Motor de portadas — gates endurecidos + ledger de rechazos (2026-07-08)
+
+Paquete de fixes al MOTOR (`fetch_better_covers.py`), post-auditoría + red team. Toda la
+lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` DELEGA.
+
+- **Ledger de rechazos + denylist** (`data/cover_rejections.jsonl`, append-only, local): cada
+  vez que `apply_preview()` marca una candidata `rejected`, se apendea `{slug, action, target,
+  rejected_url, a_hash (hex del archivo o null si ya no existe), match_dist, ref_pixels,
+  new_pixels, page_title, query, reason, rejected_at}` ANTES de borrar el archivo. `sync_cover_preview`
+  también lo apendea cuando dropea una entry entera con candidatas rechazadas por slug
+  desaparecido. `fetch_better_covers.is_rejected_candidate(slug, url, a_hash_hex, ledger)` es la
+  fuente única de la denylist, consultada por `_process_item` (URL antes de descargar, hash
+  después) y por `sc_validate` (delegando). **Política EXACTA del veto por hash** (decisión
+  post-red-team): match por **URL exacta** (mismo slug + rejected_url) veta SIEMPRE; match por
+  **hash** SÓLO si la entrada del ledger tiene un `reason` de **IDENTIDAD** (`otro_tomo`,
+  `otra_edicion`, `no_es_la_obra`, `arte_sin_logo`, `auto_revalidation`) **y** aHash dist ≤ 2 —
+  NUNCA se veta por hash con `reason` null o de calidad (`mala_calidad`/`otros`), porque toda
+  candidata que pasó `_same_cover` comparte aHash con la referencia y ese veto tiraría la
+  candidata correcta en mejor resolución. Ver gotcha #131. Tests:
+  `tests/test_cover_rejection_ledger.py`.
+- **Cierre de bypasses del gate** (`_process_item`): antes, la rama `via=="lens"` corría sólo
+  aspect ±0.30 + page-content, y la rama `via=="text"` con `orig_px < 30k` sólo aspect ±0.25 —
+  ninguna corría `_same_cover` (falsos positivos 2/3/4/5). Ahora, con **referencia utilizable**
+  (bytes descargables + px ≥ 10 000, donde `_same_cover` es fiable): lens y text EXIGEN
+  `_same_cover` (lens verificada queda `verified=True` pero `confidence` sigue `low` — no
+  auto-aplica). **Sin referencia utilizable**: `verified=False` y se exige TODO — aspect ±0.25
+  (unificado) + `candidate_metadata_conflict` sin conflicto + `_validate_page_content` en modo
+  **FAIL-CLOSED** (`fail_open=False`: error/timeout/status≠200 ⇒ rechazo, con 1 reintento). El
+  gate de blandura `_is_soft_image` corre para toda candidata aceptada (mismo criterio que
+  `sc_validate`). La función muerta `_try_candidates` se eliminó. Tests:
+  `tests/test_cover_engine_gates.py`.
+- **Umbral único de baja calidad (F16)**: `LOW_QUALITY_PX = 90_000` es la constante única en
+  `fetch_better_covers`; `DEFAULT_MIN_PIXELS` vale `LOW_QUALITY_PX` (90k, antes 100k) y
+  `sync_cover_preview.LOW_QUALITY_PX` / `promote_hires_cover.LOW_PX_THRESHOLD` la IMPORTAN (no
+  la redefinen). La banda 90k-100k generaba churn (el motor buscaba candidatas que `sync`
+  podaba al instante). Candado en `test_cover_engine_gates.py::test_low_quality_threshold_locked`.
+- **Merge anti-carrera en `_write_preview` (F19)**: `run()` reescribe `cover_preview.json`
+  completo tras cada item; el mtime-guard de `serve.py` no aplica al motor, así que pisaba
+  decisiones que la UI guardó durante la corrida. Ahora `_write_preview(entries, merge=True)`
+  relee el disco y funde: (a) candidata en memoria decidida en disco → conserva status +
+  reject_reason de disco (nunca la resucita como pending); (b) candidatas/entries de disco que
+  el motor no tiene → se conservan. `apply_preview()` escribe con `merge=False` (ya es
+  autoritativo sobre el estado final). Misma semántica de preservación que `sc_flush.py`.
+- **Cobertura de idiomas (F11)**: `_COVER_TERM`, `_EDITION_HINT`, `_LANG_TO_GL`, el nuevo
+  `_LANG_TO_HL` (código de IDIOMA para el `hl` de Serper: `ja/ko/zh-CN/pt-BR…`, distinto del
+  `gl` de país) y `_MARKET_PREFERRED_DOMAINS` cubren los 14 idiomas (KO/ZH/TH/VI/PL/TR/CS
+  agregados; dominios de mercado KR/PL/CZ/TR + JP ampliado).
 
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
@@ -490,6 +561,11 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
   `_same_cover` contra la imagen actual, o **⚠ sin verificar** (ámbar) cuando no fue posible
   verificar (p.ej. items sin imagen con `--include-no-image`). El badge aparece tanto en la
   card compacta como en el modal de comparación.
+- **Chips de motivo de rechazo** (`otro_tomo`/`otra_edicion`/`arte_sin_logo`/`no_es_la_obra`/
+  `mala_calidad`/`otros…`, opcionales, 1 clic tras rechazar): detalle completo en
+  [dashboard.md § "Cover-preview — chips de motivo de rechazo"](dashboard.md#cover-preview--chips-de-motivo-de-rechazo-2026-07-08-sin-fricción).
+  El motivo alimenta el veto por hash del ledger de rechazos (arriba, "Ledger de rechazos +
+  denylist").
 - **Badge "aprobadas SIN APLICAR" (P24, 2026-07-07)**: aprobar una candidata (👍) y
   aplicarla a `items.jsonl` son pasos DESACOPLADOS (guardar `status=approved` no toca el
   catálogo; sólo `POST /api/apply-cover-preview` lo hace). Si quedan candidatas
@@ -522,6 +598,66 @@ con producción (aHash default 6 sin relax + llamada a `candidate_metadata_confl
   normalizado al crear la candidata; el sync auto-corrige las que quedaron con valor viejo.
   Si hubo cambios (incluido `pixels_recomputed`), persiste el JSON atómicamente antes de responder.
   El CLI manual: `.venv/bin/python scripts/retrofit/sync_cover_preview.py [--dry-run]`.
+
+### Re-validación OFFLINE de la cola (`revalidate_cover_preview.py`, 2026-07-08)
+
+Retrofit puntual para re-validar candidatas `pending` que vienen de una versión VIEJA del
+skill (la copia embebida que drifteó, causa de los falsos positivos pre-2026-06-11): traen
+`match_dist: null` y NUNCA pasaron por el gate endurecido. Como la referencia (`old_image`) y
+la candidata (`new_image`) ya están espejadas en `data/images/`, se re-validan **sin red**.
+
+- **Delegación pura, cero lógica copiada**: la identidad se decide con `fetch_better_covers._same_cover`
+  + `_is_soft_image` (fuente única); la detección de candidatas MOOT delega en
+  `sync_cover_preview.sync_preview()` (item borrado, portada vigente ya buena, target ausente/ok,
+  ya-es-portada) — esas se dejan intactas para que `sync` las limpie. `revalidate_preview()` es una
+  función PURA importable (no escribe archivos ni el ledger).
+- **Por candidata pending** (que no tenga ya la clave `verified`): (a) **sin referencia utilizable**
+  (`old_image` ausente o < 10 000 px) → NO se auto-rechaza, sólo `verified: false` (queda para review
+  humano); (b) **PASA** `_same_cover` ∧ ¬`_is_soft_image` → puebla `match_dist` (aHash Hamming, igual
+  que `sc_validate`), `ref_pixels`, `verified: true`, sigue `pending`; (c) **FALLA** → `status: rejected`
+  + `reject_reason: "auto_revalidation"` (motivo de IDENTIDAD → habilita veto por hash en el ledger).
+- **El ledger NO se escribe acá** (escritor único = `apply_preview`/`sync`): la candidata rechazada se
+  ledgerea cuando el owner la aplica. Idempotente: status ≠ pending o pending-con-`verified` no se
+  reprocesan → correr 2× = JSON byte-idéntico. Backup + escritura atómica.
+- **Píxeles de referencia vía PIL** (reusa `sync_cover_preview._get_local_pixels`): el parser de bytes
+  del motor (`_get_pixels_from_bytes`) NO cubre AVIF y el espejo está normalizado a AVIF Q60 → mediría
+  0 px para todas. **Corolario/limitación**: `_is_soft_image` usa ese mismo parser como guard interno,
+  así que sobre candidatas YA normalizadas a AVIF es un no-op (devuelve `False`) — el gate real es
+  `_same_cover`. En el flujo LIVE del skill esto no aplica (la candidata se valida ANTES de normalizar,
+  en su formato original); sólo afecta la re-validación offline de archivos ya normalizados.
+- CLI: `--dry-run` (default, reporta desglose por categoría + distribución de `match_dist`) / `--apply`.
+  Tests: `tests/test_revalidate_cover_preview.py` (pasa/falla/sin-ref/moot/idempotencia/no-ledger).
+
+### Harness de evaluación del gate (`scripts/eval/eval_cover_gate.py`, 2026-07-08)
+
+Harness OFFLINE reproducible que mide el gate de identidad de portadas sobre una muestra
+etiquetada y reporta la matriz de errores (FP/FN) por categoría de la taxonomía de fallas del
+owner (2 otro tomo · 3 otra edición/editorial · 4 foto random · 5 parecida al tomo 1/plantilla ·
+6 ilustración sin trade dress). Sirve de **candado de regresión**: si alguien relaja
+`_same_cover`/`_is_soft_image`, el eval lo detecta.
+
+- **Qué mide**: dos políticas sobre cada par (referencia, candidata):
+  - `old_policy` — aspect-ratio-only (±0.30): lo que hacía el path lens/text ANTES del hardening
+    2026-07-08 (sin verificación de identidad; causa raíz #1 de fotos equivocadas).
+  - `new_policy` — **delegación pura** al motor: `_same_cover` completo + `_is_soft_image`
+    (cero lógica copiada; importa las funciones reales de `fetch_better_covers`). Referencia
+    < 10 000 px → `no_reference` (modela `usable_ref` de `_process_item`; el px se cuenta vía
+    `_get_dims_from_bytes` con fallback PIL porque `_get_pixels_from_bytes` no cubre AVIF).
+- **Muestra**: `scripts/eval/cover_gate_sample.json` (manifest chico versionable; las imágenes
+  reales referencian `data/images/` por path, NO se copian binarios) — 10 positivos reales
+  (verified, misma portada mejor resolución, `match_dist` 0-5) + 12 negativos reales
+  (auto-rechazados en la re-validación, clasificados en la taxonomía) — MÁS 6 trampas
+  **sintéticas** generadas con PIL al vuelo en un tmpdir (deterministas, seed fijo).
+- **`expected_fail`** = limitación conocida y ACEPTADA, no cuenta como falla del harness:
+  (a) *arte-sin-logo* (cat 6) — candidata = ilustración sin trade dress; la ilustración domina,
+  los hashes colisionan y el gate la ACEPTA (el red team rechazó gates automáticos para este
+  caso → cubierto por review humano + denylist); (f) *crop ±3%* — el gate estricto la rechaza
+  (NCC < 0.90), FN documentado (precisión > recall).
+- **Resultado** (28 casos): `old_policy` acepta los 14 negativos (FP=14) — ESO era el bug;
+  `new_policy` = **0 FP y 0 FN reales**, con los 2 únicos desvíos = los `expected_fail`
+  sintéticos. Determinístico: correr 2× → JSON idéntico.
+- CLI: `--json`, `--synthetic-only` (no requiere `data/images/`), `--no-synthetic`.
+  Test: `tests/test_eval_cover_gate.py` (corre sólo las sintéticas; candado de regresión).
 
 ### Eliminar fotos de la galería actual (`cover-preview.html`)
 

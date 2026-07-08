@@ -18,6 +18,7 @@ Cobertura:
 """
 
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -200,6 +201,59 @@ def test_uses_production_threshold():
         f"fbc.DEFAULT_MAX_HASH_DIST ({fbc.DEFAULT_MAX_HASH_DIST}). "
         "El umbral drifteó — revisá sc_validate.py."
     )
+
+
+# ── 5b. Denylist — anti-drift: sc_validate delega en fbc.is_rejected_candidate ─
+
+def test_denylist_delegates_to_engine(tmp_path, monkeypatch):
+    """Anti-drift: la denylist se consulta vía fbc.is_rejected_candidate (fuente
+    única). Si el motor veta la URL, sc_validate la descarta SIN descargarla."""
+    calls = []
+
+    def fake_is_rejected(slug, url, a_hash_hex=None, ledger=None):
+        calls.append((slug, url))
+        return True   # todo vetado
+
+    monkeypatch.setattr(fbc, 'is_rejected_candidate', fake_is_rejected)
+    fetch_called = []
+    monkeypatch.setattr(fbc, '_fetch',
+                        lambda url, session, **kw: fetch_called.append(url) or _jpeg(_textured_cover()))
+
+    data = {
+        'item': {'slug': 'rej', 'images': []},
+        'candidate_urls': [
+            {'url': 'https://example.com/x.jpg', 'page_title': '', 'domain': 'example.com', 'query': 'q'}
+        ],
+        'curr_px': 0,
+        'ref_image_local': '',
+    }
+    result = sc_validate.validate(data, images_dir=tmp_path)
+    assert result == []
+    assert calls, "sc_validate debe llamar a fbc.is_rejected_candidate (delegación)"
+    assert fetch_called == [], "la URL vetada no debe descargarse"
+
+
+def test_denylist_reads_engine_ledger(tmp_path, monkeypatch):
+    """Funcional: una URL en el ledger real (cargado por fbc.load_rejection_ledger)
+    hace que sc_validate la descarte."""
+    ledger_file = tmp_path / "cover_rejections.jsonl"
+    ledger_file.write_text(
+        json.dumps({"slug": "rej", "rejected_url": "https://example.com/x.jpg",
+                    "reason": None}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fbc, "REJECTION_LEDGER_PATH", ledger_file)
+    monkeypatch.setattr(fbc, '_fetch', lambda url, session, **kw: _jpeg(_textured_cover()))
+
+    data = {
+        'item': {'slug': 'rej', 'images': []},
+        'candidate_urls': [
+            {'url': 'https://example.com/x.jpg', 'page_title': '', 'domain': 'example.com', 'query': 'q'}
+        ],
+        'curr_px': 0,
+        'ref_image_local': '',
+    }
+    assert sc_validate.validate(data, images_dir=tmp_path) == []
 
 
 # ── 6-10. Tests de upgrade_url_variants ───────────────────────────────────────

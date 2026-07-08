@@ -52,7 +52,8 @@ ITEMS = Path(__file__).resolve().parents[2] / "data" / "items.jsonl"
 IMAGES = Path(__file__).resolve().parents[2] / "data" / "images"
 
 # Umbral de px bajo el cual la portada actual se considera "baja calidad".
-LOW_PX_THRESHOLD = 90_000
+# F16 — se IMPORTA del motor (fuente única); no se redefine.
+LOW_PX_THRESHOLD = fbc.LOW_QUALITY_PX
 
 # Criterio thumbnail↔full (mismo que dedup_carousel_images.py, gotcha #39):
 # el thumbnail de listadomanga degrada tanto el aHash que supera el umbral

@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 130 known gotchas
+## The 132 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1298,3 +1298,37 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     mecanismo, no relajando la regla genérica). Los residuos se desblindan + encolan a
     `data/unmapped_series.jsonl` (reason `op_import_foreign`), no se borran. Tests:
     `tests/test_audit_wo2_grupos23.py`.
+131. **Los paths lens/text-small del motor de portadas NO corrían `_same_cover` (falsos
+    positivos 2/3/4/5) + el rechazo se purgaba sin dejar rastro (2026-07-08).** En
+    `fetch_better_covers._process_item`, la rama `via=="lens"` verificaba sólo aspect ±0.30 +
+    `_validate_page_content` (fail-open), y la rama `via=="text"` con `orig_px < 30k` sólo
+    aspect ±0.25 — ninguna corría el AND-gate de identidad `_same_cover`, así que se colaban
+    portadas equivocadas de la misma serie/otro tomo. Además, cuando el owner rechazaba una
+    candidata en el panel, `apply_preview` borraba el archivo y la quitaba de la cola SIN
+    registrar nada: la misma candidata volvía a proponerse en la corrida siguiente. **Fix**:
+    (1) lens y text ahora EXIGEN `_same_cover` cuando hay **referencia utilizable** (bytes +
+    px ≥ 10 000, umbral donde `_same_cover` es fiable); sin ref utilizable el gate es
+    FAIL-CLOSED (aspect ±0.25 + `candidate_metadata_conflict` + `_validate_page_content` con
+    `fail_open=False`). (2) Ledger `data/cover_rejections.jsonl` (append-only) + denylist
+    `is_rejected_candidate` consultada por el motor y por `sc_validate` (fuente única). **El
+    veto por HASH aplica SÓLO con motivo de IDENTIDAD** (`otro_tomo`/`otra_edicion`/
+    `no_es_la_obra`/`arte_sin_logo`/`auto_revalidation`) y aHash dist ≤ 2 — NUNCA con `reason`
+    null o de calidad, porque toda candidata que pasó `_same_cover` comparte aHash con la
+    referencia y ese veto tiraría la candidata correcta en mejor resolución (lo demostró el red
+    team). El veto por URL exacta (slug + rejected_url) aplica siempre. Se eliminó la función
+    muerta `_try_candidates`. Tests: `tests/test_cover_rejection_ledger.py`,
+    `tests/test_cover_engine_gates.py`.
+132. **`_get_pixels_from_bytes` medía 0 px en AVIF ⇒ anulaba el gate `_same_cover` de #131
+    (2026-07-08).** El parser de bytes de `fetch_better_covers._get_pixels_from_bytes` sólo
+    cubría JPEG/PNG/WebP-VP8; para AVIF (y GIF/VP8L) devolvía 0. Pero el espejo local
+    `data/images/` está normalizado a AVIF (≈99.98% de los archivos), así que la REFERENCIA de
+    CUALQUIER item medía `orig_px == 0`. En `_process_item`, `usable_ref = bool(orig_bytes) and
+    orig_px >= 10_000` quedaba SIEMPRE False → TODAS las candidatas caían al gate degradado
+    `_passes_no_ref_gate` (fail-closed por page-content) en vez de correr el AND-gate de
+    identidad `_same_cover` — es decir, el fix de #131 estaba muerto en la práctica. Además el
+    filtro de ganancia de píxeles (`orig_px > 0 and ...`) quedaba deshabilitado. **Fix de fuente
+    única**: tras el parsing rápido, `_get_pixels_from_bytes` delega en `_get_dims_from_bytes`
+    (que ya tenía fallback PIL para AVIF/GIF) y multiplica — una sola fuente de verdad para las
+    dimensiones. Verificado en vivo: una ref AVIF 357×500 medía 0, ahora mide 178 500. Tests:
+    `tests/test_cover_engine_gates.py::test_get_pixels_from_bytes_measures_avif` (+ fast-paths
+    intactos).

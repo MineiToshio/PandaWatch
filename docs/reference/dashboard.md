@@ -104,8 +104,11 @@ de `_clusterImagesFor` funcione sin descargar `items.jsonl` completo (~25 MB). L
 filas en `itemsBySlug` — las llamadas repetidas no hacen fetch.
 
 El badge de verificación en la card y en el modal ahora es **tri-estado**: verde `✓ verificada` si
-`verified === true`; amarillo `⚠ sin verificar` si `verified === false`; **sin badge** si el campo
-no existe (evita 100% de ruido amarillo con el corpus que no trae el campo).
+`verified === true`; amarillo `⚠ sin verificar` si `verified === false` **o si `match_dist == null`**
+(criterio extendido 2026-07-08 — `isUnverified(c)` en Alpine; la cola tiene ~339 candidatas sin
+`match_dist`, exactamente las que nunca pasaron verificación de identidad, y antes no mostraban el
+aviso si `verified` tampoco estaba seteado); **sin badge** solo cuando `verified === true` explícito
+(manda siempre, aunque `match_dist` sea null).
 
 La barra `.actions` es `position: sticky; top: 0` con fondo sólido y z-index 50 — "Aplicar aprobadas"
 siempre visible. Cuando `pendingCount() === 0 && approvedCount() > 0` aparece un callout verde con
@@ -121,6 +124,14 @@ responde `{"entries": [...], "mtime": "<st_mtime_ns como string>", "synced": {st
 está disponible (servidor viejo), el frontend cae al fetch estático `cover_preview.json` +
 `GET /api/cover-preview-meta` (y recalcula `approved_unapplied` del lado cliente vía
 `approvedCount()`). Si `synced` incluye cambios (> 0), se muestra un toast.
+
+**Orden best-first de la cola (2026-07-08)**: `sortBestFirst()` en Alpine reordena `entries`
+tras cada carga (ambas rutas: `GET /api/cover-preview` y el fallback estático). Prioridad:
+(1) entries con alguna candidata **pendiente** con `match_dist` numérico, ascendente por el
+mínimo — las más seguras primero; (2) entries con candidatas pendientes de `match_dist == null`
+(sin verificar); (3) entries sin pendientes, al final. Estable (desempata por posición original)
+para no reordenar sin motivo real entre recargas. La navegación `N`/`P` del modal sigue el mismo
+orden ya materializado en `entries` — no hay divergencia entre el orden visible y el de salto.
 
 **`approved_unapplied` (P24, 2026-07-07)** — contador AUTORITATIVO (server-side) de
 candidatas con `status=approved` que TODAVÍA no se aplicaron a `items.jsonl`
@@ -180,14 +191,56 @@ focus** (guard `document.activeElement.tagName`):
 |---|---|
 | `A` | Aprobar la candidata visible (equivale a "✓ Aprobar") |
 | `R` | Rechazar la candidata visible (equivale a "✕ Rechazar") |
+| `1`-`5` | Rechazar con motivo en un solo paso (ver abajo) — o cambiar el motivo si ya estaba rechazada |
 | `N` | Saltar al siguiente producto con candidatas pendientes |
 | `P` | Saltar al producto anterior con candidatas pendientes |
 | `←` / `→` | Navegar entre candidatas del mismo producto |
 | `Esc` | Cerrar el modal |
 
-Un hint `A aprobar · R rechazar · N/P producto` aparece en el footer del modal (alineado
-a la derecha, muted). `jumpToNextEntry(dir)` en Alpine navega a la primera candidata
+Un hint `A aprobar · R rechazar · 1-5 motivo · N/P producto` aparece en el footer del modal
+(alineado a la derecha, muted). `jumpToNextEntry(dir)` en Alpine navega a la primera candidata
 pendiente del entry siguiente/anterior (sin wrap si no hay).
+
+## Cover-preview — chips de motivo de rechazo (2026-07-08, sin fricción)
+
+**Restricción dura**: el rechazo sigue siendo 1 tecla/1 clic (`R` o `✕`) y el motivo es
+**100% opcional** — se persiste inmediatamente al rechazar, ANTES de elegir motivo. Los
+chips nunca bloquean ni agregan un paso al flujo de rechazo pelado.
+
+Tras rechazar una candidata (card compacta o modal), aparece una fila `.reject-chips` con
+6 chips de 1 clic: `otro_tomo`, `otra_edicion`, `arte_sin_logo`, `no_es_la_obra`,
+`mala_calidad`, `otros…`. Clickear un chip (no-"otros") setea `cand.reject_reason = "<motivo>"`
+y guarda ya (`pickReason()` en Alpine). El chip activo se resalta (`rejectReasonKey(c)` compara
+contra `cand.reject_reason`), incluyendo al recargar la página — el chip actúa como badge de
+motivo ya elegido, no solo como control.
+
+**"Otros…"** abre un `<input>` de texto libre inline (`x-show`, NO `x-model` sobre un
+`<template x-if>` — ver gotcha de implementación abajo). El foco automático SOLO ocurre si el
+chip se clickeó (nunca al abrirse desde las teclas 1-5, que mapean únicamente a los otros 5
+motivos). El texto se confirma con Enter o blur (`confirmOtros()`) y se guarda como
+`reject_reason: "otros:<texto>"`.
+
+**Teclas 1-5 en el modal** (`handleReasonKey($event)`, mismo guard de foco que A/R/N/P):
+si la candidata visible está `pending`, la tecla rechaza + setea el motivo N-ésimo + avanza
+automático en un solo paso (mismo comportamiento que `R`, vía `setStatus(...,'rejected')` con
+`reject_reason` ya seteado antes del save). Si ya está `rejected`, la tecla solo cambia el
+motivo (sin avanzar, sin cerrar el modal).
+
+**Persistencia**: `reject_reason` viaja en el objeto candidata por `wrap()` →
+`cleanPayload()` → `POST /api/save-cover-preview` → `cover_preview.json` (el backend no
+filtra campos, escribe el payload completo tal cual). `sync_preview()` en
+`scripts/retrofit/sync_cover_preview.py` preserva el campo intacto para candidatas no-pending
+(nunca las toca) y en el `{**cand, ...}` de recompute de píxeles para las pendientes. Los
+campos UI-only `_otrosOpen`/`_otrosText` (estado transitorio del input) NUNCA viajan al
+servidor.
+
+**Gotcha de implementación**: el input de "otros" usa `x-show`, no `<template x-if>`. Cerrar
+el input DESDE su propio handler (`@blur`/`@keydown.enter` → `confirmOtros()` → 
+`_otrosOpen = false`) mientras el nodo está enfocado y esa asignación dispara la REMOCIÓN del
+nodo del DOM (lo que pasa con `x-if`) hace que el navegador dispare un `blur` extra sobre un
+nodo a medio desmontar — Alpine tira `"Cannot set properties of undefined (setting
+'textContent')"`. `x-show` sólo alterna `display`, nunca remueve el nodo, así que el handler
+termina su ciclo de vida normalmente antes de ocultarse.
 
 ## Carga de datos del catálogo — vivo primero, embed VACÍO por default (2026-06-14)
 

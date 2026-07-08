@@ -60,6 +60,7 @@ def setup(tmp_path, monkeypatch):
     preview_path = tmp_path / "cover_preview.json"
     preview_path.write_text(json.dumps(preview), encoding="utf-8")
     monkeypatch.setattr(fbc, "_PREVIEW_PATH", preview_path)
+    monkeypatch.setattr(fbc, "REJECTION_LEDGER_PATH", tmp_path / "cover_rejections.jsonl")
     return items_path, images_dir, preview_path
 
 
@@ -137,6 +138,7 @@ def _missing_file_setup(tmp_path, monkeypatch):
     preview_path = tmp_path / "cover_preview.json"
     preview_path.write_text(json.dumps(preview), encoding="utf-8")
     monkeypatch.setattr(fbc, "_PREVIEW_PATH", preview_path)
+    monkeypatch.setattr(fbc, "REJECTION_LEDGER_PATH", tmp_path / "cover_rejections.jsonl")
     return items_path, images_dir, preview_path
 
 
