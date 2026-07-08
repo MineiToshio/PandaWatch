@@ -30,6 +30,11 @@ spec autocontenido en `docs/specs/SPEC-<slug>.md` (o FRD de web-next si
 aplica) con unidades de trabajo y criterios de verificación ejecutables.
 **No implementa** — el spec se ejecuta en una sesión fresca.
 
+**Modelo del subagente**: el subagente `Explore` corre con **`sonnet`** — es
+mapeo/recuperación de contexto, no razonamiento fuerte (la entrevista y la
+escritura del spec pasan en el hilo principal). Sonnet es más rápido y barato
+y alcanza de sobra.
+
 **Cuándo invocarlo**: feature grande, área nueva, o decisiones de producto
 abiertas. Para fixes y features acotadas NO (vía directa / plan mode).
 
@@ -166,7 +171,10 @@ contexto adicional o sin él.
 
 **Cómo funciona**:
 1. Parsea la lista de candidatas del mensaje del usuario.
-2. Lanza un subagente por fuente en paralelo. Cada subagente:
+2. Lanza un subagente `general-purpose` con **`sonnet`** por fuente en
+   paralelo (investigación web con criterio pero acotada por fuente; Sonnet
+   rinde muy bien y sale mucho más barato que N Opus simultáneos en fan-out).
+   Cada subagente:
    - Fetchea el listing principal y 5 items de detalle.
    - Evalúa: Content Fit (% ediciones especiales reales), campos mínimos
      (serie, tipo de edición, editorial, foto de portada), y — **crítico** —

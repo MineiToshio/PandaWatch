@@ -24,11 +24,13 @@ Evalúa la feature pedida contra la regla de decisión de
 
 ## Paso 1 — Explorar (subagente, contexto principal limpio)
 
-Lanza UN subagente Explore con la pregunta concreta: qué módulos/rutas/
-docs toca la feature, qué patrones existentes hay que seguir, qué gotchas
-(#N) y decisiones de diseño aplican. Pide de vuelta: lista de archivos
-relevantes con 1 línea c/u + restricciones detectadas. NO leas módulos
-grandes en el hilo principal.
+Lanza UN subagente Explore **con modelo `sonnet`** (es mapeo/recuperación,
+no razonamiento fuerte — eso pasa en el hilo principal en los pasos 2-3;
+Sonnet es más rápido y barato y alcanza de sobra). Pregunta concreta: qué
+módulos/rutas/docs toca la feature, qué patrones existentes hay que seguir,
+qué gotchas (#N) y decisiones de diseño aplican. Pide de vuelta: lista de
+archivos relevantes con 1 línea c/u + restricciones detectadas. NO leas
+módulos grandes en el hilo principal.
 
 ## Paso 2 — Entrevistar al owner
 

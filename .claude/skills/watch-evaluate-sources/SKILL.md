@@ -54,7 +54,10 @@ URLs, nombres, texto libre o mixto. Normaliza a lista de `{id, url, contexto_ext
 
 ## Step 1 — Reconnaissance (un subagente por fuente, en paralelo)
 
-Spawna un subagente `general-purpose` por fuente. Prompt template:
+Spawna un subagente `general-purpose` **con modelo `sonnet`** por fuente
+(es investigación web con criterio pero acotada por fuente y en fan-out de N
+en paralelo — Sonnet rinde muy bien en comprensión web y sale mucho más
+barato que N Opus simultáneos). Prompt template:
 
 ---
 
