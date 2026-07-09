@@ -57,9 +57,13 @@ if str(_SCRIPTS) not in sys.path:
 # bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
 # patrón que fetch_better_covers.py / backfill_series_aliases.py).
 try:
-    from manga_watch import backup_and_rotate, derive_cluster_key, is_approved  # type: ignore
+    from manga_watch import (  # type: ignore
+        backup_and_rotate, derive_cluster_key, is_approved, write_items_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, derive_cluster_key, is_approved  # type: ignore
+    from scripts.manga_watch import (  # type: ignore
+        backup_and_rotate, derive_cluster_key, is_approved, write_items_atomic,
+    )
 
 try:
     from standardize_apply import VALID_PRODUCT_TYPES  # type: ignore
@@ -265,11 +269,7 @@ def run(
 
     backup = backup_and_rotate(items_path, "fix-item-fields")
     print(f"[OK] Backup: {backup}")
-    tmp = items_path.with_suffix(items_path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(items_path)
+    write_items_atomic(items_path, items)
     print(f"[OK] Escrito {items_path} — slug={item.get('slug')!r}, {len(changed)} campo(s).")
     return 0
 

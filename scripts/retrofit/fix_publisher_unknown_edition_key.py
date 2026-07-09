@@ -20,7 +20,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_publisher_unknown_edition_key.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,16 +64,12 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        from manga_watch import consolidate_by_cluster
+        from manga_watch import consolidate_by_cluster, backup_and_rotate, write_items_atomic
         before = len(items)
         items = consolidate_by_cluster(items)
         print(f"[pub-unknown] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-pubunknown-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        backup_and_rotate(ITEMS, "pubunknown")
+        write_items_atomic(ITEMS, items)
         print(f"[pub-unknown] escrito {ITEMS}.")
     return 0
 

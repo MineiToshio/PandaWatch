@@ -33,7 +33,12 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, derive_product_type, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    backup_and_rotate,
+    derive_product_type,
+    is_approved,
+    write_lines_atomic,
+)
 
 # Mismo enum que valida `standardize_apply.VALID_PRODUCT_TYPES` y que
 # documenta la invariante PTYPE_ENUM de validate_corpus.py — fuente única
@@ -137,7 +142,7 @@ def main() -> int:
         backup = backup_and_rotate(dst, "ptype")
         print(f"[OK] Backup guardado en {backup}")
 
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escribí {dst} con {changed} product_type re-derivados.")
     return 0
 

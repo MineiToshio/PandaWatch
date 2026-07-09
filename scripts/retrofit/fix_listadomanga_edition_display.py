@@ -16,7 +16,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_listadomanga_edition_display.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, time
+import json, re, sys, argparse, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from wikis.listadomanga_collections import _extract_collection_title  # noqa: E402
+from manga_watch import backup_and_rotate, write_items_atomic  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _COLE_RE = re.compile(r"listadomanga\.es/coleccion\.php\?id=(\d+)")
@@ -81,12 +82,8 @@ def main() -> int:
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-editiondisplay-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup_and_rotate(ITEMS, "editiondisplay")
+    write_items_atomic(ITEMS, items)
     print(f"[edition-display] escrito {ITEMS}.")
     return 0
 

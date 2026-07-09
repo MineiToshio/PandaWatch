@@ -28,7 +28,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate  # type: ignore
+from manga_watch import backup_and_rotate, write_lines_atomic  # type: ignore
 
 # cluster_key lmc: lmc:<cole>:<kind>:<vol>
 # Solo nos interesan los que tienen un vol numérico real (no "0" ni vacío).
@@ -87,12 +87,13 @@ def main() -> int:
 
     dest = Path(args.output)
     backup_and_rotate(dest, "backfill_volume_from_cluster")
-    with dest.open("w", encoding="utf-8") as fh:
-        for it in items:
-            if "_raw" in it:
-                fh.write(it["_raw"] + "\n")
-            else:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+    out_lines: list[str] = []
+    for it in items:
+        if "_raw" in it:
+            out_lines.append(it["_raw"])
+        else:
+            out_lines.append(json.dumps(it, ensure_ascii=False))
+    write_lines_atomic(dest, out_lines)
 
     print(f"[OK] guardado en {dest}")
     return 0

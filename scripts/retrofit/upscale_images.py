@@ -69,9 +69,13 @@ if str(_SCRIPTS) not in sys.path:
 
 import image_store  # type: ignore
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from manga_watch import (  # type: ignore  # noqa: E402
+        backup_and_rotate, is_approved, write_lines_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from scripts.manga_watch import (  # type: ignore  # noqa: E402
+        backup_and_rotate, is_approved, write_lines_atomic,
+    )
 
 
 # ── Upscaler detection ────────────────────────────────────────────────────────
@@ -280,7 +284,7 @@ def _write_items(dst: Path, items: list[dict]) -> None:
     for it in items:
         lines.append(it["_raw"] if "_raw" in it
                      else json.dumps(it, ensure_ascii=False, sort_keys=True))
-    dst.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, lines)
 
 
 # ── Main logic ────────────────────────────────────────────────────────────────

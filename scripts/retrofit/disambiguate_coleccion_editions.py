@@ -15,7 +15,7 @@ Uso:
   .venv/bin/python scripts/retrofit/disambiguate_coleccion_editions.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, collections
+import json, re, sys, argparse, collections
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,12 +89,8 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-disambigcole-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "disambigcole")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[disambig-cole] escrito {ITEMS}.")
     return 0
 

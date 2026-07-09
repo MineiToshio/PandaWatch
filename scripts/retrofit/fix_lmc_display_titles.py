@@ -14,12 +14,13 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_lmc_display_titles.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from wikis.listadomanga_collections import normalize_display_title  # noqa: E402
+from manga_watch import backup_and_rotate, write_items_atomic  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _ITEM = re.compile(r"[?&]item=([a-z]+)-")
@@ -94,12 +95,8 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-lmctitles-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        backup_and_rotate(ITEMS, "lmctitles")
+        write_items_atomic(ITEMS, items)
         print(f"[lmc-titles] escrito {ITEMS}.")
     return 0
 

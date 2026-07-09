@@ -62,7 +62,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, is_approved  # type: ignore
+from manga_watch import backup_and_rotate, is_approved, write_items_atomic  # type: ignore
 from op_series_guard import is_one_piece_title  # type: ignore
 import standardize_apply  # type: ignore
 
@@ -153,11 +153,7 @@ def main() -> int:
             it.pop("standardized_at", None)
         out.append(it)
 
-    tmp = src.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(src)
+    write_items_atomic(src, out)
 
     # 2. Encolar a la cola única de curación (dedup cross-run).
     seen = standardize_apply._existing_unmapped_keys()

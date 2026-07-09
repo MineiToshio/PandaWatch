@@ -48,6 +48,7 @@ try:
         fetch_metadata_from_detail,
         is_approved,
         make_session,
+        write_lines_atomic,
     )
     from scripts import image_store  # type: ignore
 except ImportError:
@@ -56,6 +57,7 @@ except ImportError:
         fetch_metadata_from_detail,
         is_approved,
         make_session,
+        write_lines_atomic,
     )
     import image_store  # type: ignore
 
@@ -376,12 +378,13 @@ def main() -> int:
         print(f"[OK] Backup: {backup}")
 
     def _flush_wayback() -> None:
-        """Serializa items al destino ATÓMICAMENTE (tmp + fsync + os.replace).
-
-        Antes usaba `write_text` (abre en modo "w", trunca in-place): un
-        crash a mitad de la escritura dejaba items.jsonl truncado/corrupto,
-        pese al docstring que decía "atómicamente" (hallazgo #3, auditoría
-        2026-07-08). Mismo patrón que `append_jsonl` en manga_watch.py.
+        """Serializa items al destino ATÓMICAMENTE vía `write_lines_atomic`
+        (tmp + flush + fsync + os.replace, bajo `items_write_lock` — helper
+        único de manga_watch.py, A7/A12). Preserva `_raw` para las líneas que
+        no se pudieron parsear al leer (patrón B11 raw-preserve): antes usaba
+        `write_text` (abre en modo "w", trunca in-place) — un crash a mitad de
+        la escritura dejaba items.jsonl truncado/corrupto, pese al docstring
+        que decía "atómicamente" (hallazgo #3, auditoría 2026-07-08).
         """
         out_lines: list[str] = []
         for it in items:
@@ -389,13 +392,7 @@ def main() -> int:
                 out_lines.append(it["_raw"])
             else:
                 out_lines.append(json.dumps(it, ensure_ascii=False))
-        content = "\n".join(out_lines) + "\n"
-        tmp = dst.with_name(dst.name + ".tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            fh.write(content)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, dst)
+        write_lines_atomic(dst, out_lines)
 
     # Caché negativa: URLs ya consultadas sin snapshot confirmado. Evita
     # re-golpear Wayback para los miles de items que ya sabemos que no

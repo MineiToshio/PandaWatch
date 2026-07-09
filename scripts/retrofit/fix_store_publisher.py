@@ -35,7 +35,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_store_publisher.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, sys, argparse
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -243,12 +243,8 @@ def main() -> int:
     items = mw.consolidate_by_cluster(items)
     print(f"[store-pub] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
 
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-storepub-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    mw.backup_and_rotate(ITEMS, "storepub")
+    mw.write_items_atomic(ITEMS, items)
     print(f"[store-pub] escrito {ITEMS}.")
     return 0
 

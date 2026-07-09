@@ -58,6 +58,7 @@ try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
         derive_cluster_key,
         is_approved,
         rebuild_edition_key_prefix,
+        write_items_atomic,
     )
 except ImportError:  # pragma: no cover
     from scripts import series_aliases  # type: ignore
@@ -67,6 +68,7 @@ except ImportError:  # pragma: no cover
         derive_cluster_key,
         is_approved,
         rebuild_edition_key_prefix,
+        write_items_atomic,
     )
 
 
@@ -181,11 +183,7 @@ def run(
 
     backup = backup_and_rotate(items_path, "series-aliases")
     print(f"[OK] Backup: {backup}")
-    tmp = items_path.with_suffix(items_path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(items_path)
+    write_items_atomic(items_path, out)
     print(f"[OK] Escrito {items_path} ({len(out)} filas).")
     return 0
 

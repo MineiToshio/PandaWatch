@@ -57,11 +57,11 @@ if dry_run:
 
 import sys as _sys
 _sys.path.insert(0, str(ROOT))
-from scripts.manga_watch import backup_and_rotate  # noqa: E402
+try:
+    from manga_watch import backup_and_rotate, write_items_atomic  # noqa: E402
+except ImportError:
+    from scripts.manga_watch import backup_and_rotate, write_items_atomic  # noqa: E402
 backup_and_rotate(ITEMS, "dedup-isbn")
 
-ITEMS.write_text(
-    "\n".join(json.dumps(it, ensure_ascii=False) for it in kept) + "\n",
-    encoding="utf-8",
-)
+write_items_atomic(ITEMS, kept)
 print(f"\n✅ Wrote {len(kept)} items (removed {len(removed)}).")

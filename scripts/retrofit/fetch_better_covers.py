@@ -79,9 +79,13 @@ if str(_SCRIPTS) not in __import__("sys").path:
 # El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
 # (no expone estos símbolos) → fallback al módulo real, como sync_cover_images.
 try:
-    from manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved, write_items_atomic,
+    )
 except ImportError:
-    from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved, write_items_atomic,
+    )
 import image_store  # noqa: E402
 _ITEMS_PATH = _HERE / "data" / "items.jsonl"
 _IMAGES_DIR = _HERE / "data" / "images"
@@ -1357,22 +1361,13 @@ def _save_image(data: bytes, images_dir: Path) -> Optional[str]:
 
 
 def _atomic_write(items_path: Path, rows: list[dict]) -> None:
-    tmp = items_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            for row in rows:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-            # F12 — fsync antes del replace: sin esto, un crash justo después del
-            # write (antes de que el kernel baje el page cache a disco) puede
-            # dejar el tmp con datos truncados/vacíos y el `replace()` promueve
-            # ese archivo corrupto. `append_jsonl` (la vía canónica de escritura
-            # del proyecto) ya hace este fsync — acá faltaba.
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(items_path)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+    """Delega en `write_items_atomic` (manga_watch, A7/A12): tmp + flush +
+    fsync + os.replace, bajo `items_write_lock` cross-proceso — antes este
+    helper tenía SU PROPIO fsync (F12) pero SIN lock, así que un save
+    concurrente del panel (serve.py) entre el read y el replace podía
+    perderse (last-writer-wins). El lock cierra ese hueco (mismo patrón que
+    ya usa `preview_write_lock` para cover_preview.json en este archivo)."""
+    write_items_atomic(items_path, rows)
 
 
 def _now_iso() -> str:

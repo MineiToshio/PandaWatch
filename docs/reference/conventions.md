@@ -137,16 +137,25 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   `sort_keys=True` (mismo formato que `append_jsonl`, necesario para diffs limpios y para
   que la prueba de idempotencia byte-a-byte entre scripts distintos sea válida — si un
   writer serializa con orden de claves distinto al de otro, dos pasadas que no cambiaron
-  NADA de contenido igual difieren en bytes). Todos los retrofits que hacen dump-completo
-  de items.jsonl (`filter_non_manga`, `filter_collectible`, `rescore`, `clean_titles`,
-  `backfill_cluster_key`, `consolidate_sources`, `apply_approvals`, `generate_slugs`,
-  `set_rarity`, `merge_isbn_duplicates`, `unify_coleccion_edition`,
-  `align_raw_to_std_coleccion`, `fix_edition_key_anomalies`, `canonicalize_edition_slugs`,
-  `enforce_listadomanga_rules._recover_edition_display`) y los 2 writers de items.jsonl de
-  `serve.py` (`_write_items`, el sync de imágenes por cluster) usan este helper +
-  `sort_keys=True` homogéneo. Antes la mitad hacía `write_text`/tmp-sin-fsync directo (un
-  kill a mitad TRUNCABA el archivo) y la serialización de claves era inconsistente entre
-  scripts (algunos con `sort_keys=True`, la mayoría sin).
+  NADA de contenido igual difieren en bytes). **TODO** script que hace dump-completo de
+  `items.jsonl` usa uno de estos dos helpers — sin excepción (regla UNIVERSAL desde la
+  migración del 2026-07-09: los ~60 writers del repo, no solo los del pipeline canónico,
+  pasan por acá; verificable con `grep -L 'write_items_atomic\|write_lines_atomic\|append_jsonl'`
+  sobre los scripts que escriben items.jsonl → debe dar vacío). `serve.py` es el único
+  writer que NO importa el helper a propósito (modo degradado, gotcha S6): sus writers de
+  items.jsonl tienen fsync propio y toman el MISMO `data/items.jsonl.lock` vía `_items_flock`
+  bajo `@_serialized`, así que interoperan con `items_write_lock` por archivo. **No confundir**
+  con los writers de `data/cover_preview.json` (`sync_cover_preview`, `prune_soft_cover_candidates`,
+  `revalidate_cover_preview`, `sc_flush`): ese es OTRO archivo, con su propio `_write_atomic`
+  local — el helper de items NO aplica ahí. La regla A7 nació el 2026-07-08 cubriendo la lista
+  del pipeline canónico (`filter_non_manga`, `filter_collectible`, `rescore`, `clean_titles`,
+  `backfill_cluster_key`, `consolidate_sources`, `apply_approvals`, `generate_slugs`, `set_rarity`,
+  `merge_isbn_duplicates`, `unify_coleccion_edition`, `align_raw_to_std_coleccion`,
+  `fix_edition_key_anomalies`, `canonicalize_edition_slugs`, `enforce_listadomanga_rules`) y se
+  completó al universo entero el 2026-07-09. Antes muchos hacían `write_text`/tmp-sin-fsync
+  directo (un kill a mitad TRUNCABA el archivo; dos —`backfill_volume_from_cluster`,
+  `strip_legacy_cover_fields`— ni siquiera usaban archivo temporal) y la serialización de
+  claves era inconsistente entre scripts.
   **Filtros** (`filter_non_manga`/`filter_collectible`): escribir el archivo de
   `rejected` ANTES que el de `kept` — un crash entre ambos writes no deja los rechazados
   fuera de AMBOS archivos.

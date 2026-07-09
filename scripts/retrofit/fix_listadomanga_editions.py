@@ -17,7 +17,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_listadomanga_editions.py        # aplica
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from pathlib import Path
 from collections import defaultdict, Counter
 
@@ -25,7 +25,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "wikis"))
 import listadomanga_collections as lmc  # noqa: E402
-from manga_watch import derive_cluster_key, consolidate_by_cluster  # noqa: E402
+from manga_watch import (  # noqa: E402
+    derive_cluster_key,
+    consolidate_by_cluster,
+    backup_and_rotate,
+    write_items_atomic,
+)
 
 ITEMS = ROOT / "data" / "items.jsonl"
 
@@ -198,13 +203,8 @@ def main() -> int:
     items = consolidate_by_cluster(items)
     print(f"[lmc-editions] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
 
-    bak = ITEMS.with_suffix(".jsonl.pre-fix-editions-bak")
-    shutil.copy(ITEMS, bak)
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    bak = backup_and_rotate(ITEMS, "fix-editions")
+    write_items_atomic(ITEMS, items)
     print(f"[lmc-editions] escrito {ITEMS} ({changed} items corregidos). Backup: {bak}")
     return 0
 

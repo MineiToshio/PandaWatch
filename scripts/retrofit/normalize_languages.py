@@ -31,7 +31,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, is_approved  # type: ignore
+from manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # type: ignore
 
 # Mismo set que `_LANG_CANON` en scripts/validate_corpus.py (14 idiomas del
 # proyecto + el valor compuesto legítimo "Español / Catalán"). No se importa
@@ -174,7 +174,7 @@ def main() -> int:
         backup = backup_and_rotate(dst, "langnorm")
         print(f"[OK] Backup guardado en {backup}")
 
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escribí {dst} con {changed} language normalizados.")
     return 0
 

@@ -34,9 +34,19 @@ if str(_SCRIPTS) not in sys.path:
 
 # Gotcha #64: el wrapper de la raíz puede sombrear scripts/manga_watch.py.
 try:
-    from manga_watch import backup_and_rotate, is_approved, normalize_release_date  # type: ignore
+    from manga_watch import (  # type: ignore
+        backup_and_rotate,
+        is_approved,
+        normalize_release_date,
+        write_lines_atomic,
+    )
 except ImportError:
-    from scripts.manga_watch import backup_and_rotate, is_approved, normalize_release_date  # type: ignore
+    from scripts.manga_watch import (  # type: ignore
+        backup_and_rotate,
+        is_approved,
+        normalize_release_date,
+        write_lines_atomic,
+    )
 
 _ISO_FULL = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ISO_PARTIAL = re.compile(r"^\d{4}(?:-\d{2})?$")
@@ -149,7 +159,7 @@ def main() -> int:
         backup = backup_and_rotate(dst, "normdates")
         print(f"[OK] Backup guardado en {backup}")
 
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escribí {dst} con {changed} fechas normalizadas.")
     return 0
 

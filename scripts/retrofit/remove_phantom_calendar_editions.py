@@ -36,11 +36,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-ITEMS = Path(__file__).resolve().parent.parent.parent / "data" / "items.jsonl"
+_SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from manga_watch import backup_and_rotate, write_items_atomic  # type: ignore
+
+ITEMS = _SCRIPTS.parent / "data" / "items.jsonl"
 
 # Fantasmas verificados contra la página viva — NO existe tal edición en la fuente.
 DELETE_SLUGS = {
@@ -126,13 +132,8 @@ def main() -> int:
         print("\n[dry-run] no se escribió nada.")
         return 0
 
-    backup = ITEMS.with_suffix(".jsonl.pre-phantom-calendar-bak")
-    shutil.copy(ITEMS, backup)
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup = backup_and_rotate(ITEMS, "phantom-calendar")
+    write_items_atomic(ITEMS, out)
     print(f"\n[ok] escrito {ITEMS} ({len(out)} filas). Backup: {backup.name}")
     return 0
 

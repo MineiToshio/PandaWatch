@@ -54,6 +54,7 @@ from manga_watch import (  # type: ignore
     is_likely_manga,
     normalize_url_for_dedup,
     score_candidate,
+    write_lines_atomic,
 )
 import image_store  # type: ignore
 from shopify_variants import (  # type: ignore
@@ -220,14 +221,11 @@ def _load_items(path: Path) -> list[dict]:
 
 
 def _write_items(path: Path, items: list[dict]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            if "_raw" in it:
-                fh.write(it["_raw"] + "\n")
-            else:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(path)
+    lines = [
+        it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False)
+        for it in items
+    ]
+    write_lines_atomic(path, lines)
 
 
 def main() -> int:

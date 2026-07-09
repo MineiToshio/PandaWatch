@@ -60,9 +60,13 @@ if str(_AUDIT_DIR) not in sys.path:
 # bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
 # patrón que fetch_better_covers.py / backfill_series_aliases.py).
 try:
-    from manga_watch import backup_and_rotate, derive_rarity_tier, is_approved  # type: ignore
+    from manga_watch import (  # type: ignore
+        backup_and_rotate, derive_rarity_tier, is_approved, write_items_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, derive_rarity_tier, is_approved  # type: ignore
+    from scripts.manga_watch import (  # type: ignore
+        backup_and_rotate, derive_rarity_tier, is_approved, write_items_atomic,
+    )
 import rarity_candidates as rc  # type: ignore — fuente única de rarity_uncertainty_reason
 
 VALID_VERDICTS = frozenset({"in_stock", "out_of_stock", "not_found", "inconclusive"})
@@ -183,11 +187,7 @@ def run(
 
     backup = backup_and_rotate(items_path, "validate-rarity")
     print(f"[OK] Backup: {backup}")
-    tmp = items_path.with_suffix(items_path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(items_path)
+    write_items_atomic(items_path, items)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as fh:

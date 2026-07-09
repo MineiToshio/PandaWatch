@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests
-from manga_watch import backup_and_rotate, append_jsonl
+from manga_watch import backup_and_rotate, append_jsonl, write_items_atomic
 import image_store
 from image_store import download_image
 from op_series_guard import is_one_piece_title
@@ -266,14 +266,6 @@ def fix_vol_333(items: list[dict]) -> bool:
     return False
 
 
-def write_items(path: Path, items: list[dict]) -> None:
-    tmp = path.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        for it in items:
-            f.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(path)
-
-
 def main(dry_run: bool = False):
     print("=== One Piece special volumes fix & extend ===\n")
 
@@ -290,7 +282,7 @@ def main(dry_run: bool = False):
     fix_vol_333(items)
 
     if not dry_run:
-        write_items(ITEMS, items)
+        write_items_atomic(ITEMS, items)
         print("  ✓ Written to disk\n")
 
     # 2. Build and ingest new items

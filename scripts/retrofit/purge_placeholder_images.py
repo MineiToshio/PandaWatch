@@ -40,9 +40,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import image_store  # noqa: E402  (fuente única de placeholder_reason + placeholders conocidos)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import backup_and_rotate, is_approved  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        backup_and_rotate, is_approved, write_items_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, is_approved  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        backup_and_rotate, is_approved, write_items_atomic,
+    )
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -311,11 +315,7 @@ def main() -> int:
     # de un slot fijo propio) + escritura atómica con sort_keys (idempotencia
     # byte-idéntica entre corridas).
     backup = backup_and_rotate(ITEMS, "purge-placeholder")
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
-    tmp.replace(ITEMS)
+    write_items_atomic(ITEMS, items)
     print(f"[purge] escrito {ITEMS}. Backup: {backup}")
 
     # mover huérfanos a cuarentena

@@ -12,7 +12,7 @@ Uso:
   .venv/bin/python scripts/retrofit/unmerge_listadomanga_editions.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, copy
+import json, re, sys, argparse, copy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +20,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "wikis"))
 import requests  # noqa: E402
 import listadomanga_collections as lmc  # noqa: E402
-from manga_watch import derive_cluster_key  # noqa: E402
+from manga_watch import (  # noqa: E402
+    derive_cluster_key,
+    backup_and_rotate,
+    write_items_atomic,
+)
 
 ITEMS = ROOT / "data" / "items.jsonl"
 KIND_SLUG = {"especial": "special", "limitada": "limited", "alternativa": "variant",
@@ -163,13 +167,9 @@ def main() -> int:
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-unmerge-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
-    print(f"[unmerge] escrito {ITEMS}. Backup: {ITEMS.with_suffix('.jsonl.pre-unmerge-bak')}")
+    bak = backup_and_rotate(ITEMS, "unmerge")
+    write_items_atomic(ITEMS, out)
+    print(f"[unmerge] escrito {ITEMS}. Backup: {bak}")
     return 0
 
 

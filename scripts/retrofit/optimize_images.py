@@ -46,7 +46,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore  # noqa: E402
-from manga_watch import backup_and_rotate  # type: ignore  # noqa: E402
+from manga_watch import backup_and_rotate, write_lines_atomic  # type: ignore  # noqa: E402
 
 _ROOT = _SCRIPTS.parent
 _IMAGES_DIR = _ROOT / "data" / "images"
@@ -74,9 +74,7 @@ def _write_items(dst: Path, items: list[dict]) -> None:
         it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False)
         for it in items
     ]
-    tmp = dst.with_name(f"{dst.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    tmp.replace(dst)
+    write_lines_atomic(dst, lines)
 
 
 def _atomic_write_bytes(dest: Path, data: bytes) -> None:

@@ -12,7 +12,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_especial_title_order.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,12 +46,8 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if changed:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-especialorder-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "especialorder")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[especial-order] escrito {ITEMS}.")
     return 0
 

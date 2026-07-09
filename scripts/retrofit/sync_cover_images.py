@@ -34,6 +34,7 @@ try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
         _img_stem,
         backup_and_rotate,
         is_approved,
+        write_items_atomic,
     )
 except ImportError:  # pragma: no cover
     from scripts.manga_watch import (  # noqa: E402
@@ -41,6 +42,7 @@ except ImportError:  # pragma: no cover
         _img_stem,
         backup_and_rotate,
         is_approved,
+        write_items_atomic,
     )
 try:
     import image_store  # noqa: E402
@@ -336,12 +338,10 @@ def run(items_path: Path, *, dry_run: bool, include_approved: bool) -> None:
         return
 
     backup_and_rotate(items_path, "sync-cover-images")
-    with items_path.open("w", encoding="utf-8") as fh:
-        for it in items:
-            # Hallazgo #12: sort_keys=True — el resto de los escritores de
-            # items.jsonl lo usa; sin esto, este era el único escritor cuya
-            # serialización dependía del orden de inserción de cada dict.
-            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
+    # Hallazgo #12: sort_keys=True — el resto de los escritores de items.jsonl
+    # lo usa; sin esto, este era el único escritor cuya serialización dependía
+    # del orden de inserción de cada dict. write_items_atomic ya lo garantiza.
+    write_items_atomic(items_path, items)
     print(f"\n✓ Escrito {items_path} ({changed} items modificados).")
 
 

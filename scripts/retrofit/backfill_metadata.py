@@ -33,7 +33,13 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import image_store  # type: ignore
-from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    fetch_metadata_from_detail,
+    make_session,
+    backup_and_rotate,
+    is_approved,
+    write_lines_atomic,
+)
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; manga-watch-backfill/1.0; "
@@ -333,15 +339,13 @@ def main() -> int:
     def _write_items_jsonl(label: str = "") -> None:
         """Serializa la lista actual `items` a items.jsonl atómicamente.
         Llamable en mid-run (checkpoints) o al final."""
-        tmp = dst.with_suffix(dst.suffix + ".tmp")
         out_lines: list[str] = []
         for it in items:
             if "_raw" in it:
                 out_lines.append(it["_raw"])
             else:
                 out_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True))
-        tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
-        tmp.replace(dst)
+        write_lines_atomic(dst, out_lines)
         if label:
             print(f"  [CHECKPOINT] {label} — {len(out_lines)} items escritos a {dst}")
 

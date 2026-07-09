@@ -61,9 +61,13 @@ if str(_SCRIPTS) not in sys.path:
 
 import image_store  # type: ignore
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import make_session, backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from manga_watch import (  # type: ignore  # noqa: E402
+        make_session, backup_and_rotate, is_approved, write_lines_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import make_session, backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from scripts.manga_watch import (  # type: ignore  # noqa: E402
+        make_session, backup_and_rotate, is_approved, write_lines_atomic,
+    )
 
 # MISMO User-Agent que usa el scraper (`manga_watch.py --user-agent`).
 # Algunas fuentes (Manga-Sanctuary, p.ej.) sirven 404 a UAs desconocidos
@@ -96,7 +100,7 @@ def _write_items(dst: Path, items: list[dict]) -> None:
             out_lines.append(item["_raw"])
         else:
             out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
 
 
 def _run_backfill(

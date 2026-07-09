@@ -23,7 +23,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_edition_country.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil, collections, re
+import json, sys, argparse, collections, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -143,12 +143,9 @@ def main() -> int:
     before = len(items)
     new_rows = mw.consolidate_by_cluster(items)
     print(f"[edition-country] consolidate: {before} → {len(new_rows)}")
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-editioncountry-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in new_rows:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup = mw.backup_and_rotate(ITEMS, "editioncountry")
+    print(f"[edition-country] backup: {backup}")
+    mw.write_items_atomic(ITEMS, new_rows)
     print(f"[edition-country] escrito {ITEMS}.")
     return 0
 

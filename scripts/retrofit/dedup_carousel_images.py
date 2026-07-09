@@ -26,9 +26,13 @@ import fetch_better_covers as fbc  # noqa: E402  (reusa _ahash/_hamming/_get_dim
 import requests  # noqa: E402
 import image_store  # noqa: E402  (fuente única de THUMB_ASPECT_TOL, hallazgo #12)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import backup_and_rotate, is_approved, make_session  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        backup_and_rotate, is_approved, make_session, write_items_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, is_approved, make_session  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        backup_and_rotate, is_approved, make_session, write_items_atomic,
+    )
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -109,13 +113,9 @@ def _fingerprint(im: dict):
 
 
 def _write_items(dst: Path, items: list[dict]) -> None:
-    """Escritura atómica (tmp + replace) con `sort_keys=True` (idempotencia
-    byte-idéntica entre corridas, hallazgo #5e, 2026-07-08)."""
-    tmp = dst.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
-    tmp.replace(dst)
+    """Escritura atómica (tmp + fsync + replace) con `sort_keys=True`
+    (idempotencia byte-idéntica entre corridas, hallazgo #5e, 2026-07-08)."""
+    write_items_atomic(dst, items)
 
 
 def main() -> int:

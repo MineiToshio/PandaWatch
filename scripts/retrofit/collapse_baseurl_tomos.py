@@ -20,15 +20,19 @@ Uso:
   .venv/bin/python scripts/retrofit/collapse_baseurl_tomos.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, collections
+import json, re, sys, argparse, collections
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
-    from manga_watch import merge_cluster, derive_cluster_key  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        merge_cluster, derive_cluster_key, backup_and_rotate, write_items_atomic,
+    )
 except ImportError:
-    from scripts.manga_watch import merge_cluster, derive_cluster_key  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        merge_cluster, derive_cluster_key, backup_and_rotate, write_items_atomic,
+    )
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _COLE = re.compile(r"coleccion\.php\?id=(\d+)")
@@ -116,12 +120,8 @@ def main() -> int:
         else:
             out.append(it)
 
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-collapsebaseurl-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup_and_rotate(ITEMS, "collapsebaseurl")
+    write_items_atomic(ITEMS, out)
     print(f"[collapse-baseurl] escrito {ITEMS}: {len(items)} → {len(out)}.")
     return 0
 

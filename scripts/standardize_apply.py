@@ -57,6 +57,7 @@ from manga_watch import (  # noqa: E402
     derive_product_type,
     rebuild_edition_key_prefix,
     sanitize_key_ascii,
+    write_items_atomic,
 )
 from series_aliases import (  # noqa: E402
     _build_aggressive_lookup,
@@ -112,11 +113,7 @@ def _load_items() -> list[dict]:
 
 
 def _write_items(items: list[dict]) -> None:
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    write_items_atomic(ITEMS, items)
 
 
 def _item_has_mangavariant(it: dict) -> bool:

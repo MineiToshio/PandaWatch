@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -103,12 +102,8 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[title-edwords] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-titleedw-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "title-edwords")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[title-edwords] escrito {ITEMS}.")
     return 0
 

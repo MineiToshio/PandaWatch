@@ -15,7 +15,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_doble_sobrecubierta_falsepos.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -104,12 +104,8 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if remove:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-falsepos-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in keep:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "falsepos")
+        mw.write_items_atomic(ITEMS, keep)
         print(f"[falsepos] escrito {ITEMS}: {len(items)} → {len(keep)}.")
     return 0
 

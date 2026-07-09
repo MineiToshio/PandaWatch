@@ -24,7 +24,12 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import clean_description, backup_and_rotate, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    clean_description,
+    backup_and_rotate,
+    is_approved,
+    write_lines_atomic,
+)
 
 
 def main() -> int:
@@ -105,9 +110,7 @@ def main() -> int:
         backup = backup_and_rotate(dst, "clean-descriptions")
         print(f"[OK] Backup guardado en {backup}")
 
-    tmp = dst.with_suffix(".jsonl.cleandesc-tmp")
-    tmp.write_text("\n".join(cleaned_lines) + "\n", encoding="utf-8")
-    tmp.replace(dst)
+    write_lines_atomic(dst, cleaned_lines)
     print(f"[OK] Escrito {dst} ({len(cleaned_lines)} líneas, {changed} items modificados).")
     return 0
 

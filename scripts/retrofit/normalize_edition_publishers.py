@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -94,12 +93,8 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[pub-mix] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-pubmix-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "pubmix")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[pub-mix] escrito {ITEMS}.")
     return 0
 

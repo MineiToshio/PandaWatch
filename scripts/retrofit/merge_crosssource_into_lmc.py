@@ -16,15 +16,15 @@ Uso:
   .venv/bin/python scripts/retrofit/merge_crosssource_into_lmc.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, collections
+import json, re, sys, argparse, collections
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
-    from manga_watch import merge_cluster  # noqa: E402
+    from manga_watch import merge_cluster, backup_and_rotate, write_items_atomic  # noqa: E402
 except ImportError:
-    from scripts.manga_watch import merge_cluster  # noqa: E402
+    from scripts.manga_watch import merge_cluster, backup_and_rotate, write_items_atomic  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _LMC = re.compile(r"^lmc:")
@@ -85,12 +85,8 @@ def main() -> int:
             out.append(merged)
         else:
             out.append(it)
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-mergexsrc-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup_and_rotate(ITEMS, "mergexsrc")
+    write_items_atomic(ITEMS, out)
     print(f"[merge-xsrc] escrito {ITEMS}: {len(items)} → {len(out)}.")
     return 0
 

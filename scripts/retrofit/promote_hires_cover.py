@@ -52,9 +52,13 @@ if str(_RETROFIT) not in sys.path:
 import fetch_better_covers as fbc  # noqa: E402
 import image_store  # noqa: E402  (fuente única de THUMB_ASPECT_TOL, hallazgo #12)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from manga_watch import (  # type: ignore  # noqa: E402
+        backup_and_rotate, is_approved, write_lines_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
+    from scripts.manga_watch import (  # type: ignore  # noqa: E402
+        backup_and_rotate, is_approved, write_lines_atomic,
+    )
 
 ITEMS = Path(__file__).resolve().parents[2] / "data" / "items.jsonl"
 IMAGES = Path(__file__).resolve().parents[2] / "data" / "images"
@@ -96,9 +100,7 @@ def _write_items(dst: Path, items: list[dict]) -> None:
         it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False, sort_keys=True)
         for it in items
     ]
-    tmp = dst.with_suffix(".jsonl.tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    tmp.replace(dst)
+    write_lines_atomic(dst, lines)
 
 
 def _read_and_px(local: str) -> tuple[bytes, int]:

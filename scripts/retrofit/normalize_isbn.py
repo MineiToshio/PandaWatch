@@ -31,7 +31,12 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import normalize_isbn, backup_and_rotate, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    normalize_isbn,
+    backup_and_rotate,
+    is_approved,
+    write_lines_atomic,
+)
 
 
 def main() -> int:
@@ -105,7 +110,7 @@ def main() -> int:
         backup = backup_and_rotate(dst, "isbn")
         print(f"[OK] Backup guardado en {backup}")
 
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escribí {dst} con {changed} ISBN normalizados.")
     return 0
 

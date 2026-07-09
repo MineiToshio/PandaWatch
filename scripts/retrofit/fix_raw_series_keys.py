@@ -15,7 +15,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_raw_series_keys.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, sys, argparse
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -69,12 +69,8 @@ def main() -> int:
     before = len(items)
     items = consolidate_by_cluster(items)
     print(f"[raw-series] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-rawseries-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    mw.backup_and_rotate(ITEMS, "raw-series-keys")
+    mw.write_items_atomic(ITEMS, items)
     print(f"[raw-series] escrito {ITEMS}.")
     return 0
 

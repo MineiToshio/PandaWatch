@@ -37,10 +37,16 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
+import sys
 from pathlib import Path
 
-ITEMS = Path(__file__).resolve().parent.parent.parent / "data" / "items.jsonl"
+_SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from manga_watch import backup_and_rotate, write_items_atomic  # type: ignore
+
+ITEMS = _SCRIPTS.parent / "data" / "items.jsonl"
 
 # Colecciones de ListadoManga cuyo número es "Número Gratuito" (free preview /
 # regalo promocional), verificadas una a una contra la página viva el 2026-06-14
@@ -113,13 +119,8 @@ def main() -> int:
         print("\n[ok] nada que borrar (idempotente).")
         return 0
 
-    backup = ITEMS.with_suffix(".jsonl.pre-freepreview-bak")
-    shutil.copy(ITEMS, backup)
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    backup = backup_and_rotate(ITEMS, "freepreview")
+    write_items_atomic(ITEMS, out)
     print(f"\n[ok] escrito {ITEMS} ({len(out)} filas, -{len(deleted)}). Backup: {backup.name}")
     return 0
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests
-from manga_watch import backup_and_rotate
+from manga_watch import backup_and_rotate, write_items_atomic
 import image_store
 from image_store import download_image
 
@@ -257,11 +257,7 @@ def main():
         out.append(nv)
         print(f"  ADD    {ek} vol2 isbn={nv['isbn']} cover={'ok' if image_store.cover_local(nv) else 'NO'}")
 
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        for it in out:
-            f.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    write_items_atomic(ITEMS, out)
     print(f"\nDone. {touched}  added_movie5_v2={bool(clone_src and not already_v2)}  total_rows={len(out)}")
 
 

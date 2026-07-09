@@ -40,7 +40,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate  # type: ignore
+from manga_watch import backup_and_rotate, write_lines_atomic  # type: ignore
 import image_store  # type: ignore
 
 
@@ -133,7 +133,7 @@ def main() -> int:
 
     backup = backup_and_rotate(src, "strip-legacy-cover")
     print(f"\n[OK] Backup guardado en {backup}")
-    src.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(src, out_lines)
     print(f"[OK] {src} migrado: image_url/image_local top-level eliminados.")
     print("[NEXT] correr retrofit/mirror_images.py para llenar los `local` "
           "faltantes (galería + portadas no rescatadas).")

@@ -29,15 +29,19 @@ Uso:
   .venv/bin/python scripts/retrofit/dedup_synthetic_source.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
-    from manga_watch import merge_cluster, derive_cluster_key  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        merge_cluster, derive_cluster_key, backup_and_rotate, write_items_atomic,
+    )
 except ImportError:  # raíz tiene un wrapper manga_watch.py que sombrea (en pytest)
-    from scripts.manga_watch import merge_cluster, derive_cluster_key  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        merge_cluster, derive_cluster_key, backup_and_rotate, write_items_atomic,
+    )
 
 ITEMS = ROOT / "data" / "items.jsonl"
 # synthetic con hash hex (>=8). Para detectar la identidad del item.
@@ -212,12 +216,8 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
     if n_dups or n_debundle:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-dedupsyn-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in out:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        backup_and_rotate(ITEMS, "dedupsyn")
+        write_items_atomic(ITEMS, out)
         print(f"[dedup-syn] escrito {ITEMS}.")
     return 0
 

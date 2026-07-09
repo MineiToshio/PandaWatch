@@ -15,7 +15,7 @@ Uso:
   .venv/bin/python scripts/retrofit/reconcile_lista_stale.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -107,12 +107,8 @@ def main():
         print("[DRY-RUN] no se escribió nada.")
         return
     if remove:
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-reconcile-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in keep:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "reconcile")
+        mw.write_items_atomic(ITEMS, keep)
         print(f"[reconcile] escrito {ITEMS}: {len(items)} → {len(keep)}.", flush=True)
 
 

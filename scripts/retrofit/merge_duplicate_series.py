@@ -202,12 +202,8 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[series-dup] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-seriesdup-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "seriesdup")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[series-dup] escrito {ITEMS}.")
 
     # Cola de curación SOLO para ganadores no canónicos (que el enrich skill

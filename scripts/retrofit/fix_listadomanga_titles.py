@@ -15,7 +15,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_listadomanga_titles.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil
+import json, re, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "wikis"))
 import requests  # noqa: E402
 import listadomanga_collections as lmc  # noqa: E402
+from manga_watch import backup_and_rotate, write_items_atomic  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _S = requests.Session(); _S.headers.update({"User-Agent": "Mozilla/5.0 (titlefix)"})
@@ -89,13 +90,9 @@ def main() -> int:
     if args.dry_run:
         print("\n[DRY-RUN] no se escribió nada.")
         return 0
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-titlefix-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
-    print(f"[titles] escrito {ITEMS} ({changed}). Backup: {ITEMS.with_suffix('.jsonl.pre-titlefix-bak')}")
+    bak = backup_and_rotate(ITEMS, "titlefix")
+    write_items_atomic(ITEMS, items)
+    print(f"[titles] escrito {ITEMS} ({changed}). Backup: {bak}")
     return 0
 
 

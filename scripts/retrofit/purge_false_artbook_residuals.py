@@ -67,7 +67,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, is_approved  # type: ignore
+from manga_watch import backup_and_rotate, is_approved, write_items_atomic  # type: ignore
 
 ITEMS = _SCRIPTS.parent / "data" / "items.jsonl"
 
@@ -213,11 +213,7 @@ def main() -> int:
                 cleaned_desc += 1
         out.append(it)
 
-    tmp = src.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in out:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(src)
+    write_items_atomic(src, out)
 
     print(f"\n[OK] Desblindados {len(candidates)} items (standardized_at removido; "
           f"{cleaned_desc} con categoría inyectada limpiada de la description) en {src}. "

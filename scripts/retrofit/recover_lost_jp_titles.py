@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -194,12 +193,9 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[recover-jp] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-recoverjp-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        backup = mw.backup_and_rotate(ITEMS, "recoverjp")
+        print(f"[recover-jp] backup: {backup}")
+        mw.write_items_atomic(ITEMS, items)
         print(f"[recover-jp] escrito {ITEMS}.")
     return 0
 
