@@ -87,7 +87,14 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from script_registry import SCRIPTS, get_script, known_flags  # type: ignore
+    from script_registry import (  # type: ignore
+        SCRIPTS,
+        build_command,
+        get_script,
+        known_flags,
+        mutates_items,
+        resolve_preset_env,
+    )
     _REGISTRY_OK = True
 except ImportError:
     SCRIPTS: list = []
@@ -98,6 +105,15 @@ except ImportError:
 
     def known_flags(sid: str) -> set:  # type: ignore[misc]
         return set()
+
+    def build_command(sid: str, flags: dict) -> tuple[None, str]:  # type: ignore[misc]
+        return None, "script_registry no disponible"
+
+    def mutates_items(sid: str) -> bool:  # type: ignore[misc]
+        return False
+
+    def resolve_preset_env(sid: str, preset_id: str | None) -> dict:  # type: ignore[misc]
+        return {}
 
 # Primitivas del modelo 1-fila-por-producto (fuente única de verdad del merge).
 # Las usan los endpoints de curación que escriben items.jsonl para no romper el
@@ -208,9 +224,23 @@ class JobManager:
         self.lock = threading.Lock()
 
     def start(self, script_id: str, command: list[str], label: str,
-              cwd: Path) -> Job:
-        job = Job(script_id, label, command)
+              cwd: Path, env: dict[str, str] | None = None,
+              *, block_if_mutator: bool = False) -> tuple[Job | None, Job | None]:
+        """Registra y lanza un job. Devuelve (job, None) o (None, blocker).
+
+        block_if_mutator=True hace el chequeo "¿hay un mutador corriendo?" +
+        el registro del job nuevo bajo el MISMO lock (S10, 2026-07-08): dos
+        POST /api/run casi simultáneos para scripts mutadores NO pueden
+        colarse los dos — antes el check (running_mutator()) y el registro
+        pasaban por locks separados, dejando una ventana TOCTOU donde ambos
+        requests veían "nada corriendo todavía" y arrancaban igual."""
         with self.lock:
+            if block_if_mutator:
+                for jid in self.order:
+                    j = self.jobs.get(jid)
+                    if j and j.status == "running" and mutates_items(j.script_id):
+                        return None, j
+            job = Job(script_id, label, command)
             self.jobs[job.id] = job
             self.order.append(job.id)
             self._trim()
@@ -234,6 +264,8 @@ class JobManager:
         try:
             full_env = os.environ.copy()
             full_env["PYTHONUNBUFFERED"] = "1"
+            if env:
+                full_env.update(env)
             proc = subprocess.Popen(
                 command,
                 cwd=str(cwd),
@@ -248,7 +280,7 @@ class JobManager:
         except Exception as e:
             job.append(f"[serve][ERROR spawn] {e}")
             job.mark_done("error", -1)
-        return job
+        return job, None
 
     def stop(self, job_id: str) -> bool:
         job = self.jobs.get(job_id)
@@ -276,6 +308,23 @@ class JobManager:
     def list(self) -> list[Job]:
         return [self.jobs[jid] for jid in self.order if jid in self.jobs]
 
+    def running_mutator(self) -> Job | None:
+        """Un job "running" cuyo script muta items.jsonl, si hay alguno (S10,
+        2026-07-08). Los retrofits lanzados desde el Panel no toman lock de
+        archivo entre sí (a diferencia de scrape-vs-scrape, .scrape.lock) —
+        dos mutadores corriendo a la vez se pisan en un read-modify-write.
+
+        Sólo para INSPECCIÓN (ej. mostrar un aviso en la UI antes de
+        intentar). El chequeo que realmente bloquea un `/api/run` concurrente
+        es el de `start(block_if_mutator=True)`, que es atómico con el
+        registro del job — este método por sí solo tiene una ventana TOCTOU."""
+        with self.lock:
+            jobs = [self.jobs[jid] for jid in self.order if jid in self.jobs]
+        for job in jobs:
+            if job.status == "running" and mutates_items(job.script_id):
+                return job
+        return None
+
     def _trim(self) -> None:
         finished = [
             jid for jid in self.order
@@ -292,73 +341,10 @@ class JobManager:
 
 JOBS = JobManager()
 
-
-# ---------------------------------------------------------------------------
-# Construcción del comando desde flags
-# ---------------------------------------------------------------------------
-
-def build_command(
-    script_id: str, flag_values: dict[str, Any]
-) -> tuple[list[str], str] | tuple[None, str]:
-    """Valida flags y devuelve (argv, label) o (None, mensaje_error)."""
-    spec = get_script(script_id)
-    if not spec:
-        return None, f"script_id desconocido: {script_id}"
-
-    valid = known_flags(script_id)
-    cmd = list(spec["command"])
-    used_labels: list[str] = []
-    by_arg = {f["arg"]: f for f in spec["flags"]}
-
-    for arg, value in flag_values.items():
-        if arg not in valid:
-            return None, f"flag desconocido para {script_id}: {arg}"
-        f = by_arg[arg]
-        t = f["type"]
-
-        if t == "bool":
-            if bool(value):
-                cmd.append(arg)
-                used_labels.append(arg)
-        elif t == "int":
-            if value in (None, "", "null"):
-                continue
-            try:
-                ival = int(value)
-            except (TypeError, ValueError):
-                return None, f"valor int inválido para {arg}: {value!r}"
-            cmd.extend([arg, str(ival)])
-            used_labels.append(f"{arg}={ival}")
-        elif t == "float":
-            if value in (None, "", "null"):
-                continue
-            try:
-                fval = float(value)
-            except (TypeError, ValueError):
-                return None, f"valor float inválido para {arg}: {value!r}"
-            cmd.extend([arg, str(fval)])
-            used_labels.append(f"{arg}={fval}")
-        elif t in ("str", "csv"):
-            sval = "" if value is None else str(value).strip()
-            if not sval:
-                continue
-            cmd.extend([arg, sval])
-            used_labels.append(f"{arg}={sval}")
-        elif t == "choice":
-            sval = "" if value is None else str(value).strip()
-            if not sval:
-                continue
-            if f.get("choices") and sval not in f["choices"]:
-                return None, f"choice inválido para {arg}: {sval!r}"
-            cmd.extend([arg, sval])
-            used_labels.append(f"{arg}={sval}")
-        else:
-            return None, f"tipo de flag no soportado: {t}"
-
-    label = spec["name"]
-    if used_labels:
-        label += "  ·  " + " ".join(used_labels)
-    return cmd, label
+# build_command vive en script_registry.py (4.1, 2026-07-08) — fuente única,
+# importado arriba junto con resolve_preset_env/mutates_items. Antes estaba
+# duplicado byte-a-byte acá y en admin_serve.py; ya habían divergido (sólo la
+# copia de admin_serve.py sabía castear "choice" con validación).
 
 
 # ---------------------------------------------------------------------------
@@ -1358,6 +1344,23 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             raise ValueError("body vacío u oversized")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def _origin_allowed(self) -> bool:
+        """Defensa barata contra CSRF/DNS-rebinding sobre /api/run (S7,
+        2026-07-08). El bind por default es 127.0.0.1, pero eso NO protege
+        contra una página de OTRO origen abierta en el mismo navegador (o un
+        dominio público que resuelve a 127.0.0.1 vía DNS-rebinding) haciendo
+        fetch() hacia acá — el browser manda el header Origin en cualquier
+        request cross-origin. Si Origin está presente, su host debe matchear
+        el Host de este request. Clientes sin Origin (curl, scripts locales)
+        pasan siempre — esto no es auth, es "no ejecutes lo que pida un tab
+        de otro sitio"."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        origin_host = origin.split("://", 1)[-1].rstrip("/")
+        return bool(host) and origin_host == host
+
     def _reject_if_scrape_locked(self) -> bool:
         """423 si hay un scrape corriendo (data/.scrape.lock activo).
 
@@ -1635,6 +1638,9 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
     # ---------- Panel: run + SSE ----------
 
     def _handle_run(self) -> None:
+        if not self._origin_allowed():
+            self._json(403, {"error": "origin no permitido"})
+            return
         try:
             payload = self._read_json(max_bytes=200_000)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1646,18 +1652,47 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         if not isinstance(flags, dict):
             self._json(400, {"error": "'flags' debe ser dict"})
             return
+        preset_id = payload.get("preset_id")
+        if preset_id is not None and not isinstance(preset_id, str):
+            self._json(400, {"error": "'preset_id' debe ser string"})
+            return
 
         cmd, label = build_command(script_id, flags)
         if cmd is None:
             self._json(400, {"error": label})
             return
 
+        # El env NUNCA viene del cliente: sólo se resuelve server-side desde
+        # el preset_id conocido, validado contra la allowlist INCLUDE_*/
+        # SKIP_* (1.2/S5, 2026-07-08) — ver script_registry.resolve_preset_env.
+        env = resolve_preset_env(script_id, preset_id)
+
         # Resolver python del venv si existe.
         if cmd and cmd[0] == ".venv/bin/python":
             candidate = ROOT / ".venv" / "bin" / "python"
             cmd[0] = str(candidate) if candidate.exists() else sys.executable
 
-        job = JOBS.start(script_id, cmd, label, cwd=ROOT)
+        # S10 (2026-07-08): dos mutadores de items.jsonl corriendo a la vez
+        # desde el Panel se pisan (no toman lock de archivo entre sí, a
+        # diferencia de scrape-vs-scrape que sí usa .scrape.lock). El chequeo
+        # + registro del job son ATÓMICOS (mismo lock en JobManager.start) —
+        # evita el race TOCTOU de dos POST /api/run simultáneos.
+        job, blocker = JOBS.start(
+            script_id, cmd, label, cwd=ROOT, env=env or None,
+            block_if_mutator=mutates_items(script_id),
+        )
+        if job is None:
+            assert blocker is not None
+            self._json(409, {
+                "error": (
+                    f"ya hay un job mutador corriendo ({blocker.script_id}, "
+                    f"job {blocker.id}) — esperá a que termine antes de "
+                    f"lanzar otro que escribe items.jsonl"
+                ),
+                "job_id": blocker.id,
+                "script_id": blocker.script_id,
+            })
+            return
         self._json(200, {"job_id": job.id, "label": label, "command": cmd})
 
     def _stream_job(self, job: Job) -> None:

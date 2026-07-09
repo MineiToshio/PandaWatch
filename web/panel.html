@@ -509,6 +509,10 @@ function controlPanel() {
     // Selección actual
     selected: null,
     flagValues: {},     // {"--flag": value}
+    activePresetId: null,  // preset con "env" aplicado más recientemente
+                            // (S5, 2026-07-08) — se manda a /api/run para
+                            // que el servidor resuelva el env server-side.
+                            // null si el usuario tocó un flag a mano después.
 
     // Job activo + historial
     activeJob: null,    // {id, label, status, exit_code, ...}
@@ -563,29 +567,60 @@ function controlPanel() {
       const s = this.scripts.find(x => x.id === id);
       if (!s) return;
       this.selected = s;
+      this.activePresetId = null;
       localStorage.setItem("mw_selected_script", id);
-      // Cargar últimos valores de flags desde localStorage o defaults.
-      const saved = localStorage.getItem("mw_flags_" + id);
-      if (saved) {
-        try { this.flagValues = JSON.parse(saved); return; }
-        catch (e) { /* fall through */ }
+      // Cargar últimos valores de flags desde localStorage, mergeados con
+      // los defaults ACTUALES del registry (11 / 4.5, 2026-07-08).
+      const defaults = this._computeDefaults(s);
+      const raw = localStorage.getItem("mw_flags_" + id);
+      if (raw) {
+        try {
+          const saved = JSON.parse(raw);
+          // Formato nuevo: {values, defaultsSnapshot}. defaultsSnapshot es
+          // "cuáles eran los defaults la última vez que guardamos" — así
+          // distinguimos "el usuario puso este valor a mano" de "esto es
+          // simplemente el default viejo que quedó cacheado". Un valor
+          // guardado que coincide con SU default de entonces se trata como
+          // no-customizado y se reemplaza por el default de HOY (recoge
+          // fixes como 2.1-2.3 sin que el usuario tenga que resetear a
+          // mano). Formato viejo (values pelado, pre-migración): no hay
+          // snapshot para diffear, así que TODO se trata como no-customizado
+          // y se adoptan los defaults de hoy de una — es la migración.
+          if (saved && typeof saved === "object" && saved.values) {
+            const snapshot = saved.defaultsSnapshot || {};
+            const merged = { ...defaults };
+            for (const [k, v] of Object.entries(saved.values)) {
+              if (!(k in snapshot) || snapshot[k] !== v) {
+                merged[k] = v;  // el usuario lo cambió explícitamente
+              }
+            }
+            this.flagValues = merged;
+            this._persistFlags();
+            return;
+          }
+        } catch (e) { /* fall through */ }
       }
       this.resetFlags();
     },
 
-    resetFlags() {
+    _computeDefaults(script) {
       const values = {};
-      for (const f of (this.selected?.flags || [])) {
+      for (const f of (script?.flags || [])) {
         if (f.type === "bool") values[f.arg] = !!f.default;
         else if (f.default !== null && f.default !== undefined) values[f.arg] = f.default;
         else values[f.arg] = "";
       }
-      this.flagValues = values;
+      return values;
+    },
+
+    resetFlags() {
+      this.flagValues = this._computeDefaults(this.selected);
       this._persistFlags();
     },
 
     setFlag(arg, value) {
       this.flagValues = { ...this.flagValues, [arg]: value };
+      this.activePresetId = null;  // el usuario diverge del preset con env
       this._persistFlags();
     },
 
@@ -597,12 +632,20 @@ function controlPanel() {
         values[k] = v;
       }
       this.flagValues = values;
+      // Sólo trackeamos el preset si tiene "env" — es lo único que /api/run
+      // necesita resolver server-side (S5, 2026-07-08). Los presets sin env
+      // no necesitan preset_id: sus flags ya viajan en el body normal.
+      this.activePresetId = p.env ? p.id : null;
       this._persistFlags();
     },
 
     _persistFlags() {
       if (this.selected) {
-        localStorage.setItem("mw_flags_" + this.selected.id, JSON.stringify(this.flagValues));
+        const defaultsSnapshot = this._computeDefaults(this.selected);
+        localStorage.setItem("mw_flags_" + this.selected.id, JSON.stringify({
+          values: this.flagValues,
+          defaultsSnapshot,
+        }));
       }
     },
 
@@ -651,15 +694,24 @@ function controlPanel() {
       if (!this.selected || this.running) return;
       this.clearConsole();
       const { flags } = this._buildArgs();
+      // preset_id viaja SOLO para que el servidor resuelva el env de un
+      // preset con "env" (S5, 2026-07-08) — nunca mandamos env directo, el
+      // cliente no tiene ese poder.
+      const body = { script_id: this.selected.id, flags };
+      if (this.activePresetId) body.preset_id = this.activePresetId;
       try {
         const r = await fetch(ADMIN_API + "/api/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ script_id: this.selected.id, flags }),
+          body: JSON.stringify(body),
         });
         const data = await r.json();
         if (!r.ok) {
-          this.consoleLines.push("[error] " + (data.error || "no se pudo lanzar"));
+          if (r.status === 409) {
+            this.consoleLines.push("[error] " + (data.error || "ya hay un job mutador corriendo — esperá a que termine"));
+          } else {
+            this.consoleLines.push("[error] " + (data.error || "no se pudo lanzar"));
+          }
           return;
         }
         this.attachToJob(data.job_id);

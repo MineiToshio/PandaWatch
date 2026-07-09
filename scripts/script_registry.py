@@ -9,20 +9,38 @@ scripts/serve.py expone este registry vía GET /api/scripts y valida que
 cualquier run venga de un id conocido + flags conocidas.
 
 Convenciones de tipos de flag:
-- "bool"   → toggle. Solo agrega el flag si está en True (acción 'store_true').
-- "int"    → input numérico. Si vacío, no se agrega el flag.
-- "float"  → input numérico decimal. Idem.
-- "str"    → input texto libre. Si vacío, no se agrega el flag.
-- "choice" → select desplegable. choices: lista de strings.
-- "csv"    → input texto que el usuario separa con comas. Mismo tratamiento
-             que "str" pero con placeholder distinto.
+- "bool"      → toggle. Solo agrega el flag si está en True (acción 'store_true').
+- "int"       → input numérico. Si vacío, no se agrega el flag. Soporta
+                choices (lista de ints) para action="store" con choices=[...].
+- "float"     → input numérico decimal. Idem "int" sin choices.
+- "str"       → input texto libre. Si vacío, no se agrega el flag.
+- "choice"    → select desplegable. choices: lista de strings.
+- "csv"       → input texto que el usuario separa con comas. Mismo tratamiento
+                que "str" (UN solo `--flag "a,b,c"`) pero con placeholder
+                distinto. Para el argparse real: default="" con split interno.
+- "csv_multi" → mismo input que "csv", pero el CLI emite el flag UNA VEZ POR
+                cada valor separado por coma (`--flag a --flag b`). Usar
+                cuando el argparse real es action="append" y NO hace split
+                interno de comas (si el script sí splitea internamente, usar
+                "csv" — más simple, un solo --flag).
 
 Mantener este registry en sync con los argparse reales — si rompís uno y no
-el otro, el panel ejecutará comandos inválidos.
+el otro, el panel ejecutará comandos inválidos. tests/test_script_registry.py
+lo valida por AST contra cada script real.
+
+Política deliberada de flags NO expuestos (2026-07-08, hallazgo 3.1 de la
+auditoría Fable): varios scripts tienen --include-approved en su argparse
+real pero NO en este registry a propósito — protege golden records
+(items con approved_at) de mutaciones accidentales lanzadas desde el panel.
+`rescore.py --include-standardized` tampoco se expone: es el guard de la
+gotcha #61 (no rescorear items ya estandarizados). Si encontrás uno de estos
+flags "faltante", es DELIBERADO — no lo agregues sin levantar el guard
+correspondiente en el código primero.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -35,7 +53,7 @@ PYTHON = ".venv/bin/python"
 # ---------------------------------------------------------------------------
 
 def _flag(arg: str, label: str, help: str, *, type: str = "bool",
-          default: Any = None, choices: list[str] | None = None,
+          default: Any = None, choices: list[Any] | None = None,
           placeholder: str = "", advanced: bool = False) -> dict[str, Any]:
     return {
         "arg": arg,
@@ -59,6 +77,7 @@ SCRIPTS: list[dict[str, Any]] = [
     # =====================================================================
     {
         "id": "scrape_delta",
+        "mutates_items": True,
         "category": "⭐ Canónicos",
         "icon": "⚡",
         "name": "Scrape DELTA (incremental, diario/semanal)",
@@ -98,6 +117,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "scrape_full",
+        "mutates_items": True,
         "category": "⭐ Canónicos",
         "icon": "📚",
         "name": "Scrape FULL (catálogo completo, mensual)",
@@ -141,6 +161,7 @@ SCRIPTS: list[dict[str, Any]] = [
     # =====================================================================
     {
         "id": "scrape",
+        "mutates_items": True,
         "category": "Día a día",
         "icon": "🔍",
         "name": "Buscar mangas nuevos (Scraper principal)",
@@ -230,10 +251,16 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Dejá vacío para todos.",
                   type="csv", default="",
                   placeholder="España,Japón"),
-            _flag("--only-source", "Solo esta fuente",
-                  "Nombre EXACTO de una sola fuente (ej. 'ES - Norma'). "
-                  "Útil para depurar una fuente específica.",
-                  type="str", default="",
+            # El argparse real es action="append" (repetible: --only-source A
+            # --only-source B), sin split interno de comas — encontrado por
+            # el test AST (4.3, 2026-07-08) al escribirlo, no estaba en el
+            # reporte de auditoría original. "csv_multi" también cubre el
+            # caso de un solo nombre (comportamiento previo intacto).
+            _flag("--only-source", "Solo esta(s) fuente(s) (CSV)",
+                  "Nombre(s) EXACTO(s) de fuente, separados por coma si son "
+                  "varias (ej. 'ES - Norma'). Útil para depurar una fuente "
+                  "específica.",
+                  type="csv_multi", default="",
                   placeholder="ES - Norma"),
             _flag("--include-tags", "Solo fuentes con estos tags",
                   "Lista de tags separados por coma. Solo procesa fuentes "
@@ -285,9 +312,10 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False, advanced=True),
 
             _flag("--min-score", "Score mínimo",
-                  "Solo items con score ≥ N se reportan. Default 30 ya "
-                  "incluye artbooks.",
-                  type="int", default=30, advanced=True),
+                  "Solo items con score ≥ N se reportan. Default 20 — "
+                  "coincide con el umbral real del script y con "
+                  "scrape_delta/scrape_full; ya incluye artbooks.",
+                  type="int", default=20, advanced=True),
             _flag("--max-age-days", "Antigüedad máx en días (RSS)",
                   "Para feeds RSS ignora entradas más viejas que N días. "
                   "0 = sin filtro. Default 30.",
@@ -315,6 +343,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "bootstrap_wiki",
+        "mutates_items": True,
         "category": "Día a día",
         "icon": "📚",
         "name": "Importar desde Wiki comunitaria",
@@ -719,6 +748,9 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
+            # Sincronizado con manga_watch.py:9727 (choices reales del argparse).
+            # Si agregás una wiki nueva, agregala en AMBOS lados o el test AST
+            # de tests/test_script_registry.py va a fallar (1.3, 2026-07-08).
             _flag("--bootstrap-wiki", "Wiki a importar",
                   "Elegí qué wiki recorrer. Cada una cubre un país/idioma.",
                   type="choice", default="listadomanga",
@@ -727,7 +759,9 @@ SCRIPTS: list[dict[str, Any]] = [
                            "mangavariant", "socialanime", "blogbbm",
                            "booksprivilege", "sumikko",
                            "listadomanga-collections", "mangapassion",
-                           "animeclick", "prhcomics", "kinokuniya", "yenpress"]),
+                           "animeclick", "prhcomics", "kinokuniya", "yenpress",
+                           "shueisha", "viz", "sevenseas", "kodansha-us",
+                           "jd-intl", "spp-tw", "kimdong", "ipm", "yaakz"]),
             _flag("--wiki-from", "Mes inicial (YYYY-MM)",
                   "Desde qué mes traer items. Aplica a wikis basadas en "
                   "calendario (listadomanga, manga-sanctuary, otaku-calendar). "
@@ -747,6 +781,10 @@ SCRIPTS: list[dict[str, Any]] = [
                   "todo el catálogo a 2026-05). El bootstrap también se detiene "
                   "automáticamente tras 50 ids consecutivos sin contenido.",
                   type="int", default=6500, advanced=True),
+            # Excepción tácita (2.4): la mayoría de los bool arrancan en False
+            # (opt-in explícito); --fetch-details default=True a propósito —
+            # sin detalle un bootstrap deja items sin portada/autor/ISBN, así
+            # que el toggle nace pre-marcado como "Normal" en scrape (arriba).
             _flag("--fetch-details", "Rellenar detalles después",
                   "Tras importar entra a cada detalle para portada/autor/ISBN. "
                   "RECOMENDADO.",
@@ -764,6 +802,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "search_discovery",
+        "mutates_items": True,
         "category": "Día a día",
         "icon": "🤖",
         "name": "Descubrir vía buscadores (Gemini + Tavily + DDG)",
@@ -828,6 +867,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "build_web",
+        "mutates_items": False,
         "category": "Día a día",
         "icon": "🌐",
         "name": "Generar dashboard estático",
@@ -848,7 +888,7 @@ SCRIPTS: list[dict[str, Any]] = [
                 "id": "embed",
                 "label": "📦 Embeber datos en HTML",
                 "desc": "Mete items.jsonl dentro de web/index.html.",
-                "values": {},
+                "values": {"--embed": True},
             },
             {
                 "id": "clear",
@@ -858,6 +898,18 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
+            # Bug encontrado durante 6/2026-07-08: este preset mandaba
+            # "values": {} — el bug 1.1 (flags→values) lo hacía invisible,
+            # pero el flag --embed tampoco existía en el registry. Sin
+            # --embed el script deja el embed vacío (comportamiento default),
+            # así que el preset "Embeber" no embebía nada. Corregido junto
+            # con la exposición del flag.
+            _flag("--embed", "Embeber catálogo completo en el HTML",
+                  "Mete todos los items dentro de web/index.html para que "
+                  "funcione con doble-click (file://) sin server. Por "
+                  "defecto el embed queda vacío y la página usa fetch() en "
+                  "vivo (decisión #5, ver docs/reference/dashboard.md).",
+                  type="bool", default=False),
             _flag("--clear", "Vaciar datos embebidos",
                   "Deja [] en el script embebido. La página volverá a hacer "
                   "fetch dinámico al JSONL.",
@@ -868,6 +920,13 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--output", "Archivo HTML destino",
                   "Default web/index.html.",
                   type="str", default="web/index.html", advanced=True),
+            _flag("--force", "Saltar el gate de validate_corpus",
+                  "Construye igual aunque --input tenga violaciones "
+                  "estructurales DURAS. Override consciente — el pipeline "
+                  "canónico (scrape_delta/full) NO usa este flag, tiene su "
+                  "propio gate + cuarentena/restore. Solo para invocación "
+                  "manual deliberada.",
+                  type="bool", default=False, advanced=True),
         ],
     },
 
@@ -876,6 +935,7 @@ SCRIPTS: list[dict[str, Any]] = [
     # =====================================================================
     {
         "id": "filter_non_manga",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🚫",
         "name": "Filtrar lo que NO es manga",
@@ -914,6 +974,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "filter_collectible",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "💎",
         "name": "Filtrar lo que NO es coleccionable",
@@ -952,6 +1013,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "restore_official_titles",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "📛",
         "name": "Restaurar títulos oficiales",
@@ -993,6 +1055,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "extract_store_bonus",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🎁",
         "name": "Separar bonus de tienda",
@@ -1033,6 +1096,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "fix_corrupted_lm_special_titles",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🩹",
         "name": "Arreglar títulos LM corruptos (edición duplicada)",
@@ -1075,6 +1139,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "restore_mistranslated_especial",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🌐",
         "name": "Restaurar edición mal traducida",
@@ -1107,6 +1172,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "remove_phantom_calendar_editions",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "👻",
         "name": "Borrar ediciones fantasma del calendario",
@@ -1141,6 +1207,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "remove_free_preview_editions",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🎟️",
         "name": "Borrar folletos promocionales gratuitos",
@@ -1174,6 +1241,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "clean_titles",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🧼",
         "name": "Re-limpiar títulos",
@@ -1211,6 +1279,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "normalize_release_dates",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "📅",
         "name": "Normalizar fechas de lanzamiento",
@@ -1258,6 +1327,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "fix_product_types",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🏷️",
         "name": "Re-derivar product_type fuera de enum",
@@ -1303,6 +1373,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "normalize_languages",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🌐",
         "name": "Normalizar idioma al canon español",
@@ -1347,6 +1418,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "queue_regular_shielded",
+        "mutates_items": False,
         "category": "Mantenimiento",
         "icon": "🚩",
         "name": "Encolar tomos regulares sospechosos",
@@ -1392,6 +1464,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "normalize_isbn",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🔢",
         "name": "Normalizar ISBN",
@@ -1435,6 +1508,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "clean_descriptions",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🧹",
         "name": "Re-limpiar descripciones",
@@ -1473,6 +1547,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "rescore",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "📊",
         "name": "Recalcular score y tipo",
@@ -1506,11 +1581,18 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--dry-run", "Modo prueba",
                   "Reporta drift sin escribir.",
                   type="bool", default=False),
+            # --include-approved e --include-standardized existen en el argparse
+            # real pero se dejan AFUERA del registry a propósito (3.1, 2026-07-08):
+            # --include-standardized es el guard-rail de la gotcha #61 (rescorear
+            # un item ya estandarizado pisa señales curadas por el skill/LLM);
+            # --include-approved protege golden records. Exponerlos en el panel
+            # facilitaría saltear ambos guards sin querer.
         ],
     },
 
     {
         "id": "backfill_metadata",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "📥",
         "name": "Rellenar metadata faltante",
@@ -1553,11 +1635,17 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
+            # choices SIN "" a propósito: "" == default="" del script real
+            # (rellena TODOS los campos); build_command ya omite el flag
+            # cuando el valor es "" (elif t == "choice": if not sval: continue),
+            # así que agregar "" a choices no es necesario y no matchea el
+            # argparse real (choices=BACKFILL_FIELDS, sin la cadena vacía).
             _flag("--only", "Solo este campo",
                   "Si querés rellenar solo uno: image_url, author, isbn, "
-                  "release_date, o images (carrusel multi-imagen).",
+                  "release_date, o images (carrusel multi-imagen). Vacío = "
+                  "todos los campos.",
                   type="choice", default="",
-                  choices=["", "image_url", "author", "isbn", "release_date", "images"]),
+                  choices=["image_url", "author", "isbn", "release_date", "images"]),
             _flag("--limit", "Máx items a procesar",
                   "0 = sin límite. Útil para probar con --limit 50.",
                   type="int", default=0, placeholder="50"),
@@ -1567,11 +1655,14 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--sleep", "Pausa entre requests (seg)",
                   "Default 0.3.",
                   type="float", default=0.3, advanced=True),
-            _flag("--skip-domain", "Saltar este dominio",
-                  "Match por substring. Ej: darkhorse.com. Solo uno por "
-                  "ahora (TODO: múltiple).",
-                  type="str", default="", advanced=True,
-                  placeholder="darkhorse.com"),
+            # El argparse real es action="append" SIN split interno de comas
+            # (2.4, 2026-07-08) — "csv_multi" emite un --skip-domain por
+            # cada dominio, ahora sí soporta varios desde el panel.
+            _flag("--skip-domain", "Saltar estos dominios (CSV)",
+                  "Match por substring contra la URL del item. Podés poner "
+                  "varios separados por coma.",
+                  type="csv_multi", default="", advanced=True,
+                  placeholder="darkhorse.com,otrodominio.com"),
             _flag("--dry-run", "Modo prueba (no fetchea)",
                   "Solo cuenta cuántos serían candidatos.",
                   type="bool", default=False),
@@ -1580,6 +1671,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "backfill_animeclick_details",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🇮🇹",
         "name": "Backfill AnimeClick (fecha, descripción)",
@@ -1630,6 +1722,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "mirror_images",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🖼️",
         "name": "Espejo local de portadas (bajar + limpiar)",
@@ -1698,6 +1791,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "upgrade_image_resolution",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🔍",
         "name": "Mejorar resolución de portadas",
@@ -1758,6 +1852,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "backfill_prh_covers",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🇺🇸",
         "name": "Portadas EN via PRH CDN",
@@ -1816,6 +1911,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "upscale_images",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🔬",
         "name": "Upscaling de portadas pixeladas (IA)",
@@ -1836,16 +1932,22 @@ SCRIPTS: list[dict[str, Any]] = [
         "command": [PYTHON, "scripts/retrofit/upscale_images.py"],
         "presets": [
             {
+                "id": "dryrun",
                 "label": "🔬 Dry-run (ver cuántas hay)",
-                "flags": {"--dry-run": True},
+                "desc": "Cuenta cuántas imágenes calificarían sin upscalear nada.",
+                "values": {"--dry-run": True},
             },
             {
+                "id": "test",
                 "label": "🔬 Test rápido (20 imágenes)",
-                "flags": {"--limit": 20},
+                "desc": "Upscalea sólo 20 imágenes para validar el resultado.",
+                "values": {"--limit": 20},
             },
             {
+                "id": "todo",
                 "label": "🔬 Todo (< 200 000 px)",
-                "flags": {"--max-pixels": 200000},
+                "desc": "Upscalea todas las imágenes por debajo del umbral.",
+                "values": {"--max-pixels": 200000},
             },
         ],
         "flags": [
@@ -1853,10 +1955,13 @@ SCRIPTS: list[dict[str, Any]] = [
                   "Solo procesa imágenes con menos de N píxeles totales. "
                   "200 000 ≈ 450×445 px. Subir para procesar más imágenes.",
                   type="int", default=200000, placeholder="200000"),
+            # --scale es type=int con choices=[2, 4] en el argparse real (no
+            # strings) — 2.4, 2026-07-08. Usa el flag "int" con choices para
+            # que build_command valide y castee coherente con el script.
             _flag("--scale", "Factor de escala",
                   "Multiplicar las dimensiones por este factor (2 o 4). "
                   "Default 2: una imagen de 150×220 pasa a ~300×440 px.",
-                  type="choice", default="2", choices=["2", "4"]),
+                  type="int", default=2, choices=[2, 4]),
             _flag("--denoise", "Nivel de denoise (waifu2x)",
                   "0 = sin denoise, 1 = leve (recomendado), 3 = agresivo. "
                   "Solo aplica a waifu2x-ncnn-vulkan.",
@@ -1876,6 +1981,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "translate_descriptions",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🌐",
         "name": "Traducir descripciones al español",
@@ -1938,6 +2044,13 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--force", "Re-traducir existentes",
                   "Traduce aunque description_es ya esté poblado.",
                   type="bool", default=False, advanced=True),
+            _flag("--retry-empty", "Reintentar traducciones vacías fallidas",
+                  "Reprocesa SOLO los campos con description_es='' cuya "
+                  "description NO detecta como español — recupera fallos de "
+                  "API marcados por error como 'ya está en español'. Nunca "
+                  "toca items aprobados (golden records); no re-traduce lo "
+                  "ya traducido.",
+                  type="bool", default=False, advanced=True),
             _flag("--dry-run", "Modo prueba",
                   "Solo muestra qué se traduciría. No llama a la API.",
                   type="bool", default=False),
@@ -1946,6 +2059,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "fetch_better_covers",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🔍",
         "name": "Buscar portadas en mayor resolución",
@@ -1957,7 +2071,10 @@ SCRIPTS: list[dict[str, Any]] = [
             "(2) Sin ISBN → Serper Google Images API (SERPER_API_KEY, 2 500 queries gratis sin tarjeta) o "
             "Tavily Search API (TAVILY_API_KEY, 1 000 queries/mes) como fallback. "
             "Keys auto-cargadas desde .env. "
-            "Verificación: perceptual hash aHash 8×8, distancia Hamming ≤ --max-hash-dist (default 12/64). "
+            "Verificación (endurecida 2026-07-08): identidad AND-gate — aHash Hamming ≤ "
+            "--max-hash-dist (default 6/64) + dHash≤8 + pHash≤8 + NCC≥0.90 — y un gate de "
+            "entropía/detalle que descarta candidatas 'blandas' (escaneos sobre-comprimidos "
+            "o upscales que ganan píxeles pero pierden nitidez). "
             "SEGURO POR DEFECTO (2026-06-03): NO reemplaza ninguna portada automáticamente — todas las "
             "candidatas van a cover-preview.html para tu aprobación manual; el item conserva su portada "
             "vieja hasta que apruebes. Solo busca imágenes que realmente lo necesitan (debajo de --min-pixels). "
@@ -1965,7 +2082,7 @@ SCRIPTS: list[dict[str, Any]] = [
             "confianza NUNCA se auto-aplica. Aprobás en la página → corrés con --apply-preview."
         ),
         "when": (
-            "Después de upgrade_image_resolution.py. Cuando hay items con imagen < 100 000 px "
+            "Después de upgrade_image_resolution.py. Cuando hay items con imagen < 90 000 px "
             "sin versión hi-res en el servidor origen (típico: AnimeClick IT, ListadoManga ES). "
             "Correr primero con --dry-run para estimar. "
             "Requiere: pip install Pillow. "
@@ -1974,36 +2091,50 @@ SCRIPTS: list[dict[str, Any]] = [
         "command": [PYTHON, "scripts/retrofit/fetch_better_covers.py"],
         "presets": [
             {
+                "id": "dryrun",
                 "label": "🔍 Dry-run (ver candidatos)",
-                "flags": {"--dry-run": True, "--limit": 30, "--verbose": True},
+                "desc": "Lista candidatas sin descargar ni escribir preview. NO consume cuota API.",
+                "values": {"--dry-run": True, "--limit": 30, "--verbose": True},
             },
             {
+                "id": "cdn_only",
                 "label": "🔍 Solo CDN + OpenLibrary (sin web search)",
-                "flags": {"--no-search": True},
+                "desc": "Sólo lookups determinísticos por ISBN, sin gastar cuota de Serper/Tavily.",
+                "values": {"--no-search": True},
             },
             {
+                "id": "buscar",
                 "label": "🔍 Buscar y mandar a preview (no aplica nada)",
-                "flags": {},
+                "desc": "Corrida real: busca candidatas y las manda a cover-preview.html para tu aprobación.",
+                "values": {},
             },
             {
+                "id": "apply_preview",
                 "label": "✅ Aplicar aprobadas del preview",
-                "flags": {"--apply-preview": True},
+                "desc": "Aplica a items.jsonl las candidatas que ya aprobaste en cover-preview.html.",
+                "values": {"--apply-preview": True},
             },
         ],
         "flags": [
+            # min-pixels/max-hash-dist DEBEN coincidir con LOW_QUALITY_PX /
+            # DEFAULT_MAX_HASH_DIST de fetch_better_covers.py (2.1/2.2,
+            # 2026-07-08): un default más laxo acá DEBILITA el gate de
+            # covers recién endurecido en cada corrida desde el panel.
             _flag("--min-pixels", "Umbral de calidad baja (px)",
                   "Items con imagen de menos de N píxeles totales son candidatos. "
-                  "Default 100 000 ≈ 316×316 px.",
-                  type="int", default=100000, placeholder="100000"),
+                  "Default 90 000 ≈ 300×300 px (mismo umbral que el Panel de Calidad).",
+                  type="int", default=90000, placeholder="90000"),
             _flag("--min-gain", "Ganancia mínima requerida (×)",
                   "La candidata debe tener al menos N× más píxeles que la imagen actual. "
                   "Default 1.5: si la actual tiene 30 000 px, la candidata debe tener ≥ 45 000 px.",
                   type="float", default=1.5, placeholder="1.5"),
-            _flag("--max-hash-dist", "Distancia hash máxima (0-64)",
-                  "Distancia Hamming máxima del perceptual hash para aceptar la candidata "
-                  "como 'misma portada'. 0 = imagen idéntica, 64 = completamente diferente. "
-                  "Default 12: permite variaciones de iluminación, recorte leve, compresión.",
-                  type="int", default=12, placeholder="12"),
+            _flag("--max-hash-dist", "Distancia hash máxima del aHash (0-64)",
+                  "Cota Hamming del aHash para aceptar la candidata como 'misma portada'. "
+                  "0 = imagen idéntica, 64 = completamente diferente. dHash≤8, pHash≤8, "
+                  "NCC≥0.90 y el gate de entropía aplican SIEMPRE además de esta cota. "
+                  "Default 6 (endurecido 2026-07-08 — eval: old=14 falsos positivos → "
+                  "new=0). Valores >6 se honran pero suben el riesgo de falso positivo.",
+                  type="int", default=6, placeholder="6"),
             _flag("--no-search", "Solo CDN + OpenLibrary (sin búsqueda web)",
                   "No usa Serper, Brave ni Tavily. Solo lookups determinísticos por ISBN. "
                   "Rápido, sin consumo de cuota API; solo ayuda a items con ISBN.",
@@ -2034,17 +2165,30 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--limit", "Máx items a procesar",
                   "0 = sin límite. Útil para probar con --limit 50.",
                   type="int", default=0, placeholder="50"),
+            # action="append" en el argparse real (script splitea comas por
+            # chunk Y soporta --slugs repetido) — "csv_multi" cubre ambos.
+            _flag("--slugs", "Acotar a estos slugs (CSV)",
+                  "Corre SOLO sobre estos slugs exactos, además de los filtros "
+                  "normales de candidatura (un slug sin candidatura real igual "
+                  "se saltea). Vacío = todos los candidatos.",
+                  type="csv_multi", default="", advanced=True,
+                  placeholder="berserk-darkhorse-deluxe-1,naruto-viz-3in1-1"),
             _flag("--dry-run", "Modo prueba (no escribe)",
                   "Solo muestra qué se encontraría. No descarga ni modifica archivos.",
                   type="bool", default=False),
             _flag("--verbose", "Mostrar detalle de cada item",
                   "Imprime URL candidata, píxeles y resultado de verificación por item.",
                   type="bool", default=False),
+            # --include-approved existe en el argparse real pero se deja
+            # AFUERA del registry a propósito (3.1, 2026-07-08): por defecto
+            # protege golden records de --apply/--apply-preview; exponerlo en
+            # el panel facilitaría pisar una portada aprobada por error.
         ],
     },
 
     {
         "id": "dedup_carousel_images",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🖼️",
         "name": "Dedup portada del carrusel (misma foto, 2 resoluciones)",
@@ -2066,9 +2210,15 @@ SCRIPTS: list[dict[str, Any]] = [
         ),
         "command": [PYTHON, "scripts/retrofit/dedup_carousel_images.py"],
         "presets": [
-            {"label": "🖼️ Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
-            {"label": "🖼️ Aplicar (solo items con imagen de listadomanga)", "flags": {}},
-            {"label": "🖼️ Aplicar a TODOS los items", "flags": {"--all": True}},
+            {"id": "dryrun", "label": "🖼️ Dry-run (ver qué se quitaría)",
+             "desc": "Lista los duplicados que se quitarían sin tocar items.jsonl.",
+             "values": {"--dry-run": True}},
+            {"id": "apply_lm", "label": "🖼️ Aplicar (solo items con imagen de listadomanga)",
+             "desc": "Dedupea sólo items que tienen alguna imagen de listadomanga.",
+             "values": {}},
+            {"id": "apply_all", "label": "🖼️ Aplicar a TODOS los items",
+             "desc": "Revisa el carrusel de TODOS los items con ≥2 imágenes.",
+             "values": {"--all": True}},
         ],
         "flags": [
             _flag("--dry-run", "Solo mostrar, no escribir",
@@ -2083,6 +2233,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "purge_placeholder_images",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🚫",
         "name": "Purgar imágenes placeholder / 1×1 / rotas",
@@ -2107,9 +2258,15 @@ SCRIPTS: list[dict[str, Any]] = [
         ),
         "command": [PYTHON, "scripts/retrofit/purge_placeholder_images.py"],
         "presets": [
-            {"label": "🚫 Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
-            {"label": "🚫 Aplicar (mueve huérfanos a cuarentena)", "flags": {}},
-            {"label": "🚫 Aplicar sin mover archivos", "flags": {"--keep-files": True}},
+            {"id": "dryrun", "label": "🚫 Dry-run (ver qué se quitaría)",
+             "desc": "Reporta placeholders detectados sin tocar items.jsonl ni mover archivos.",
+             "values": {"--dry-run": True}},
+            {"id": "apply", "label": "🚫 Aplicar (mueve huérfanos a cuarentena)",
+             "desc": "Quita los placeholders y manda los archivos huérfanos a data/images/_orphans/.",
+             "values": {}},
+            {"id": "apply_keep", "label": "🚫 Aplicar sin mover archivos",
+             "desc": "Quita las entries de images[] pero deja los archivos placeholder en disco.",
+             "values": {"--keep-files": True}},
         ],
         "flags": [
             _flag("--dry-run", "Solo mostrar, no escribir",
@@ -2125,6 +2282,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "prune_soft_cover_candidates",
+        "mutates_items": False,
         "category": "Mantenimiento",
         "icon": "🩹",
         "name": "Podar candidatas de portada chicas + blandas",
@@ -2145,8 +2303,12 @@ SCRIPTS: list[dict[str, Any]] = [
         ),
         "command": [PYTHON, "scripts/retrofit/prune_soft_cover_candidates.py"],
         "presets": [
-            {"label": "🩹 Dry-run (ver qué se quitaría)", "flags": {"--dry-run": True}},
-            {"label": "🩹 Aplicar", "flags": {}},
+            {"id": "dryrun", "label": "🩹 Dry-run (ver qué se quitaría)",
+             "desc": "Reporta candidatas chicas+blandas sin tocar cover_preview.json.",
+             "values": {"--dry-run": True}},
+            {"id": "apply", "label": "🩹 Aplicar",
+             "desc": "Poda las candidatas chicas+blandas de la cola de aprobación.",
+             "values": {}},
         ],
         "flags": [
             _flag("--dry-run", "Solo mostrar, no escribir",
@@ -2158,6 +2320,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "promote_hires_cover",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "⬆️",
         "name": "Promover portada hi-res desde la galería",
@@ -2200,6 +2363,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "sync_cover_preview",
+        "mutates_items": False,
         "category": "Mantenimiento",
         "icon": "🔄",
         "name": "Sincronizar cola de portadas candidatas",
@@ -2243,7 +2407,57 @@ SCRIPTS: list[dict[str, Any]] = [
     },
 
     {
+        "id": "revalidate_cover_preview",
+        "mutates_items": False,
+        "category": "Mantenimiento",
+        "icon": "🔎",
+        "name": "Re-validar candidatas de portada contra el gate endurecido",
+        "tagline": "Re-corre el gate _same_cover/_is_soft_image OFFLINE sobre la cola pendiente.",
+        "what": (
+            "La mayoría de las candidatas PENDING de cover_preview.json vienen de una "
+            "versión vieja del skill watch-search-covers que nunca pasó por el gate "
+            "endurecido (_same_cover AND-gate + _is_soft_image, overhaul 2026-07-08). "
+            "Este script re-valida cada candidata pending SIN red — old_image y "
+            "new_image ya están espejados en data/images/ — reusando las funciones "
+            "REALES del motor (fetch_better_covers, delegación pura, cero lógica "
+            "copiada). Las que pasan quedan 'verified: true' con match_dist poblado "
+            "(las decide igual el owner); las que fallan pasan a 'rejected' con "
+            "reject_reason='auto_revalidation'. Sin referencia o candidata en disco "
+            "→ 'verified: false' (no auto-rechaza, sólo flaggea para revisión humana). "
+            "Idempotente: una candidata ya procesada no se reprocesa."
+        ),
+        "when": (
+            "1× para limpiar el backlog de candidatas sin verificar heredado del "
+            "skill viejo. Después de cada corrida del skill watch-search-covers ya no "
+            "hace falta — valida inline. Sin red, requiere Pillow."
+        ),
+        "command": [PYTHON, "scripts/retrofit/revalidate_cover_preview.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🔎 Dry-run (default del script)",
+                "desc": "Reporta qué cambiaría sin escribir cover_preview.json.",
+                "values": {},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Aplicar",
+                "desc": "Escribe los resultados de la re-validación (backup + atomic).",
+                "values": {"--apply": True},
+            },
+        ],
+        "flags": [
+            _flag("--apply", "Aplicar de verdad",
+                  "El script es dry-run por DEFAULT (mutuamente excluyente con este "
+                  "flag en el argparse real) — sin --apply sólo reporta. Con --apply "
+                  "escribe cover_preview.json con backup y rotación.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
         "id": "wayback_recover",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🕰️",
         "name": "Recuperar items 404 vía Wayback Machine",
@@ -2301,6 +2515,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "expand_whakoom_ediciones",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "📚",
         "name": "Expandir ediciones Whakoom en tomos",
@@ -2348,6 +2563,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "expand_index_pages",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🧹",
         "name": "Limpiar páginas-índice guardadas como productos",
@@ -2395,6 +2611,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "generate_slugs",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🔗",
         "name": "Generar slugs para el app Next.js",
@@ -2452,6 +2669,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "set_rarity",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🟪",
         "name": "Asignar rareza",
@@ -2493,6 +2711,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "apply_approvals",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "✅",
         "name": "Re-aplicar aprobaciones",
@@ -2526,6 +2745,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "sync_cover_images",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🖼️",
         "name": "Sincronizar portada del carrusel",
@@ -2565,6 +2785,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "align_raw_to_std_coleccion",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🔗",
         "name": "Alinear raw a edición estandarizada (por coleccion)",
@@ -2602,6 +2823,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "fix_store_publisher",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🏪",
         "name": "Sacar nombre de tienda del publisher (Sanyodo/Rakuten)",
@@ -2641,6 +2863,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "fix_listadomanga_edition_display",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🏷️",
         "name": "Nombre oficial de edición (sin traducir)",
@@ -2662,6 +2885,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "unify_coleccion_edition",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "📂",
         "name": "Una coleccion = una edición",
@@ -2685,6 +2909,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "fix_edition_country",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🌍",
         "name": "País en edition_key (país = edición)",
@@ -2721,6 +2946,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "fix_publisher_unknown_edition_key",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🏷️",
         "name": "Arreglar editorial 'unknown' en edition_key",
@@ -2757,6 +2983,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "consolidate_sources",
+        "mutates_items": True,
         "category": "Retrofit",
         "icon": "🧩",
         "name": "Consolidar fuentes (1 fila por producto)",
@@ -2790,12 +3017,70 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False),
         ],
     },
+    {
+        "id": "backfill_series_aliases",
+        "mutates_items": True,
+        "category": "Retrofit",
+        "icon": "🔗",
+        "name": "Backfill de aliases de serie (scope acotado)",
+        "tagline": "Remapea series_key/series_display a su canónica según series_aliases.yml.",
+        "what": (
+            "Aplica data/series_aliases.yml sobre los items indicados vía "
+            "canonical_series_key() (fuente única de la resolución de aliases): "
+            "remapea series_key/series_display a la forma canónica, re-alinea el "
+            "prefijo del edition_key (rebuild_edition_key_prefix), re-deriva "
+            "cluster_key y re-consolida con consolidate_by_cluster (la MISMA "
+            "primitiva del merge de la ingesta — decisión #1, nada reimplementado). "
+            "Salta items aprobados (golden records) por defecto. Idempotente; "
+            "backupea items.jsonl antes de escribir."
+        ),
+        "when": (
+            "Lo corre el skill /watch-enrich-series-aliases tras editar el YAML "
+            "de aliases. 'Series a remapear' (--only-keys) es OBLIGATORIO: son "
+            "EXACTAMENTE los series_key que la corrida del skill procesó. "
+            "Correrlo sobre todo el corpus puede colapsar series ajenas — regla "
+            "dura de la auditoría post-scrape 2026-07-07 ('backfill de aliases "
+            "NUNCA sobre todo el corpus'). Sin ese campo, el script aborta."
+        ),
+        "command": [PYTHON, "scripts/retrofit/backfill_series_aliases.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué cambiaría. Requiere completar 'Series a remapear'.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--only-keys", "Series a remapear (CSV) — OBLIGATORIO",
+                  "Lista separada por comas de los series_key EXACTOS a "
+                  "remapear (los que la corrida del skill acaba de procesar). "
+                  "Sin este campo el script aborta — es el guard contra "
+                  "colapsos colaterales de series ajenas.",
+                  type="csv", default="",
+                  placeholder="atelier-des-sorciers,apothicaire"),
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los remapeos que haría sin modificar items.jsonl.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Remapea también items aprobados (golden records). Por "
+                  "defecto se saltean.",
+                  type="bool", default=False, advanced=True),
+            # --all / --yes-i-know-collateral existen en el argparse real pero
+            # NO se exponen en el panel a propósito: son el caso excepcional
+            # de CLI para remapear TODO el corpus (doble confirmación textual).
+            # Exponerlos como toggles trivializaría un footgun con historial
+            # real de colapsos colaterales (regla dura 2026-07-07) — quien lo
+            # necesite, que lo escriba a mano en una terminal.
+        ],
+    },
 
     # =====================================================================
     # AUDITORÍA
     # =====================================================================
     {
         "id": "source_health",
+        "mutates_items": False,
         "category": "Auditoría",
         "icon": "🩺",
         "name": "Auditoría de salud de fuentes",
@@ -2834,10 +3119,23 @@ SCRIPTS: list[dict[str, Any]] = [
                   "guarda ahí.",
                   type="str", default="",
                   placeholder="reports/source-health.md", advanced=True),
+            _flag("--mode", "Modo del run (para el baseline)",
+                  "delta o full — compara el yield contra la mediana "
+                  "histórica del MISMO modo (delta-vs-delta, full-vs-full). "
+                  "Vacío = se infiere del run más reciente. Sólo tiene "
+                  "efecto junto con 'Alertar regresión de yield'.",
+                  type="choice", default="", choices=["delta", "full", "other"],
+                  advanced=True),
+            _flag("--baseline-alert", "Alertar regresión de yield",
+                  "Compara el yield del run actual contra la mediana "
+                  "histórica del mismo modo (ver logs/metrics.jsonl) y "
+                  "reporta fuentes que cayeron a menos de la mitad.",
+                  type="bool", default=False, advanced=True),
         ],
     },
     {
         "id": "data_quality",
+        "mutates_items": False,
         "category": "🔍 Calidad",
         "icon": "🩺",
         "name": "Auditoría de calidad de datos",
@@ -2891,6 +3189,7 @@ SCRIPTS: list[dict[str, Any]] = [
     },
     {
         "id": "split_edition_buckets",
+        "mutates_items": False,
         "category": "Auditoría",
         "icon": "🔀",
         "name": "Ediciones sospechosas de partirse solo por el tipo",
@@ -2943,6 +3242,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "purge_false_artbook_residuals",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🖼️",
         "name": "Desblindar falsos artbook (calendario legacy)",
@@ -2992,6 +3292,7 @@ SCRIPTS: list[dict[str, Any]] = [
 
     {
         "id": "purge_op_import_foreign",
+        "mutates_items": True,
         "category": "Mantenimiento",
         "icon": "🏴‍☠️",
         "name": "Purgar residuos ajenos del import de One Piece",
@@ -3054,3 +3355,225 @@ def known_flags(script_id: str) -> set[str]:
     if not s:
         return set()
     return {f["arg"] for f in s["flags"]}
+
+
+def mutates_items(script_id: str) -> bool:
+    """True si el script puede escribir data/items.jsonl.
+
+    Lo usan serve.py/admin_serve.py para el 409 de S10 (dos mutadores del
+    Panel corriendo a la vez se pisan sin lock de archivo, gotcha A12/S10)."""
+    s = SCRIPTS_BY_ID.get(script_id)
+    return bool(s and s.get("mutates_items"))
+
+
+# ---------------------------------------------------------------------------
+# Construcción del comando desde flags — FUENTE ÚNICA (4.1, 2026-07-08).
+#
+# Vivía duplicado byte-a-byte en serve.py y admin_serve.py (60 líneas, ya
+# habían divergido: sólo la copia de admin_serve.py sabía castear "choice").
+# Ambos servers ahora importan build_command/resolve_preset_env de acá.
+# ---------------------------------------------------------------------------
+
+def build_command(
+    script_id: str, flag_values: dict[str, Any]
+) -> tuple[list[str], str] | tuple[None, str]:
+    """Valida flags y devuelve (argv, label) o (None, mensaje_error)."""
+    spec = get_script(script_id)
+    if not spec:
+        return None, f"script_id desconocido: {script_id}"
+
+    valid = known_flags(script_id)
+    cmd = list(spec["command"])
+    used_labels: list[str] = []
+    by_arg = {f["arg"]: f for f in spec["flags"]}
+
+    for arg, value in flag_values.items():
+        if arg not in valid:
+            return None, f"flag desconocido para {script_id}: {arg}"
+        f = by_arg[arg]
+        t = f["type"]
+
+        if t == "bool":
+            if bool(value):
+                cmd.append(arg)
+                used_labels.append(arg)
+        elif t == "int":
+            if value in (None, "", "null"):
+                continue
+            try:
+                ival = int(value)
+            except (TypeError, ValueError):
+                return None, f"valor int inválido para {arg}: {value!r}"
+            if f.get("choices") and ival not in [int(c) for c in f["choices"]]:
+                return None, f"choice inválido para {arg}: {ival!r}"
+            cmd.extend([arg, str(ival)])
+            used_labels.append(f"{arg}={ival}")
+        elif t == "float":
+            if value in (None, "", "null"):
+                continue
+            try:
+                fval = float(value)
+            except (TypeError, ValueError):
+                return None, f"valor float inválido para {arg}: {value!r}"
+            cmd.extend([arg, str(fval)])
+            used_labels.append(f"{arg}={fval}")
+        elif t == "csv_multi":
+            # action="append" del argparse real, sin split interno de comas:
+            # una toma por cada valor separado por coma que mandó el panel.
+            sval = "" if value is None else str(value)
+            tokens = [tok.strip() for tok in sval.split(",") if tok.strip()]
+            for tok in tokens:
+                cmd.extend([arg, tok])
+            if tokens:
+                used_labels.append(f"{arg}={','.join(tokens)}")
+        elif t in ("str", "csv"):
+            sval = "" if value is None else str(value).strip()
+            if not sval:
+                continue
+            cmd.extend([arg, sval])
+            used_labels.append(f"{arg}={sval}")
+        elif t == "choice":
+            sval = "" if value is None else str(value).strip()
+            if not sval:
+                continue
+            if f.get("choices") and sval not in f["choices"]:
+                return None, f"choice inválido para {arg}: {sval!r}"
+            cmd.extend([arg, sval])
+            used_labels.append(f"{arg}={sval}")
+        else:
+            return None, f"tipo de flag no soportado: {t}"
+
+    label = spec["name"]
+    if used_labels:
+        label += "  ·  " + " ".join(used_labels)
+    return cmd, label
+
+
+# ---------------------------------------------------------------------------
+# Resolución server-side del env de un preset (1.2 / S5, 2026-07-08).
+#
+# Los presets "+ Whakoom spider" / "+ Whakoom + Wayback" corren scrape_delta/
+# full con INCLUDE_WHAKOOM_SPIDER=1 / INCLUDE_WAYBACK_RECOVERY=1 — variables
+# que los .sh leen para activar fases opt-in. El CLIENTE NUNCA manda env
+# arbitrario (sería inyección de proceso); sólo manda un preset_id conocido
+# y el servidor resuelve el env DESDE ACÁ, validado contra la allowlist.
+# ---------------------------------------------------------------------------
+
+# Prefijos de env var que los .sh del pipeline efectivamente leen
+# (scrape_delta.sh / scrape_full.sh: INCLUDE_WHAKOOM_SPIDER, SKIP_*, etc.).
+ALLOWED_ENV_PREFIXES: tuple[str, ...] = ("INCLUDE_", "SKIP_")
+
+
+def resolve_preset_env(script_id: str, preset_id: str | None) -> dict[str, str]:
+    """Devuelve el env dict de un preset conocido, filtrado por la allowlist.
+
+    preset_id ausente/desconocido, o un preset sin "env" → {} (sin efecto).
+    Claves fuera de ALLOWED_ENV_PREFIXES se descartan silenciosamente (nunca
+    deberían estar en el registry — 4.2 lo valida con un assert al importar)."""
+    if not preset_id:
+        return {}
+    spec = get_script(script_id)
+    if not spec:
+        return {}
+    for preset in spec.get("presets", []):
+        if preset.get("id") == preset_id:
+            env = preset.get("env") or {}
+            return {
+                k: str(v) for k, v in env.items()
+                if isinstance(k, str) and k.startswith(ALLOWED_ENV_PREFIXES)
+            }
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# Validación estructural del registry (4.2, 2026-07-08).
+#
+# Corre al IMPORTAR el módulo — un registry roto tumba serve.py/admin_serve.py
+# al arrancar en vez de fallar en silencio en producción (el bug 1.1 —
+# presets con "flags" en vez de "values" — pasó desapercibido meses porque
+# nada validaba el schema). tests/test_script_registry.py ejercita lo mismo
+# más las comparaciones por-AST contra los argparse reales.
+# ---------------------------------------------------------------------------
+
+_KNOWN_FLAG_TYPES = {"bool", "int", "float", "str", "choice", "csv", "csv_multi"}
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _validate_registry() -> None:
+    ids_seen: set[str] = set()
+    for spec in SCRIPTS:
+        sid = spec.get("id")
+        assert isinstance(sid, str) and sid, f"entrada sin id válido: {spec!r}"
+        assert sid not in ids_seen, f"id duplicado en SCRIPTS: {sid!r}"
+        ids_seen.add(sid)
+
+        assert isinstance(spec.get("mutates_items"), bool), (
+            f"{sid}: falta 'mutates_items' (bool) — marcá si el script "
+            f"puede escribir data/items.jsonl (usado por el 409 de S10)."
+        )
+
+        command = spec.get("command")
+        assert isinstance(command, list) and command, f"{sid}: 'command' inválido"
+        # El último elemento del command es el path al script (los previos son
+        # el intérprete/subcomando, ej. [PYTHON, "scripts/x.py"] o ["bash", "x.sh"]).
+        script_path = command[-1]
+        if isinstance(script_path, str) and script_path.endswith((".py", ".sh")):
+            full_path = _ROOT / script_path
+            assert full_path.exists(), (
+                f"{sid}: 'command' apunta a un path que no existe: {script_path}"
+            )
+
+        arg_names: set[str] = set()
+        for f in spec.get("flags", []):
+            arg = f.get("arg")
+            assert isinstance(arg, str) and arg.startswith("--"), (
+                f"{sid}: flag con 'arg' inválido: {f!r}"
+            )
+            assert arg not in arg_names, f"{sid}: flag duplicado {arg!r}"
+            arg_names.add(arg)
+            ftype = f.get("type")
+            assert ftype in _KNOWN_FLAG_TYPES, (
+                f"{sid}.{arg}: type desconocido {ftype!r} (válidos: {_KNOWN_FLAG_TYPES})"
+            )
+            if ftype == "choice":
+                assert f.get("choices"), f"{sid}.{arg}: type=choice sin 'choices'"
+
+        for preset in spec.get("presets", []):
+            assert "flags" not in preset, (
+                f"{sid}: preset con clave 'flags' (schema viejo, el panel usa "
+                f"'values') — {preset.get('label', preset)!r}. Este es "
+                f"EXACTAMENTE el bug 1.1 (2026-07-08): renombrá a 'values'."
+            )
+            assert isinstance(preset.get("id"), str) and preset["id"], (
+                f"{sid}: preset sin 'id' — {preset.get('label', preset)!r}"
+            )
+            assert isinstance(preset.get("label"), str) and preset["label"], (
+                f"{sid}: preset {preset.get('id')!r} sin 'label'"
+            )
+            assert isinstance(preset.get("desc"), str) and preset["desc"], (
+                f"{sid}: preset {preset.get('id')!r} sin 'desc'"
+            )
+            assert isinstance(preset.get("values"), dict), (
+                f"{sid}: preset {preset.get('id')!r} sin 'values' (dict)"
+            )
+            for preset_arg in preset["values"]:
+                assert preset_arg in arg_names, (
+                    f"{sid}: preset {preset['id']!r} referencia el flag "
+                    f"desconocido {preset_arg!r} (no está en 'flags')"
+                )
+            env = preset.get("env")
+            if env is not None:
+                assert isinstance(env, dict), f"{sid}: preset 'env' debe ser dict"
+                for k in env:
+                    assert isinstance(k, str) and k.startswith(ALLOWED_ENV_PREFIXES), (
+                        f"{sid}: preset {preset['id']!r} tiene la env var "
+                        f"{k!r} fuera de la allowlist {ALLOWED_ENV_PREFIXES} "
+                        f"— resolve_preset_env() la descartaría en silencio."
+                    )
+
+    assert len(SCRIPTS) == len(SCRIPTS_BY_ID), (
+        "hay ids duplicados en SCRIPTS (SCRIPTS_BY_ID los dedupeó en silencio)"
+    )
+
+
+_validate_registry()

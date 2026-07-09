@@ -49,7 +49,14 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from script_registry import SCRIPTS, get_script, known_flags  # type: ignore
+from script_registry import (  # type: ignore
+    SCRIPTS,
+    build_command,
+    get_script,
+    known_flags,
+    mutates_items,
+    resolve_preset_env,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +141,17 @@ class JobManager:
         self.lock = threading.Lock()
 
     def start(self, script_id: str, command: list[str], label: str,
-              cwd: Path, env: dict[str, str] | None = None) -> Job:
-        job = Job(script_id, label, command)
+              cwd: Path, env: dict[str, str] | None = None,
+              *, block_if_mutator: bool = False) -> tuple[Job | None, Job | None]:
+        """Ídem serve.py JobManager.start — devuelve (job, None) o (None,
+        blocker). El check+registro es atómico bajo el mismo lock (S10)."""
         with self.lock:
+            if block_if_mutator:
+                for jid in self.order:
+                    j = self.jobs.get(jid)
+                    if j and j.status == "running" and mutates_items(j.script_id):
+                        return None, j
+            job = Job(script_id, label, command)
             self.jobs[job.id] = job
             self.order.append(job.id)
             self._trim()
@@ -176,7 +191,7 @@ class JobManager:
         except Exception as e:
             job.append(f"[admin_serve][ERROR spawn] {e}")
             job.mark_done("error", -1)
-        return job
+        return job, None
 
     def stop(self, job_id: str) -> bool:
         job = self.jobs.get(job_id)
@@ -204,6 +219,16 @@ class JobManager:
     def list(self) -> list[Job]:
         return [self.jobs[jid] for jid in self.order if jid in self.jobs]
 
+    def running_mutator(self) -> Job | None:
+        """Sólo para INSPECCIÓN — ver el aviso en serve.py.JobManager.running_mutator.
+        El bloqueo real de /api/run usa start(block_if_mutator=True) (atómico)."""
+        with self.lock:
+            jobs = [self.jobs[jid] for jid in self.order if jid in self.jobs]
+        for job in jobs:
+            if job.status == "running" and mutates_items(job.script_id):
+                return job
+        return None
+
     def _trim(self) -> None:
         finished_ids = [jid for jid in self.order
                         if jid in self.jobs and self.jobs[jid].status != "running"]
@@ -218,71 +243,11 @@ class JobManager:
 
 JOBS = JobManager()
 
-
-# ---------------------------------------------------------------------------
-# Construcción del comando desde flags
-# ---------------------------------------------------------------------------
-
-def build_command(script_id: str, flag_values: dict[str, Any]) -> tuple[list[str], str] | tuple[None, str]:
-    """Valida flags y devuelve (argv, label) o (None, mensaje_error)."""
-    spec = get_script(script_id)
-    if not spec:
-        return None, f"script_id desconocido: {script_id}"
-
-    valid = known_flags(script_id)
-    cmd = list(spec["command"])
-    used_labels: list[str] = []
-    by_arg = {f["arg"]: f for f in spec["flags"]}
-
-    for arg, value in flag_values.items():
-        if arg not in valid:
-            return None, f"flag desconocido para {script_id}: {arg}"
-        f = by_arg[arg]
-        t = f["type"]
-
-        if t == "bool":
-            if bool(value):
-                cmd.append(arg)
-                used_labels.append(arg)
-        elif t == "int":
-            if value is None or value == "" or value == "null":
-                continue
-            try:
-                ival = int(value)
-            except (TypeError, ValueError):
-                return None, f"valor int inválido para {arg}: {value!r}"
-            cmd.extend([arg, str(ival)])
-            used_labels.append(f"{arg}={ival}")
-        elif t == "float":
-            if value is None or value == "" or value == "null":
-                continue
-            try:
-                fval = float(value)
-            except (TypeError, ValueError):
-                return None, f"valor float inválido para {arg}: {value!r}"
-            cmd.extend([arg, str(fval)])
-            used_labels.append(f"{arg}={fval}")
-        elif t in ("str", "csv"):
-            sval = "" if value is None else str(value).strip()
-            if not sval:
-                continue
-            cmd.extend([arg, sval])
-            used_labels.append(f"{arg}={sval}")
-        elif t == "choice":
-            sval = "" if value is None else str(value).strip()
-            if not sval:
-                continue
-            if f.get("choices") and sval not in f["choices"]:
-                return None, f"choice inválido para {arg}: {sval!r}"
-            cmd.extend([arg, sval])
-            used_labels.append(f"{arg}={sval}")
-        else:
-            return None, f"tipo de flag no soportado: {t}"
-
-    label = spec["name"]
-    if used_labels:
-        label += "  ·  " + " ".join(used_labels)
-    return cmd, label
+# build_command vive en script_registry.py (4.1, 2026-07-08) — fuente única,
+# importado arriba junto con resolve_preset_env/mutates_items. Ya no se
+# duplica acá (había divergido de la copia de serve.py: sólo ésta sabía
+# validar "choice", causa de que sync/desync se filtrara sin que un test lo
+# atrapara — ver tests/test_script_registry.py).
 
 
 # ---------------------------------------------------------------------------
@@ -298,18 +263,16 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         sys.stderr.write("[admin] " + (format % args) + "\n")
 
-    # ---------- CORS para que la UI consuma su propia API ----------
-    def end_headers(self) -> None:
-        # Mismo origen siempre que el front venga del mismo server, pero
-        # dejamos abierto para que un dev pueda apuntar el panel desde otro
-        # origen local si lo necesita.
-        self.send_header("Access-Control-Allow-Origin", "*")
-        super().end_headers()
-
+    # ---------- CORS (S7, 2026-07-08) ----------
+    # ANTES: `Access-Control-Allow-Origin: *` en toda respuesta. Aunque el
+    # bind por default es 127.0.0.1, ese header permite que CUALQUIER página
+    # abierta en el navegador del owner (o un dominio público con
+    # DNS-rebinding a 127.0.0.1) haga fetch() a /api/run y ejecute scripts —
+    # CSRF puro. No se necesita CORS: la UI (web/panel.html) consume /api/*
+    # del MISMO origen (ADMIN_API=""), no cross-origin. Sin el header, el
+    # navegador bloquea cualquier fetch() cross-origin por su cuenta.
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     # ---------- GET ----------
@@ -374,7 +337,20 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
+    def _origin_allowed(self) -> bool:
+        """Ídem serve.py._origin_allowed (S7, 2026-07-08): si el request trae
+        Origin (cross-origin fetch), su host debe matchear el Host local."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        origin_host = origin.split("://", 1)[-1].rstrip("/")
+        return bool(host) and origin_host == host
+
     def _handle_run(self) -> None:
+        if not self._origin_allowed():
+            self._json(403, {"error": "origin no permitido"})
+            return
         try:
             payload = self._read_json_body()
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -386,18 +362,41 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         if not isinstance(flags, dict):
             self._json(400, {"error": "'flags' debe ser dict"})
             return
+        preset_id = payload.get("preset_id")
+        if preset_id is not None and not isinstance(preset_id, str):
+            self._json(400, {"error": "'preset_id' debe ser string"})
+            return
 
         cmd, label = build_command(script_id, flags)
         if cmd is None:
             self._json(400, {"error": label})  # label es msg de error
             return
 
+        # El env NUNCA viene del cliente — se resuelve server-side desde el
+        # preset_id, validado contra la allowlist (1.2/S5, 2026-07-08).
+        env = resolve_preset_env(script_id, preset_id)
+
         # Resolver path absoluto al python del venv si existe.
         if cmd and cmd[0] == ".venv/bin/python":
             candidate = ROOT / ".venv" / "bin" / "python"
             cmd[0] = str(candidate) if candidate.exists() else sys.executable
 
-        job = JOBS.start(script_id, cmd, label, cwd=ROOT)
+        # S10: check + registro ATÓMICOS bajo el mismo lock (ver serve.py).
+        job, blocker = JOBS.start(
+            script_id, cmd, label, cwd=ROOT, env=env or None,
+            block_if_mutator=mutates_items(script_id),
+        )
+        if job is None:
+            assert blocker is not None
+            self._json(409, {
+                "error": (
+                    f"ya hay un job mutador corriendo ({blocker.script_id}, "
+                    f"job {blocker.id}) — esperá a que termine"
+                ),
+                "job_id": blocker.id,
+                "script_id": blocker.script_id,
+            })
+            return
         self._json(200, {"job_id": job.id, "label": label, "command": cmd})
 
     # ---------- SSE ----------
