@@ -651,7 +651,17 @@ def candidate_metadata_conflict(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _fetch(url: str, session: requests.Session, timeout: tuple = (8, 20)) -> Optional[bytes]:
-    """Descarga una URL y devuelve los bytes. None si falla."""
+    """Descarga una URL y devuelve los bytes. None si falla.
+
+    F10 — URLs con caracteres no-ASCII sin escapar (thai/chino/etc. en el path
+    o la query) crasheaban acá con `UnicodeError` antes de llegar siquiera al
+    `except requests.RequestException` (que no lo cubre). `requote_uri` normaliza
+    el escaping (idempotente sobre URLs ya bien formadas) y el catch adicional
+    de `UnicodeError` cubre lo que el requote no alcance a arreglar."""
+    try:
+        url = requests.utils.requote_uri(url)
+    except Exception:
+        pass  # si el requote falla, seguimos con la URL original
     try:
         r = session.get(url, timeout=timeout, stream=True, headers=_HEADERS)
         if r.status_code != 200:
@@ -669,7 +679,7 @@ def _fetch(url: str, session: requests.Session, timeout: tuple = (8, 20)) -> Opt
             if time.monotonic() > deadline:
                 return None
         return bytes(body)
-    except requests.RequestException:
+    except (requests.RequestException, UnicodeError):
         return None
     finally:
         try:
@@ -703,6 +713,27 @@ def _isbn13_to_10(isbn13: str) -> Optional[str]:
     check = total % 11
     check_char = "X" if check == 10 else str(check)
     return body + check_char
+
+
+def _isbn_len_ok(isbn: str) -> bool:
+    """True si el ISBN tiene la longitud/prefijo que `_candidates_from_isbn*`
+    siquiera intenta resolver (10 dígitos, o 13 con prefijo 978/979). NO valida
+    checksum (eso lo hace `_norm_isbn13` para el gate R5) — sólo distingue
+    "esto puede producir una candidata CDN gratis" de "esto es demasiado
+    corto/largo/mal formado para producir ninguna".
+
+    F18 — usado por `run()` para que `--limit` cuente como "consume búsqueda
+    web" a los items cuyo campo `isbn` es un string no-vacío pero de longitud
+    inválida: antes esos items se trataban como "gratis" (tienen `isbn`
+    truthy) pero en la práctica `_candidates_from_isbn*` no producía NINGUNA
+    candidata para ellos y el item caía igual a Serper/Tavily (créditos
+    reales), sin que `--limit` lo contabilizara."""
+    clean = str(isbn or "").replace("-", "").replace(" ", "")
+    if len(clean) == 10:
+        return True
+    if len(clean) == 13 and clean.startswith(("978", "979")):
+        return True
+    return False
 
 
 def _candidates_from_isbn(isbn: str, session: requests.Session) -> list[str]:
@@ -893,23 +924,26 @@ def _build_search_query(item: dict) -> str:
     1. Usa `title_original` si difiere de `title` — el título local (FR/IT/ES)
        es lo que Google Images indexa en los retailers de ese país.
     2. Usa `series_display` como nombre base de la serie (sin sufijos de edición).
-    3. Extrae el tipo de edición del `edition_key` y lo adapta al idioma.
-    4. Simplifica el publisher (quita palabras genéricas).
-    5. Usa el término de "portada" correcto según el idioma del item.
+    3. Simplifica el publisher (quita palabras genéricas).
+    4. Usa el término de "portada" correcto según el idioma del item.
+
+    NO extrae el tipo de edición del `edition_key` (ver comentario abajo): el
+    título ya lo contiene cuando corresponde.
     """
     title       = item.get("title", "")
     title_orig  = item.get("title_original", "")
     series      = item.get("series_display", "")
     publisher   = item.get("publisher", "")
     language    = item.get("language", "")
-    edition_key = item.get("edition_key", "")
     volume      = item.get("volume", "")
 
     cover_term    = _COVER_TERM.get(language, "cover")
     pub_short     = _simplify_publisher(publisher)
-    ed_slug       = _edition_slug(edition_key)
-    ed_hints      = _EDITION_HINT.get(ed_slug, {})
-    edition_hint  = ed_hints.get(language, ed_hints.get("default", ""))
+    # F16 — antes acá se derivaba `edition_hint` (vía `_edition_slug`/`_EDITION_HINT`)
+    # pero NUNCA se usaba en `parts` (ver el comentario debajo: el título ya lo
+    # contiene). `_edition_slug`/`_EDITION_HINT` en sí NO son código muerto —
+    # los usa `.claude/skills/watch-search-covers/SKILL.md` (`fbc._edition_slug`,
+    # `fbc._EDITION_HINT`) — solo se quitó el cómputo local sin uso de esta función.
 
     parts: list[str] = []
 
@@ -985,6 +1019,12 @@ def _search_serper_for_cover(
             "url": url,
             "page_title": img.get("title", ""),
             "domain": img.get("domain", ""),
+            # F4-fix — Serper /images también trae `link` (la página que aloja
+            # la imagen), igual que /lens. Antes solo Lens lo capturaba, así
+            # que la vía text-search nunca tenía con qué correr
+            # `_validate_page_content` en modo fail-closed cuando no había
+            # referencia local (ver `_passes_no_ref_gate`).
+            "link": img.get("link", ""),
             "width": w,
             "height": h,
         })
@@ -1127,9 +1167,12 @@ def _search_serper_lens(
             if any(bad in page_domain for bad in _LENS_LOW_QUALITY_DOMAINS):
                 continue
 
-        # Debe tener extensión de imagen o ser de un CDN conocido
+        # Debe tener extensión de imagen o ser de un CDN conocido.
+        # F16 — `f"{e}?" in path` era una condición muerta: `urlparse().path`
+        # NUNCA contiene "?" (la query string queda en `.query`, un atributo
+        # separado), así que ese término jamás podía matchear.
         path = parsed.path.lower()
-        has_ext = any(path.endswith(e) or f"{e}?" in path or f"{e};" in path
+        has_ext = any(path.endswith(e) or f"{e};" in path
                       for e in (".jpg", ".jpeg", ".png", ".webp"))
         is_cdn = any(h in domain for h in (
             "amazon.com", "media-amazon", "whakoom.com", "normaeditorial.com",
@@ -1312,6 +1355,13 @@ def _atomic_write(items_path: Path, rows: list[dict]) -> None:
         with tmp.open("w", encoding="utf-8") as f:
             for row in rows:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            # F12 — fsync antes del replace: sin esto, un crash justo después del
+            # write (antes de que el kernel baje el page cache a disco) puede
+            # dejar el tmp con datos truncados/vacíos y el `replace()` promueve
+            # ese archivo corrupto. `append_jsonl` (la vía canónica de escritura
+            # del proyecto) ya hace este fsync — acá faltaba.
+            f.flush()
+            os.fsync(f.fileno())
         tmp.replace(items_path)
     except Exception:
         tmp.unlink(missing_ok=True)
@@ -1466,9 +1516,21 @@ def _validate_page_content(page_url: str, item: dict, session: requests.Session,
         utilizable). Un error/timeout/status≠200 ⇒ RECHAZO, con 1 reintento corto
         antes de rendirse. Sin esto, una candidata sin ref se colaba con sólo el
         aspect ratio si la página no respondía.
+
+    F4-fix (2026-07-08) — `page_url` vacío: antes esto SIEMPRE aceptaba (`return
+    True`) sin mirar `fail_open`, así que en modo fail-closed (candidata sin
+    referencia visual Y sin page_url) el "chequeo obligatorio" era en realidad
+    un no-op — un hueco real porque `link` sólo lo poblaba Lens (texto no lo
+    traía). Ahora respeta `fail_open`: sin página que mirar, fail_open=True
+    sigue aceptando (best-effort, sin penalizar candidatas ya verificadas
+    visualmente); fail_open=False rechaza (no hay nada que verificar → no puede
+    "pasar" el gate fail-closed). El caller (`_passes_no_ref_gate`) decide con
+    `require_page_validation` si este chequeo aplica para la vía (CDN no tiene
+    página que scrapear — su confianza viene del ISBN determinístico, no de
+    texto — así que ese caller ni siquiera llega acá).
     """
     if not page_url:
-        return True  # sin URL de página, no podemos verificar → aceptar
+        return fail_open
 
     publisher = item.get("publisher", "").lower()
     series = item.get("series_display", "").lower()
@@ -1513,6 +1575,17 @@ def _validate_page_content(page_url: str, item: dict, session: requests.Session,
                 print(f"      page validation: serie '{series[:30]}' no encontrada", flush=True)
             return False
 
+    # F11 — señal ADICIONAL, NO bloqueante: el publisher en la página puede
+    # variar (imprint/sello local/nombre corto vs. largo) — un miss no es
+    # concluyente, así que nunca rechaza por sí solo. Antes `pub_keywords` se
+    # computaba y se abandonaba sin usar (promesa de verificación incumplida);
+    # ahora se reporta en verbose para diagnóstico.
+    if verbose and pub_keywords:
+        pub_match = sum(1 for w in pub_keywords if w in text)
+        if pub_match == 0:
+            print(f"      page validation: publisher '{publisher[:30]}' no encontrado "
+                  f"(señal adicional, no bloqueante)", flush=True)
+
     # Verificar volumen si lo tiene
     if volume and volume.isdigit():
         # Buscar el número del volumen en contexto de "vol", "tome", "tomo", "n°", "#"
@@ -1535,15 +1608,15 @@ def _validate_page_content(page_url: str, item: dict, session: requests.Session,
 # Leer estado actual del image_local
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _get_current_pixels(item: dict, images_dir: Path) -> int:
-    fname = image_store.cover_local(item)
-    if not fname:
-        return 0
-    path = images_dir / fname
-    if not path.exists():
+def _get_current_pixels(item: dict, images_dir: Path, _bytes: Optional[bytes] = None) -> int:
+    """Píxeles de la portada actual. F17 — acepta `_bytes` ya leídos (el caller
+    los pasa cuando ya los tiene en memoria) para no releer/re-parsear el MISMO
+    archivo de portada varias veces por item (antes: hasta 3-4 lecturas)."""
+    data = _bytes if _bytes is not None else _get_current_bytes(item, images_dir)
+    if not data:
         return 0
     try:
-        return _get_pixels_from_bytes(path.read_bytes())
+        return _get_pixels_from_bytes(data)
     except Exception:
         return 0
 
@@ -1575,15 +1648,28 @@ def _passes_no_ref_gate(
     orig_bytes: bytes,
     session: requests.Session,
     verbose: bool = False,
+    require_page_validation: bool = True,
 ) -> bool:
     """Gate FAIL-CLOSED para candidatas SIN referencia utilizable — no se pudo
     correr _same_cover (sin portada actual, o la actual < 10k px, donde _same_cover
-    deja de ser fiable). Exige TODO (F4/F7):
+    deja de ser fiable). Exige (F4/F7):
 
       - aspect ratio ±0.25 contra la referencia (si la referencia da dimensiones),
       - sin conflicto de metadata (volumen/ISBN) declarado por la candidata,
-      - `_validate_page_content` en modo FAIL-CLOSED (error/timeout/status≠200 ⇒
-        rechazo, con 1 reintento).
+      - si `require_page_validation` (default True): `_validate_page_content` en
+        modo FAIL-CLOSED (error/timeout/status≠200/sin página ⇒ rechazo, con 1
+        reintento).
+
+    `require_page_validation=False` — usado por la vía CDN/ISBN (Amazon/PRH/
+    OpenLibrary/Google Books): esas candidatas no tienen una "página" que
+    scrapear (son URLs de imagen directas de un CDN), así que exigirles page
+    validation las rechazaría siempre (0% pass rate) — su confianza viene del
+    match determinístico por ISBN, no de texto. F4-fix (2026-07-08): antes
+    `_validate_page_content("")` aceptaba de forma vacua sin mirar `fail_open`
+    para CUALQUIER vía sin `link` (que era todas menos Lens); ahora que
+    `_validate_page_content` respeta `fail_open`, CDN necesita este flag
+    explícito para conservar su comportamiento documentado (no se "mata" la
+    vía, se preserva tal como estaba — el hueco cerrado es en lens/text).
     """
     # Aspect ratio ±0.25 contra la referencia (si es medible).
     if orig_bytes:
@@ -1600,33 +1686,15 @@ def _passes_no_ref_gate(
     # rama por-vía; se re-verifica acá para dejar explícito el gate sin-ref).
     if candidate_metadata_conflict(item, cand.get("url", ""), cand.get("page_title", "")):
         return False
-    # Validación de página FAIL-CLOSED.
+    if not require_page_validation:
+        return True
+    # Validación de página FAIL-CLOSED (lens/text; CDN no llega acá).
     page_link = cand.get("link", "")
     if not _validate_page_content(page_link, item, session, verbose, fail_open=False):
         if verbose:
             print("    skip: page content fail-closed (sin ref utilizable)", flush=True)
         return False
     return True
-
-def _text_matches_item(page_title: str, item: dict) -> bool:
-    """Verifica que el título de la página de la candidata sea relevante al item."""
-    if not page_title:
-        return True  # sin metadata, no podemos verificar → aceptar
-    pt = page_title.lower()
-    series = item.get("series_display", "").lower()
-    title_orig = item.get("title_original", "").lower()
-    # Al menos el nombre de la serie (o parte significativa) debe aparecer en el título de la página
-    series_words = [w for w in series.split() if len(w) >= 4]
-    if series_words:
-        matches = sum(1 for w in series_words if w in pt)
-        return matches >= max(1, len(series_words) // 2)
-    # Si no tenemos series_display, probar con title_original
-    title_words = [w for w in title_orig.split() if len(w) >= 4]
-    if title_words:
-        matches = sum(1 for w in title_words if w in pt)
-        return matches >= max(1, len(title_words) // 2)
-    return True
-
 
 def _process_item(
     item: dict,
@@ -1659,8 +1727,13 @@ def _process_item(
     if _SKIP_SIGNALS & set(signals):
         return None
 
-    curr_px = _get_current_pixels(item, images_dir)
-    is_upscaled_item = _is_upscaled(item, images_dir)
+    # F17 — leer la portada actual UNA sola vez y reusar los bytes para todo lo
+    # que necesita el archivo local (píxeles, detección de upscale, referencia
+    # para _same_cover más abajo). Antes se leía/parseaba el MISMO archivo
+    # hasta 3-4 veces por item.
+    orig_bytes = _get_current_bytes(item, images_dir)
+    curr_px = _get_current_pixels(item, images_dir, orig_bytes)
+    is_upscaled_item = _is_upscaled(item, images_dir, orig_bytes)
     # Solo buscamos para imágenes que GENUINAMENTE necesitan mejora: las que
     # están por debajo del umbral de píxeles. Antes había un bypass que hacía
     # buscar reemplazo para CUALQUIER imagen upscaleada por AI aunque ya fuera de
@@ -1738,9 +1811,9 @@ def _process_item(
     if not all_candidates:
         return None
 
-    # Evaluar candidatas
-    orig_bytes = _get_current_bytes(item, images_dir)
-    orig_px = _get_pixels_from_bytes(orig_bytes) if orig_bytes else curr_px
+    # Evaluar candidatas. `orig_bytes` ya se leyó una vez arriba (F17); `orig_px`
+    # es exactamente `curr_px` (mismos bytes, mismo cómputo) — sin releer.
+    orig_px = curr_px
 
     for cand in all_candidates:
         url = cand["url"]
@@ -1803,7 +1876,11 @@ def _process_item(
                 verified = True
             else:
                 confidence = "low"
-                if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose):
+                # require_page_validation=False: CDN no tiene página que
+                # scrapear (URL de imagen directa) — ver docstring de
+                # _passes_no_ref_gate (F4-fix).
+                if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose,
+                                            require_page_validation=False):
                     continue
         elif via == "lens":
             # F4 — Lens ya hizo el matching visual, pero ahora EXIGIMOS _same_cover
@@ -1961,9 +2038,12 @@ def _write_preview(entries: list[dict], merge: bool = True) -> None:
         except (ValueError, OSError):
             pass
     tmp = _PREVIEW_PATH.with_name(f"{_PREVIEW_PATH.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(
-        json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # F12 — fsync antes del replace (mismo motivo que _atomic_write): sin esto
+    # un crash justo tras el write puede promover un tmp truncado.
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(entries, ensure_ascii=False, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
     tmp.replace(_PREVIEW_PATH)
 
 
@@ -2131,15 +2211,16 @@ def _collect_referenced_locals(items: list[dict]) -> set:
     return referenced
 
 
-def _is_upscaled(item: dict, images_dir: Path) -> bool:
-    """Detecta si la portada actual es un PNG upscaleado por waifu2x (look pastel)."""
+def _is_upscaled(item: dict, images_dir: Path, _bytes: Optional[bytes] = None) -> bool:
+    """Detecta si la portada actual es un PNG upscaleado por waifu2x (look pastel).
+    F17 — acepta `_bytes` ya leídos (ver `_get_current_pixels`)."""
     local = image_store.cover_local(item)
     if not local or not local.endswith(".png"):
         return False
     # Los upscaleados de waifu2x producen PNGs grandes (> 200k px)
     # a partir de fuentes chicas. Si la image_url original es de un CDN
     # que sirve thumbnails, probablemente fue upscaleada.
-    px = _get_current_pixels(item, images_dir)
+    px = _get_current_pixels(item, images_dir, _bytes)
     return px >= 200_000
 
 
@@ -2194,14 +2275,19 @@ def run(
         item = items[i]
         if not _SKIP_SIGNALS.isdisjoint(item.get("signal_types", [])):
             return False
-        px = _get_current_pixels(item, images_dir)
+        # F17 — leer la portada UNA vez y reusar los bytes para px + upscale
+        # check (antes: hasta 2 lecturas del mismo archivo acá).
+        data = _get_current_bytes(item, images_dir)
+        if not data:
+            return False
+        px = _get_current_pixels(item, images_dir, data)
         if px <= 0:
             return False
         # Candidato normal: imagen chica
         if px < min_pixels:
             return True
         # Candidato extra: imagen upscaleada (pastel) — buscar reemplazo real
-        if include_upscaled and _is_upscaled(item, images_dir):
+        if include_upscaled and _is_upscaled(item, images_dir, data):
             return True
         return False
 
@@ -2222,13 +2308,17 @@ def run(
 
     total = len(all_candidates_idx)
 
-    # --limit aplica a items que realmente necesitan búsqueda web (sin ISBN),
-    # no a los que solo hacen CDN check local. Así no se desperdician créditos.
+    # --limit aplica a items que realmente necesitan búsqueda web (sin ISBN
+    # resoluble), no a los que solo hacen CDN check local. Así no se
+    # desperdician créditos. F18 — `_isbn_len_ok` (no `bool(isbn)` a secas):
+    # un ISBN con longitud/prefijo inválido nunca produce candidata CDN, así
+    # que ese item cae igual a Serper/Tavily (créditos reales) — contarlo como
+    # "con ISBN" subestimaba el consumo real de API del --limit pedido.
     if limit > 0:
         candidates_idx: list[int] = []
         search_count = 0
         for idx in all_candidates_idx:
-            has_isbn = bool(items[idx].get("isbn"))
+            has_isbn = _isbn_len_ok(items[idx].get("isbn", ""))
             candidates_idx.append(idx)
             if not has_isbn:
                 search_count += 1
@@ -2237,7 +2327,7 @@ def run(
     else:
         candidates_idx = all_candidates_idx
 
-    with_isbn = sum(1 for i in candidates_idx if items[i].get("isbn"))
+    with_isbn = sum(1 for i in candidates_idx if _isbn_len_ok(items[i].get("isbn", "")))
     without_isbn = len(candidates_idx) - with_isbn
 
     mode_label = "PREVIEW" if preview else ("dry-run" if dry_run else "escritura")
@@ -2408,8 +2498,14 @@ def run(
                 skipped += 1
         except Exception as e:
             errors += 1
+            # F15 — visible SIEMPRE (antes: solo con --verbose, así que una
+            # corrida sin -v podía terminar con "Errores: 40" y cero pistas de
+            # cuáles/por qué). Item + tipo de excepción alcanzan para triage sin
+            # inundar la salida; con --verbose se imprime además el traceback.
+            print(f"  ⚠ WARN [{item.get('slug', '') or title}]: {type(e).__name__}: {e}", flush=True)
             if verbose:
-                print(f"  ERROR: {e}", flush=True)
+                import traceback  # noqa: PLC0415
+                traceback.print_exc()
 
         # ITEM 6 — observabilidad: UNA fila por target procesado (no por motor;
         # el dedup recently_failed del skill toma la última fila por
@@ -2464,9 +2560,22 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
     Una entry se quita del preview cuando TODAS sus candidatas están decididas
     (approved/rejected). Si queda alguna pending, la entry se conserva entera.
 
-    `dry_run`: si True, NO escribe el ledger de rechazos (ITEM 1). El resto del
-    apply es igual (no hay caller de producción que pase dry_run=True; sirve para
-    tests y para inspección sin ensuciar la denylist).
+    `dry_run`: DRY-RUN REAL (F1-fix, 2026-07-08) — no toca NADA en disco:
+      - NO escribe/rota el backup de items.jsonl.
+      - NO re-descarga archivos faltantes (self-heal): si una candidata
+        aprobada tiene el archivo local ausente, se reporta como "pendiente"
+        sin contactar la red ni escribir un archivo nuevo.
+      - NO escribe items.jsonl (`_atomic_write` se salta).
+      - NO hace `unlink()` de imágenes viejas ni nuevas.
+      - NO escribe el ledger de rechazos.
+      - NO escribe/borra cover_preview.json.
+    El resto de la lógica (qué se APLICARÍA/REVERTIRÍA, los contadores del
+    resumen) corre igual, así el resumen impreso es fiel a lo que haría una
+    corrida real — es lo único que se muta es un `items` en memoria que nunca
+    se persiste. Antes `--apply-preview --dry-run` se ignoraba por completo
+    (la CLI nunca pasaba `dry_run` a esta función) Y aunque se hubiera pasado,
+    la implementación vieja sólo saltaba el ledger — igual escribía
+    items.jsonl y borraba archivos. Ambos huecos se cierran acá.
     """
     if not _PREVIEW_PATH.exists():
         print(f"No hay preview en {_PREVIEW_PATH}.")
@@ -2481,6 +2590,10 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
     n_rejected = sum(1 for c in all_cands if c.get("status") == "rejected")
     n_pending  = sum(1 for c in all_cands if c.get("status", "pending") == "pending")
 
+    if dry_run:
+        print("[DRY-RUN] No se modifica NADA en disco (items.jsonl, imágenes, "
+              "preview, ledger) — solo se reporta qué haría una corrida real.",
+              flush=True)
     print(f"Preview: {len(preview)} productos, {len(all_cands)} candidatas — "
           f"{n_approved} aprobadas, {n_rejected} rechazadas, {n_pending} pendientes",
           flush=True)
@@ -2491,7 +2604,8 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                 "message": "Nada que procesar (todo pendiente)."}
 
     items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
-    backup_and_rotate(items_path, "apply-preview")
+    if not dry_run:
+        backup_and_rotate(items_path, "apply-preview")
 
     items_by_slug: dict[str, list[dict]] = {}
     for item in items:
@@ -2545,14 +2659,29 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                 # desde new_url antes de rendirse. Solo si la descarga falla se omite
                 # (la entry se conserva en el preview y se reporta en el summary).
                 if new_local and new_local != "[dry-run]" and not (images_dir / new_local).exists():
+                    if dry_run:
+                        # F1 — dry-run real: no contactamos la red ni escribimos
+                        # un archivo nuevo. Se reporta como si la re-descarga no
+                        # se hubiera intentado (conservador: el resumen dry-run
+                        # no puede prometer un self-heal que no ejecutó).
+                        skipped_missing_file += 1
+                        entries_with_missing.add(slug)
+                        continue
                     refetched = ""
-                    if new_url.startswith("http"):
-                        if _redl_session is None:
-                            _redl_session = requests.Session()
-                            _redl_session.headers.update({"User-Agent": _UA})
-                        data_bytes = _fetch(new_url, _redl_session)
-                        if data_bytes:
-                            refetched = _save_image(data_bytes, images_dir) or ""
+                    try:
+                        # F10 — el self-heal no tenía try propio: una excepción
+                        # inesperada de _fetch/_save_image (más allá de las que
+                        # _fetch ya atrapa internamente) tumbaba apply_preview()
+                        # entero a mitad de aplicar candidatas ya decididas.
+                        if new_url.startswith("http"):
+                            if _redl_session is None:
+                                _redl_session = requests.Session()
+                                _redl_session.headers.update({"User-Agent": _UA})
+                            data_bytes = _fetch(new_url, _redl_session)
+                            if data_bytes:
+                                refetched = _save_image(data_bytes, images_dir) or ""
+                    except Exception:
+                        refetched = ""
                     if refetched:
                         new_local = refetched
                         cand["new_image"] = refetched
@@ -2661,7 +2790,14 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     new_to_drop.add(new_local)
             # pending: nada
 
-    _atomic_write(items_path, items)
+    # F1 — dry-run real: NO escribimos items.jsonl. `items` en memoria ya
+    # refleja lo que la corrida real aplicaría (los `_apply_improvement`/
+    # `_remove_gallery_image` de arriba mutaron esos dicts en memoria nomás),
+    # así que los contadores de abajo (replaced/galleried/reverted/etc.) y el
+    # cálculo de `referenced` para el resumen de borrado siguen siendo fieles
+    # a lo que pasaría — sólo el disco queda intacto.
+    if not dry_run:
+        _atomic_write(items_path, items)
 
     # Borrado seguro de archivos: solo si NINGÚN item los referencia tras aplicar.
     referenced = _collect_referenced_locals(items)
@@ -2671,16 +2807,21 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
         if fname and fname not in referenced:
             f = images_dir / fname
             if f.exists():
-                f.unlink()
+                if not dry_run:
+                    f.unlink()
                 cleaned_old += 1
     for fname in new_to_drop:
         if fname and fname not in referenced:
             f = images_dir / fname
             if f.exists():
-                f.unlink()
+                if not dry_run:
+                    f.unlink()
                 cleaned_new += 1
 
-    print(f"✓ Resultado:")
+    if dry_run:
+        print(f"[DRY-RUN] Resultado (nada se escribió en disco):")
+    else:
+        print(f"✓ Resultado:")
     print(f"  Reemplazos (portada/galería): {replaced} (imagen vieja eliminada: {cleaned_old})")
     print(f"  Agregadas a galería:          {galleried}")
     print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
@@ -2735,19 +2876,27 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
         remaining.append(e)
     n_rem = 0
     if remaining:
-        # merge=False: apply_preview es autoritativo sobre el estado final del
-        # preview (ya releyó el disco arriba). Un merge acá re-agregaría las
-        # candidatas decididas que este apply acaba de quitar (F19).
-        _write_preview(remaining, merge=False)
+        if not dry_run:
+            # merge=False: apply_preview es autoritativo sobre el estado final
+            # del preview (ya releyó el disco arriba). Un merge acá
+            # re-agregaría las candidatas decididas que este apply acaba de
+            # quitar (F19).
+            _write_preview(remaining, merge=False)
         n_rem = sum(1 for e in remaining for c in e["candidates"]
                     if c.get("status", "pending") == "pending")
-        print(f"  Pendientes:              {n_rem} candidatas (siguen en preview)")
+        tag = "[DRY-RUN] " if dry_run else ""
+        print(f"  {tag}Pendientes:              {n_rem} candidatas "
+              f"(siguen en preview{' — no se escribió' if dry_run else ''})")
     else:
-        _PREVIEW_PATH.unlink()
-        print(f"  Preview limpiado (todo procesado).")
+        if not dry_run:
+            _PREVIEW_PATH.unlink()
+            print(f"  Preview limpiado (todo procesado).")
+        else:
+            print(f"  [DRY-RUN] Preview quedaría limpio (todo procesado) — no se modifica.")
 
     return {
         "ok": True,
+        "dry_run": dry_run,
         "applied": n_approved,
         "rejected": n_rejected,
         "pending": n_rem,
@@ -2863,7 +3012,11 @@ def main() -> None:
               f"aHash. dHash/pHash/NCC/entropía siguen aplicando igual.", flush=True)
 
     if args.apply_preview:
-        apply_preview(Path(args.items), Path(args.images_dir), include_approved=args.include_approved)
+        # F1-fix — antes `--apply-preview --dry-run` se ignoraba: la CLI nunca
+        # pasaba `dry_run` a apply_preview(), así que el flag no tenía efecto y
+        # una corrida "dry-run" mutaba items.jsonl y borraba archivos igual.
+        apply_preview(Path(args.items), Path(args.images_dir),
+                      include_approved=args.include_approved, dry_run=args.dry_run)
         return
 
     run(
