@@ -252,6 +252,96 @@ describe('filterClusters', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Búsqueda: editorial, ISBN, acentos y tokens AND (auditoría #1 / #2)
+// ---------------------------------------------------------------------------
+
+// Fixtures sin `searchText` → filterClusters usa el fallback buildSearchText
+// (mismo builder que el data layer). Cubre editorial + ISBN + acentos.
+const pokemonItem = makeItem({
+  title: 'Pokémon Adventures Ed. Coleccionista',
+  series_display: 'Pokémon',
+  country: 'Spain',
+  language: 'es',
+  publisher: 'Norma Editorial',
+  isbn: '978-84-1234-567-0',
+  cluster_key: 'isbn:9788412345670',
+})
+const pokemonCluster = makeCluster({
+  clusterKey: 'isbn:9788412345670',
+  slug: 'pokemon-norma-coleccionista',
+  canonical: pokemonItem,
+  items: [pokemonItem],
+  editionKey: 'pokemon-norma-coleccionista',
+  seriesDisplay: 'Pokémon',
+  publishers: ['Norma Editorial'],
+  countries: ['Spain'],
+  languages: ['es'],
+})
+
+const SEARCH_CLUSTERS = [
+  berserkCluster, opBoxCluster, demonSlayerCluster, regularCluster, pokemonCluster,
+]
+
+describe('filterClusters — búsqueda editorial/ISBN/acentos/tokens', () => {
+  it('#1 busca por editorial (case-insensitive)', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'ivrea' })
+    expect(result).toHaveLength(0) // ninguna es Ivrea
+    const dark = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'dark horse' })
+    expect(dark.map(c => c.slug)).toEqual(['berserk-darkhorse-deluxe-1'])
+  })
+
+  it('#1/#2 editorial con acento matchea sin acento (Glénat → glenat)', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'glenat' })
+    expect(result.map(c => c.slug)).toEqual(['one-piece-glenat-boxset-1'])
+  })
+
+  it('#1 busca por ISBN completo (sin guiones)', () => {
+    // pokemonItem es el único fixture con item.isbn poblado (el ISBN "pelado"
+    // del cluster_key de otros no cuenta: buildSearchText lee item.isbn).
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: '9788412345670' })
+    expect(result.map(c => c.slug)).toEqual(['pokemon-norma-coleccionista'])
+  })
+
+  it('#1 busca por ISBN con guiones (se normaliza a dígitos)', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: '978-84-1234-567-0' })
+    expect(result.map(c => c.slug)).toEqual(['pokemon-norma-coleccionista'])
+  })
+
+  it('#2 acentos: "pokemon" matchea "Pokémon"', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'pokemon' })
+    expect(result.map(c => c.slug)).toEqual(['pokemon-norma-coleccionista'])
+  })
+
+  it('#2 multi-token AND: "berserk deluxe" con tokens no adyacentes en el título', () => {
+    // title = "Berserk Deluxe 1" → "berserk 1" (tokens separados) matchea
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'berserk 1' })
+    expect(result.map(c => c.slug)).toEqual(['berserk-darkhorse-deluxe-1'])
+  })
+
+  it('#2 multi-token AND: un token ausente excluye el resultado', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: 'berserk boxset' })
+    expect(result).toHaveLength(0) // "boxset" no está en el searchable de Berserk
+  })
+
+  it('#2 CJK intacto: substring match por título original', () => {
+    const result = filterClusters(SEARCH_CLUSTERS, { ...baseParams, q: '鬼滅の刃' })
+    expect(result.map(c => c.slug)).toEqual(['demon-slayer-panini-limited-23'])
+  })
+
+  it('usa el searchText precomputado del cluster cuando existe', () => {
+    // El campo searchText (data layer) es la fuente; incluye un término que NO
+    // está en los campos del canonical → prueba que se consulta el precomputado.
+    const c = makeCluster({
+      slug: 'precomputed',
+      searchText: 'berserk edicion definitiva panini',
+      canonical: makeItem({ title: 'X', cluster_key: 'k:precomp' }),
+    })
+    const result = filterClusters([c], { ...baseParams, q: 'definitiva' })
+    expect(result.map(x => x.slug)).toEqual(['precomputed'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // sortClusters
 // ---------------------------------------------------------------------------
 

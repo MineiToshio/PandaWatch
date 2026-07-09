@@ -24,6 +24,23 @@ export function absoluteUrl(path = '/'): string {
   return `${siteUrl()}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+/**
+ * Resuelve el nombre de archivo del espejo local de imágenes a una URL pública.
+ *
+ * - Con `NEXT_PUBLIC_IMAGE_BASE_URL` seteado (bucket R2 del deploy — "Image
+ *   storage Fase 2") → se resuelve contra ese base.
+ * - Sin él → contra el symlink local `public/images → ../../data/images/`,
+ *   servido en el origin como `/images/<archivo>` (comportamiento actual intacto).
+ *
+ * Se usa el prefijo `NEXT_PUBLIC_` para que la MISMA variable funcione tanto en
+ * Server Components (metadata/JSON-LD) como en el `CoverImage` client — Next
+ * sólo expone al cliente las env vars con ese prefijo.
+ */
+export function localImageUrl(filename: string): string {
+  const base = process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.replace(/\/$/, '')
+  return base ? `${base}/${filename}` : absoluteUrl(`/images/${filename}`)
+}
+
 // ─── Route paths ──────────────────────────────────────────────────────────────
 // Única fuente de construcción de rutas internas: las claves pueden traer
 // caracteres no-ASCII (CJK, homoglifos), así que SIEMPRE van percent-encoded
@@ -62,6 +79,6 @@ export function ogImage(value?: string | null, alt?: string) {
   let url: string
   if (value.startsWith('http')) url = value
   else if (value.startsWith('/')) url = absoluteUrl(value)
-  else url = absoluteUrl(`/images/${value}`)
+  else url = localImageUrl(value)  // espejo local (o bucket vía IMAGE_BASE_URL)
   return [{ url, alt: alt ?? 'PandaWatch' }]
 }

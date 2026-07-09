@@ -1,4 +1,4 @@
-import { loadClusters, buildFacets, groupByEdition, seriesFromClusters, aliasSearchIndex } from '@/lib/data'
+import { loadClusters, loadFacets, groupByEdition, seriesFromClusters, aliasSearchIndex } from '@/lib/data'
 import { parseFilterParams, filterClusters, sortClusters, paginate } from '@/lib/filters'
 import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
@@ -32,7 +32,7 @@ export default async function CatalogPage({
 }) {
   const rawParams   = await searchParams
   const allClusters = loadClusters()
-  const facets      = buildFacets(allClusters)
+  const facets      = loadFacets()  // cacheado por mtime (auditoría #6)
   const fp          = parseFilterParams(rawParams)
   const filtered    = filterClusters(allClusters, fp, aliasSearchIndex())
   const sorted      = sortClusters(filtered, fp.sort)

@@ -4,29 +4,37 @@
  * Structured facts are what search engines turn into rich results and what LLM answer
  * engines extract most reliably — this is the highest-leverage discoverability surface.
  */
-import { absoluteUrl, seriesPath, editionPath, itemPath } from '@/lib/seo'
+import { absoluteUrl, seriesPath, editionPath, itemPath, localImageUrl } from '@/lib/seo'
 import { coverImage } from '@/lib/data'
 import { itemDescription, editionDescription, seriesDescription } from '@/lib/descriptions'
 import type { Cluster, Item, Series } from '@/lib/types'
 
+// Espejo local primero (mismo criterio que ogImage()): los hotlinks a tiendas
+// son frágiles (hotlink protection / links muertos). Antes preferíamos la URL
+// remota — criterio invertido respecto de OG, corregido en auditoría #5.
 function imageUrl(c: Pick<Item, 'images'>): string | undefined {
   const { url, local } = coverImage(c)
+  if (local) return localImageUrl(local)
   if (url) return url
-  if (local) return absoluteUrl(`/images/${local}`)
   return undefined
 }
 
 export function itemJsonLd(cluster: Cluster, slug: string) {
   const c = cluster.canonical
   const url = absoluteUrl(itemPath(slug))
+  const image = imageUrl(c)
 
   return {
     '@context': 'https://schema.org',
-    '@type': c.isbn ? ['Product', 'Book'] : 'Product',
+    // Book como tipo primario cuando hay ISBN (elegible sin offers); el resto
+    // usa CreativeWork neutro. Se ELIMINÓ Product: Google exige offers/review/
+    // aggregateRating para Product y no hay precios (decisión firme) — el
+    // Product sin offers era structured data inválido (auditoría #5).
+    '@type': c.isbn ? 'Book' : 'CreativeWork',
     name: c.title,
     description: itemDescription(cluster),
     url,
-    ...(imageUrl(c) && { image: imageUrl(c) }),
+    ...(image && { image }),
     // Sin bookFormat: no hay evidencia confiable del formato físico y declarar
     // Hardcover para todo item con ISBN era structured data falso.
     ...(c.isbn && { isbn: c.isbn }),

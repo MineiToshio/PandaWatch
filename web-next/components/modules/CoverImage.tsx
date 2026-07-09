@@ -42,8 +42,15 @@ export function CoverImage({
   priority = false,
   className,
 }: CoverImageProps) {
-  const initialSrc: string | null =
-    imageLocal ? `/images/${imageLocal}` : (imageUrl ?? null)
+  // Espejo local: symlink `/images/...` por defecto; contra el bucket
+  // (NEXT_PUBLIC_IMAGE_BASE_URL) en deploy. Cuando apunta al bucket, la src es
+  // absoluta → cae al <img> remoto de abajo (next/image no optimiza hosts sin
+  // allowlist), que es lo deseado. Sin la env, comportamiento actual intacto.
+  const imageBase = process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.replace(/\/$/, '')
+  const localSrc = imageLocal
+    ? (imageBase ? `${imageBase}/${imageLocal}` : `/images/${imageLocal}`)
+    : null
+  const initialSrc: string | null = localSrc ?? (imageUrl ?? null)
 
   const [src, setSrc] = useState<string | null>(initialSrc)
 

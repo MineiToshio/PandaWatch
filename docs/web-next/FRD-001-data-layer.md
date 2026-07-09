@@ -136,7 +136,7 @@ all active filters and returns matching clusters. Filters:
 
 | Param | Type | Logic |
 |---|---|---|
-| `q` | string | Case-insensitive substring match on `title + title_original + series_display` |
+| `q` | string | Match normalizado (lowercase + NFD sin diacríticos) sobre `Cluster.searchText` (= `title + title_original + series_display + publishers + isbn-sin-guiones`, precomputado en `buildCluster`) + aliases de serie. **Multi-token AND**: el query se tokeniza por espacios y todos los tokens deben aparecer; un token ISBN-like (10-13 dígitos) se colapsa a dígitos. CJK intacto. Ver auditoría Fable 2026-07-08 #1/#2. |
 | `country` | string[] | ANY match in cluster.countries |
 | `language` | string[] | ANY match in cluster.languages |
 | `publisher` | string[] | ANY match in cluster.publishers |
@@ -191,6 +191,12 @@ filters are applied (stable facets UX pattern). `productTypes`/`sourceClasses`/`
 se eliminaron (sin UI que los consuma). La home recorta los facets a lo que la UI muestra
 (top 12 publishers, top 8 languages) ANTES de serializarlos al client component.
 
+**Cacheado (auditoría Fable 2026-07-08 #6):** los facets globales se computan **una
+vez** dentro de `DataCache` (invalidados por mtime, igual que `bySlug`) y se sirven
+vía `loadFacets()`. La home es `force-dynamic` (para leer searchParams por request);
+antes recalculaba `buildFacets` sobre los ~12.8k clusters en cada keystroke/toggle.
+`buildFacets(clusters)` sigue exportado para subconjuntos arbitrarios.
+
 ---
 
 ## Non-Functional Requirements
@@ -199,8 +205,12 @@ se eliminaron (sin UI que los consuma). La home recorta los facets a lo que la U
   JSONL parsing of 10k lines takes ~20ms; cluster grouping ~30ms. Total well under budget.
 - **Caching:** el cache de módulo se invalida por **mtime** del JSONL (vale también en dev:
   sin esto cada request re-parseaba el corpus). Junto al cache se construyen índices
-  `Map` (`bySlug`, `byEdition`, series `byKey`) — los lookups por página dejan de ser
-  scans O(n) durante `generateStaticParams` (~19k páginas).
+  `Map` (`bySlug`, `byEdition`, `bySeries`, series `byKey`) + los `facets` globales — los
+  lookups por página dejan de ser scans O(n) durante `generateStaticParams` (~23k páginas).
+  `bySeries` (auditoría Fable 2026-07-08 #23) elimina el scan lineal del corpus que
+  `loadSeriesEditions`/`seriesCache` hacían por cada una de las ~3.7k páginas de serie.
+  `ALIASES_PATH` y `NEXT_PUBLIC_IMAGE_BASE_URL` son env overrides coherentes con
+  `ITEMS_PATH` para deploys (ver README → Deploy).
 - **Type safety:** All functions are fully typed. No `any`. `Item` type mirrors the
   `items.jsonl` schema documented in `CLAUDE.md`.
 - **Error handling:** corrupted JSONL lines and rows without `cluster_key` are skipped

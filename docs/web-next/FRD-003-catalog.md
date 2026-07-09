@@ -122,7 +122,7 @@ All filters update the URL via `router.replace()`. The page Server Component rea
 
 | Filter | Type | UI Control |
 |---|---|---|
-| Search | text | Input with 🔍 icon, debounce 600ms + Enter fires immediately. Matchea `title` + `title_original` + `series_display` + **aliases de la serie** (`data/series_aliases.json` vía `aliasSearchIndex()`, política de títulos 2026-06-12: el título oficial no se renombra; "kimetsu no yaiba" y "guardianes de la noche" devuelven lo mismo) |
+| Search | text | Input with 🔍 icon, debounce 600ms + Enter fires immediately. Matchea `title` + `title_original` + `series_display` + **editorial** (todas las de `c.publishers`) + **ISBN** (sin guiones) + **aliases de la serie** (`data/series_aliases.json` vía `aliasSearchIndex()`, política de títulos 2026-06-12: el título oficial no se renombra; "kimetsu no yaiba" y "guardianes de la noche" devuelven lo mismo). **Normalización + tokens AND** (auditoría Fable 2026-07-08 #1/#2): `normalize()` = lowercase + NFD + strip de diacríticos → "pokemon" matchea "Pokémon", "japon"/"Japón"; el query se tokeniza por espacios y TODOS los tokens deben aparecer ("berserk deluxe" matchea aunque los tokens no sean adyacentes en el título). Un token que parece ISBN (10-13 dígitos con/sin guiones) se colapsa a dígitos. El CJK queda intacto (substring). El texto buscable normalizado se **precomputa una vez por cluster** (`Cluster.searchText`, data layer), no por request. |
 | Country | multi-select | Checkbox list with country flag emoji + count |
 | Language | multi-select | Checkbox list with count |
 | Publisher | multi-select | Checkbox list with count (collapsed to top 8 + "ver más") |

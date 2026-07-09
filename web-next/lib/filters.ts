@@ -1,5 +1,58 @@
-import type { Cluster, FilterParams, SortKey } from './types'
+import type { Cluster, FilterParams, SortKey, Item } from './types'
 import { sortableDate } from './format'
+
+/**
+ * Normalización de texto para búsqueda (determinista, sin LLM):
+ * lowercase + NFD + quita diacríticos combinantes. El CJK queda intacto (no
+ * lleva marcas combinantes), así que el match por substring sigue funcionando.
+ * Ej.: "Pokémon" → "pokemon", "Japón" → "japon", "L'Attaque" → "l'attaque".
+ * Fuente ÚNICA de normalización — la comparten searchText (data layer) y el query.
+ */
+export function normalize(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
+/** Sólo dígitos (y X del dígito de control ISBN-10), en minúscula. */
+function isbnDigits(s?: string | null): string {
+  return s ? s.replace(/[^0-9xX]/g, '').toLowerCase() : ''
+}
+
+/**
+ * Texto buscable normalizado de un cluster. Une el nombre OFICIAL del título y
+ * sus variantes, la serie, TODAS las editoriales del cluster y los ISBN (sin
+ * guiones). NO transforma el título para display — es sólo un índice de búsqueda
+ * (política de títulos 2026-06-12). Se precomputa una vez por cluster en el data
+ * layer (buildCluster) y se reusa como fallback acá para clusters de fixtures.
+ */
+export function buildSearchText(
+  canonical: Pick<Item, 'title' | 'title_original' | 'series_display' | 'isbn'>,
+  publishers: string[] = [],
+  isbns: (string | undefined)[] = [],
+): string {
+  const parts = [
+    canonical.title,
+    canonical.title_original,
+    canonical.series_display,
+    ...publishers,
+    ...[canonical.isbn, ...isbns].map(isbnDigits).filter(Boolean),
+  ].filter(Boolean) as string[]
+  return normalize(parts.join(' '))
+}
+
+/**
+ * Tokeniza el query en términos AND (todos deben matchear). Un token que parece
+ * ISBN (10-13 dígitos con o sin guiones/espacios) se colapsa a dígitos para
+ * empatar con el ISBN normalizado del searchText.
+ */
+function queryTokens(q: string): string[] {
+  return normalize(q)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(tok => {
+      const digits = tok.replace(/-/g, '')
+      return /^\d{10,13}$/.test(digits) ? digits : tok
+    })
+}
 
 const LIMITED_SIGNALS = new Set([
   'limited',
@@ -63,19 +116,20 @@ export function filterClusters(
   return clusters.filter(c => {
     const item = c.canonical
 
-    // Full-text search
+    // Full-text search: acentos normalizados + multi-token AND (todos los
+    // tokens deben aparecer). El searchText normalizado se precomputa por
+    // cluster en el data layer (buildCluster); fallback para clusters de
+    // fixtures sin searchText. El aliasIndex ya viene normalizado (data.ts).
     if (params.q) {
-      const q = params.q.toLowerCase()
-      const searchable = [
-        item.title,
-        item.title_original,
-        item.series_display,
-        item.series_key ? aliasIndex[item.series_key] : undefined,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-      if (!searchable.includes(q)) return false
+      const tokens = queryTokens(params.q)
+      if (tokens.length) {
+        const base =
+          c.searchText ??
+          buildSearchText(item, c.publishers, c.items.map(i => i.isbn))
+        const alias = item.series_key ? aliasIndex[item.series_key] : undefined
+        const hay = alias ? `${base} ${alias}` : base
+        if (!tokens.every(t => hay.includes(t))) return false
+      }
     }
 
     // Array filters (ANY match)

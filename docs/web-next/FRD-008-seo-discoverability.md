@@ -120,10 +120,18 @@ configured site URL. This FRD closes those gaps.
 
 ### FR-8: Structured data (JSON-LD)
 - Injected as `<script type="application/ld+json">` per route (server-rendered):
-  - **`/item`** → `Product` + `Book` (name, ISBN, author, publisher, datePublished,
-    image, inLanguage). **Sin `Offer`** (precios fuera del pipeline, decisión
-    2026-06-11) y **sin `bookFormat`** (no hay evidencia confiable del formato
-    físico; declarar Hardcover para todo ISBN era structured data falso).
+  - **`/item`** → `Book` cuando hay ISBN (name, isbn, author, publisher,
+    datePublished, image, inLanguage); `CreativeWork` cuando NO hay ISBN.
+    **Sin `Product`** (auditoría Fable 2026-07-08 #5): Google exige `offers`,
+    `review` o `aggregateRating` para que un `Product` sea elegible, y no hay
+    precios (decisión 2026-06-11) ni ratings → el `Product` sin `offers` era
+    structured data **inválido** (Search Console lo marcaba "item inválido").
+    `Book` es elegible sin `offers`. **Sin `Offer`** y **sin `bookFormat`** (no
+    hay evidencia confiable del formato físico; declarar Hardcover para todo ISBN
+    era structured data falso). **`image` local-first**: se prefiere el espejo
+    local (o el bucket vía `NEXT_PUBLIC_IMAGE_BASE_URL`) sobre la URL remota —
+    mismo criterio que `ogImage()`; antes el JSON-LD prefería la remota (frágil
+    por hotlink protection).
   - **`/edition`** → `CollectionPage` / `ItemList` linking its volumes.
   - **`/series`** → `CollectionPage` / `ItemList` linking its editions.
   - **All three** → `BreadcrumbList` (home → series → edition → item; the hierarchy
@@ -177,8 +185,8 @@ configured site URL. This FRD closes those gaps.
 - [ ] Home, series, edition, item pages all set canonical + full OG + Twitter + a real
       description (FR-6).
 - [ ] Filtered home URLs are `noindex` / disallowed; clean `/` and detail pages indexable.
-- [ ] JSON-LD validates in Google Rich Results Test for an item (Product/Book), an edition,
-      a series (ItemList), and breadcrumbs on all.
+- [ ] JSON-LD validates in Google Rich Results Test for an item (`Book`/`CreativeWork`,
+      NUNCA `Product`), an edition, a series (ItemList), and breadcrumbs on all.
 - [ ] Cover images have descriptive alt text.
 - [ ] `docs/web-next/README.md` index updated; SEO surfaces documented.
 

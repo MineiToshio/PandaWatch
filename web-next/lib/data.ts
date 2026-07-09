@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { Item, Cluster, Facets, Series } from './types'
+import { buildSearchText, normalize } from './filters'
 
 // Path relative to web-next/ (process.cwd() in Next.js). Overridable via env
 // for deploys where the data lives elsewhere (pending: migración a DB).
@@ -9,8 +10,11 @@ const ITEMS_PATH =
 
 // Vista de búsqueda de aliases ({series_key: [nombres…]}), generada desde
 // series_aliases.yml por scripts/export_series_aliases.py (la regenera cada
-// build_web.py). Vive junto al items.jsonl.
-const ALIASES_PATH = path.join(path.dirname(ITEMS_PATH), 'series_aliases.json')
+// build_web.py). Vive junto al items.jsonl por defecto; ALIASES_PATH permite
+// apuntarla a otra ubicación en deploys (coherente con ITEMS_PATH).
+const ALIASES_PATH =
+  process.env.ALIASES_PATH ??
+  path.join(path.dirname(ITEMS_PATH), 'series_aliases.json')
 
 function readRawItems(): Item[] {
   let raw: string
@@ -139,6 +143,8 @@ function buildCluster(items: Item[]): Cluster {
     return [...new Set(vals)]
   }
 
+  const publishers = collect('publisher')
+
   return {
     clusterKey: canonical.cluster_key,
     slug: canonical.slug || '',
@@ -151,8 +157,13 @@ function buildCluster(items: Item[]): Cluster {
     volumeCount: volumes.size || 1,
     signalTypes: [...new Set(items.flatMap(i => i.signal_types || []))],
     countries: collect('country'),
-    publishers: collect('publisher'),
+    publishers,
     languages: collect('language'),
+    // Índice de búsqueda normalizado (una vez por cluster, no por request —
+    // ver auditoría #6). Incluye editoriales + ISBN (búsqueda por editorial/ISBN,
+    // auditoría #1). Los aliases de serie se unen en filterClusters (viven en un
+    // JSON con mtime propio). El title NUNCA se transforma para display.
+    searchText: buildSearchText(canonical, publishers, items.map(i => i.isbn)),
     // minPrice eliminado: precios fuera del pipeline (decisión 2026-06-11,
     // architecture.md — catálogo de descubrimiento, no tracker de precios).
   }
@@ -168,6 +179,13 @@ type DataCache = {
   clusters: Cluster[]
   bySlug: Map<string, Cluster>
   byEdition: Map<string, Cluster[]>
+  // Índice serie→clusters (mismo patrón que byEdition). Evita el scan lineal
+  // de loadSeriesEditions/seriesCache por cada página de serie (auditoría #23).
+  bySeries: Map<string, Cluster[]>
+  // Facets globales cacheados: idénticos entre requests mientras el corpus no
+  // cambia (se invalidan con el mtime, igual que bySlug). La home los recalculaba
+  // por request bajo force-dynamic (auditoría #6).
+  facets: Facets
 }
 
 let _cache: DataCache | null = null
@@ -193,8 +211,10 @@ export function aliasSearchIndex(): Record<string, string> {
   let index: Record<string, string> = {}
   try {
     const raw = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8')) as Record<string, string[]>
+    // Normalizado (misma función que el query y el searchText) para que la
+    // búsqueda por alias sea insensible a acentos igual que el resto.
     index = Object.fromEntries(
-      Object.entries(raw).map(([k, names]) => [k, names.join(' ').toLowerCase()])
+      Object.entries(raw).map(([k, names]) => [k, normalize(names.join(' '))])
     )
   } catch {
     console.warn(`[data] series_aliases.json ilegible en ${ALIASES_PATH} — búsqueda sin aliases`)
@@ -245,13 +265,26 @@ function dataCache(): DataCache {
     list.sort((a, b) => compareVolumes(a.volume, b.volume) || kindRank(a) - kindRank(b))
   }
 
-  _cache = { mtimeMs, clusters, bySlug, byEdition }
+  const bySeries = new Map<string, Cluster[]>()
+  for (const c of clusters) {
+    const key = c.canonical.series_key
+    if (!key) continue
+    if (!bySeries.has(key)) bySeries.set(key, [])
+    bySeries.get(key)!.push(c)
+  }
+
+  _cache = { mtimeMs, clusters, bySlug, byEdition, bySeries, facets: buildFacets(clusters) }
   _seriesCache = null
   return _cache
 }
 
 export function loadClusters(): Cluster[] {
   return dataCache().clusters
+}
+
+/** Facets globales cacheados (invalidados por mtime). Ver auditoría #6. */
+export function loadFacets(): Facets {
+  return dataCache().facets
 }
 
 export function loadEditionClusters(editionKey: string): Cluster[] {
@@ -372,19 +405,11 @@ function buildSeries(seriesKey: string, clusters: Cluster[]): Series {
 let _seriesCache: { series: Series[]; byKey: Map<string, Series> } | null = null
 
 function seriesCache(): { series: Series[]; byKey: Map<string, Series> } {
-  dataCache() // resetea _seriesCache si el corpus cambió
+  const cache = dataCache() // resetea _seriesCache si el corpus cambió
   if (_seriesCache) return _seriesCache
 
-  const bySeries = new Map<string, Cluster[]>()
-  for (const c of loadClusters()) {
-    const key = c.canonical.series_key
-    if (!key) continue
-    if (!bySeries.has(key)) bySeries.set(key, [])
-    bySeries.get(key)!.push(c)
-  }
-
   const collator = new Intl.Collator('es')
-  const series = Array.from(bySeries.entries())
+  const series = Array.from(cache.bySeries.entries())
     .map(([key, clusters]) => buildSeries(key, clusters))
     // FRD-007 FR-2 ranking — isolated comparator for easy retuning
     .sort((a, b) =>
@@ -406,9 +431,9 @@ export function seriesByKey(seriesKey: string): Series | null {
 }
 
 export function loadSeriesEditions(seriesKey: string): Cluster[] {
-  const clusters = loadClusters().filter(
-    c => c.canonical.series_key === seriesKey
-  )
+  // Índice bySeries (auditoría #23): evita el scan lineal del corpus por cada
+  // una de las ~3.7k páginas de serie en build.
+  const clusters = dataCache().bySeries.get(seriesKey) ?? []
   return groupByEdition(clusters).sort(
     (a, b) =>
       b.volumeCount - a.volumeCount ||

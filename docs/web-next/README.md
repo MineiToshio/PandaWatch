@@ -112,6 +112,62 @@ PandaWatch es light-only.)
 
 ---
 
+## Deploy — estrategia de datos e imágenes (auditoría Fable 2026-07-08 #4)
+
+> **Estado: vía documentada y habilitada por env vars; el deploy real NO está hecho.**
+
+El objetivo del proyecto es un frontend **público** en Vercel / Cloudflare Pages, pero
+hoy la app sólo corre en la máquina del owner porque **los datos y las imágenes están
+gitignored** (`data/items.jsonl`, `data/series_aliases.json`, `data/images/`) y las
+imágenes se sirven por un **symlink** (`public/images → ../../data/images/`). En un clone
+limpio de CI/Vercel esos paths no existen: `readRawItems()` lanzaría en build y el symlink
+apuntaría a la nada. Es SSG puro (sin DB ni API routes), así que la solución es de
+**abastecimiento de datos en build**, no de arquitectura runtime.
+
+### Qué sube el build (artefactos)
+
+1. **Corpus** — `items.jsonl` (~decenas de MB) + `series_aliases.json`. No están en git;
+   el paso `prebuild` los descarga (o los copia) a una ruta accesible y se apunta con
+   env vars:
+   - `ITEMS_PATH` → ruta absoluta al `items.jsonl` descargado.
+   - `ALIASES_PATH` → ruta al `series_aliases.json` (default: junto al items.jsonl).
+
+   Fuente sugerida: un artefacto versionado (Vercel Blob / R2 / release asset) que el owner
+   publica tras cada corrida del pipeline. El build baja la copia más reciente en `prebuild`.
+
+2. **Imágenes** — el espejo local (~1.64 GB, AVIF Q60 ≤1600px ya pre-optimizado) **no** viaja
+   en el repo ni conviene meterlo en el bundle. Van a un **bucket R2** propio ("Image storage
+   Fase 2" en CLAUDE.md; entra en el free tier de 10 GB porque ya está pre-optimizado — R2 no
+   transforma). Se apunta con:
+   - `NEXT_PUBLIC_IMAGE_BASE_URL` → base pública del bucket (p.ej. `https://images.watch.pandatrack.app`).
+
+   Con esa var seteada, `CoverImage`, `ogImage()` (OG/Twitter) y el `image` del JSON-LD
+   resuelven `images[0].local` contra el bucket en lugar del symlink. La `src` del bucket es
+   absoluta → `CoverImage` la sirve por `<img>` plano (next/image no optimiza hosts sin
+   allowlist, y no hace falta: el AVIF ya está optimizado). **Sin la var, el comportamiento
+   local es idéntico al de hoy** (symlink `/images/...` vía next/image).
+
+### Env vars del deploy (ver `.env.example`)
+
+| Var | Para qué | Local |
+|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | Origin público (sitemap, canonical, OG) | unset → localhost |
+| `ITEMS_PATH` | Ruta al corpus JSONL | unset → `../data/items.jsonl` |
+| `ALIASES_PATH` | Ruta a `series_aliases.json` | unset → junto al items.jsonl |
+| `NEXT_PUBLIC_IMAGE_BASE_URL` | Base del bucket de imágenes | unset → symlink `/images/` |
+
+### Qué falta para el deploy real (NO hecho acá)
+
+- Publicar el artefacto de corpus (elegir Vercel Blob vs R2 vs release asset) y escribir el
+  script `prebuild` que lo baja y setea `ITEMS_PATH`/`ALIASES_PATH`.
+- Subir el espejo `data/images/` al bucket R2 y setear `NEXT_PUBLIC_IMAGE_BASE_URL`.
+- Setear `NEXT_PUBLIC_SITE_URL` en Vercel Production y validar en Google Rich Results Test.
+
+Hasta que eso exista, un deploy a Vercel **fallaría en build** — el "pending" NO está a un
+env var de distancia; requiere abastecer corpus + imágenes primero.
+
+---
+
 ## Folder Structure (target)
 
 ```
@@ -168,3 +224,11 @@ percent-encoded + decode; sitemap con lastModified; JSON-LD sin Offer/bookFormat
 next/font self-hosted; RarityBadge/dedupeImages unificados; `components/core/` eliminado;
 39 tests. Pending: set `NEXT_PUBLIC_SITE_URL` in Vercel Production, then validate in
 Google Rich Results Test.)*
+
+*Actualizado 2026-07-08 (paquete H1-webnext-core de la auditoría Fable): búsqueda por
+**editorial** e **ISBN** + normalización de acentos + tokens AND (`Cluster.searchText`
+precomputado); facets globales e índice `bySeries` cacheados en `DataCache` (auditoría
+#6/#23); JSON-LD `/item` = `Book`/`CreativeWork`, **sin `Product`**, imagen local-first
+(auditoría #5); vía de deploy documentada + habilitada por env vars (`ITEMS_PATH`,
+`ALIASES_PATH`, `NEXT_PUBLIC_IMAGE_BASE_URL`) SIN deployar (auditoría #4); tests de
+`descriptions`/`jsonld`/`seo` + búsqueda (54→95). Ver la sección "Deploy" de arriba.)*

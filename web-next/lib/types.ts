@@ -82,6 +82,10 @@ export type Cluster = {
   countries: string[]
   publishers: string[]
   languages: string[]
+  // Índice de búsqueda normalizado (title/title_original/series/publishers/isbn),
+  // precomputado una vez por cluster en el data layer. NO afecta el display del
+  // título (política de títulos). Opcional: clusters de fixtures pueden omitirlo.
+  searchText?: string
 }
 
 export type FacetOption = {
