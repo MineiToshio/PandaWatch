@@ -95,6 +95,13 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   cobertura de fuentes que lo bloquean sin razón real de carga. Si una fuente puntual
   necesita respetar robots.txt, se invoca `manga_watch.py --respect-robots` manualmente
   (`RobotsCache` ya existe); no se agrega a los scripts canónicos por defecto.
+  **`RobotsCache` (M10, Fable 2026-07-08)**: fetchea `robots.txt` con la `session` del
+  proyecto (`fetch_text`, mismo timeout/retry que cualquier otro fetch del pipeline) +
+  `parser.parse(text.splitlines())`, en vez de `RobotFileParser.read()` (`urlopen` SIN
+  timeout — el único fetch del pipeline sin límite, podía colgar el worker para siempre
+  ante un host que no responde). El dict `cache` está protegido por lock (se muta desde
+  N threads en el path paralelo); un fetch duplicado ante una carrera es benigno, sólo el
+  hang era el problema real.
 
 ### Escritura de datos — reglas duras
 
@@ -102,29 +109,67 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   Antes del rename atómico hace `file.flush()` + `os.fsync(file.fileno())` (2026-07-07):
   sin eso, un corte de energía justo tras escribir el `.tmp` podía dejarlo en el page
   cache pero no en disco.
-- **Cualquier archivo (no sólo JSONL vía append_jsonl)**: el mismo patrón tmp+fsync+
-  `os.replace` aplica a CUALQUIER escritura de un archivo que otro proceso pueda leer a
-  medio escribir — `web/index.html` (`build_web._atomic_write_text`), un flush manual de
-  items.jsonl fuera de `append_jsonl` (`wayback_recover._flush_wayback`, reescribe el
-  archivo entero por índice de URL), o una caché JSON (`wayback_recover.save_negative_cache`).
-  `write_text`/`open(path,'w')` truncan in-place — un kill a mitad de la escritura deja el
-  archivo corrupto (gotcha #133, auditoría 2026-07-08: pasaba con `index.html` y con el
-  `_flush_wayback` que decía "atómicamente" en el docstring pero no lo era).
+- **Dump-completo de JSONL (no upsert)**: usá `write_items_atomic(path, rows)` (dicts) o
+  `write_lines_atomic(path, lines)` (strings ya serializadas — para preservar texto crudo
+  de una línea corrupta, patrón `_raw`, o cuando un writer mezcla dicts y raw lines) — las
+  dos, importadas de `manga_watch.py`, es el patrón OFICIAL desde A7 (Fable 2026-07-08).
+  Mismo tmp+flush+fsync+`os.replace` que `append_jsonl`; `write_items_atomic` serializa con
+  `sort_keys=True` (mismo formato que `append_jsonl`, necesario para diffs limpios y para
+  que la prueba de idempotencia byte-a-byte entre scripts distintos sea válida — si un
+  writer serializa con orden de claves distinto al de otro, dos pasadas que no cambiaron
+  NADA de contenido igual difieren en bytes). Todos los retrofits que hacen dump-completo
+  de items.jsonl (`filter_non_manga`, `filter_collectible`, `rescore`, `clean_titles`,
+  `backfill_cluster_key`, `consolidate_sources`, `apply_approvals`, `generate_slugs`,
+  `set_rarity`, `merge_isbn_duplicates`, `unify_coleccion_edition`,
+  `align_raw_to_std_coleccion`, `fix_edition_key_anomalies`, `canonicalize_edition_slugs`,
+  `enforce_listadomanga_rules._recover_edition_display`) y los 2 writers de items.jsonl de
+  `serve.py` (`_write_items`, el sync de imágenes por cluster) usan este helper +
+  `sort_keys=True` homogéneo. Antes la mitad hacía `write_text`/tmp-sin-fsync directo (un
+  kill a mitad TRUNCABA el archivo) y la serialización de claves era inconsistente entre
+  scripts (algunos con `sort_keys=True`, la mayoría sin).
+  **Filtros** (`filter_non_manga`/`filter_collectible`): escribir el archivo de
+  `rejected` ANTES que el de `kept` — un crash entre ambos writes no deja los rechazados
+  fuera de AMBOS archivos.
 - **Backups**: todo script que modifique un archivo de datos usa `backup_and_rotate(path,
   label)` importada de `manga_watch.py`, UNA vez ANTES del loop. Escribe en
   `data/backups/<filename>/` (rota, máx 3). NUNCA `cp ... /tmp/`, NUNCA path propio (un
-  path mal calculado crea `backups/` en la raíz, sin rotación, en git status).
+  path mal calculado crea `backups/` en la raíz, sin rotación, en git status; A13, Fable
+  2026-07-08: 5 retrofits hacían `shutil.copy` a un path propio sin rotar — 38 siblings /
+  1.1 GB sueltos, migrados a `backup_and_rotate` y borrados).
   **Backup pre-scrape (2026-07-07)**: `scrape_delta.sh`/`scrape_full.sh` corren
   `backup_and_rotate(items.jsonl, "scrape-{delta,full}")` al inicio del run, ANTES de
   tocar nada — antes el primer backup recién ocurría dentro de retrofits puntuales de
   la Fase 3; ahora un snapshot cubre también la Fase 1/2 (scrape + wikis). Mismo patrón
   en `enforce_listadomanga_rules.py` (backup al inicio de su cadena de 20+ pasos).
+  **Rotación por-label (A6, Fable 2026-07-08)**: el slot fijo (`timestamped=False`,
+  default) poda SÓLO el propio glob `<filename>.pre-<label>-bak` de ESE label — antes
+  ordenaba TODA la carpeta `backups_dir` por mtime y podaba a `max_keep` GLOBAL, así que
+  una cadena de 3+ llamadas con labels distintos (la del enforcer encadena 20+) evictaba
+  el snapshot pre-run inicial y los backups `timestamped=True` de otros pasos, justo lo
+  que "restaurar si la cadena aborta" necesita. Los snapshots de NIVEL-RUN (el backup
+  pre-scrape del shell y el snapshot inicial del enforcer) usan `timestamped=True` —
+  se conservan entre corridas en vez de pisarse.
 - **Flush incremental**: todo loop de red/subprocess (HTTP por ítem, Tavily, waifu2x,
   Wayback) escribe items.jsonl incremental (por mejora o cada N; `--flush-every` donde
   exista, default 50, bajar a 5-10 para llamadas lentas). Un write único al final pierde
   todo si el proceso muere. El backup va antes del loop; el flush es `_write_items` directo
   (sin backup). Scripts compute-only (rescore, clean_titles, filter_*, backfill_cluster_key,
   generate_slugs) terminan en segundos → write único OK.
+- **Orden save_state / append_jsonl (A3, Fable 2026-07-08)**: `save_state` SIEMPRE corre
+  DESPUÉS de que las filas lleguen a items.jsonl (`append_jsonl`/`mirror_candidate_images`),
+  nunca antes — en `run()`, `_run_wiki_bootstrap()` y `_run_sitemap_mining()`. Si se
+  persiste el state ANTES (como era antes de este fix), un crash entre medio deja el
+  enriquecimiento (author/isbn/imágenes del detail-fetch) perdido para siempre: el próximo
+  run ve el `content_hash` ya "al día" en state y nunca re-escribe ni re-hace el
+  detail-fetch.
+- **Trabajo parcial ante un error a mitad de loop (M7/M8, Fable 2026-07-08)**: un loop
+  paralelo (`ThreadPoolExecutor`+`as_completed`) SIEMPRE envuelve `fut.result()` en
+  try/except por-future (contar como failed, seguir) — nunca dejar que una excepción de UN
+  future aborte todo el batch (patrón ya usado por el loop de detail-fetch; `mirror_candidate_images`
+  lo adoptó). Un loop de PAGINACIÓN (fuente con "página siguiente") que falla en la página N
+  debe scorear y devolver lo acumulado de las páginas 1..N-1 en los handlers de excepción
+  (`_finalize_partial_pages()` en `_scrape_one`), no descartarlo — el problema/error se
+  registra igual, sólo se recupera el trabajo ya hecho.
 - **nohup**: todo script >~2 min se lanza con `nohup .venv/bin/python -u scripts/... >
   logs/<x>.log 2>&1 &` + `echo $!` (sobrevive cierres de terminal y compactaciones de
   contexto de Claude). NO `tee` (buffering). Claude programa un `ScheduleWakeup` (~20 min)

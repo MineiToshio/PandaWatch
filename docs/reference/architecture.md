@@ -200,6 +200,29 @@ post-run; `build_web.py` gana su propio gate (`--force` para saltearlo). Detalle
 completo: [PIPELINE-WALKTHROUGH.md](../scraper/PIPELINE-WALKTHROUGH.md), gotchas
 #117-#125.
 
+**Paquete E-standardize (auditoría Fable, 2026-07-08)** — protección de golden
+records + invariantes nuevas. En `standardize_apply.py`: (a) el paso de outliers de
+serie ya NO reescribe un item aprobado (`approved_at`) por dominancia estadística de
+sus hermanas no curadas (gotcha #121), ni reescribe a `series_key=""` cuando la serie
+dominante es vacía; (b) `tier1`/`merge` backupean (`backup_and_rotate`) antes de mutar
+y recomputan `cluster_key` + `consolidate_by_cluster` al final (una corrida 100% Tier 1
+ya no deja CLKEY stale); (c) `tier1` NO marca `standardized_at` si la key se vacía al
+sanitizar (invariante STDKEYS); (d) la cola unmapped honra `MANGA_WATCH_DATA_DIR`
+(`_unmapped_path`); (e) el enum `product_type` es fuente única
+(`manga_watch.PRODUCT_TYPE_ENUM`, ya no una copia local en `standardize_apply` ni en
+`validate_corpus`). En `validate_corpus.py`, **7 invariantes WARN nuevas** (código en
+`main()`): **PAISKEY** (`country`→`_country_slug` vs sufijo país del `edition_key`, la
+regla dura "país = edición" sin enforcement hasta ahora; skip si el sufijo no es país
+parseable), **URLDUP** (misma URL top-level/`sources[].url` en >1 item — invisible para
+DUPCL que saltea el tier `url:`), **IMGTOP** (residuo `image_url`/`image_local`
+top-level, eliminados 2026-06-09), **COVER0** (`images[0]` debe ser dict con url —
+cover = images[0]), **APPROVED** (`approved_at` ⇒ `standardized_at` + keys no vacías),
+**TSISO** (`standardized_at`/`approved_at` parsean ISO), **SRCFMT** (entrada no-dict en
+`sources[]` — antes crasheaba el validador). Conteos vivos en el corpus real al cerrar:
+PAISKEY 15 (Hong Kong→`tw`), URLDUP 172 (series-splits fuzzy), resto 0 — todas warning,
+0 duras. En `series_aliases.py`: `aggressive_series_norm` colapsa vocales largas POR
+TOKEN (ya no cruza límites de token) y conserva Hangul (jamo + NFC).
+
 ## Modelo de rareza — `derive_rarity_tier()` en `set_rarity.py`
 
 Rediseño 2026-06-10: **default-common** (antes default-rare con 54% de precisión medida).

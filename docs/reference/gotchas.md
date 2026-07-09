@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 137 known gotchas
+## The 140 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1564,3 +1564,79 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     check de state → un re-bootstrap reescribía TODO el batch aunque estuviera "seen". Fix:
     delega en `flush_source_candidates` (fuente única). Idempotencia del enforcer verificada
     2× byte-idéntica tras todos los cambios.
+139. **Paquete E-standardize de la auditoría Fable (2026-07-08) — golden records +
+    `aggressive_series_norm`.** (a) El paso de "outliers de serie" de `standardize_apply.py`
+    reescribía `series_key`/`edition_key` de CUALQUIER item de la /coleccion que difiriera
+    del dominante, SIN guard `approved_at` — un golden record curado a mano podía cambiar de
+    serie por dominancia estadística de sus hermanas no curadas (misma clase que gotcha #121)
+    y, si la serie dominante era `""`, los items sanos se volvían huérfanos. Fix: guard
+    `approved_at` en el loop de rewrite + `if not dom_sk: continue`. (b)
+    `aggressive_series_norm` (`series_aliases.py`, gotcha #70) colapsaba las vocales largas
+    del romaji (`ou/oo→o`, `uu→u`) sobre la cadena YA concatenada → una `ou` formada en el
+    LÍMITE entre dos tokens (`…o` + `u…`) fundía series distintas (`neko-udon`≡`neko-don`).
+    Fix: colapso POR TOKEN, antes del join. Además el rango conservado descartaba Hangul: NFKD
+    descompone las sílabas `가-힣` en jamo conjuntivos `U+1100-U+11FF` que el char-class no
+    incluía → un título coreano se vaciaba. Fix: conservar también los jamo + recomponer a NFC.
+    (c) `validate_corpus.py` gana 7 invariantes WARN (PAISKEY/URLDUP/IMGTOP/COVER0/APPROVED/
+    TSISO/SRCFMT) y deja de crashear ante una entrada no-dict en `sources[]`. (d) enum
+    `product_type` unificado a `manga_watch.PRODUCT_TYPE_ENUM` (ya no doble copia). Tests:
+    `test_standardize_apply.py`, `test_validate_corpus.py`, `test_series_aliases.py`.
+140. **Paquete F-escritura de la auditoría Fable (2026-07-08) — durabilidad, rotación y
+    determinismo en los writers de items.jsonl.** Ver `tests/test_write_robustness_20260708.py`.
+    **(A7)** la mitad de los retrofits hacían `write_text`/tmp-sin-fsync directo — un kill a
+    mitad de la escritura truncaba/corrompía items.jsonl (gotcha #133, misma clase). Fix:
+    helper único `write_items_atomic(path, rows)`/`write_lines_atomic(path, lines)` en
+    `manga_watch.py` (tmp+flush+fsync+`os.replace`, `sort_keys=True` homogéneo con
+    `append_jsonl`), adoptado por los 14 retrofits que hacen dump-completo + los 2 writers
+    de items.jsonl de `serve.py`. Los filtros (`filter_non_manga`/`filter_collectible`)
+    ahora escriben `rejected` ANTES que `kept`. **(A3)** `save_state` corría ANTES de
+    `append_jsonl`/`mirror_candidate_images` en `run()`/`_run_wiki_bootstrap()`/
+    `_run_sitemap_mining()` — un crash entre medio perdía el enriquecimiento del
+    detail-fetch para siempre (state ya "al día", items.jsonl no). Fix: `save_state` SIEMPRE
+    después de que las filas lleguen al JSONL. **(A6)** `backup_and_rotate` en su rama
+    fixed-slot podaba TODA la carpeta de backups por mtime a `max_keep` GLOBAL — con ~20
+    labels compartiendo la misma carpeta, una cadena de 3+ llamadas (el enforcer encadena
+    20+) evictaba el snapshot pre-run y los `timestamped=True` de otros labels. Fix: podar
+    SÓLO el glob del propio label; snapshots de nivel-run (pre-scrape, enforcer) pasan a
+    `timestamped=True`. **(A8)** `generate_slugs` resolvía colisiones de slug ordenando por
+    `cluster_key` sacado de iterar un `set` — con `PYTHONHASHSEED` aleatorio (default), el
+    orden de empate entre clusters con la misma `detected_at` más vieja cambiaba entre
+    procesos → sufijo `-b`/`-c` NO determinista (churn de URLs, idempotencia rota). Fix:
+    tie-break `(detected_at, cluster_key)` + un `taken_slugs` global (antes sólo dedupeaba
+    DENTRO de cada grupo de colisión, no ENTRE grupos en modo full) + iterar los grupos en
+    orden alfabético de `base_slug` (no orden de inserción del set). **(A13)** 5 retrofits
+    (`merge_isbn_duplicates`, `unify_coleccion_edition`, `align_raw_to_std_coleccion`,
+    `fix_edition_key_anomalies`, `canonicalize_edition_slugs`) usaban `shutil.copy` a un
+    path propio sin rotar (38 siblings / 1.1 GB sueltos) — migrados a `backup_and_rotate`;
+    `unify_coleccion_edition` además escribía SIEMPRE aunque `changed==0` (no-op en cada
+    delta), ahora hace early-return. **(M7/M8)** un `fut.result()` sin try/except en
+    `mirror_candidate_images` podía abortar TODO el run ante un bug de `image_store`; un
+    error de red en la página N de una fuente paginada descartaba las páginas 1..N-1 ya
+    scrapeadas — ambos ahora recuperan el trabajo parcial (contar como failed/loguear el
+    error, seguir con lo acumulado). **(M10)** `RobotsCache.allowed()` usaba
+    `RobotFileParser.read()` (`urlopen` SIN timeout, el único fetch del pipeline sin
+    límite) — un host colgado bloqueaba el worker para siempre; fix: fetch vía la `session`
+    del proyecto (`fetch_text`, timeout+retry) + `parser.parse()`, dict cacheado bajo lock.
+    **(B2/B8/B9/B10/B11/B12/B13, bajos)**: rama muerta `cluster_key="isbn:…"` en
+    `generate_slugs` removida (tier eliminado 2026-07-07, 0 usos reales);
+    `_recover_edition_display` exige el separador `" · "` + tope de longitud (si no, colaba
+    la `description` entera como "título"); `align_raw_to_std_coleccion` matchea el
+    edition_slug por POSICIÓN (`unify_coleccion_edition._edition_slug`, hoisteada a nivel de
+    módulo) en vez de substring (un `…-variant-…` en el nombre de la serie ya no confundía
+    al matcher); `fix_edition_key_anomalies._publisher_slug` saltea el token `-cNNNN` antes
+    de indexar (con disambiguador, `parts[-3]` apuntaba al slug de edición, no al
+    publisher) + `resolved_xx` se siembra desde ediciones YA resueltas en items.jsonl (antes
+    sólo vivía en memoria de la corrida actual — un hermano `-xx` llegado en un scrape
+    posterior no heredaba el país de una edición resuelta en una corrida previa); 9 scripts
+    con `json.loads` sin try/except unificados al patrón `_raw`-preserve (una línea corrupta
+    se cuenta/warnea y se reinyecta verbatim, no tumba el paso); los diagnósticos de
+    rechazados de los filtros se ROTAN (`backup_and_rotate`) en vez de pisarse cada corrida;
+    `rescore` incluye `content_hash` en su chequeo de drift (antes "nada cambió" si sólo el
+    hash recomputado difería, dejando el item stale sin escribir).
+    **Hallazgo NO introducido por este paquete** (pre-existente, fuera de scope): en una
+    corrida FRESCA que aún tiene títulos pendientes de `clean_titles`, `rescore` corre ANTES
+    (orden canónico del pipeline) y computa `content_hash` sobre el título SUCIO; recién en
+    la corrida SIGUIENTE lo recalcula sobre el título ya limpio → 1 pasada de "retraso" antes
+    de estabilizar (confirmado con prueba de idempotencia: pasada 2→3 da md5 IDÉNTICO). No es
+    un bug de escritura — es orden de pipeline documentado; ahora VISIBLE gracias al fix de
+    `rescore` de este mismo paquete (B13) en vez de quedar silenciosamente ignorado.
