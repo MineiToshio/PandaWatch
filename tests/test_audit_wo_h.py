@@ -161,11 +161,19 @@ def test_slug_isbn_field_10_and_13_converge():
     assert s13 == s10
 
 
-def test_slug_isbn_cluster_key_10_and_13_converge():
+def test_slug_isbn_cluster_key_branch_is_dead_b2():
+    """B2 (Fable 2026-07-08): la Regla vieja "cluster_key = isbn:{isbn13}" se
+    quitó — el tier `isbn:` de derive_cluster_key fue eliminado 2026-07-07 (un
+    ISBN pelado repite entre ediciones/series distintas en manga; ver
+    CLAUDE.md decisión #4). La rama nunca ejecutaba en el corpus real (0
+    items con ese prefijo), así que un `cluster_key` con ese prefijo YA NO
+    produce un slug "isbn-…" — cae al fallback por URL, igual que cualquier
+    item sin edition_key/isbn field."""
     c13 = {"cluster_key": "isbn:9784799777046", "url": "https://x/c"}
     c10 = {"cluster_key": "isbn:4799777041", "url": "https://x/d"}
-    assert generate_slugs._derive_base_slug(c13) == "isbn-9784799777046"
-    assert generate_slugs._derive_base_slug(c10) == "isbn-9784799777046"
+    assert generate_slugs._derive_base_slug(c13) == generate_slugs._derive_base_slug({"url": "https://x/c"})
+    assert generate_slugs._derive_base_slug(c10) == generate_slugs._derive_base_slug({"url": "https://x/d"})
+    assert not generate_slugs._derive_base_slug(c13).startswith("isbn-")
 
 
 def test_slug_isbn_is_idempotent():

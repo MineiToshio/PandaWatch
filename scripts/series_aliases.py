@@ -75,18 +75,28 @@ def aggressive_series_norm(key: str) -> str:
     "kumicho", "shoujo" vs "shojo"). NO es fuzzy matching: dos series
     distintas solo colisionan si son idénticas bajo estas transformaciones
     ("demon-slave" ≠ "demon-slayer", "naruto-gaiden" ≠ "naruto").
+
+    El colapso de vocales largas se aplica POR TOKEN, antes del join: si se
+    hiciera sobre la cadena ya concatenada, una "ou"/"oo"/"uu" formada en el
+    LÍMITE entre dos tokens ("...o" + "u...") colapsaría espuriamente y fundiría
+    series distintas (hallazgo #13). El rango conservado incluye Hangul
+    (silabas 가-힣 y los jamo U+1100-U+11FF a los que NFKD las descompone)
+    además de Hiragana/Katakana/CJK, para no descartar títulos coreanos; el
+    resultado se recompone a NFC para volver de los jamo a la sílaba original.
     """
     if not key:
         return ""
     s = unicodedata.normalize("NFKD", str(key).lower())
     s = "".join(c for c in s if not unicodedata.combining(c))
-    tokens = [t for t in re.split(r"[^0-9a-z぀-ヿ一-鿿]+", s) if t]
+    tokens = [t for t in re.split(r"[^0-9a-z぀-ヿ一-鿿ᄀ-ᇿ가-힣]+", s) if t]
     # Solo el artículo INICIAL "the" como palabra completa (no "theo…").
     if len(tokens) > 1 and tokens[0] == "the":
         tokens = tokens[1:]
-    s = "".join(tokens)
-    s = s.replace("ou", "o").replace("uu", "u").replace("oo", "o")
-    return s
+    # Vocales largas POR TOKEN (no cross-token): evita colapsos en el límite.
+    tokens = [t.replace("ou", "o").replace("uu", "u").replace("oo", "o")
+              for t in tokens]
+    # NFC: recompone los jamo Hangul (NFKD los partió) a la sílaba precompuesta.
+    return unicodedata.normalize("NFC", "".join(tokens))
 
 
 @lru_cache(maxsize=1)

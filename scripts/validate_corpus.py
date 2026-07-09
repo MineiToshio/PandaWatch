@@ -75,6 +75,29 @@ Invariantes (cada una con su id corto):
          [warning]
   SRCURL sources[] vacío, o con alguna entrada sin url. [warning]
 
+  Invariantes agregadas 2026-07-08 (auditoría Fable, paquete E-standardize) —
+  TODAS warning al nacer (backlog vivo; promoverlas a dura frenaría el build):
+  PAISKEY el `country` del item, mapeado a slug (`_country_slug`), coincide con
+         el sufijo país del `edition_key` — "país = edición" es regla DURA del
+         owner pero sin enforcement hasta hoy. Sólo compara cuando el sufijo del
+         edition_key ES un país conocido (si no es parseable, skip: no falso
+         positivo — eso ya lo cubren PAIS/EKMALFORMED). [warning]
+  URLDUP una misma URL (top-level o `sources[].url`) aparece en >1 item DISTINTO
+         (cluster_key/slug distinto): el mismo producto partido en dos filas.
+         Invisible para DUPCL (que saltea el tier `url:`) y para DUPSYN (sólo
+         synthetic de listadomanga). [warning]
+  IMGTOP residuo de `image_url`/`image_local` top-level (campos ELIMINADOS
+         2026-06-09; cover unificado a `images[0]`). Detecta la regresión. [warning]
+  COVER0 `images[]` no vacío pero `images[0]` no es un dict con url — el slot de
+         cover (images[0] = portada, fuente única desde 2026-06-09) está roto.
+         [warning]
+  APPROVED coherencia de golden record: `approved_at` ⇒ `standardized_at`
+         presente Y `series_key`/`edition_key` no vacías. [warning]
+  TSISO  `standardized_at`/`approved_at` presentes parsean como ISO-8601
+         (`datetime.fromisoformat`). DATEISO sólo cubría `release_date`. [warning]
+  SRCFMT una entrada de `sources[]` que no es un dict (dato corrupto). Antes
+         crasheaba el validador (exit 1); ahora se reporta. [warning]
+
 Exit codes (contrato para el gate pre-build de scrape_delta/full):
   0  corpus VÁLIDO — 0 violaciones DURAS (los warnings NO fallan).
   2  hay violaciones DURAS — corpus INVÁLIDO (el pipeline OMITE el build).
@@ -88,6 +111,7 @@ Uso:
 """
 from __future__ import annotations
 import json, os, re, sys, argparse
+import datetime as dt
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -115,16 +139,11 @@ _COUNTRIES = set(mw._COUNTRY_SLUG_MAP.values())
 
 IMAGES_DIR = ROOT / "data" / "images"
 
-# Enum de derive_product_type() — manga_watch.py:3841-3872 usa PRODUCT_TYPE_KEYWORDS
-# (línea 1679: artbook/fanbook/guidebook/boxset/novel), el chequeo directo de
-# "Magazine" en el título (línea 3849→magazine) y el set directo de audiobook
-# (líneas 2077-2078, por book_format). No hay una constante exportada con el
-# enum completo — se define ACÁ, apuntando a la fuente (no reimplementa lógica,
-# sólo enumera los valores posibles que esa lógica puede devolver).
-_PTYPE_ENUM = {
-    "manga", "artbook", "fanbook", "guidebook", "boxset", "novel", "magazine",
-    "audiobook",
-}
+# Enum de derive_product_type() — fuente ÚNICA: mw.PRODUCT_TYPE_ENUM (antes se
+# copiaba a mano acá y en standardize_apply.py; el doble enum era el hallazgo #9
+# de la auditoría 2026-07-08). Enumera los valores que derive_product_type puede
+# devolver: {manga, artbook, fanbook, guidebook, boxset, novel, magazine, audiobook}.
+_PTYPE_ENUM = mw.PRODUCT_TYPE_ENUM
 
 _DATEISO_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 
@@ -166,7 +185,14 @@ _CARVED_SLUGS = {"boxset", "special", "limited", "deluxe"}
 
 
 def _urls(it):
-    return [it.get("url", "") or ""] + [s.get("url", "") or "" for s in (it.get("sources") or [])]
+    # Guard isinstance: una entrada no-dict en sources[] (dato corrupto) antes
+    # crasheaba el validador entero (exit 1) — hallazgo #11. Se ignora acá y la
+    # invariante SRCFMT la reporta desde el loop principal.
+    out = [it.get("url", "") or ""]
+    for s in (it.get("sources") or []):
+        if isinstance(s, dict):
+            out.append(s.get("url", "") or "")
+    return out
 
 
 def _syn_tokens(it):
@@ -275,7 +301,7 @@ def main():
     if not file_path.exists():
         print(f"[ERROR] no existe {file_path}", file=sys.stderr)
         return 1
-    items = [json.loads(l) for l in file_path.open() if l.strip()]
+    items = [json.loads(l) for l in file_path.open(encoding="utf-8") if l.strip()]
     N = len(items)
 
     V = defaultdict(list)          # id -> list[str ejemplos]
@@ -296,6 +322,7 @@ def main():
     ev_owner = defaultdict(list)  # (edition_key, volume) -> items (para DUPVOL)
     sk_by_norm = defaultdict(set)  # aggressive_norm -> series_keys (SERIESDUP)
     ek_pubs = defaultdict(set)     # edition_key -> publisher strings (PUBMIX)
+    url_owner = defaultdict(set)   # url -> identidades distintas (URLDUP)
 
     for it in items:
         ek = it.get("edition_key", "") or ""
@@ -476,10 +503,67 @@ def main():
                 if not os.path.exists(IMAGES_DIR / loc):
                     flag("MIRRORREF", f"{ck or item_slug} | falta {loc!r}")
 
-        # SRCURL
+        # SRCURL + SRCFMT — dict-safe (una entrada no-dict antes crasheaba el
+        # validador; ahora se reporta como SRCFMT). #11.
         srcs = it.get("sources") or []
-        if not srcs or any(not (s.get("url") or "").strip() for s in srcs):
+        bad_fmt = [s for s in srcs if not isinstance(s, dict)]
+        if bad_fmt:
+            flag("SRCFMT", f"{ck or item_slug or it.get('url', '')[-40:]} | "
+                           f"{len(bad_fmt)} entradas no-dict | {title!r}")
+        dict_srcs = [s for s in srcs if isinstance(s, dict)]
+        if not srcs or any(not (s.get("url") or "").strip() for s in dict_srcs):
             flag("SRCURL", f"{ck or item_slug or it.get('url', '')[-40:]} | {title!r}")
+
+        # --- Paquete E-standardize (2026-07-08): invariantes nuevas, WARN -----
+
+        ident = ck or item_slug or (it.get("url", "") or "")
+
+        # URLDUP — acumular; una URL en >1 item distinto se reporta post-loop.
+        for u in _urls(it):
+            u = (u or "").strip()
+            if u:
+                url_owner[u].add(ident)
+
+        # PAISKEY — country del item vs sufijo país del edition_key ("país =
+        # edición", regla dura del owner). Sólo compara cuando el sufijo ES un
+        # país conocido (si no es parseable → PAIS/EKMALFORMED ya lo cubren).
+        if ek and (it.get("country") or "").strip():
+            ek_suffix = ek.rsplit("-", 1)[-1]
+            if ek_suffix in _COUNTRIES:
+                want = mw._country_slug(it["country"])
+                if want != ek_suffix:
+                    flag("PAISKEY", f"country={it['country']!r}→{want!r} "
+                                    f"pero edition_key termina en {ek_suffix!r} | {ek!r}")
+
+        # IMGTOP — residuo de image_url/image_local top-level (eliminados
+        # 2026-06-09; cover = images[0]). Detecta la regresión.
+        if "image_url" in it or "image_local" in it:
+            flag("IMGTOP", f"{ident} | tiene image_url/image_local top-level | {title!r}")
+
+        # COVER0 — images[] no vacío ⇒ images[0] es un dict con url (slot de
+        # cover, fuente única desde 2026-06-09).
+        imgs0 = it.get("images") or []
+        if imgs0:
+            first = imgs0[0]
+            if not isinstance(first, dict) or not (first.get("url") or "").strip():
+                flag("COVER0", f"{ident} | images[0] sin url/no-dict | {title!r}")
+
+        # APPROVED — golden record coherente: approved_at ⇒ standardized_at +
+        # series_key/edition_key no vacías.
+        if it.get("approved_at"):
+            if (not (it.get("standardized_at") or "").strip()
+                    or not sk_it or not ek):
+                flag("APPROVED", f"{ident} | approved sin "
+                                 f"standardized_at/series_key/edition_key | {title!r}")
+
+        # TSISO — timestamps de estandarización/aprobación parsean como ISO.
+        for _tsf in ("standardized_at", "approved_at"):
+            _tsv = (it.get(_tsf) or "").strip()
+            if _tsv:
+                try:
+                    dt.datetime.fromisoformat(_tsv)
+                except ValueError:
+                    flag("TSISO", f"{ident} | {_tsf}={_tsv!r} no es ISO | {title!r}")
 
     # DUPCL
     for ck, group in cl_owner.items():
@@ -570,6 +654,13 @@ def main():
         if len(cks) > 1:
             flag("SLUGUNIQ", f"{s!r} ×{len(cks)} cluster_keys: {sorted(cks)[:4]}")
 
+    # URLDUP — una misma URL (top-level o sources[].url) repartida en >1 item
+    # DISTINTO: el mismo producto partido en dos filas. DUPCL no lo ve (saltea
+    # el tier url:) y DUPSYN sólo cubre synthetic de listadomanga.
+    for u, owners in url_owner.items():
+        if len(owners) > 1:
+            flag("URLDUP", f"{u[-70:]!r} ×{len(owners)} items: {sorted(owners)[:3]}")
+
     # LANG_ENUM — el TOP de valores no-canónicos (más útil que N ejemplos
     # repetidos del mismo valor). counts["LANG_ENUM"] ya se acumuló en el loop.
     for val, cnt in lang_bad_counter.most_common(args.examples):
@@ -578,9 +669,10 @@ def main():
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
     order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
-             "COLED", "PAIS", "EDSLUG", "SPECIALREG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
+             "COLED", "PAIS", "PAISKEY", "EDSLUG", "SPECIALREG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
              "DATEISO", "PTYPE_ENUM", "LANG_ENUM", "VOLRANGE", "EKMALFORMED",
-             "SLUGUNIQ", "SLUGFMT", "STDKEYS", "MIRRORREF", "SRCURL"]
+             "SLUGUNIQ", "SLUGFMT", "STDKEYS", "MIRRORREF", "SRCURL", "SRCFMT",
+             "URLDUP", "IMGTOP", "COVER0", "APPROVED", "TSISO"]
     NOTES = {"MIRRORREF": f"(de {mirror_checked} refs con local revisadas)"}
     hard_fail = 0
     for k in order:

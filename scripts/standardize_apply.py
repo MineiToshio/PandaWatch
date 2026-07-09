@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -49,6 +50,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from manga_watch import (  # noqa: E402
+    PRODUCT_TYPE_ENUM,
+    backup_and_rotate,
     consolidate_by_cluster,
     derive_cluster_key,
     derive_product_type,
@@ -63,24 +66,49 @@ from series_aliases import (  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 UNMAPPED = ROOT / "data" / "unmapped_series.jsonl"
-DEFAULT_BASE = Path("/tmp/manga-standardize-run")
+_DEFAULT_UNMAPPED = UNMAPPED  # slot fijo capturado al import (ver _unmapped_path)
+# Run dir del skill. Alineado con standardize_audit.DEFAULT_BASE
+# (data/standardize-run): el workflow/SKILL.md pasan --base explícito a AMBOS
+# scripts, pero los defaults no deben divergir (paquete I1, 2026-07-08).
+DEFAULT_BASE = ROOT / "data" / "standardize-run"
 
 # Tope de intentos de estandarización LLM antes de mandar el item a curación
 # manual (unmapped_series.jsonl). Evita el retry infinito de títulos con keys
 # irromanizables que gastarían Tier 3 para siempre (WO-C).
 MAX_STANDARDIZE_ATTEMPTS = 3
 
-# Enum válido de product_type (ver derive_product_type en manga_watch.py). El
-# KIND de edición (special/deluxe/variant/limited/collector) NUNCA va acá — vive
-# en edition_key. Si el LLM devuelve un edition-kind en product_type, se descarta.
-VALID_PRODUCT_TYPES = frozenset({
-    "manga", "artbook", "fanbook", "guidebook",
-    "boxset", "novel", "magazine", "audiobook",
-})
+# Enum válido de product_type — fuente ÚNICA: PRODUCT_TYPE_ENUM de manga_watch
+# (antes se copiaba a mano acá y en validate_corpus.py; el doble enum era el
+# hallazgo #9 de la auditoría 2026-07-08). El KIND de edición (special/deluxe/
+# variant/limited/collector) NUNCA va acá — vive en edition_key; si el LLM
+# devuelve un edition-kind en product_type, se descarta.
+VALID_PRODUCT_TYPES = PRODUCT_TYPE_ENUM
+
+
+def _unmapped_path() -> Path:
+    """Path de escritura de unmapped_series.jsonl, honrando MANGA_WATCH_DATA_DIR.
+
+    Misma clase de bug ya corregida en `series_aliases._unmapped_target()`
+    (hallazgo #5, 2026-07-08): antes se usaba la constante de módulo y se
+    ignoraba la env var → la suite ensuciaba el `data/unmapped_series.jsonl`
+    REAL. Orden de resolución:
+      1. Si un test monkeypatcheó `UNMAPPED` a un path ad-hoc (≠ el slot fijo del
+         import) → se honra ese path (compat con tests que fijan UNMAPPED, ej.
+         WO-C). Debe ir PRIMERO: esos tests no setean env var propia.
+      2. Si `MANGA_WATCH_DATA_DIR` está seteada (fixture autouse de conftest,
+         o serve.py en prod) → `<dir>/unmapped_series.jsonl`.
+      3. Default: el slot fijo `data/unmapped_series.jsonl`.
+    """
+    if UNMAPPED != _DEFAULT_UNMAPPED:
+        return UNMAPPED
+    data_dir = os.environ.get("MANGA_WATCH_DATA_DIR")
+    if data_dir:
+        return Path(data_dir) / "unmapped_series.jsonl"
+    return UNMAPPED
 
 
 def _load_items() -> list[dict]:
-    return [json.loads(l) for l in ITEMS.open() if l.strip()]
+    return [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
 
 
 def _write_items(items: list[dict]) -> None:
@@ -109,9 +137,10 @@ def _existing_unmapped_keys() -> set[tuple[str, str]]:
     """Set de identidades `(series_key|sample_url, reason)` ya presentes en
     unmapped_series.jsonl, para dedup cross-run al appendear."""
     seen: set[tuple[str, str]] = set()
-    if not UNMAPPED.exists():
+    target = _unmapped_path()
+    if not target.exists():
         return seen
-    for line in UNMAPPED.open(encoding="utf-8"):
+    for line in target.open(encoding="utf-8"):
         line = line.strip()
         if not line:
             continue
@@ -158,8 +187,9 @@ def append_unmapped_from_item(it: dict, reason: str, *, note: str = "",
         "reason": reason,
         "note": note or "",
     }
-    UNMAPPED.parent.mkdir(parents=True, exist_ok=True)
-    with UNMAPPED.open("a", encoding="utf-8") as fh:
+    target = _unmapped_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     if sk:
         seen.add((sk, reason))
@@ -198,12 +228,18 @@ def cmd_tier1(base: Path, force_all: bool) -> int:
     if not tier1_file.exists():
         print("tier1.json no existe — correr standardize_audit.py primero.")
         return 1
-    tier1 = json.load(tier1_file.open())
+    tier1 = json.load(tier1_file.open(encoding="utf-8"))
     url_to_md = {p["url"]: p for p in tier1 if p.get("url")}
+
+    # Backup ANTES de mutar (convención dura: todo script que modifica un archivo
+    # de datos backupea una vez antes del loop — hallazgo #2).
+    if ITEMS.exists():
+        backup_and_rotate(ITEMS, "standardize-tier1")
 
     items = _load_items()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     applied = 0
+    skipped_empty = 0
     for it in items:
         if it.get("approved_at"):
             continue
@@ -212,41 +248,77 @@ def cmd_tier1(base: Path, force_all: bool) -> int:
         md = url_to_md.get(it.get("url", ""))
         if not md:
             continue
+        # Sanitizar ANTES de marcar (gotcha #81): claves LLM/heurísticas pueden
+        # traer no-ASCII. Si series o edición se vacían al sanitizar, NO marcar
+        # standardized_at y NO pisar las keys existentes con "" — el item queda
+        # pendiente (invariante STDKEYS: estandarizado ⇒ keys no vacías). #3.
+        sk = sanitize_key_ascii(md.get("proposed_series_key", ""))
+        ek = sanitize_key_ascii(md.get("proposed_edition_key", ""))
+        if not sk or not ek:
+            skipped_empty += 1
+            continue
         if not it.get("title_original"):
             it["title_original"] = it.get("title", "")
-        it["series_key"] = sanitize_key_ascii(md.get("proposed_series_key", ""))
+        it["series_key"] = sk
         it["series_display"] = md.get("proposed_series_display", "")
-        it["edition_key"] = sanitize_key_ascii(md.get("proposed_edition_key", ""))
+        it["edition_key"] = ek
         it["edition_display"] = md.get("proposed_edition_display", "")
         it["volume"] = md.get("proposed_volume", "")
         # title intacto: es el nombre OFICIAL scrapeado, nunca se renombra
         # ni traduce (política de títulos 2026-06-12).
         it["standardized_at"] = now_iso
         applied += 1
-    _write_items(items)
+
+    # Recomputar cluster_key + consolidar (mismo paso 4 del merge). tier1
+    # reescribe edition_key/volume (insumos de derive_cluster_key); sin esto
+    # una corrida 100% Tier 1 dejaría cluster_key STALE → validate_corpus exit 2
+    # (invariante DURA CLKEY) → gate pre-build bloqueado. Fuente única:
+    # derive_cluster_key + consolidate_by_cluster de manga_watch. #4.
+    for it in items:
+        it["cluster_key"] = derive_cluster_key(it)
+    deduped = consolidate_by_cluster(items)
+
+    _write_items(deduped)
     print(f"Tier 1 auto-standardized: {applied} items (0 tokens LLM)")
+    if skipped_empty:
+        print(f"Tier 1 sin marcar (keys vacías al sanitizar, siguen pending): "
+              f"{skipped_empty}")
+    print(f"Items: {len(items)} -> {len(deduped)} (deduped {len(items) - len(deduped)})")
     return 0
 
 
 def cmd_merge(base: Path, force_all: bool) -> int:
+    # Backup ANTES de mutar (convención dura; el merge es de los pasos más
+    # mutantes del pipeline — hallazgo #2).
+    if ITEMS.exists():
+        backup_and_rotate(ITEMS, "standardize-merge")
+
     # Caches de aliases pueden estar stale si el YAML cambió en esta sesión.
     _build_lookup.cache_clear()
     _build_aggressive_lookup.cache_clear()
 
     # 1) Veredictos LLM por chunk (cubre result_NN.jsonl y result_t{2,3}_NN.jsonl).
     results: dict[str, dict] = {}
+    malformed_lines = 0
     for f in sorted(base.glob("result_*.jsonl")):
-        for line in f.open():
+        for line in f.open(encoding="utf-8"):
             line = line.strip()
             if not line:
                 continue
             try:
                 r = json.loads(line)
             except Exception:
+                # Antes se descartaba EN SILENCIO: una línea de veredicto
+                # corrupta (chunk truncado, JSON mal cerrado por el subagente)
+                # desaparecía sin traza. Ahora se cuenta y se reporta. #14.
+                malformed_lines += 1
                 continue
             if r.get("url"):
                 results[r["url"]] = r
     print(f"Veredictos leídos de archivos de chunk: {len(results)}")
+    if malformed_lines:
+        print(f"WARN: {malformed_lines} líneas de veredicto LLM malformadas "
+              f"(descartadas, no aplicadas).")
 
     # 2) Propuestas heurísticas (fallback para keys vacías del LLM).
     proposals: dict[str, dict] = {}
@@ -254,10 +326,10 @@ def cmd_merge(base: Path, force_all: bool) -> int:
         p = base / name
         if p.exists():
             try:
-                for proj in json.load(p.open()):
+                for proj in json.load(p.open(encoding="utf-8")):
                     proposals[proj.get("url", "")] = proj
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"WARN: no se pudo parsear {name} (ignorado): {e}")
 
     items = _load_items()
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -314,23 +386,33 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             left_pending += 1
             final.append(it)
             continue
-        it["series_key"] = sk
-        it["series_display"] = ((r.get("series_display", "") or "").strip()
-                                or prop.get("proposed_series_display", ""))
+        # Resolver la edición ANTES de mutar el item: si el LLM no dio edición
+        # usable, el item queda PENDIENTE — y NO debe salir con series_key/
+        # series_display ya pisados a medias (mutación parcial, hallazgo #8).
         # PRESERVAR la edición ya asignada determinísticamente (el parser aplicó
         # las reglas duras): el LLM solo asigna edición a items SIN edition_key.
-        if (it.get("edition_key") or "").strip():
-            it["volume"] = it.get("volume", "") or (r.get("volume", "") or "").strip()
-        else:
+        has_edition = bool((it.get("edition_key") or "").strip())
+        new_ek = None
+        if not has_edition:
             ek = (r.get("edition_key", "") or "").strip() or prop.get("proposed_edition_key", "")
             ek = sanitize_key_ascii(ek)
             if not ek:
                 # Keys inusables → pendiente + intento contabilizado (WO-C).
+                # Se contabiliza SIN haber mutado nada del item todavía.
                 it["standardize_attempts"] = (it.get("standardize_attempts", 0) or 0) + 1
                 left_pending += 1
                 final.append(it)
                 continue
-            it["edition_key"] = ek
+            new_ek = ek
+
+        # A partir de acá el item se estandariza sí o sí: seguro mutar.
+        it["series_key"] = sk
+        it["series_display"] = ((r.get("series_display", "") or "").strip()
+                                or prop.get("proposed_series_display", ""))
+        if has_edition:
+            it["volume"] = it.get("volume", "") or (r.get("volume", "") or "").strip()
+        else:
+            it["edition_key"] = new_ek
             it["edition_display"] = ((r.get("edition_display", "") or "").strip()
                                      or prop.get("proposed_edition_display", ""))
             it["volume"] = ((r.get("volume", "") or "").strip()
@@ -342,9 +424,14 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             it["title_original"] = it.get("title", "")
         new_sk, new_sd = canonical_series_key(it["title"], it["series_key"],
                                               it["series_display"])
-        # La canónica del YAML también puede traer no-ASCII (gotcha #81).
-        new_sk = sanitize_key_ascii(new_sk) or new_sk
-        if new_sk != it["series_key"]:
+        # La canónica del YAML también puede traer no-ASCII (gotcha #81). Se
+        # sanitiza SIN fallback al valor crudo: antes `... or new_sk`
+        # reintroducía la clave no-ASCII cuando la sanitización la vaciaba
+        # (hallazgo #7). Si queda vacía, NO se aplica la reescritura canónica —
+        # se conserva el series_key actual (ya sanitizado, nunca "" → no crea
+        # huérfanos).
+        new_sk = sanitize_key_ascii(new_sk)
+        if new_sk and new_sk != it["series_key"]:
             old_sk = it["series_key"]
             it["series_key"] = new_sk
             it["series_display"] = new_sd
@@ -381,9 +468,19 @@ def cmd_merge(base: Path, force_all: bool) -> int:
         dom_sk, dom_n = Counter(it.get("series_key", "") for it in grp).most_common(1)[0]
         if dom_n < 3:
             continue
+        # La serie dominante NO puede ser vacía: reescribir items sanos a
+        # series_key="" los convierte en huérfanos (hallazgo #1, agravante).
+        if not dom_sk:
+            continue
         dom_sd = next((x.get("series_display", "") for x in grp
                        if x.get("series_key") == dom_sk), "")
         for it in grp:
+            # NUNCA reescribir un golden record por dominancia estadística de sus
+            # hermanas no curadas (guard `approved_at` homogéneo, gotcha #121 —
+            # hallazgo #1). Un item aprobado conserva la serie/edición que curó
+            # el owner aunque difiera de la dominante de la /coleccion.
+            if it.get("approved_at"):
+                continue
             if it.get("series_key", "") and it["series_key"] != dom_sk:
                 old_ek = it.get("edition_key", "")
                 if old_ek.startswith(it["series_key"] + "-"):

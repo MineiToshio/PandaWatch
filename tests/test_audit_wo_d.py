@@ -51,6 +51,9 @@ WO_D_SCRIPTS = [
     "unify_coleccion_edition.py",
     "fix_listadomanga_title_collisions.py",
     "enforce_listadomanga_rules.py",
+    # Agregado 2026-07-08 (paquete E-standardize): remapea series_key/display de
+    # golden records si pierde el guard → misma clase de bug de gotcha #121.
+    "backfill_series_aliases.py",
 ]
 
 

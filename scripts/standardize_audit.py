@@ -5,7 +5,7 @@ Fuente ÚNICA de la lógica de auditoría/tiering que antes vivía COPIADA en
 SKILL.md y en el workflow (drift). Calcula los items pendientes (sin
 `standardized_at` ni `approved_at`), re-deriva la metadata heurística para
 obtener el `confidence_tier`, y escribe las proyecciones por tier a
-`/tmp/manga-standardize-run/tier{1,2,3}.json`.
+`data/standardize-run/tier{1,2,3}.json` (run dir persistente; ver DEFAULT_BASE).
 
 Cada proyección Tier 2/3 incluye además:
   - `proposed_*`: la propuesta heurística (Tier 2 la valida, no re-deriva).
@@ -116,7 +116,7 @@ def main() -> int:
     ap.add_argument("--base", type=Path, default=DEFAULT_BASE)
     args = ap.parse_args()
 
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
     if args.force_all:
         pending = [it for it in items if not it.get("approved_at")]
     else:
