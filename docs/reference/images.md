@@ -205,7 +205,7 @@ lógica en otro lado). Reglas:
   single-thread por imagen + paralelismo por pool es ~3× más rápido en batch (medido).
 - **Idempotente**: una imagen ya AVIF y ≤ 1600 px se devuelve sin re-encodear (cero pérdida
   generacional). Una AVIF > 1600 px se redimensiona.
-- **NUNCA toca placeholders** (gotcha #100): si `placeholder_reason(body) != ""` devuelve los
+- **NUNCA toca placeholders** (gotcha #104): si `placeholder_reason(body) != ""` devuelve los
   bytes CRUDOS sin tocar, para que la detección por FIRMA (sha1 del contenido) de
   `purge_placeholder_images` siga matcheando aguas abajo. Si re-encodeáramos, el sha1 cambiaría.
 - **Degrada con gracia**: ante error de decode/encode (o sin pyvips/PIL) devuelve los bytes

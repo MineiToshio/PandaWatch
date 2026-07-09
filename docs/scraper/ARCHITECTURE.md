@@ -3,6 +3,15 @@
 Deep dive into how PandaWatch's pipeline works end-to-end.
 Read `CLAUDE.md` first for the high-level orientation.
 
+> ⚠ **Doc legado.** La fuente vigente para storage/cluster_key/corpus state es
+> [docs/reference/architecture.md](../reference/architecture.md) (las 7
+> decisiones de diseño). Este deep-dive es más antiguo y algunas secciones
+> pueden estar desactualizadas (conteos de fuentes, campos de `sources[]`,
+> el esquema de `cluster_key`) — si algo acá contradice `docs/reference/
+> architecture.md`, ese último gana. Auditoría de alineación 2026-07-08
+> corrigió la sección "Cluster key" y el ejemplo de `sources[]`; el resto de
+> las cifras (conteo de `sources.yml`, etc.) puede seguir stale.
+
 ## Components
 
 ```
@@ -417,8 +426,12 @@ even when their title and description had nothing about a boxset.
 - Semantics (cambio 2026-06-02): **una fila por PRODUCTO** (cluster), no por
   URL. `append_jsonl` hace upsert por URL normalizada, luego **consolida por
   `cluster_key`** (`consolidate_by_cluster`) → cada producto queda en UNA fila
-  con un array **`sources[]`** (todas las fuentes donde se encontró: name, url,
-  price, country, stock_type, image_url…). Un producto re-encontrado en otra
+  con un array **`sources[]`** (todas las fuentes donde se encontró: `name`,
+  `source_class`, `country`, `publisher`, `language`, `url`, `stock_type`,
+  `detected_at`, `release_date`, `score` — ver `_SOURCE_FIELDS` en
+  `scripts/manga_watch.py`; **no hay `price` ni `image_url`/`image_local`
+  por-fuente**: precio se removió del pipeline y la portada vive en
+  `images[0]` top-level, no por-fuente). Un producto re-encontrado en otra
   fuente NO agrega fila: suma su entrada a `sources[]` (sticky+merge, preserva
   hermanas). El merge vive en `manga_watch.merge_cluster` / `source_entry`
   (fuente única de verdad; también lo usan build_web y `consolidate_sources.py`).
@@ -1278,56 +1291,19 @@ reentrant). **Any new endpoint that rewrites `items.jsonl` MUST use
 
 ## Cluster key — multi-source grouping beyond ISBN
 
-Added 2026-05-21 (Sprint 3.8). `derive_cluster_key(item) -> str` lives
-in `manga_watch.py` and is called by `candidate_to_json` so every row
-in `items.jsonl` carries a precomputed `cluster_key`.
-
-Four cluster-key shapes, in priority order:
-
-| Shape | When | Example |
-|---|---|---|
-| `isbn:<X>` | Item has an ISBN | `isbn:9784099432416` |
-| `edition:<edition_key>\|<volume>` | No ISBN but both `edition_key` and `volume` set (or no volume needed for box sets) | `edition:gon-norma-collector\|` |
-| `fuzzy:<lang>\|<series>\|<vol>\|<tier>\|<publisher>` | No ISBN/edition_key but lang + series (≥3 chars) + volume all derivable | `fuzzy:japonés\|転生したらスライムだった件\|15\|limited\|講談社` |
-| `url:<url>` | Insufficient info to fuzzy-merge safely | `url:https://example.com/x` |
-
-The `edition:` tier (added 2026-05-24) solves box sets and other items
-without volume that the fuzzy tier couldn't merge — e.g. Gon Edición
-Coleccionista appeared as 2 cards (Whakoom + ListadoManga) because both
-had no ISBN, no volume, and different publishers. With `edition:`, items
-sharing the same `edition_key` (which encodes publisher+market in its
-slug) merge regardless of publisher string. See design decision #4 in
-CLAUDE.md for full details including the variant tier hierarchy.
-
-Components of the fuzzy key:
-- `language`: `item.language` lowercased.
-- `series`: `_normalize_series_name(title, volume)` — strips variant
-  keywords (deluxe, kanzenban, celebration edition…), volume markers
-  (vol., tomo, tome, n., #, 巻…), and bracketed retailer noise (the
-  full-width `（...）` is part of that). Preserves kanji/kana/accents
-  because they're discriminants for non-Latin scripts.
-- `volume`: `_extract_volume(title)` — first match of vol/tomo/tome/
-  n./#/巻 patterns, including JP-style parenthesized numbers
-  (`タイトル（15）`). Required for fuzzy mode; without it we fall through
-  to `url:` to avoid merging different tomos of the same series.
-- `tier`: `_variant_tier(signal_types)` — picks the most specific tier
-  from `artbook > omnibus > box_set > kanzenban > lore_edition >
-  variant_cover > deluxe > limited > special > ""`. Two items in the
-  same tier merge; two in different tiers don't.
-- `publisher`: `item.publisher` lowercased.
-
-Grouping consumers:
-- **`build_web.py:_group_by_cluster_key`** — groups items by key,
-  picks the canonical (highest score, latest detected_at as tiebreak),
-  best-of-merges missing fields, and builds `sources[]`.
-- **`web/index.html:dedupByUrl`** — mirrors the same logic in JS for
-  live-fetch mode. Reads `item.cluster_key`; for legacy rows without
-  the field, falls back to ISBN (or `url:` if neither).
+⚠ **Sección obsoleta (drift detectado 2026-07-08).** Describía un esquema de
+4 tiers con `isbn:` como prioridad máxima y sin `lmc:`. Eso ya NO es así: el
+ISBN se eliminó como criterio de fusión (2026-07-07, es destructivo en manga —
+portadas variantes y series distintas comparten ISBN) y se agregó el tier
+`lmc:` para ListadoManga. **El esquema vigente vive en
+[docs/reference/architecture.md](../reference/architecture.md) → decisión #4
+("Multi-source grouping by `cluster_key`")**, con los 4 tiers reales
+(`lmc:` > `edition:` > `fuzzy:` > `url:`), el detalle de cada componente, el
+`_variant_tier` y las consumers (`build_web.py:_group_by_cluster_key`,
+`web/index.html:dedupByUrl`). Consultá esa sección, no esta.
 
 Retrofit: `scripts/retrofit/backfill_cluster_key.py` adds/refreshes
-`cluster_key` on every row in `items.jsonl`. Reports the consolidation
-delta (currently ~7%, 130 cards collapsed into 89 multi-source
-groups).
+`cluster_key` on every row in `items.jsonl`.
 
 If you change the derivation, re-run the retrofit AND verify in the
 browser that the top groups still look right — bad merges are

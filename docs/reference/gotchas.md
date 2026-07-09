@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 142 known gotchas
+## The 143 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -899,7 +899,7 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     mano puede re-meter un free preview vía estandarización (mismo origen que gotcha #99). Tests:
     `test_lmc_free_preview_number_is_skipped`, `test_lmc_free_preview_skipped_but_paid_items_kept`.
 
-100. **Estandarizar la imagen al ingresar NO debe tocar los placeholders, o se rompe la detección
+104. **Estandarizar la imagen al ingresar NO debe tocar los placeholders, o se rompe la detección
     por FIRMA (2026-06-15).** Desde 2026-06-15 toda imagen que entra al espejo se normaliza a un
     "master de display" único (AVIF Q60, lado largo ≤1600px, resize-down + strip de metadata) en
     `image_store.normalize_image()`, llamado desde los 3 cuellos de escritura: `download_image`

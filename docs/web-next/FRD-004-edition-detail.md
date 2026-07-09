@@ -16,6 +16,15 @@ belong to a specific edition — same series + publisher + edition type. It is t
 Example: `/edition/berserk-darkhorse-deluxe` shows Berserk Deluxe Edition Vol. 1
 through Vol. 15 (or however many are in the corpus).
 
+> **Nota (auditoría de alineación 2026-07-08):** este FRD y sus work orders
+> (WO-004/005/006/008/010/012) referencian `canonical.image_url`/
+> `canonical.image_local` como si el tipo `Item` los tuviera directo — eran
+> los campos vigentes cuando se escribió la spec (2026-05-27). Esos campos
+> top-level se ELIMINARON el 2026-06-09 (portada unificada a `images[0]`); la
+> implementación actual accede a la portada vía el helper `coverImage(item)`
+> (`web-next/lib/data.ts`). Esta spec queda como snapshot histórico de lo
+> pedido, no se reescribió retroactivamente — no confundir con el código real.
+
 ---
 
 ## Problem Statement

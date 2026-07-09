@@ -144,7 +144,7 @@ chico. ANTES de tocar código de un área, leé su doc:
 |---|---|
 | **Implementar cualquier feature o fix** (elegir vía A/B/C, plan mode, verificación, eficiencia de tokens; skills de proceso `/feature-spec`, `/ship-check`, `/product-pulse`) | [docs/process/AI-WORKFLOW.md](docs/process/AI-WORKFLOW.md) |
 | **Escribir, transformar, filtrar o mostrar el `title` de un item** (parser, skill, retrofit de títulos, filtro non-manga, tarjeta/detalle de UI) | [docs/reference/title-policy.md](docs/reference/title-policy.md) — **léelo ANTES**; el title es el nombre OFICIAL, no se traduce/renombra |
-| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 116 gotchas) |
+| Tocar un parser / filtro / extractor / scoring / dedup | [docs/reference/gotchas.md](docs/reference/gotchas.md) (las 143 gotchas) |
 | Cambiar storage, cluster_key, el pipeline, o entender el modelo de datos | [docs/reference/architecture.md](docs/reference/architecture.md) (pipeline + corpus state + las 7 decisiones) |
 | Escribir/modificar un retrofit, fuente, wiki, o script del registry | [docs/reference/conventions.md](docs/reference/conventions.md) (filtros, backup/flush/nohup, registry, playbooks) |
 | Ubicar un archivo o entender qué hace cada módulo | [docs/reference/file-map.md](docs/reference/file-map.md) |
@@ -269,7 +269,7 @@ Last updated: 2026-07-08 (implementación de la auditoría Fable 2026-07-08 —
 ajustados: spool de flush + lock inter-proceso sobre items.jsonl). CLAUDE.md se
 compactó de ~5700 a ~190 líneas: el changelog histórico narrativo se removió
 (vive en `git log -- CLAUDE.md`) y el detalle de referencia (file map, las 7
-decisiones, las 142 gotchas, convenciones, dashboard, imágenes) se movió a
+decisiones, las 143 gotchas, convenciones, dashboard, imágenes) se movió a
 `docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,

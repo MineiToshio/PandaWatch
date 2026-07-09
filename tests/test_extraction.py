@@ -6443,7 +6443,7 @@ def test_lmc_parses_ediciones_especiales_section():
 
 
 def test_lmc_especial_in_non_id1_ventana_is_captured():
-    """Regresión (gotcha #41 + #100; caso owner 2026-06-14): la sección
+    """Regresión (gotcha #41 + #101; caso owner 2026-06-14): la sección
     'Números editados (Ediciones Especiales)' suele renderizar sus tomos en una
     tabla `ventana_id9`/`id14` (skin CSS de especiales), NO en `ventana_id1`.
     El parser viejo solo leía `ventana_id1` → esos especiales daban 0 items y se
@@ -6476,7 +6476,7 @@ def test_lmc_especial_in_non_id1_ventana_is_captured():
 
 
 def test_lmc_two_especiales_same_section_get_distinct_clusters():
-    """Regresión (gotcha #60 + #100; caso owner 'A Miyoshi le gusta Hosaka'
+    """Regresión (gotcha #60 + #101; caso owner 'A Miyoshi le gusta Hosaka'
     2026-06-14): dos ediciones especiales del MISMO título (vol 1 y vol 2) en la
     misma sección deben (a) emitirse AMBAS, (b) propagar su volumen a
     `Candidate.volume`, (c) derivar `cluster_key` DISTINTOS. El bug viejo dejaba

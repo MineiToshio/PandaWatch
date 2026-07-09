@@ -93,6 +93,50 @@ items.jsonl si necesitás precisión.
 | Países | 20 (top: Japón ~3866, Italia ~2322, España ~2003, Francia ~1465, Alemania ~957; **nuevos 2026-06-12: KR ~404, PL ~278, TW ~559, VN ~346, HK ~216, TH ~93, CZ 4, TR 10**) |
 | validate_corpus | 0 violaciones duras; warnings: 1 PAIS (eBay sin ISBN, sin evidencia), 1 SERIESDUP (loosers/losers — encolado en unmapped_series.jsonl), 11 EKPREFIX (antologías multi-obra, curación manual), 4 ISBNDUP (conflictos país/volumen/lmc — visibles a propósito, invariante nueva) |
 
+### Invariantes de `validate_corpus.py` (índice consolidado)
+
+Fuente de verdad: docstring + `HARD = {...}` en `scripts/validate_corpus.py`. Exit
+2 (build se OMITE) solo si hay violaciones **HARD**; las **WARN** se reportan pero
+no bloquean (nacen con backlog vivo en el corpus real — promoverlas a duras
+frenaría el build indefinidamente).
+
+| Código | Tipo | Qué detecta |
+|---|---|---|
+| SLUG | HARD | Todo item tiene `slug` no vacío. |
+| CLKEY | HARD | `cluster_key` guardado == `derive_cluster_key(item)` (auto-consistente ante re-ingesta). |
+| DUPCL | HARD | Ningún `cluster_key` aparece en >1 fila (consolidate es punto fijo). |
+| DUPSYN | HARD | Ninguna fuente sintética de listadomanga `{cole}|{item=}` en >1 fila (gotcha #54). |
+| LMCKIND | HARD | El `kind` del `cluster_key` lmc == canon(kind de su fuente sintética). |
+| TITLE | HARD | Título de tomo de listadomanga estable bajo `normalize_display_title` (gotcha #52/#54). |
+| ONECOLE | HARD | Las fuentes sintéticas de una fila son TODAS de la misma colección. |
+| DUPVOL | HARD | Dentro de un `edition_key`, ningún volumen se repite de forma visible (gotcha #56/#57). |
+| COLED | WARN | Una `/coleccion` = UNA edición: todos sus items comparten `edition_key` (gotcha #48). |
+| PAIS | WARN | `edition_key` termina en sufijo de país conocido (gotcha #46). |
+| EDSLUG | WARN | El slug de TIPO del `edition_key` no contradice el término del título (gotcha #69). |
+| SPECIALREG | WARN | Título con frase fuerte de tipo especial ⇒ `edition_slug` NO debe ser `regular`. |
+| SERIESDUP | WARN | `series_key` distintos que colapsan bajo `aggressive_series_norm` (gotcha #70). |
+| PUBMIX | WARN | >1 string de `publisher` dentro de una misma `edition_key`. |
+| ISBNDUP | WARN | Mismo ISBN-13 compartido por >1 fila que ADEMÁS huele a duplicado real (no todo ISBN compartido es violación en manga). |
+| EKPREFIX | WARN | `edition_key` empieza con el `series_key` del item. |
+| STOLENIMG | WARN | La portada de un tomo normal es la foto de un extra/bonus de OTRA fila (gotcha #99). |
+| DATEISO | WARN (2026-07-07) | `release_date` presente que no matchea el patrón ISO parcial. |
+| PTYPE_ENUM | WARN (2026-07-07) | `product_type` fuera del enum de `derive_product_type()`. |
+| LANG_ENUM | WARN (2026-07-07) | `language` fuera del set canónico de 14 idiomas del proyecto. |
+| VOLRANGE | WARN (2026-07-07) | `volume` numérico fuera de (0, 350], con pinta de año, o absurdo (basura de import). |
+| EKMALFORMED | WARN (2026-07-07) | Sufijo final del `edition_key` NO es un país conocido ni `xx`. |
+| SLUGUNIQ | WARN (2026-07-07) | `slug` duplicado entre `cluster_key` DISTINTOS. |
+| SLUGFMT | WARN (2026-07-07) | `slug` que viola `^[a-z0-9][a-z0-9-]*[a-z0-9]$`. |
+| STDKEYS | WARN (2026-07-07) | `standardized_at` presente con `series_key`/`edition_key` vacíos. |
+| MIRRORREF | WARN (2026-07-07) | `images[].local` que no existe en `data/images/` (espejo local roto). |
+| SRCURL | WARN (2026-07-07) | `sources[]` vacío, o con alguna entrada sin `url`. |
+| PAISKEY | WARN (2026-07-08) | `country` del item (mapeado a slug) no coincide con el sufijo país del `edition_key`. |
+| URLDUP | WARN (2026-07-08) | Una misma URL aparece en >1 item DISTINTO (partido en dos filas). |
+| IMGTOP | WARN (2026-07-08) | Residuo de `image_url`/`image_local` TOP-LEVEL (campos eliminados 2026-06-09). |
+| COVER0 | WARN (2026-07-08) | `images[]` no vacío pero `images[0]` no es un dict con `url` (slot de cover roto). |
+| APPROVED | WARN (2026-07-08) | Coherencia de golden record: `approved_at` ⇒ `standardized_at` + `series_key`/`edition_key` presentes. |
+| TSISO | WARN (2026-07-08) | `standardized_at`/`approved_at` no parsean como ISO-8601. |
+| SRCFMT | WARN (2026-07-08) | Entrada de `sources[]` que no es un dict (dato corrupto). |
+
 ISBN/author bajos NO son regresión: muchas filas curadas (Mangavariant,
 wikis) catalogan "qué variant existe", no "dónde comprarlo" (ver "URL como referencia").
 **Precios eliminados del pipeline (2026-06-11)**: PandaWatch es un catálogo de

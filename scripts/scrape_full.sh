@@ -39,7 +39,11 @@
 #      2n. yenpress (EN/US — calendario histórico desde 2013)
 #      2o (opt-in). whakoom spider profundo
 #   3. Cleanup retrofits + (opt-in) wayback recovery
-#   4. Build web final
+#   4. `validate_corpus.py` — GATE duro pre-build (exit 2 = corpus inválido,
+#      se omite el build; cuarentena + restore automático desde el backup)
+#   5. Build web final (solo si el corpus pasó el gate)
+#   6. `source_health.py` (+ baseline-alert) y `staleness_report.py` — salud
+#      de fuentes de ESTE run
 #
 # Tiempo estimado: 1.5-3 horas (vs 30-60 min del delta).
 # NOTE: listadomanga-blog histórico REMOVED del pipeline canónico

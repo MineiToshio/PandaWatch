@@ -29,8 +29,12 @@
 #      prhcomics US/CA, kinokuniya US, yenpress US,
 #      mangavariant incremental)
 #   3. Cleanup retrofits (rescore → clean_titles → normalize_release_dates →
-#      filter_non_manga → filter_collectible → backfill_metadata)
-#   4. Build web final
+#      filter_non_manga → filter_collectible → backfill_metadata → ...)
+#   4. `validate_corpus.py` — GATE duro pre-build (exit 2 = corpus inválido,
+#      se omite el build; cuarentena + restore automático desde el backup)
+#   5. Build web final (solo si el corpus pasó el gate)
+#   6. `source_health.py` (+ baseline-alert) y `staleness_report.py` — salud
+#      de fuentes de ESTE run
 #
 # Tiempo estimado: 30-60 min (vs 2-4 horas del full).
 #

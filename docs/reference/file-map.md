@@ -208,6 +208,7 @@ scripts/
                                last_seen_at > N meses (default 12). --dry-run por defecto, backup
                                antes de escribir (--apply). NUNCA en el pipeline canónico (last_seen
                                viejo también es señal de mercado). No toca items.jsonl. Gotcha #138.
+                               No registrado en el Panel (housekeeping manual opt-in).
     filter_non_manga.py        re-filtra (is_likely_manga / is_comic_not_manga / is_pure_novel).
     filter_collectible.py      2º gate: descarta tomos regulares.
     backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.

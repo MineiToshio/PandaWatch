@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """admin_serve.py — server LOCAL del Panel de Control.
 
+⚠ DEPRECATED: absorbido por serve.py; usar scripts/serve.py. Este módulo se
+mantiene sincronizado (mismos endpoints) pero es legacy standalone — el
+flujo normal ya sirve el Panel de Control desde `scripts/serve.py`
+(ver docs/admin/README.md y docs/reference/file-map.md).
+
 Sirve `admin/index.html` y la API de ejecución de scripts. Por seguridad
 bindea por default a 127.0.0.1, así que solo procesos de esta máquina
 pueden ejecutar scripts.
@@ -312,6 +317,13 @@ def main() -> int:
               "ejecutar tus scripts."),
     )
     args = parser.parse_args()
+
+    print(
+        "[DEPRECATED] admin_serve.py está deprecated — absorbido por "
+        "scripts/serve.py (mismos endpoints, flujo normal). Usar: "
+        "python scripts/serve.py",
+        file=sys.stderr,
+    )
 
     if not ADMIN_DIR.exists():
         print(f"[ERROR] no existe {ADMIN_DIR}", file=sys.stderr)

@@ -39,10 +39,10 @@ Un único usuario: el dueño del proyecto (sergiomineiro).
 > "score mínimo", del ordenamiento y de los badges de las cards. El scoring interno
 > del pipeline (gate de coleccionables) se mantiene, pero no es user-facing.
 - **Paginación** con contador de items que matchean los filtros
-- **Página de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes con precio por fuente, descripción en español (`description_es` con fallback a `description` si no hay traducción)
+- **Página de detalle**: imagen en carrusel (cuando hay múltiples), todos los campos, lista de fuentes, descripción en español (`description_es` con fallback a `description` si no hay traducción)
 - **Lightbox**: clic en la imagen del detalle la abre en grande (overlay full-screen, navegación ‹ ›, dots, contador "N / total", etiqueta Portada/Galería/Extra, teclado ←/→/Esc) — mismo comportamiento que el `ImageCarousel` de la app Next.js
 - **Navegación entre tomos de la edición**: flechas laterales ‹ › fijas a los lados de la página de detalle (y teclado ←/→) para saltar al tomo anterior/siguiente de la misma edición sin volver a la grilla. Se ocultan en items sin hermanos (ediciones de 1 tomo / standalone). Esc vuelve a la edición/catálogo.
-- **Multi-source view**: un producto con N fuentes se muestra como 1 card consolidada; el modal lista todas las fuentes con sus precios y URLs
+- **Multi-source view**: un producto con N fuentes se muestra como 1 card consolidada; el modal lista todas las fuentes con sus URLs
 
 ### Aprobación humana (golden records)
 
