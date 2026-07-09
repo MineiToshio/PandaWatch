@@ -194,12 +194,18 @@ contexto adicional o sin él.
    paralelo (investigación web con criterio pero acotada por fuente; Sonnet
    rinde muy bien y sale mucho más barato que N Opus simultáneos en fan-out).
    Cada subagente:
-   - Fetchea el listing principal y 5 items de detalle.
+   - Fetchea el listing principal, hace un triage chico (3-5 items) para
+     C1 (Content Fit); si pasa, amplía la muestra a **8-10 items** de detalle
+     (auditoría Fable 2026-07-08, hallazgo F13 — 5 items daba un intervalo de
+     confianza muy amplio para la regla de overlap 30/70%).
    - Evalúa: Content Fit (% ediciones especiales reales), campos mínimos
      (serie, tipo de edición, editorial, foto de portada), y — **crítico** —
      si la fuente cubre extras/bonuses, verifica que haya foto del EXTRA en
      sí (no solo la portada del manga).
    - Estima escala y factibilidad técnica.
+   - Escribe su JSON de resultado a `data/diagnostics/source-eval-<id>.json`
+     (trazabilidad; el contrato es descriptivo, no un JSON Schema ejecutable —
+     skill interactivo, no workflow).
 3. Para fuentes que pasan el filtro básico: cruza muestra con `items.jsonl`
    para calcular % de overlap con el corpus existente.
 4. Compila reporte: tabla resumen (✅/⚠️/❌) + detalle solo para viables.
@@ -233,7 +239,11 @@ y trunca la queue.
 3. Para problemas de filtro: escanea el corpus buscando más items afectados
    por el mismo patrón, presenta propuestas numeradas y **espera confirmación**.
 4. Aplica cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
-   `sources.yml` / `series_aliases.yml` / o correcciones directas en `items.jsonl`.
+   `sources.yml` / `series_aliases.yml` / o correcciones puntuales de un item vía
+   `scripts/retrofit/fix_item_fields.py --url X --set campo=valor` (auditoría
+   Fable 2026-07-08, hallazgo F12 — allowlist de campos + `title` BLOQUEADO
+   salvo `--allow-title` explícito, política de títulos gotcha #92; guard
+   `approved_at` + `backup_and_rotate` + re-deriva `cluster_key` si aplica).
    **Golden records guard**: si un fix de calidad de datos (K–N) tocaría un item
    con `approved_at`, NO se auto-edita — se consulta al owner primero.
 5. Agrega tests y corre pytest (solo para cambios de filtros).
@@ -258,25 +268,37 @@ evidencia (`stock_status` + `stock_checked_at`) y **re-deriva la rareza con
 `rarity_verified_at` (incremental). Agrupa por `edition_key` (1 verificación
 por edición) con cap de 40 por corrida (`--limit N`).
 
-**Cómo funciona**:
-1. Selecciona rares por incertidumbre (tracer que replica el orden de ramas
-   de `derive_rarity_tier`); excluye aprobados y ya verificados.
-2. Agrupa por `edition_key`, prioriza retailer_exclusive (posible promoción a
-   super_rare) y mercados occidentales.
-3. Verifica con escalera de métodos: URL del item si es retailer → tienda del
-   publisher (mejor ground truth; panini.it solo vía Chrome por queue-it) →
-   Amazon vía Chrome con selectores JS (WebFetch da 500) → WebSearch solo
-   para descubrir la ficha.
-4. Veredictos: `in_stock` → common (salvo evidencia estructural extra),
+**Cómo funciona** — Steps 0/1 y 3 compilados a script (auditoría Fable
+2026-07-08, hallazgo F5; antes el tracer de incertidumbre vivía DUPLICADO dos
+veces en el SKILL.md — ahora `scripts/audit/rarity_candidates.py` es la ÚNICA
+implementación, fijada por un test de coherencia por-rama contra
+`derive_rarity_tier()` en `tests/test_rarity_candidates.py`):
+1. `scripts/audit/rarity_candidates.py` selecciona rares por incertidumbre
+   (`rarity_uncertainty_reason()`), excluye aprobados y ya verificados, agrupa
+   por `edition_key` y prioriza retailer_exclusive (posible promoción a
+   super_rare) + mercados occidentales. Escribe
+   `data/diagnostics/rarity_validation_candidates.json`.
+2. Verifica con escalera de métodos (interactivo, LLM + Chrome — la única
+   parte no compilable): URL del item si es retailer → tienda del publisher
+   (mejor ground truth; panini.it solo vía Chrome por queue-it) → Amazon vía
+   Chrome con selectores JS (WebFetch da 500) → WebSearch solo para descubrir
+   la ficha. Guarda los veredictos en
+   `data/diagnostics/rarity_validation_results.json`.
+3. Veredictos: `in_stock` → common (salvo evidencia estructural extra),
    `out_of_stock` → rare confirmado o **super_rare** si retailer_exclusive,
    `not_found` → rare confirmado, `inconclusive` → no toca nada (se reintenta).
-5. Marca `rarity_verified_at` (ground truth: `set_rarity --force` lo respeta)
-   y loguea a `data/diagnostics/rarity_validation_log.jsonl`.
+4. `scripts/retrofit/apply_rarity_verdicts.py` aplica: marca
+   `rarity_verified_at` (ground truth: `set_rarity --force` lo respeta) y
+   loguea a `data/diagnostics/rarity_validation_log.jsonl`.
 
 **Cuándo invocarlo**:
 - Después de scrapes grandes con items nuevos de fuentes de referencia.
 - No para corridas delta diarias (10-20 items nuevos, el default está bien).
 - Nunca integrar en `/watch-standardize-catalog` — separa el costo de tokens.
+
+**Tier de modelo (hallazgo F10)**: hilo principal; Steps 0/1/3 son 100%
+mecánicos (scripts, cero LLM), el Step 2 (verificación web) sí razona —
+`sonnet` alcanza, no requiere `opus`.
 
 ---
 
@@ -295,8 +317,17 @@ aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
 > Google (preferencia del owner) y Bing queda de fallback.
 
 **Cómo funciona**:
-1. Verifica que Chrome esté disponible (`mcp__claude-in-chrome__list_connected_browsers`).
-2. Filtra `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin imagen con `--include-no-image`), saltando los `(slug, action, target)` que ya tienen una candidata **del skill** (campo `match_dist`) en **cualquier** estado — pending, approved o rejected. (Antes saltaba solo los `pending`, así que un item ya adjudicado re-entraba al plan y se re-buscaba en vano contra el mismo índice externo hasta aplicar la portada.) Las candidatas del script python `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual sobre esos items.
+0. Verifica que Chrome esté disponible (`mcp__claude-in-chrome__list_connected_browsers`).
+1. **El plan de queries está compilado a `scripts/retrofit/sc_plan.py`** (auditoría
+   Fable 2026-07-08, hallazgo F9 — antes ~300 líneas de Python embebido). Filtra
+   `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin
+   imagen con `--include-no-image`), saltando los `(slug, action, target)` que ya
+   tienen una candidata **del skill** (campo `match_dist`) en **cualquier** estado
+   — pending, approved o rejected. (Antes saltaba solo los `pending`, así que un
+   item ya adjudicado re-entraba al plan y se re-buscaba en vano contra el mismo
+   índice externo hasta aplicar la portada.) Las candidatas del script python
+   `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual
+   sobre esos items.
 3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<images[0].url>` — la portada actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
 4. Valida cada URL con Python: píxeles ≥ 1.5× actual, y **`fetch_better_covers._same_cover()`** — aspect ratio ±25% + aHash Hamming ≤ `MAX_HASH_DIST` (10 base; `_same_cover` relaja +4 para portadas actuales < 30k px). Solo pasa si es **la MISMA portada en mejor resolución** (otro volumen / edición / arte = hash distinto = descartada). Items sin imagen actual (`--include-no-image`) no se pueden verificar → quedan `verified: false`. Esto es lo que elimina las candidatas no relacionadas que antes se colaban (el filtro viejo de "Hamming > 3" hacía justo lo contrario: descartaba la misma portada y dejaba pasar las distintas).
 5. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json` con `confidence: "low"`, `status: "pending"`, más `match_dist`/`verified`. Flush **self-healing** después de cada item (acumulador propio + reescritura completa → resiste un save concurrente del dashboard).
@@ -316,6 +347,10 @@ calidad). Si el panel lo marca como "pixelada", este skill lo procesa.
 - Cuando quieras mejorar la calidad visual del catálogo (imágenes pequeñas o ausentes).
 - Antes de publicar un build fresco si hay items con portadas de baja resolución.
 - No integrar en el pipeline canónico automático — requiere decisión consciente.
+
+**Tier de modelo (hallazgo F10)**: hilo principal; el loop es mecánico
+(navegar + regex + subprocess) y el criterio vive en scripts —
+`sonnet` alcanza de sobra, nunca hace falta `opus`.
 
 ---
 

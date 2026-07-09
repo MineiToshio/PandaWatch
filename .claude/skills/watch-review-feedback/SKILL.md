@@ -261,35 +261,14 @@ Option 1 — run backfill for that specific item:
 # then apply
 ```
 
-Option 2 — manual fix in items.jsonl (for a single item when the correct URL is known):
-```python
-import json, sys
-from pathlib import Path
-sys.path.insert(0, "scripts")
-import image_store
+Option 2 — single item with a known correct URL: `fix_item_fields.py` (auditoría
+Fable 2026-07-08, hallazgo F12 — reemplaza el snippet manual que reescribía
+`items.jsonl` a mano sin `backup_and_rotate`). `cover_url` es un campo sintético
+que delega en `image_store.set_cover()` (la MISMA función del resto del pipeline):
 
-items_path = Path("data/items.jsonl")
-target_url = "<item_url>"
-correct_image_url = "<correct_image_url>"
-
-rows = []
-with items_path.open(encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        row = json.loads(line)
-        if row.get("url") == target_url:
-            # La portada es images[0] (única fuente de verdad); set_cover la
-            # actualiza con local="" para forzar el re-download de mirror_images.
-            image_store.set_cover(row, correct_image_url, "")
-        rows.append(row)
-
-tmp = items_path.with_name("items.jsonl.tmp")
-with tmp.open("w", encoding="utf-8") as f:
-    for row in rows:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-tmp.replace(items_path)
-print("Done — run mirror_images.py to download the new cover")
+```bash
+.venv/bin/python scripts/retrofit/fix_item_fields.py \
+    --url "<item_url>" --set cover_url="<correct_image_url>"
 ```
 
 Then re-download:
@@ -305,45 +284,32 @@ Then re-download:
 # then apply if it looks right
 ```
 
-Or for a single item, edit directly in `items.jsonl` using the same pattern as K above.
+Or for a single item, use `fix_item_fields.py` (same pattern as K above) for
+fields it covers (`isbn`, `publisher`, `language`, `description`…).
 
 ### M: Wrong classification
 
-1. Fix the item directly in `items.jsonl`:
-```python
-import json
-from pathlib import Path
-
-items_path = Path("data/items.jsonl")
-target_url = "<item_url>"
-
-rows = []
-with items_path.open(encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        row = json.loads(line)
-        if row.get("url") == target_url:
-            row["series_key"] = "<correct_series_key>"
-            row["series_display"] = "<correct_display>"
-            row["edition_key"] = "<correct_edition_key>"
-            row["edition_display"] = "<correct_display>"
-            row["volume"] = "<correct_volume>"
-            row["title"] = "<correct_standardized_title>"
-        rows.append(row)
-
-tmp = items_path.with_name("items.jsonl.tmp")
-with tmp.open("w", encoding="utf-8") as f:
-    for row in rows:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-tmp.replace(items_path)
+1. Fix the item with `fix_item_fields.py` (auditoría Fable 2026-07-08, hallazgo
+   F12 — reemplaza el snippet manual que reescribía `items.jsonl` sin
+   `backup_and_rotate` ni guard `approved_at`, y que además seteaba `title` a
+   mano contradiciendo la política de títulos, gotcha #92 — **NUNCA renombres
+   el `title`; categoría M es sobre series/edition/volume, no el nombre
+   oficial**):
+```bash
+.venv/bin/python scripts/retrofit/fix_item_fields.py --url "<item_url>" \
+    --set series_key="<correct_series_key>" \
+    --set series_display="<correct_display>" \
+    --set edition_key="<correct_edition_key>" \
+    --set edition_display="<correct_display>" \
+    --set volume="<correct_volume>"
 ```
+   El script re-deriva `cluster_key` automáticamente (sus insumos incluyen
+   `edition_key`/`volume`) y hace `backup_and_rotate` + guard `approved_at`.
 
 2. If the issue is a missing alias (same work under a different name), add to `data/series_aliases.yml`.
 
-3. Refresh cluster_key and slug:
+3. Refresh slug (cluster_key ya lo re-derivó `fix_item_fields.py`):
 ```bash
-.venv/bin/python scripts/retrofit/backfill_cluster_key.py
 .venv/bin/python scripts/retrofit/generate_slugs.py --only-missing
 ```
 
@@ -355,7 +321,13 @@ If it's a systematic pattern (same prefix on multiple items from same source), f
 .venv/bin/python scripts/retrofit/clean_titles.py
 ```
 
-If it's a one-off, fix the item directly (same pattern as K above, changing the `title` field).
+If it's a one-off (real scraping garbage — button text, prefix noise,
+truncation — NEVER a rename to the canonical series), use `fix_item_fields.py`
+with `--allow-title` explícito (imprime el warning de la política de títulos):
+```bash
+.venv/bin/python scripts/retrofit/fix_item_fields.py --url "<item_url>" \
+    --set title="<cleaned_title>" --allow-title
+```
 
 ## Step 5 — Add tests (filter changes only)
 

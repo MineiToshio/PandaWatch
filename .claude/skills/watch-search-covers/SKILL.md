@@ -133,6 +133,12 @@ etiquetar es opcional y nunca bloquea el flujo de aprobar/rechazar.
 > foto específica. En una corrida real, 12 de 25 targets eran fotos de galería con 0 matches.
 > Usar `--include-gallery` para procesar ambas, o `--gallery-only` para exclusivamente galería.
 
+**Tier de modelo recomendado (auditoría Fable 2026-07-08, hallazgo F10)**: el skill
+corre en el hilo principal, no fan-out. El loop es mecánico (navegar Chrome +
+extraer con regex + validar por subprocess) y el criterio genuino vive en scripts
+(`sc_plan.py`/`sc_validate.py`/`sc_flush.py`/`fetch_better_covers.py`), no en
+razonamiento del modelo — **`sonnet` alcanza de sobra; nunca hace falta `opus`**.
+
 ---
 
 ## Step 0 — Verificar que Chrome está disponible
@@ -155,307 +161,43 @@ Después, obtené un tab ID con `mcp__claude-in-chrome__tabs_context_mcp` (`crea
 
 ## Step 1 — Identificar items y construir el PLAN de queries
 
-Parsear los parámetros, filtrar `items.jsonl`, y para cada target generar **una lista ordenada
-de variantes de query** (la iteración del Step 3). Las variantes usan los helpers de producción
-(`fetch_better_covers`) para meter contexto de serie + volumen + tipo de edición + editorial +
-el término "portada" en el idioma correcto.
+Planificador determinista (0 tokens LLM) compilado a `scripts/retrofit/sc_plan.py`
+(auditoría Fable 2026-07-08, hallazgo F9 — antes ~300 líneas de Python embebido que
+ya habían drifteado 3 veces; mismo criterio que `sc_validate.py`/`sc_flush.py`, que
+tuvieron el mismo problema y ya son scripts permanentes con tests). **No copies el
+algoritmo acá**: si hace falta un cambio de comportamiento, se cambia el script (y
+sus tests en `tests/test_sc_plan.py`), no este documento.
 
-```python
-import json, sys, urllib.parse
-from pathlib import Path
-sys.path.insert(0, 'scripts/retrofit')
-import fetch_better_covers as fbc
+Invocá el script con los flags que reciba el skill (todos opcionales, mapean 1:1 a
+los parámetros del skill):
 
-# Umbral de "baja calidad": SIEMPRE el mismo que fetch_better_covers.LOW_QUALITY_PX
-# (constante única del motor, 90 000 — antes había un DEFAULT_MIN_PIXELS de 100 000
-# separado que generaba churn entre motor y skill; unificado 2026-07-08).
-# Se importa de fbc en vez de hardcodear el número para que NUNCA pueda driftear.
-LOW_QUALITY_PX = fbc.LOW_QUALITY_PX
-
-# Umbral de "referencia usable": por debajo de esto la imagen actual es un
-# placeholder roto (típico: GIF de 1×1 px de Amazon "imagen no disponible") y NO
-# sirve como referencia para _same_cover — el gate de aspect ratio y los hashes
-# rechazarían toda candidata (0 matches garantizados). Estos targets se tratan
-# como "sin imagen": se saltan salvo --include-no-image (y ahí van verified:false,
-# sin variante reverse, porque no hay con qué hacer búsqueda por foto). Sin este
-# guard los ~46 placeholders de 1px copan el --limit en cada corrida y nunca se
-# llega a las portadas reales de baja resolución (causa estructural, 2026-06-12).
-MIN_REF_PX = 2_500
-
-# Ajustar según los parámetros recibidos al invocar el skill
-LIMIT            = 0         # --limit N  (0 = TODAS por defecto; solo acotar si el owner pasa --limit N)
-SLUG_FILTER      = None      # --slug SLUG  (o None)
-INCLUDE_NO_IMAGE = False     # --include-no-image
-QUERY_EXTRA      = ""        # --query-extra "texto"  (o "")
-
-SKIP_SIGNALS    = {'variant_cover', 'retailer_exclusive'}
-GALLERY_ONLY    = False     # --gallery-only
-INCLUDE_GALLERY = False     # --include-gallery (procesa portadas Y galería)
-RETRY_FAILED    = False     # --retry-failed (ignorar la exclusión de 30 días)
-
-# Términos de edición que NO cubre fbc._EDITION_HINT, por idioma.
-EXTRA_EDITION_HINT = {
-    'special': {'Español': 'edición especial', 'Inglés': 'special edition',
-                'Italiano': 'edizione speciale', 'Francés': 'édition spéciale',
-                'Portugués': 'edição especial', 'default': 'special edition'},
-}
-
-items      = [json.loads(l) for l in open('data/items.jsonl') if l.strip()]
-images_dir = Path('data/images')
-
-preview_path = Path('data/cover_preview.json')
-# Skip key = (slug, action, target_url) — así cubrimos portada y cada foto de galería por separado.
-# Excluimos SOLO los items que YA tienen una candidata DEL SKILL (las que produce
-# sc_validate.py, reconocibles por el campo 'match_dist'), y en CUALQUIER estado:
-#   • pending   → esperando adjudicación del owner
-#   • approved  → ya resuelto, pendiente de apply_preview (que recién ahí pisa items.jsonl
-#                 y saca el item del plan al volverse hi-res)
-#   • rejected  → el owner YA dijo que no; re-buscar el mismo índice (whakoom/Google/Yandex)
-#                 devolvería las MISMAS imágenes ya descartadas (el índice externo no cambia
-#                 entre corridas) → se re-procesaría en vano.
-# Antes se excluían SOLO los 'pending', así que un item adjudicado (approved/rejected)
-# RE-ENTRABA al plan en la siguiente corrida y se re-buscaba inútilmente hasta aplicar la
-# portada (verificado en vivo 2026-06-14: black-clover-norma-regular-es-1). Cubrir los 3
-# estados lo evita. Las candidatas del script python fetch_better_covers (SIN 'match_dist')
-# NO excluyen: el owner quiere que el skill TAMBIÉN corra sobre esos items.
-already_in_preview = set()
-if preview_path.exists():
-    try:
-        for e in json.loads(preview_path.read_text(encoding='utf-8')):
-            for c in e.get('candidates', []):
-                if 'match_dist' in c:
-                    already_in_preview.add((
-                        e.get('slug', ''),
-                        c.get('action', 'replace_cover'),
-                        c.get('target', ''),
-                    ))
-    except (ValueError, OSError):
-        pass
-
-# Memoria de intentos: excluir targets con 0 matches en los últimos 30 días.
-# Razón: sin esto cada corrida re-quema presupuesto en los mismos targets imposibles
-# (ediciones especiales no indexadas en ningún motor). --retry-failed lo ignora.
-import datetime
-attempts_path = Path('data/cover_search_attempts.jsonl')
-recently_failed = set()   # skip_key = (slug, action, target)
-if not RETRY_FAILED and attempts_path.exists():
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
-    last_attempt: dict = {}   # skip_key → dict más reciente
-    try:
-        for line in attempts_path.read_text(encoding='utf-8').splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            a = json.loads(line)
-            key = (a.get('slug',''), a.get('action',''), a.get('target',''))
-            prev = last_attempt.get(key)
-            if prev is None or a.get('attempted_at','') > prev.get('attempted_at',''):
-                last_attempt[key] = a
-    except (ValueError, OSError):
-        pass
-    for key, a in last_attempt.items():
-        if a.get('matches', 1) == 0:
-            try:
-                ts = datetime.datetime.fromisoformat(a['attempted_at'].replace('Z', '+00:00'))
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=datetime.timezone.utc)
-                if ts >= cutoff:
-                    recently_failed.add(key)
-            except (KeyError, ValueError):
-                pass
-
-def get_pixels_local(local_fname):
-    if not local_fname:
-        return 0
-    p = images_dir / local_fname
-    if not p.exists():
-        return 0
-    try:
-        from PIL import Image
-        with Image.open(p) as img:
-            return img.width * img.height
-    except Exception:
-        return 0
-
-def edition_term(item):
-    """Tipo de edición en el idioma del item (kanzenban, boxset, edición especial...)."""
-    lang = item.get('language', '')
-    slug = fbc._edition_slug(item.get('edition_key', ''))
-    if not slug:
-        return ''
-    hint = fbc._EDITION_HINT.get(slug, {})
-    if hint:
-        return hint.get(lang, hint.get('default', ''))
-    extra = EXTRA_EDITION_HINT.get(slug, {})
-    return extra.get(lang, extra.get('default', ''))
-
-def build_variants(item, ref_url=None):
-    """
-    Lista ORDENADA de (label, query) — de la más específica a la más amplia.
-    El loop del Step 3 las prueba en orden e itera hasta juntar suficientes matches.
-    ref_url: URL de la imagen de referencia para Yandex reverse (la portada =
-    images[0].url, o la foto de galería que se esté procesando).
-    """
-    title      = (item.get('title') or '').strip()
-    title_orig = (item.get('title_original') or '').strip()
-    series     = (item.get('series_display') or '').strip()
-    volume     = str(item.get('volume') or '').strip()
-    lang       = item.get('language', '')
-    cover_term = fbc._COVER_TERM.get(lang, 'cover')
-    pub_short  = fbc._simplify_publisher(item.get('publisher', ''))
-    ed_term    = edition_term(item)
-
-    def clean(q):
-        q = ' '.join(q.split())
-        return f"{q} {QUERY_EXTRA}".strip() if QUERY_EXTRA else q
-
-    variants = []
-    # 1. La más específica: serie + volumen + edición + editorial + portada
-    if series:
-        v1 = f"{series} {volume} {ed_term} {pub_short} {cover_term}"
-        variants.append(('serie+vol+ed', clean(v1)))
-    # 2. title_original (lo que indexan los retailers locales) + editorial + portada
-    if title_orig and title_orig != title:
-        variants.append(('title_original', clean(f"{title_orig} {pub_short} {cover_term}")))
-    # 3. title (en inglés/canónico) + editorial + portada
-    if title:
-        variants.append(('title', clean(f"{title} {pub_short} {cover_term}")))
-    # 4. amplia: serie + volumen + edición + editorial (sin término portada)
-    if series:
-        variants.append(('amplia', clean(f"{series} {volume} {ed_term} {pub_short}")))
-    # Dedup conservando orden (variantes de TEXTO → Google udm=2)
-    seen, out = set(), []
-    for label, q in variants:
-        if q and q.lower() not in seen:
-            seen.add(q.lower())
-            out.append({'label': label, 'query': q, 'kind': 'text',
-                        'url': f"https://www.google.com/search?q={urllib.parse.quote(q)}&udm=2"})
-
-    # Variante WHAKOOM (texto, Google udm=2) — va PRIMERO para ítems en Español.
-    # Evidencia: en la corrida real 2026-06-11, whakoom produjo el 100% de los matches ES
-    # (8/8); yandex-reverse 0 (los thumbnails de listadomanga no están indexados por Yandex).
-    # Su CDN (i1.whakoom.com/small/) tiene upgrade automático a /large/ en sc_validate.py.
-    if lang == 'Español':
-        wk_q = ' '.join(p for p in [series or title, volume] if p).strip()
-        if wk_q:
-            wk_query = f"site:whakoom.com {wk_q}"
-            wk_url   = f"https://www.google.com/search?q={urllib.parse.quote(wk_query)}&udm=2"
-            out.insert(0, {'label': 'whakoom', 'query': wk_query,
-                           'kind': 'text', 'url': wk_url})
-
-    # Variante REVERSE-IMAGE (Yandex) — segundo para ES, primero para otros idiomas.
-    # El mejor motor de búsqueda por foto gratuito (sin captcha, devuelve portadas del
-    # tomo correcto). Usa la imagen de referencia ref_url como consulta.
-    # Solo si tiene URL http usable. Va detrás de whakoom para ES porque los thumbnails
-    # de listadomanga no están indexados por Yandex (0 matches verificados 2026-06-11).
-    # EXCEPCIÓN: si la referencia ES un thumbnail de listadomanga, la variante se OMITE
-    # por completo — Yandex no tiene esas imágenes en su índice y devuelve resultados
-    # genéricos no relacionados (0/14 intentos en 3 lotes reales, 2026-06-11).
-    old_url = (ref_url or '').strip()
-    if old_url.startswith('http') and 'static.listadomanga.com' not in old_url:
-        yx = f"https://yandex.com/images/search?rpt=imageview&url={urllib.parse.quote(old_url, safe='')}"
-        # Para ES: insertar después de whakoom (pos 1); para otros idiomas: al inicio (pos 0)
-        yandex_pos = 1 if (lang == 'Español' and out and out[0].get('label') == 'whakoom') else 0
-        out.insert(yandex_pos, {'label': 'yandex-reverse', 'query': f"[reverse] {series or title}",
-                                'kind': 'reverse', 'url': yx})
-
-    return out
-
-targets = []
-for item in items:
-    if SLUG_FILTER and item.get('slug') != SLUG_FILTER:
-        continue
-    if item.get('approved_at'):
-        continue
-    if SKIP_SIGNALS & set(item.get('signal_types', [])):
-        continue
-    slug = item.get('slug', '')
-
-    # Construir lista de imágenes a evaluar. La portada es images[0] (única fuente
-    # de verdad). Si el item no tiene images[], igual lo procesamos con un entry
-    # vacío para que la búsqueda por TEXTO corra (sin Yandex reverse, que necesita
-    # una URL de referencia) — útil para items sin portada con --include-no-image.
-    imgs = item.get('images') or []
-    if not imgs:
-        imgs = [{'url': '', 'local': '', 'kind': 'gallery'}]
-
-    for img_idx, img in enumerate(imgs):
-        local   = img.get('local', '')
-        ref_url = img.get('url', '')
-        px      = get_pixels_local(local)
-
-        if img_idx == 0:
-            # Portada: saltar si --gallery-only está activo
-            if GALLERY_ONLY:
-                continue
-            if px < MIN_REF_PX:
-                # Referencia ausente o placeholder roto (1×1 px): no sirve para
-                # _same_cover. Se trata como "sin imagen" → skip salvo
-                # --include-no-image, y en ese caso se blanquea la referencia
-                # (local + ref_url) para que la candidata quede verified:false y
-                # NO se construya variante reverse sobre un placeholder degenerado.
-                if not INCLUDE_NO_IMAGE:
-                    continue
-                local   = ''
-                ref_url = ''
-                px      = 0
-            elif px >= LOW_QUALITY_PX:
-                continue
-        else:
-            # Galería: por defecto se salta (las fotos de galería interior son
-            # irrecuperables en su mayoría — no existe copia externa). Solo entra
-            # con --gallery-only o --include-gallery. Verificado: en la corrida
-            # real 2026-06-11, 12/25 targets eran galería con 0 matches posibles.
-            if not GALLERY_ONLY and not INCLUDE_GALLERY:
-                continue
-            # Galería: solo procesar si existe local usable y es baja calidad
-            # (necesitamos _same_cover → skip si no hay referencia usable o es
-            # un placeholder roto por debajo de MIN_REF_PX)
-            if px < MIN_REF_PX or px >= LOW_QUALITY_PX:
-                continue
-
-        action     = 'replace_cover' if img_idx == 0 else 'replace_image'
-        target_url = '' if img_idx == 0 else ref_url
-        skip_key   = (slug, action, target_url)
-        if skip_key in already_in_preview:
-            continue
-        if skip_key in recently_failed:
-            continue
-
-        targets.append({
-            'slug'            : slug,
-            'pixels'          : px,
-            'img_idx'         : img_idx,
-            'image_ref_local' : local,
-            'image_ref_url'   : ref_url,
-            'candidate_action': action,
-            'candidate_target': target_url,
-            'target_label'    : 'portada' if img_idx == 0 else f'galería {img_idx}',
-            'variants'        : build_variants(item, ref_url=ref_url),
-        })
-
-targets.sort(key=lambda x: (x['pixels'] > 0, x['pixels']))
-targets = targets[:LIMIT] if LIMIT else targets   # LIMIT=0 => TODAS
-
-# Persistir el plan para el loop del Step 3
-Path('.tmp_sc_plan.json').write_text(json.dumps(targets, ensure_ascii=False), encoding='utf-8')
-
-# Reset del accumulator self-healing (slugs de ESTA corrida → entry completo)
-Path('.tmp_sc_acc.json').write_text('{}', encoding='utf-8')
-
-if not targets:
-    print("No hay imágenes que necesiten búsqueda. Nada que hacer.")
-    raise SystemExit(0)
-
-by_slug = {it['slug']: it for it in items}
-n_items = len(set(t['slug'] for t in targets))
-print(f"Targets a procesar: {len(targets)} imágenes en {n_items} item(s)")
-for t in targets:
-    it  = by_slug.get(t['slug'], {})
-    px_str = f"{t['pixels']:,} px" if t['pixels'] > 0 else "sin imagen"
-    lbl    = t['target_label']
-    print(f"  • {it.get('title','')[:45]}  ({it.get('publisher','')}) [{lbl}] — {px_str}  · {len(t['variants'])} queries")
+```bash
+.venv/bin/python scripts/retrofit/sc_plan.py \
+    [--limit N] [--slug SLUG] [--include-no-image] \
+    [--gallery-only] [--include-gallery] [--retry-failed] \
+    [--query-extra "texto"]
 ```
+
+Escribe `.tmp_sc_plan.json` (la lista de targets que consume el loop del Step 3) y
+resetea `.tmp_sc_acc.json` (acumulador self-healing de esta corrida), e imprime en
+stdout el resumen de targets a procesar (título, editorial, tipo de target, píxeles
+actuales, cantidad de queries). Si no hay imágenes que necesiten búsqueda, imprime
+"No hay imágenes que necesiten búsqueda. Nada que hacer." y termina en 0 — en ese
+caso el skill reporta y para, sin entrar al Step 2/3.
+
+Qué hace el script (para contexto, no para reimplementar):
+- Umbral de "baja calidad" = `fetch_better_covers.LOW_QUALITY_PX` (90 000, importado
+  para que no pueda driftear del motor de producción).
+- Referencia degenerada (< `MIN_REF_PX` = 2 500 px, típico placeholder 1×1 de Amazon)
+  se trata como "sin imagen": se salta salvo `--include-no-image`.
+- Salta `(slug, action, target)` que YA tienen una candidata del skill (campo
+  `match_dist`) en cualquier estado — pending/approved/rejected — en
+  `data/cover_preview.json`.
+- Salta targets con 0 matches en los últimos 30 días (`data/cover_search_attempts.jsonl`),
+  salvo `--retry-failed`.
+- Arma las variantes de query por idioma: whakoom primero para Español, luego
+  yandex-reverse; yandex-reverse primero para el resto de idiomas (sin whakoom); las
+  de texto (serie+vol+edición+editorial+"portada") van después, en Google `udm=2`.
 
 ---
 

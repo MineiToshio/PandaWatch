@@ -34,106 +34,38 @@ un tier a mano. Consecuencias del modelo:
 Todo item con veredicto firme queda con `rarity_verified_at` (no se re-verifica;
 sticky ante re-scrapes; `set_rarity.py --force` lo respeta).
 
-## Step 0 — Seleccionar candidatos (solo rares por incertidumbre)
+## Step 0/1 — Seleccionar, agrupar y priorizar candidatos
 
-```python
-import json, sys, collections
-sys.path.insert(0, 'scripts')
-from manga_watch import (_TOKUTEN_SOURCES, _SINGLE_RUN_KEYWORDS, _SINGLE_RUN_PATTERNS,
-                         _extract_print_run, _is_reference_only_source, is_approved)
+Compilado a `scripts/audit/rarity_candidates.py` (auditoría Fable 2026-07-08,
+hallazgo F5 — antes `uncertainty_reason()` vivía DUPLICADA dos veces en este
+documento, una copia manual del orden de ramas `rare` de `derive_rarity_tier()`
+que podía driftear sin que ningún test lo detectara). `rarity_uncertainty_reason()`
+es ahora la ÚNICA implementación — la usan tanto este script como
+`apply_rarity_verdicts.py` (Step 3), y un test de coherencia
+(`tests/test_rarity_candidates.py`) fija, con un fixture por rama, que el orden
+coincide con `derive_rarity_tier()` en `manga_watch.py`.
 
-items = [json.loads(l) for l in open('data/items.jsonl') if l.strip()]
-
-def item_sources(item):
-    names = [s.get('name') or s.get('source') or '' for s in (item.get('sources') or [])]
-    return [n for n in names if n] or [item.get('source') or '']
-
-def uncertainty_reason(item):
-    """'referencia' | 'retailer_exclusive' | None si su rare tiene evidencia estructural.
-    Replica el ORDEN de las ramas rare de derive_rarity_tier. NOTA: un item
-    retailer_exclusive puede tener ADEMÁS keywords estructurales más abajo —
-    sigue siendo candidato porque un 'out_of_stock' lo PROMUEVE a super_rare
-    (con 'in_stock' se queda en rare por la keyword: resultado '=' esperado)."""
-    text = f"{item.get('title','')} {item.get('description','')}".lower()
-    src = (item.get('source') or '').lower()
-    if _extract_print_run(text) is not None: return None
-    if item.get('stock_status') == 'out_of_stock': return None   # ya hay evidencia
-    if 'retailer_exclusive' in (item.get('signal_types') or []): return 'retailer_exclusive'
-    if any(t in src for t in _TOKUTEN_SOURCES): return None
-    if any(kw in text for kw in _SINGLE_RUN_KEYWORDS): return None
-    if any(p.search(text) for p in _SINGLE_RUN_PATTERNS): return None
-    if all(_is_reference_only_source(s) for s in item_sources(item)): return 'referencia'
-    return None
-
-pending = []
-for i in items:
-    if i.get('rarity') != 'rare' or i.get('rarity_verified_at') or is_approved(i):
-        continue
-    reason = uncertainty_reason(i)
-    if reason:
-        pending.append((reason, i))
-
-print(f"Total items: {len(items)}")
-print(f"Rares por incertidumbre pendientes: {len(pending)}")
-print(dict(collections.Counter(r for r, _ in pending)))
+```bash
+.venv/bin/python scripts/audit/rarity_candidates.py [--limit N]
 ```
 
-Si 0 pendientes → reportar y parar.
+Selecciona items `rarity="rare"` sin `rarity_verified_at` ni `approved_at` cuyo
+`rare` viene de INCERTIDUMBRE (`retailer_exclusive` sin stock verificado, o
+fuente de referencia sin otra evidencia — nunca los que tienen evidencia
+estructural), agrupa por edición (`edition_key` > `slug` > `url` — una
+verificación por edición, no por volumen) y prioriza: `retailer_exclusive`
+primero (puede promover a `super_rare`), luego mercados occidentales
+(verificación más confiable que JP), luego tamaño del grupo. Tope default 40
+ediciones (`--limit N`, honrá el que pasó el usuario al invocar el skill).
 
-## Step 1 — Agrupar por edición y priorizar
+Imprime la lista priorizada en pantalla (título, editorial, país, ISBN, url) y
+escribe `data/diagnostics/rarity_validation_candidates.json` con el mismo
+contenido — el Step 2 usa `group_id` de ahí para indexar los veredictos web.
 
-Una verificación por **edición** (no por volumen): el representativo de mayor
-score responde por el grupo. La aplicación del Step 3 alcanza SOLO a los items
-candidatos del grupo (no a todo el edition_key — un volumen hermano ya common o
-ya verificado no se toca).
+Si el script reporta "Rares por incertidumbre pendientes: 0" → reportar al
+usuario y parar.
 
-```python
-# ... continúa del bloque anterior (misma sesión de python)
-by_group = collections.defaultdict(list)
-for reason, item in pending:
-    gid = item.get('edition_key') or item.get('slug') or item.get('url')
-    by_group[gid].append((reason, item))
-
-def priority(group):
-    """retailer_exclusive primero (puede PROMOVER a super_rare); luego
-    mercados occidentales (verificación más confiable que JP); luego impacto."""
-    reasons = {r for r, _ in group}
-    rep = max((i for _, i in group), key=lambda i: i.get('score') or 0)
-    western = rep.get('country') not in ('Japón', 'Tailandia', 'Taiwán', 'Vietnam')
-    return (0 if 'retailer_exclusive' in reasons else 1, 0 if western else 1, -len(group))
-
-groups = sorted(by_group.items(), key=lambda kv: priority(kv[1]))
-
-LIMIT = 40  # honrar --limit si el usuario lo pasó
-groups = groups[:LIMIT]
-
-candidates = []
-for gid, group in groups:
-    rep = max((i for _, i in group), key=lambda i: i.get('score') or 0)
-    candidates.append({
-        'group_id': gid,           # ¡usar EXACTAMENTE este id en los resultados!
-        'reason': sorted({r for r, _ in group})[0],
-        'title': rep.get('title', ''),
-        'series_display': rep.get('series_display', ''),
-        'edition_display': rep.get('edition_display', ''),
-        'publisher': rep.get('publisher', ''),
-        'country': rep.get('country', ''),
-        'release_date': rep.get('release_date', ''),
-        'isbn': rep.get('isbn', ''),
-        'n_volumes': len(group),
-        'url': rep.get('url', ''),
-        'price': rep.get('price', ''),   # precio de lista conocido — referencia para el veredicto
-    })
-
-print(f"\nEdiciones a verificar ({len(candidates)}):")
-for c in candidates:
-    print(f"  [{c['reason']:18s}] {c['title'][:50]:50s} ({c['publisher'][:18]}, {c['country']}) — {c['n_volumes']} item(s)")
-    print(f"      url: {c['url'][:90]}  isbn: {c['isbn'] or '-'}")
-
-json.dump(candidates, open('/tmp/rarity_validation_candidates.json', 'w'), ensure_ascii=False, indent=1)
-```
-
-Muestra los candidatos al usuario antes de buscar.
+Mostrá la salida del script al usuario antes de pasar al Step 2.
 
 ## Step 2 — Verificación web por edición (escalera de métodos)
 
@@ -188,7 +120,7 @@ difícil; ante la duda, `inconclusive`):
 Cuidado con el **país**: la edición es del país del item (regla dura del
 owner). Encontrar la edición US en stock NO resuelve la edición FR.
 
-Guarda `/tmp/rarity_validation_results.json` (group_id EXACTO del candidato):
+Guarda `data/diagnostics/rarity_validation_results.json` (group_id EXACTO del candidato):
 ```json
 [
   {"group_id": "phantom-seer-star-limited-it",
@@ -203,95 +135,27 @@ candidato buscado debe tener una entrada.
 
 ## Step 3 — Aplicar: stock_status + re-derivación con el modelo
 
-Aplica SOLO a los items que eran candidatos (mismo filtro del Step 0) — nunca a
-todo el edition_key (los hermanos ya common/verificados no se tocan).
+Compilado a `scripts/retrofit/apply_rarity_verdicts.py` (auditoría Fable
+2026-07-08, hallazgo F5 — reemplaza el snippet embebido que DUPLICABA
+`uncertainty_reason()` por segunda vez). Re-selecciona candidatos con la MISMA
+`rarity_uncertainty_reason()` del Step 0/1 (`scripts/audit/rarity_candidates.py`,
+fuente única) por si el universo cambió entre selección y aplicación, y aplica
+SOLO a esos — nunca a todo el `edition_key` (los hermanos ya common/verificados
+no se tocan).
 
-```python
-import json, os, sys, datetime as dt
-from pathlib import Path
-sys.path.insert(0, 'scripts')   # ANTES del import — el wrapper de la raíz no exporta estos símbolos (gotcha #64)
-from manga_watch import (derive_rarity_tier, backup_and_rotate, is_approved,
-                         _TOKUTEN_SOURCES, _SINGLE_RUN_KEYWORDS, _SINGLE_RUN_PATTERNS,
-                         _extract_print_run, _is_reference_only_source)
-
-DRY_RUN = False  # True si el usuario pasó --dry-run
-
-results = {r['group_id']: r for r in json.load(open('/tmp/rarity_validation_results.json'))}
-items = [json.loads(l) for l in open('data/items.jsonl') if l.strip()]
-
-def item_sources(item):
-    names = [s.get('name') or s.get('source') or '' for s in (item.get('sources') or [])]
-    return [n for n in names if n] or [item.get('source') or '']
-
-def uncertainty_reason(item):
-    text = f"{item.get('title','')} {item.get('description','')}".lower()
-    src = (item.get('source') or '').lower()
-    if _extract_print_run(text) is not None: return None
-    if item.get('stock_status') == 'out_of_stock': return None
-    if 'retailer_exclusive' in (item.get('signal_types') or []): return 'retailer_exclusive'
-    if any(t in src for t in _TOKUTEN_SOURCES): return None
-    if any(kw in text for kw in _SINGLE_RUN_KEYWORDS): return None
-    if any(p.search(text) for p in _SINGLE_RUN_PATTERNS): return None
-    if all(_is_reference_only_source(s) for s in item_sources(item)): return 'referencia'
-    return None
-
-candidate_ids = set()
-for i in items:
-    if i.get('rarity') != 'rare' or i.get('rarity_verified_at') or is_approved(i):
-        continue
-    if uncertainty_reason(i):
-        candidate_ids.add(id(i))
-
-now = dt.datetime.now(dt.timezone.utc).isoformat()
-updated, inconclusive, log = 0, 0, []
-for item in items:
-    if id(item) not in candidate_ids:
-        continue
-    gid = item.get('edition_key') or item.get('slug') or item.get('url')
-    res = results.get(gid)
-    if not res:
-        continue
-    if res['verdict'] == 'inconclusive':
-        inconclusive += 1
-        continue
-    old = item.get('rarity', '')
-    if res['verdict'] in ('in_stock', 'out_of_stock'):
-        item['stock_status'] = res['verdict']
-        item['stock_checked_at'] = now
-    # Re-derivar con el modelo — la skill no asigna tiers a mano.
-    item['rarity'] = derive_rarity_tier(
-        signal_types=item.get('signal_types') or [],
-        source=item.get('source') or '',
-        description=item.get('description') or '',
-        title=item.get('title') or '',
-        publisher=item.get('publisher') or '',
-        stock_status=item.get('stock_status') or '',
-        sources=item_sources(item),
-    )
-    item['rarity_verified_at'] = now
-    updated += 1
-    log.append({'slug': item.get('slug'), 'group_id': gid, 'old': old,
-                'new': item['rarity'], 'verdict': res['verdict'],
-                'rationale': res.get('rationale', ''),
-                'evidence_url': res.get('evidence_url', ''), 'at': now})
-
-print(f"Items {'que cambiarían' if DRY_RUN else 'actualizados'}: {updated} | inconclusos (sin tocar): {inconclusive}")
-for e in log:
-    mark = '→' if e['old'] != e['new'] else '='
-    print(f"  {e['old']:5s} {mark} {e['new']:10s} [{e['verdict']:12s}] {e['slug']}")
-
-if not DRY_RUN and updated:
-    backup_and_rotate(Path('data/items.jsonl'), 'validate-rarity')   # Path, NO str
-    tmp = 'data/items.jsonl.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        for item in items:
-            f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    os.replace(tmp, 'data/items.jsonl')
-    with open('data/diagnostics/rarity_validation_log.jsonl', 'a', encoding='utf-8') as f:
-        for e in log:
-            f.write(json.dumps(e, ensure_ascii=False) + '\n')
-    print("✓ data/items.jsonl actualizado + log en data/diagnostics/rarity_validation_log.jsonl")
+```bash
+.venv/bin/python scripts/retrofit/apply_rarity_verdicts.py [--dry-run]
 ```
+
+Lee `data/diagnostics/rarity_validation_results.json` (el archivo del Step 2),
+escribe `stock_status`/`stock_checked_at` como EVIDENCIA (solo para veredictos
+`in_stock`/`out_of_stock`) y **re-deriva `rarity` con `derive_rarity_tier()`** —
+el script nunca asigna un tier a mano. `inconclusive` no toca nada (ni
+`stock_status` ni `rarity_verified_at`). Golden records (`approved_at`) se
+saltean. Backupea `items.jsonl` antes de escribir y apendea el log de auditoría
+a `data/diagnostics/rarity_validation_log.jsonl`. Imprime el resumen
+(actualizados / inconclusos / aprobados saltados) y el detalle por item
+(`old → new [verdict] slug`).
 
 ## Step 4 — Verificación y reporte final
 
@@ -341,5 +205,12 @@ inconclusos vuelven a entrar).
 
 **Cuándo correr:**
 - Después de scrapes grandes con items nuevos de Mangavariant/fuentes de
-  referencia, o cuando el contador del Step 0 crezca.
+  referencia, o cuando el contador del Step 0/1 crezca.
 - No integrar en `/watch-standardize-catalog` (costo de tokens).
+
+**Tier de modelo recomendado (auditoría Fable 2026-07-08, hallazgo F10)**: el
+skill corre en el hilo principal. Los Steps 0/1/3 son 100% mecánicos (scripts
+determinísticos, cero LLM); el Step 2 (verificación web) sí razona — lee
+buybox/geolocalización/ambigüedad de página y decide un veredicto con
+criterio. **`sonnet` es suficiente** para ese razonamiento acotado; no hace
+falta `opus`.

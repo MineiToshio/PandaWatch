@@ -12,6 +12,11 @@ skill convierte las señales en decisiones. **Solo análisis — no implementa.*
 
 Default: últimos 14 días (`--days N` para cambiar).
 
+**Tier de modelo (auditoría Fable 2026-07-08, hallazgo F10, nota opcional)**:
+corre en el hilo principal, sin fan-out. Es un análisis corto quincenal
+(agregar señales de PostHog + feedback.jsonl y priorizar) — `sonnet` alcanza;
+no requiere `opus`.
+
 ## Paso 1 — Señales de PostHog
 
 Carga las tools de PostHog vía ToolSearch (query `+posthog trends`) y

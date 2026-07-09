@@ -72,10 +72,20 @@ Usa WebFetch para cargar la página de catálogo/listing. Si la URL es genérica
 (solo el dominio), busca la sección de ediciones especiales / variantes /
 limitadas. Entiende qué tipos de items muestra.
 
-### B. Muestra de 5 items
+### B. Muestra de items
 
-Elige 5 items del listing (variados: distintas series/editoriales si es posible)
-y fetchea sus páginas de detalle. Por cada item registra:
+Dos etapas (auditoría Fable 2026-07-08, hallazgo F13 — 5 items daba un
+intervalo de confianza muy amplio para la regla de overlap 30/70% del Step 2):
+
+1. **Triage chico** (3-5 items): alcanza para estimar C1 (Content Fit). Si
+   falla (< 20% ediciones especiales reales) → veredicto ❌ directo, no hace
+   falta ampliar la muestra — cortá acá.
+2. **Si C1 pasa** (borderline o pass): ampliá la muestra a **8-10 items
+   totales** (variados: distintas series/editoriales si es posible) y
+   fetcheá sus páginas de detalle para el resto de la rúbrica (C2-C5) y para
+   que el overlap del Step 2 tenga una base más confiable.
+
+Por cada item de la muestra final registra:
 
 1. Título completo
 2. ¿Es una edición especial real? (sí/no + por qué)
@@ -91,7 +101,7 @@ y fetchea sus páginas de detalle. Por cada item registra:
 - ¿Qué % del listing son ediciones especiales reales (no tomos regulares)?
 - Si < 20%: FAIL. Si 20-60%: borderline. Si > 60%: pass.
 
-**C2 — Campos mínimos** (evaluar sobre los 5 items sampleados)
+**C2 — Campos mínimos** (evaluar sobre los items sampleados — 8-10 si pasó C1)
 - Nombre de la serie: disponible? (s/n)
 - Tipo de edición (qualifier: Limited/Deluxe/Collector/etc.): disponible? (s/n)
 - Editorial/Publisher: disponible? (s/n)
@@ -156,6 +166,19 @@ Si sí: ¿esta fuente es mejor (más items, más campos, más editoriales)?
   "verdict_reason": "una frase"
 }
 ```
+
+Además de devolver este JSON como resultado del subagente, **escribilo también a
+`data/diagnostics/source-eval-<id>.json`** (`<id>` = slug del nombre/dominio de la
+fuente, ej. `source-eval-nueva-tienda-fr.json`) — trazabilidad de la corrida y
+permite que el Step 2 lo parsee mecánicamente en vez de depender solo de lo que
+el subagente devolvió en memoria.
+
+> **Nota (auditoría Fable 2026-07-08, hallazgo F13)**: este contrato es
+> descriptivo, no un JSON Schema ejecutable — `evaluate-sources` es un skill
+> INTERACTIVO (reporte de viabilidad para que el owner decida, no un workflow
+> automatizado), así que no amerita la inversión de un schema formal + validación
+> por código. El formato de arriba + el archivo por-fuente en `data/diagnostics/`
+> alcanzan para que el Step 2/3 lean resultados consistentes entre subagentes.
 
 ---
 

@@ -269,6 +269,26 @@ scripts/
     translate_descriptions.py  description → description_es (Google Translate + DeepL opcional).
     generate_slugs.py          genera slug (último paso de /watch-standardize-catalog).
     set_rarity.py              aplica rarity vía derive_rarity_tier().
+    apply_rarity_verdicts.py   aplica veredictos web (data/diagnostics/rarity_validation_results.json)
+                               del skill /watch-validate-rarity: stock_status como evidencia +
+                               re-deriva rarity con derive_rarity_tier(). Re-selecciona candidatos
+                               con audit/rarity_candidates.rarity_uncertainty_reason (fuente única).
+                               Guard approved + backup_and_rotate + log a
+                               data/diagnostics/rarity_validation_log.jsonl. Reemplaza el Step 3
+                               embebido del skill (auditoría Fable 2026-07-08, hallazgo F5).
+    fix_item_fields.py         mini-helper --url/--slug X --set campo=valor (multi --set) para
+                               correcciones puntuales de items.jsonl. Allowlist de campos + campo
+                               sintético cover_url (delega en image_store.set_cover). title
+                               BLOQUEADO salvo --allow-title (política de títulos, gotcha #92).
+                               Re-deriva cluster_key si tocó sus insumos (gotcha #55). Guard
+                               approved + backup_and_rotate. Reemplaza los snippets K/M embebidos
+                               del skill /watch-review-feedback (hallazgo F12).
+    sc_plan.py                 planificador determinista (Step 1) del skill /watch-search-covers:
+                               identifica targets de baja calidad/ausentes, arma variantes de query
+                               por idioma (whakoom/yandex/texto), aplica guards de skip (cola,
+                               memoria de intentos 30d, referencia degenerada). Escribe
+                               .tmp_sc_plan.json/.tmp_sc_acc.json — NUNCA items.jsonl. Reemplaza
+                               las ~300 líneas embebidas del skill (hallazgo F9).
     apply_approvals.py         re-materializa approvals.jsonl tras reconstruir el catálogo.
     fix_edition_key_anomalies.py  normaliza edition_key: panini-es→panini + xx→país (tier: source country → grupo ISBN → editorial mono-país → hermano de la misma edición). Enforcer 2b.
     disambiguate_coleccion_editions.py  coleccion distinta=edición distinta: -c{cole} si edition_key colisiona (#57). Enforcer 3-0.
@@ -318,6 +338,13 @@ scripts/
                                data/state.json llevan >N días (default 90) sin verse. No propone
                                borrar nada, siempre exit 0. Invocado al final de scrape_delta/full.sh.
     unmapped_series.py         series_keys sin alias, fuzzy-matched. Lo lee enrich-series-aliases.
+    rarity_candidates.py       selecciona/agrupa/prioriza (Step 0/1) los rarity='rare' por
+                               INCERTIDUMBRE del skill /watch-validate-rarity. rarity_uncertainty_
+                               reason() es la ÚNICA implementación del tracer (antes duplicado 2x en
+                               el SKILL.md); test de coherencia por-rama contra derive_rarity_tier()
+                               en tests/test_rarity_candidates.py. Escribe
+                               data/diagnostics/rarity_validation_candidates.json. Solo lectura.
+                               Reemplaza el Step 0/1 embebido del skill (hallazgo F5).
     data_quality.py            audit SOLO LECTURA → quality_report.json + check_urls(). Ver quality.html.
                                Auditoría 2026-07-08: "archivo_tiny"/"pixelada" (y check_urls, el
                                live-update del panel) juzgan por PÍXELES vía `image_store.
@@ -340,10 +367,17 @@ scripts/
                                  regla 画集付き vivía solo en SKILL.md, drift confirmado).
   enrich-series-aliases/       cola unmapped → series_aliases.yml vía Anilist (#20).
   evaluate-sources/            evalúa fuentes candidatas antes de implementar.
-  review-feedback/             procesa feedback.jsonl (14 categorías A–N).
+  review-feedback/             procesa feedback.jsonl (14 categorías A–N). Fixes K/M/N puntuales vía
+                               scripts/retrofit/fix_item_fields.py (hallazgo F12; title bloqueado
+                               salvo --allow-title, política de títulos gotcha #92).
+  validate-rarity/             verifica vía web los rare por incertidumbre (retailer_exclusive sin
+                               stock / fuente de referencia). Step 0/1 → scripts/audit/
+                               rarity_candidates.py; Step 3 (apply) → scripts/retrofit/
+                               apply_rarity_verdicts.py (hallazgo F5, tracer fuente única).
   search-covers/               busca portadas hi-res para items con imagen pequeña (<min-pixels)
                                o ausente. Usa Serper API (preferido) o Chrome (fallback). Escribe
-                               candidatas a cover_preview.json. NUNCA toca items.jsonl.
+                               candidatas a cover_preview.json. NUNCA toca items.jsonl. Step 1 (plan
+                               de queries) compilado a scripts/retrofit/sc_plan.py (hallazgo F9).
 web/  (dashboard HTML público + paneles)
   index.html                 — dashboard Alpine.js. Filtros, detalle, feedback 👎,
                                aprobación 👍, edición inline ✏️, selección batch,

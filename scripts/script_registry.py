@@ -3075,6 +3075,165 @@ SCRIPTS: list[dict[str, Any]] = [
         ],
     },
 
+    {
+        "id": "sc_plan",
+        "mutates_items": False,
+        "category": "Retrofit",
+        "icon": "🖼️",
+        "name": "Plan de búsqueda de portadas (search-covers, Step 1)",
+        "tagline": "Arma la lista de imágenes a buscar + variantes de query. No escribe items.jsonl.",
+        "what": (
+            "Compila a script el planificador determinista del skill "
+            "/watch-search-covers (Step 1, auditoría Fable 2026-07-08, "
+            "hallazgo F9): identifica portadas/galería de baja calidad o "
+            "ausentes, arma las variantes de query ordenadas (whakoom/yandex/"
+            "texto según idioma) y aplica los guards (ya adjudicado en "
+            "cover_preview.json, memoria de intentos de 30 días, referencia "
+            "degenerada). Escribe SOLO .tmp_sc_plan.json/.tmp_sc_acc.json "
+            "(archivos de trabajo del skill) — nunca toca items.jsonl. Correr "
+            "desde acá sirve para inspeccionar el plan; el loop de Chrome del "
+            "Step 3 sigue siendo del skill (no automatizable)."
+        ),
+        "when": "Lo invoca el skill /watch-search-covers en su Step 1. Correrlo "
+                "manual solo para ver cuántos targets hay sin lanzar el skill.",
+        "command": [PYTHON, "scripts/retrofit/sc_plan.py"],
+        "presets": [
+            {
+                "id": "default",
+                "label": "🟢 Todas las imágenes pendientes",
+                "desc": "Portadas de baja calidad o ausentes (sin galería).",
+                "values": {},
+            },
+            {
+                "id": "gallery",
+                "label": "🖼️ Solo galería",
+                "desc": "Salta portadas; procesa solo fotos de galería (img_idx >= 1).",
+                "values": {"--gallery-only": True},
+            },
+        ],
+        "flags": [
+            _flag("--limit", "Máximo de targets",
+                  "0 = TODAS las imágenes pendientes (default).",
+                  type="int", default=0),
+            _flag("--slug", "Solo este slug",
+                  "Procesa únicamente el item con este slug exacto.",
+                  type="str", default="", placeholder="berserk-darkhorse-deluxe-1"),
+            _flag("--include-no-image", "Incluir items sin imagen",
+                  "Candidatas quedan verified:false (sin referencia para comparar).",
+                  type="bool", default=False, advanced=True),
+            _flag("--gallery-only", "Solo galería",
+                  "Salta portadas (img_idx 0); procesa solo galería.",
+                  type="bool", default=False, advanced=True),
+            _flag("--include-gallery", "Portadas + galería",
+                  "Sin este flag ni --gallery-only, solo se procesan portadas.",
+                  type="bool", default=False, advanced=True),
+            _flag("--retry-failed", "Ignorar exclusión de 30 días",
+                  "Reintenta targets con 0 matches en el último mes.",
+                  type="bool", default=False, advanced=True),
+            _flag("--query-extra", "Texto extra en cada query",
+                  "Se agrega al final de cada variante de búsqueda en Google.",
+                  type="str", default="", placeholder="portada oficial",
+                  advanced=True),
+        ],
+    },
+
+    {
+        "id": "apply_rarity_verdicts",
+        "mutates_items": True,
+        "category": "Retrofit",
+        "icon": "🟪",
+        "name": "Aplicar veredictos de rareza (validate-rarity, Step 3)",
+        "tagline": "Aplica los veredictos web (Step 2 del skill) a items.jsonl.",
+        "what": (
+            "Compila a script el Step 3 del skill /watch-validate-rarity "
+            "(auditoría Fable 2026-07-08, hallazgo F5): lee "
+            "data/diagnostics/rarity_validation_results.json (veredicto por "
+            "group_id), escribe stock_status/stock_checked_at como EVIDENCIA "
+            "y re-deriva rarity con derive_rarity_tier() — nunca asigna un "
+            "tier a mano. inconclusive no toca nada. Re-selecciona candidatos "
+            "con la MISMA rarity_uncertainty_reason() del Step 0/1 (scripts/"
+            "audit/rarity_candidates.py) por si el universo cambió entre "
+            "selección y aplicación."
+        ),
+        "when": "Lo invoca el skill /watch-validate-rarity tras la verificación "
+                "web (Step 2). Requiere el JSON de resultados ya escrito.",
+        "command": [PYTHON, "scripts/retrofit/apply_rarity_verdicts.py"],
+        "presets": [
+            {
+                "id": "apply",
+                "label": "✅ Aplicar veredictos",
+                "desc": "Lee data/diagnostics/rarity_validation_results.json y actualiza items.jsonl.",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué cambiaría sin modificar items.jsonl.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los cambios que aplicaría sin modificar items.jsonl.",
+                  type="bool", default=False),
+        ],
+    },
+
+    {
+        "id": "fix_item_fields",
+        "mutates_items": True,
+        "category": "Retrofit",
+        "icon": "✏️",
+        "name": "Corregir campos puntuales de un item",
+        "tagline": "Mini-helper --url X --set campo=valor. Reemplaza ediciones a mano de review-feedback.",
+        "what": (
+            "Corrige campos puntuales de UN item (identificado por --url o "
+            "--slug) contra una allowlist (series_key/series_display/"
+            "edition_key/edition_display/volume/product_type/rarity/country/"
+            "publisher/language/isbn/stock_status/description) más el campo "
+            "sintético cover_url (delega en image_store.set_cover, categoría "
+            "K wrong_image). 'title' está BLOQUEADO salvo --allow-title explícito (política de títulos, "
+            "gotcha #92 — el title es el nombre OFICIAL, nunca se renombra a "
+            "mano). Re-deriva cluster_key si el cambio tocó uno de sus "
+            "insumos (edition_key/volume/country/publisher/title/url, gotcha "
+            "#55). Reemplaza los snippets K/M embebidos del skill "
+            "/watch-review-feedback (auditoría Fable 2026-07-08, hallazgo F12)."
+        ),
+        "when": "Al aplicar una corrección puntual de review-feedback (categorías "
+                "K/L/M/N) o cualquier fix manual de un item específico.",
+        "command": [PYTHON, "scripts/retrofit/fix_item_fields.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué cambiaría. Completá URL y al menos un campo.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--url", "URL exacta del item",
+                  "Identifica el item a editar por su URL.",
+                  type="str", default="", placeholder="https://tienda.com/producto"),
+            _flag("--slug", "slug exacto del item (alternativa a URL)",
+                  "Identifica el item a editar por su slug.",
+                  type="str", default="", placeholder="berserk-darkhorse-deluxe-1"),
+            _flag("--set", "Campo a corregir (field=value)",
+                  "Repetible: agregá una fila por cada campo a cambiar.",
+                  type="csv_multi", default="",
+                  placeholder="series_key=berserk"),
+            _flag("--allow-title", "Permitir editar 'title'",
+                  "Bloqueado por default (política de títulos, gotcha #92). "
+                  "Solo para basura real de scraping, nunca para renombrar.",
+                  type="bool", default=False, advanced=True),
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Muestra los cambios que aplicaría sin modificar items.jsonl.",
+                  type="bool", default=False),
+            # --include-approved existe en el argparse real pero NO se expone
+            # acá a propósito (protege golden records de ediciones puntuales
+            # lanzadas desde el panel — mismo criterio que backfill_series_aliases).
+        ],
+    },
+
     # =====================================================================
     # AUDITORÍA
     # =====================================================================
@@ -3237,6 +3396,53 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="str", default="",
                   placeholder="data/diagnostics/split-edition-buckets.json",
                   advanced=True),
+        ],
+    },
+
+    {
+        "id": "rarity_candidates",
+        "mutates_items": False,
+        "category": "Auditoría",
+        "icon": "🟪",
+        "name": "Candidatos de rareza por incertidumbre (validate-rarity, Step 0/1)",
+        "tagline": "Selecciona y prioriza los 'rare' que necesitan verificación web. Solo lectura.",
+        "what": (
+            "Compila a script el Step 0/1 del skill /watch-validate-rarity "
+            "(auditoría Fable 2026-07-08, hallazgo F5): selecciona items "
+            "rarity='rare' cuya rareza viene de INCERTIDUMBRE (retailer_"
+            "exclusive sin stock verificado, o fuente de referencia sin otra "
+            "evidencia) — no los que tienen evidencia estructural. "
+            "rarity_uncertainty_reason() es la ÚNICA implementación del "
+            "tracer (antes duplicado 2 veces en el SKILL.md); un test de "
+            "coherencia fija que replica el orden real de "
+            "derive_rarity_tier(). Agrupa por edition_key, prioriza "
+            "retailer_exclusive + mercados occidentales, y escribe el JSON a "
+            "data/diagnostics/rarity_validation_candidates.json."
+        ),
+        "when": "Lo invoca el skill /watch-validate-rarity en su Step 0/1. "
+                "Correrlo manual solo para ver cuántos candidatos hay.",
+        "command": [PYTHON, "scripts/audit/rarity_candidates.py"],
+        "presets": [
+            {
+                "id": "text",
+                "label": "📋 Texto (default)",
+                "desc": "Lista legible en pantalla + escribe el JSON de candidatos.",
+                "values": {},
+            },
+            {
+                "id": "json",
+                "label": "🧾 JSON puro (stdout)",
+                "desc": "Para procesamiento programático.",
+                "values": {"--output": "json"},
+            },
+        ],
+        "flags": [
+            _flag("--limit", "Tope de ediciones a priorizar",
+                  "Default 40. 0 = sin tope.",
+                  type="int", default=40),
+            _flag("--output", "Formato de stdout",
+                  "text = legible; json = para máquina.",
+                  type="choice", default="text", choices=["text", "json"]),
         ],
     },
 
