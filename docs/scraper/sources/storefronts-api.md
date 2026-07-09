@@ -39,6 +39,15 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
   manga japonés licenciado en HK (帶子雄狼 = Lone Wolf and Cub, 淚眼煞星 = Crying
   Freeman) → los aliases CJK necesitan trabajo (nombres HK no literales).
 - Bonus de 1ª edición a veces fotografiados en ficha (pasa la lección BooksPrivilege).
+- ⚠️ **Quirk país (2026-07-08, gotcha #143):** el scrape hornea `country="Hong Kong"`
+  correctamente (fuente de verdad), pero el standardize LLM del 2026-06-12 acuñó
+  `edition_key` terminado en `-tw` (Taiwán) para 15 items de Jade Dynasty — el LLM
+  confundió el mercado (JD también distribuye en TW) pese a que la edición es HK.
+  Violaba la invariante PAISKEY (`-tw` ≠ `_country_slug("Hong Kong")="hk"`). Corregido
+  determinísticamente: `fix_edition_country` ahora reemplaza un sufijo país válido pero
+  EQUIVOCADO (`-tw`→`-hk`), no sólo apenda el faltante. El fix corre en el pipeline
+  (`enforce_listadomanga_rules`), así que un re-standardize que vuelva a acuñar `-tw`
+  queda saneado por el enforcement final.
 
 ### spp-tw (Taiwán)
 - El HTML de búsqueda tiene paginación client-side ROTA (&page=2 = mismo lote);

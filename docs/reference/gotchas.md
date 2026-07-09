@@ -1704,3 +1704,27 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     toma `fetch_better_covers.preview_write_lock` (fcntl.flock sobre `cover_preview.json.lock`,
     reentrante mismo-hilo, timeout 10 s) sobre su intervalo read→modify→write — cierra el TOCTOU
     motor-vs-panel que perdía decisiones del owner.
+
+143. **`fix_edition_country` sólo APENDABA el país; nunca corregía un sufijo país EQUIVOCADO
+    (2026-07-08).** Regla dura país=edición: el último segmento del `edition_key` debe reflejar
+    `_country_slug(item.country)` (la fuente de verdad). El motor viejo (`_suffix_country` +
+    `_has_country_suffix`) daba por "ya sufijado" a CUALQUIER `edition_key` que terminara en un
+    country_slug válido y sólo apendaba cuando faltaba — así que si un sufijo país válido pero
+    EQUIVOCADO se horneaba upstream, nunca se arreglaba. **Caso real:** 15 items de Jade Dynasty
+    (editorial de Hong Kong, `jd-intl.com`, lang=Chino, `country="Hong Kong"`) quedaron con
+    `edition_key` terminado en `-tw` (Taiwán) tras el standardize LLM del 2026-06-12 — el LLM
+    acuñó el sufijo `tw` (Jade Dynasty también distribuye en TW) aunque `item.country` es Hong Kong.
+    Como `tw` es un slug válido, el enforcer determinista lo dejaba intacto y la invariante PAISKEY
+    de `validate_corpus` reportaba 15 violaciones indefinidamente. **Fix (mecanismo, no síntoma):**
+    `_suffix_country` ahora, además de apendar, CORRIGE — si el último segmento ES un country_slug
+    CONOCIDO (`_VALID_SLUGS`, el mismo conjunto que vigila PAISKEY) pero DISTINTO del correcto, lo
+    REEMPLAZA por `_country_slug(item.country)`. Cautela para no tocar agrupación legítima: sólo se
+    reemplaza si el segmento es un slug país conocido; un token de edición corto, `xx` (placeholder,
+    fuera de scope — lo maneja `fix_edition_key_anomalies`), o un sufijo roto (`glob`) NO se
+    interpreta como país (se cae al apendar histórico). Se respeta un sufijo de colisión opcional
+    `-cN` (se separa, se corrige el país, se re-apenda). País desconocido (`cs=="xx"`) NUNCA
+    clobberea un sufijo país real. Idempotente (2ª corrida = 0 cambios, items.jsonl byte-idéntico);
+    respeta el guard `approved_at` (+`--include-approved`); re-deriva cluster_key + consolida. Corre
+    en el pipeline vía `enforce_listadomanga_rules` (paso fix_edition_country). El gap UPSTREAM (el
+    standardize LLM acuñando `-tw` para HK) queda como responsabilidad del enforcement determinista
+    final — no del LLM. Tests: `tests/test_fix_edition_country_suffix.py`.

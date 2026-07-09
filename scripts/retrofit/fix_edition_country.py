@@ -23,7 +23,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_edition_country.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil, collections
+import json, sys, argparse, shutil, collections, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,9 +36,15 @@ except (ImportError, AttributeError):  # pragma: no cover
 
 ITEMS = ROOT / "data" / "items.jsonl"
 _VALID_SLUGS = set(mw._COUNTRY_SLUG_MAP.values())
+_COLLISION_RE = re.compile(r"c\d+")  # sufijo opcional de colisión de slug ("-c2")
 
 
 def _has_country_suffix(ek: str, country_slug: str = "") -> bool:
+    """True si el edition_key ya termina en un sufijo país RECONOCIBLE.
+
+    (Se conserva por compat/legibilidad; la lógica autoritativa vive en
+    `_suffix_country`, que además CORRIGE un sufijo país equivocado.)
+    """
     tail = ek.rsplit("-", 1)[-1] if "-" in ek else ""
     # Idempotencia ROBUSTA (gotcha #91): además de los códigos del mapa,
     # aceptar el código COMPUTADO para el país de este item — si el país no
@@ -47,14 +53,58 @@ def _has_country_suffix(ek: str, country_slug: str = "") -> bool:
     # (caso real: "…-cheq-cheq-cheq" tras 3 corridas).
     if country_slug and tail == country_slug:
         return True
-    return tail in _VALID_SLUGS or (len(tail) in (2, 4) and tail == "xx")
+    return tail in _VALID_SLUGS or tail == "xx"
 
 
 def _suffix_country(ek: str, country: str) -> str:
+    """Deja el sufijo país del edition_key reflejando `item.country` (país=edición).
+
+    Dos comportamientos (idempotentes):
+      1. APENDA `-{slug}` si el edition_key no termina en un sufijo país
+         reconocible (comportamiento histórico: separar mercados).
+      2. CORRIGE el sufijo país cuando el último segmento ES un country_slug
+         CONOCIDO pero DISTINTO del correcto — reemplaza el equivocado por el
+         de `item.country` (fuente de verdad). Caso real: Jade Dynasty (HK)
+         quedó con `…-tw` tras el standardize; el sufijo `tw` es un slug válido,
+         así que el motor viejo lo daba por "ya sufijado" y NUNCA lo arreglaba.
+
+    Cautela (agrupación): sólo se REEMPLAZA el último segmento si es un
+    country_slug CONOCIDO (`_VALID_SLUGS`), el mismo conjunto que la invariante
+    PAISKEY de validate_corpus vigila. Un segmento corto que NO es país conocido
+    (un token de edición, `xx` placeholder, un sufijo roto tipo `glob`) NO se
+    toca como país → se cae al comportamiento de apendar. Se respeta un sufijo
+    de colisión opcional `-cN` (se separa, se corrige el país, se re-apenda).
+    """
     cs = mw._country_slug(country)
-    if _has_country_suffix(ek, cs):
-        return ek  # ya sufijado (idempotente)
-    return f"{ek}-{cs}"
+    if cs == "xx":
+        # País desconocido: no sabemos el correcto → no clobbereamos un sufijo
+        # existente ni inventamos país. Comportamiento histórico: apendar `-xx`
+        # sólo si no hay ningún sufijo país reconocible.
+        if _has_country_suffix(ek, cs):
+            return ek
+        return f"{ek}-{cs}"
+
+    segs = ek.split("-")
+    coll = ""
+    if len(segs) >= 2 and _COLLISION_RE.fullmatch(segs[-1]):
+        coll = segs.pop()  # separar el sufijo de colisión "-cN"
+    if not segs:
+        return ek  # degenerado (edition_key vacío o sólo "-cN")
+
+    tail = segs[-1]
+    if tail == cs:
+        return ek  # ya correcto (idempotente)
+    if tail in _VALID_SLUGS:
+        segs[-1] = cs  # sufijo país EQUIVOCADO (p.ej. tw) → corregir a `cs` (hk)
+    elif tail == "xx":
+        # placeholder explícito de "país desconocido": scope acotado, no lo
+        # convertimos aquí (lo maneja fix_edition_key_anomalies con reglas duras).
+        return ek
+    else:
+        segs.append(cs)  # sin sufijo país reconocible → apendar (histórico)
+
+    new_ek = "-".join(segs)
+    return f"{new_ek}-{coll}" if coll else new_ek
 
 
 def main() -> int:
