@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 135 known gotchas
+## The 137 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -136,7 +136,13 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     grilla de relacionados y `_node_in_grid()` las excluye del harvest de galería. Una galería
     legítima (front/back/lomo del mismo producto) no enlaza a N páginas de producto distintas,
     así que nunca dispara el detector. El purge de este bug limpió 29 entradas contaminadas
-    del corpus (ver gotcha #112 y `docs/reference/images.md` → Purga).
+    del corpus (ver gotcha #112 y `docs/reference/images.md` → Purga). **False-positive
+    INVERSO (M6, Fable 2026-07-08):** cuando la cover vive en OTRO directorio que la galería
+    (Shopify moderno sirve la cover en `/s/products/` y las vistas en `/s/files/`), el filtro
+    de dir-exacto descartaba TODA la galería legítima porque ninguna compartía dir con la
+    cover. Fix en el paso 6 de `_extract_images_from_detail_soup`: si NINGUNA gallery comparte
+    dir con la cover pero hay un dir MAYORITARIO entre las gallery (≥2 imgs y ≥2/3), se usa ESE
+    como ancla en vez de la cover. Ver gotcha #136.
 32. **`flush_source_candidates()` = escritura incremental** tras CADA fuente (no acumular todo
     para un único write final → kill mid-run perdía todo). Aplica el gate, no actualiza
     `state` (eso lo hace `process_state()` al final). Idempotente con el write final enriquecido.
@@ -268,7 +274,14 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     con su contraparte ya estandarizada. Fix: tras `_SERIES_STRIP_RE`, una pasada extra
     `re.sub(r"(?:n[º°]|＃|#|第)\s*\d*\s*巻?", " ", text, flags=I)` limpia el marcador (y sus variantes
     JP ＃/#/第…巻) junto al número. OJO: "Kaiju No. 8", "Denjin N", "Make wa Tada **no** Mahou" NO se
-    tocan (la "no"/"N" es parte real del nombre; el marcador es `nº`/`n°`, no la palabra suelta). El
+    tocan (la "no"/"N" es parte real del nombre; el marcador es `nº`/`n°`, no la palabra suelta).
+    **A2 (Fable 2026-07-08): el fix de arriba NO estaba completo — `_SERIES_STRIP_TOKENS` seguía
+    incluyendo `"no"`/`"no."` como stopword, así que la palabra "no" líder/interna SÍ se borraba
+    ("No Longer Human" → "longer human", "No Soy un Ángel" → "soy un ángel" — que NO matchea la
+    canónica `no-soy-un-angel`/`im-not-an-angel`, "No Guns Life" → "guns life", "Kaiju No. 8" →
+    "kaiju 8" ≠ `kaiju-no-8`). Fix real: quitar `"no"`/`"no."` de `_SERIES_STRIP_TOKENS` (los
+    markers reales `nº`/`n°`/`n.` quedan). Verificado: `backfill_cluster_key --dry-run` = 0 churn
+    (el corpus estandarizado agrupa por tier edition/lmc, no por la heurística de serie).** El
     corpus existente se reparó con `scripts/retrofit/fix_raw_series_keys.py` (re-deriva series/edition
     de los items raw y consolida). **Raw vs. estandarizado en una misma coleccion**: si una `/coleccion`
     ya tiene un item estandarizado y entran items raw de la misma página (misma obra, otro idioma p.ej.
@@ -481,7 +494,7 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
 
 73. **SECTION_RULES no reconocía "Números en preparación (Packs)" (2026-06-11).** Listadomanga usa el header `Números en preparación (Packs)` para packs ANUNCIADOS aún no a la venta (caso real id=5584, detectado en `logs/listadomanga_unknown_h2.txt`). SECTION_RULES cubría `Números editados (Packs)` y las variantes "en preparación" de Especiales/Limitadas/Alternativas + el base, pero NO `(Packs)` en preparación → la sección caía a unknown-h2 y los packs anunciados se perdían en silencio (exactamente la novedad próxima que el modo delta existe para capturar). Fix: nueva regla en SECTION_RULES (`scripts/wikis/listadomanga_collections.py`), ANTES del entry base "en preparación", con el mismo tratamiento que editados: kind `pack` + filtro `PACK_EXTRAS_KEYWORDS` (un pack sin keywords de extras, ej. "Pack tomos 4 y 5" pelado, se sigue descartando) y `status:upcoming` vía `EN_PREPARACION_PATTERN` (prefijo). No toca enforcer ni validador (sólo clasificación upstream).
 
-74. **Volumen contaminado por número embebido en el NOMBRE de la serie (2026-06-11).** `VOLUME_PATTERN` (`n[º°.]?\s*\d+`) tomaba el PRIMER match del alt/título — en series cuyo nombre incluye un número con marcador ("Kaiju Nº8"), ese primer match es el de la serie, no el del tomo: "Kaiju Nº8 nº16" daba vol 8 (la limitada del tomo 16 quedaba con key `limitada-8`), y el pack cuyo alt es SOLO el nombre de la serie heredaba un vol 8 fantasma (`pack-8` para un cofre de tomos 1-3). Detectado en la prueba en vivo de la cole 4139. Fix: `_strip_series_prefix()` en `_parse_item_table` — antes de buscar el volumen se quita el prefijo del título de la colección (probando también la forma sin sufijo parentético, "InuYasha (Kanzenban)" → "InuYasha"); lo que queda es el nº del tomo o nada. Las keys sintéticas stale del corpus (2 items Kaiju) se repararon + `backfill_cluster_key` (la invariante CLKEY del validador las detectó al instante — el cluster_key lmc se deriva de la URL).
+74. **Volumen contaminado por número embebido en el NOMBRE de la serie (2026-06-11).** `VOLUME_PATTERN` (`n[º°.]?\s*\d+`) tomaba el PRIMER match del alt/título — en series cuyo nombre incluye un número con marcador ("Kaiju Nº8"), ese primer match es el de la serie, no el del tomo: "Kaiju Nº8 nº16" daba vol 8 (la limitada del tomo 16 quedaba con key `limitada-8`), y el pack cuyo alt es SOLO el nombre de la serie heredaba un vol 8 fantasma (`pack-8` para un cofre de tomos 1-3). Detectado en la prueba en vivo de la cole 4139. Fix: `_strip_series_prefix()` en `_parse_item_table` — antes de buscar el volumen se quita el prefijo del título de la colección (probando también la forma sin sufijo parentético, "InuYasha (Kanzenban)" → "InuYasha"); lo que queda es el nº del tomo o nada. Las keys sintéticas stale del corpus (2 items Kaiju) se repararon + `backfill_cluster_key` (la invariante CLKEY del validador las detectó al instante — el cluster_key lmc se deriva de la URL). **M1 (Fable 2026-07-08): el mismo bug vivía en el helper GENÉRICO `_extract_volume` de `manga_watch.py`** (usado por `derive_series_metadata` y el tier fuzzy), que sólo tenía el fix en `listadomanga_collections.py`. `_extract_volume("Kaiju Nº8 nº16")` daba `8`. Fix generalizado: el helper prefiere el ÚLTIMO match de cada patrón (el volumen va DESPUÉS del nombre) — `pat.findall(title)[-1]` en vez de `pat.search`. Ver gotcha #136.
 
 75. **Cofres listados INLINE dentro de "Números editados" (2026-06-11).** El gate "sección regular sin premium → descartar entera" se tragaba cofres que listadomanga lista como un item más de la sección regular ("Cofre de 2 tomos", caso real Boichi cole 6240 — el boxset solo existía en el corpus porque el calendario plano legacy lo había capturado; el parser de colecciones daba 0 items). Fix: antes de descartar la sección, se buscan items cuyo `description_extra` matchee `INLINE_BOX_RE` (`\bcofres?\b`); si los hay, se emiten SOLO esos (kind `box`, título enriquecido con el desc_extra como los packs, hint "Box Set") y el resto de tomos regulares se sigue descartando. No confundir con el formato "en cofre" de página entera (emisión box-level, gotcha #41) ni con la sección "Cofres de regalo".
 
@@ -1207,6 +1220,13 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     el parser binario, ANTES de caer al proxy de tamaño de archivo. Cada entry upscaleada de
     `images[]` se marca `upscaled: true` (idempotencia: nunca se re-upscalea un upscale, señal
     primaria — más robusta que inferir por tamaño). Tests: `test_audit_wo_e.py`.
+    **Cerrado el 3er (y último) sitio con esta misma clase de bug (2026-07-08, auditoría
+    Fable de imágenes, hallazgo #1, ALTA)**: `upgrade_image_resolution.py._pixels` tenía
+    su PROPIO parser binario duplicado (`_image_dimensions_from_bytes`) sin rama AVIF ni
+    fallback PIL — el gate `--min-gain` de ese script caía al mismo proxy de tamaño de
+    archivo. Fix: `_pixels()` delega en `fetch_better_covers._get_pixels_from_bytes`
+    (fuente única, ya con el fallback PIL de la gotcha #132) — el parser binario
+    duplicado se eliminó en vez de parchearlo por 3ª vez. Tests: `tests/test_images_pkg.py::TestPixelsDelegatesToFetchBetterCovers`.
 125. **Serie resuelta desde un token LATINO MINORITARIO de un título CJK pasaba Tier 1 (0
     tokens LLM) con series_key potencialmente equivocada (2026-07-07).** Caso real: "冴えない
     彼女の育てかた 深崎暮人画集 上 Flat." resolvía `series_key='flat'` — el ÚNICO fragmento
@@ -1427,3 +1447,70 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     images`, `mirror_images --no-gc`, `wayback_recover`) quedaron envueltos en
     `_run_timed` (regresión de gotcha #33). Detalle operativo completo en
     `docs/scraper/PIPELINE-WALKTHROUGH.md` → "Convenciones de ambos scripts".
+
+136. **Paquete D-parsing de la auditoría Fable (2026-07-08) — correctness silenciosa en el
+    parsing de `manga_watch.py`.** Trece fixes con test de regresión en
+    `tests/test_parsing_fixes_20260708.py`; ninguno cambió un cluster_key existente
+    (`backfill_cluster_key --dry-run` = 0 churn). **A1 — JSON-LD por-card MUERTO en el listing:**
+    `extract_generic_html` hacía `soup(["script",…]).decompose()` ANTES de que
+    `extract_with_selectors`/`_candidate_from_card` llamaran a `extract_schema_org_product(card)`,
+    que sólo lee `<script type='application/ld+json'>` — ya destruidos. El isbn/author/release_date/
+    cover por card nunca se extraían en el listing (los tests pasaban porque construyen soup fresco).
+    Fix: un **mapa `card→schema` (`_build_card_schema_map`) construido ANTES del decompose**,
+    guardando el `script.parent` (sobrevive al decompose del `<script>`), atribuido a la card vía
+    `_schema_for_card` (camina el ancestro hasta la card). Así el texto de la card NO se contamina
+    con el JSON crudo y el JSON-LD se atribuye por card. La extracción de campos se factorizó en
+    `_schema_product_result(items, url)` (fuente única, usada por el mapa y por
+    `extract_schema_org_product`; los call sites de detail/soup-fresco quedan idénticos, `schema_map=None`).
+    **A2** — ver gotcha #43 (strip de "no"). **M1** — ver gotcha #74 (último-match en `_extract_volume`).
+    **M2 — año entre paréntesis como volumen:** "Berserk Official Guidebook (2016)" → vol 2016; el
+    patrón de paréntesis descarta ahora `(19xx|20xx)` con un negative-lookahead. **M3 — autores en
+    Hangul rechazados:** `_validate_author_candidate`/`_extract_author_from_links` usaban el rango
+    U+3040–U+9FFF (sin Hangul) → autores KR (Aladin) perdidos; ahora reutilizan `_has_cjk()`/`_CJK_RE`
+    (fuente única, ya incluye Hangul). **M4 — meses PT/DE sin normalizar:** "15 de junho de 2025" /
+    "15. März 2026" se guardaban crudos; se agregaron los 12 meses PT y DE (con/sin acento) a
+    `_MONTH_NAMES` y a `RELEASE_DATE_PATTERNS`, y un `\.?` tras el día en `_DATE_TEXT_DMY_RE` (el "15."
+    alemán). **M5 — `_schema_item_is_product` matcheaba substring del `@type`:** `BookSeries`/
+    `BookStore`/`ComicSeries` daban True (poblando name/publisher con la SERIE, no el tomo); ahora
+    matchea por TOKEN excluyendo esos tres. Y `dateModified` (fecha de registro, no 発売日) salió de
+    la cascada de release_date. **M6 — filtro de dir de galería INVERSO:** ver gotcha #31 (cover en
+    `/s/products/`, galería en `/s/files/`). **B3 — `\bMagazine\b` case-sensitive:** "ONE PIECE
+    magazine" (minúscula) no se tipaba magazine; ahora IGNORECASE pero ignorando lo que va entre
+    paréntesis (para no disparar con "(sale magazine)" de marketing — el test histórico se preserva).
+    **B4 — `_load_comics_blacklist` relativo al CWD, degradación SILENCIOSA a vacío:** ahora ancla a
+    `Path(__file__)…/data/comics_blacklist.yml` (fallback al CWD) y WARN a stderr si falta o el YAML no
+    parsea. **B5 — `normalize_isbn` logueaba `ISBN_ANOMALY` a stdout** (contaminaba salida parseable):
+    a `sys.stderr`. **B6 — `series_display = raw.title()` rompía apóstrofes** ("hell's" → "Hell'S");
+    ahora `" ".join(w.capitalize() …)`. **B14 — `normalize_release_date` default DD/MM ambiguo para
+    fuentes US:** `06/07/2026` de una fuente US se leía 6-jul; nuevo param opcional `country` (y en
+    `extract_release_date`/`fetch_metadata_from_detail`) → MM/DD para US/CA cuando el formato es
+    AMBIGUO (ambos componentes ≤12); el resto sigue day-first (gotcha #80). Cableado en los call sites
+    de parsing (card-level + detail-fetch); un componente >12 ya era inequívoco y no depende del país.
+137. **`normalize_image_url` borraba la query COMPLETA en el patrón Magento-resize →
+    colisión de `image_stem` entre imágenes DISTINTAS, cross-cover silencioso latente
+    (2026-07-08, auditoría Fable de imágenes, hallazgo #2, ALTA).** El stem local
+    (`data/images/<sha256(image_url)[:16]>.<ext>`) se deriva de la URL NORMALIZADA — el
+    patrón 1 de `normalize_image_url` (params de resize tipo Magento:
+    `?width=300&height=300&quality=80…`) hacía `parsed._replace(query="").geturl()`,
+    borrando TODA la query, incluidos params de IDENTIDAD que algunas fuentes meten en
+    el mismo query string (ej. `?id=123&width=300` vs `?id=456&width=300` → ambas
+    normalizan a la misma URL sin query → mismo stem). Como `existing_local_image` hace
+    glob por stem, la SEGUNDA imagen con ese stem "ya existía" y `download_image` la
+    saltaba, dejando la portada del PRIMER item pisando al segundo — el mismo bug de
+    fondo que el STOLENIMG de la gotcha #112, pero de una clase distinta (colisión de
+    hash, no un placeholder compartido) y corriendo sobre CADA imagen de las 63 fuentes,
+    no sólo listadomanga. Latente en el corpus real: 164 URLs matcheaban el patrón, 151
+    cambiarían de stem con el fix, 67 ya tenían archivo en disco bajo el stem viejo.
+    **Fix (fuente única, `image_store.normalize_image_url`)**: reconstruir la query
+    filtrando SOLO los keys de `_CDN_RESIZE_PARAMS`, preservando cualquier otro param
+    (identidad, cache-buster, etc.) — idempotente (una 2ª pasada ya no tiene esos keys,
+    el `if` de detección da False). **Compat hacia atrás**: `existing_local_image`
+    prueba el stem correcto primero y cae al stem LEGACY (`_legacy_image_stem`, replica
+    exactamente el comportamiento pre-fix) si no encuentra nada, así los archivos ya
+    espejados bajo el stem viejo se siguen sirviendo sin re-descarga — sólo las
+    descargas NUEVAS usan el stem corregido. Regla general: cualquier función que derive
+    un stem/hash de identidad a partir de una URL debe preservar TODO lo que distingue
+    una imagen de otra — "limpiar la query" para des-parametrizar un CDN no es lo mismo
+    que "vaciar la query", y confundir ambas cosas es el patrón exacto de este bug.
+    Tests: `tests/test_images_pkg.py::TestNormalizeImageUrlIdentityParams`,
+    `::TestExistingLocalImageLegacyCompat`.

@@ -442,6 +442,37 @@ Cuándo aplicar este patrón:
 - Las detail pages contienen toda la metadata necesaria (no hace falta
   un segundo crawl).
 
+### Descubrimiento genérico vía sitemap — `manga_watch.py --discover-sitemaps`
+
+Distinto del patrón anterior (que es código AD-HOC de una wiki puntual,
+`scripts/wikis/mangavariant.py`): `--discover-sitemaps` es un modo genérico
+del scraper principal, respaldado por `scripts/sitemap_miner.py`
+(`discover_and_filter`), que corre sobre TODAS las sources `kind: html`
+elegibles (sin tag `search:*` ni `expansion`) probando paths comunes de
+sitemap + `robots.txt`. No tiene ficha propia por fuente — es infraestructura
+compartida.
+
+**Endurecido (2026-07-08, auditoría Fable de imágenes, hallazgos #9/#10/#13):**
+- `<loc>` ahora soporta `<![CDATA[...]]>` (algunos generadores envuelven la URL
+  ahí — antes esas URLs se perdían en silencio) y hace `html.unescape()` sobre
+  el valor (una URL con `&` que el sitemap re-escapa como `&amp;amp;` quedaba
+  con la entidad literal sin este paso).
+- El candidato de sitemap elegido ya NO se descarga 2 veces: `discover_and_
+  filter` lo baja una vez para validarlo y se lo pasa PRELOADED a
+  `fetch_all_sitemap_urls` en vez de dejar que lo re-pida — la mitad de
+  requests HTTP por source cuando el primer candidato probado es el bueno
+  (el caso común).
+- `429` se reintenta UNA vez con backoff (`Retry-After` si el server lo manda,
+  2s por defecto) — mismo espíritu que la política 403 del scraper principal
+  (nunca un loop de reintentos).
+- Las excepciones de fetch ya no se tragan en silencio — se loguean a stderr
+  antes de degradar a `""` (comportamiento sin cambios: el caller sigue
+  tratando `""` como "no hay sitemap acá").
+
+Tests: `tests/test_images_pkg.py` (clases `TestLocPatternCdataAndEntities`,
+`test_fetch_text_retries_once_on_429_then_succeeds`,
+`test_discover_and_filter_does_not_double_fetch_same_candidate`).
+
 ### JSON-feed wiki (SocialAnime pattern)
 
 Algunas wikis renderizan items en cliente vía AJAX. La página HTML
@@ -790,6 +821,23 @@ a Dark Horse Direct + cualquier futuro Shopify multi-tomo. La detección
 se restringe a dominios conocidos (hoy solo `darkhorsedirect.com`) —
 otros Shopify (mangadreams.it, milkyway, funside.it) no usan variants
 para volúmenes y NO se chequean.
+
+**Anclaje del JSON de variants (2026-07-08, auditoría Fable de imágenes, hallazgo
+#11).** `extract_shopify_variants` probaba `"variants":[...]` SUELTO como primer
+patrón — el PRIMER match del documento, sin garantía de que perteneciera al producto
+de la página (un widget de "productos relacionados"/recomendaciones que serialice su
+propio "variants" ANTES del bloque del producto principal le ganaría). Fix: nuevo
+patrón prioritario `_PRODUCT_SCOPED_VARIANTS_PATTERN` que exige `"product":{...,
+"variants":[...]}` SIN otro `{`/`}` de por medio — anclado al bloque `var meta =
+{"product": {...}}` real (Dark Horse Direct, equivalente a
+`window.ShopifyAnalytics.meta.product.variants`) verificado en
+`tests/fixtures/shopify/dh_hellsing_deluxe.html`. El patrón suelto sigue como
+fallback (no se ha visto un caso real donde matchee lo incorrecto, documentado como
+hueco conocido, no resuelto). El docstring del módulo también dejó de anunciar
+`expand_shopify_variant_page` — esa función NUNCA existió en `shopify_variants.py`;
+la expansión real es `expand_shopify_variants_item` en
+`scripts/retrofit/expand_index_pages.py` (hallazgo #7). `format_variant_price`
+(código muerto, precios fuera del pipeline desde 2026-06-11) se eliminó (hallazgo #8).
 
 ## Recipe: source de referencia (Mangavariant pattern)
 

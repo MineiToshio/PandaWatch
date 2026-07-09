@@ -124,6 +124,22 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   - **El union-merge de `images[]` es sticky en AMBAS direcciones** (gotcha #87): en
     colisión (kind, url), el entry conservado rellena `local`/`description` vacíos con
     los del duplicado — cubre el flush-pre-mirror de los wikis Y el re-scrape sin descarga.
+  - **`normalize_image_url` preserva params de IDENTIDAD, solo filtra los de resize
+    (2026-07-08, hallazgo #2, ALTA, gotcha #137)**: el patrón 1 (Magento-style query
+    params: `?width=300&height=300&quality=80…`) borraba la query COMPLETA en vez de
+    filtrar solo `_CDN_RESIZE_PARAMS`. Dos imágenes DISTINTAS con un param de identidad
+    (`?id=123&width=300` vs `?id=456&width=300`) colapsaban al mismo `image_stem` →
+    `existing_local_image` devolvía la portada del PRIMER item para el segundo
+    (cross-cover silencioso). Fix: reconstruye la query quedándose sólo con los pares
+    que NO están en `_CDN_RESIZE_PARAMS` (idempotente: una 2ª pasada ya no tiene esos
+    keys, así que el `if` de detección da False). Análisis de impacto sobre el corpus
+    real (2026-07-08): de 19 688 URLs únicas en `images[].url`, 164 matcheaban el
+    patrón 1, 151 cambian de stem con el fix, y **67 ya tenían un archivo en disco bajo
+    el stem VIEJO** — por encima del umbral de "impacto material" (>50), así que
+    `existing_local_image` prueba el stem correcto primero y cae al stem LEGACY
+    (`_legacy_image_stem`, replica el comportamiento pre-fix) si no encuentra nada — los
+    67 archivos existentes se siguen sirviendo sin re-descarga; sólo las descargas
+    NUEVAS usan el stem corregido.
 - La `url` remota de cada entry queda como provenance + fallback (espejo falla → url remota → 📚).
 - On por defecto en todo scrape; `--skip-image-download` lo desactiva. Primitivas en
   `image_store.py` (incluye los helpers `cover_url`/`cover_local`/`set_cover`); orquestado
@@ -131,6 +147,12 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
 - **Idempotente** (nombre determinístico). **Validación magic bytes** (descarta HTML de
   error servido como imagen; la extensión sale de los bytes). El `local` de `images[0]` es
   sticky vía el union-merge de `images[]` en `append_jsonl` (gotcha #25).
+- **Cota anti-decompression-bomb (2026-07-08, hallazgo #16)**: `image_store.
+  MAX_IMAGE_PIXELS_CAP` (80 MP) reemplaza `Image.MAX_IMAGE_PIXELS = None` en los 3
+  sitios donde el módulo abre bytes con PIL (`placeholder_reason`, `normalize_image`
+  ×2) — `None` desactivaba por completo el guard de PIL contra un PNG/JPEG adversarial
+  de pocos KB que decodifica a gigapíxeles. 80 MP cubre con margen cualquier escaneo/
+  portada legítima del corpus.
 - `data/images/` gitignored (entrada propia; `data/` no se ignora en bloque). Deploy-agnóstico:
   el JSONL guarda sólo el filename → cambia sólo la base de la URL (local hoy, R2 en Fase 2).
 - Retrofits: `backfill_metadata.py --only images` (re-fetch carrusel de items con <2 imágenes,
@@ -142,7 +164,10 @@ cada item nuevo/cambiado a `data/images/<sha256(url)[:16]>.<ext>` y guarda el **
   por consistencia de CLI con el resto de retrofits de imagen, pero no cambia el
   comportamiento del backfill (sólo reporta a título informativo cuántas entries rellenadas
   eran de items aprobados). El GC (huérfanos) tampoco necesita el guard: opera sobre archivos
-  en disco, no muta `images[]` de ningún item.
+  en disco, no muta `images[]` de ningún item. **Flush incremental cada 50** (no 200 —
+  2026-07-08, hallazgo #15): alineado a la convención dura de `docs/reference/conventions.md`
+  § "Flush incremental"; idempotente de todos modos, así que el cambio es de robustez ante
+  cancelación, no de comportamiento.
 
 **Fase 2 — subir el espejo a Cloudflare R2 (PLANEADA).** Al desplegar, sincronizar
 `data/images/ → R2` (boto3, S3-compatible). **Bucket R2 propio** (no un prefijo dentro del
@@ -237,6 +262,29 @@ El download pasa `referer=<url del item>` para evitar 403 de CDNs con anti-hotli
 de revisión. `--include-approved` fuerza. Mismo guard homogéneo en los 13 scripts de
 imagen/agrupación de listadomanga (ver `docs/reference/conventions.md`).
 
+**El gate de píxeles delega en la fuente única de dimensiones (2026-07-08, hallazgo #1,
+ALTA, gotcha #124).** `_pixels()` tenía su PROPIO 3er parser binario de dimensiones
+(`_image_dimensions_from_bytes`) sin rama AVIF ni fallback PIL — la misma clase de bug
+ya cerrada en `upscale_images.py` y `fetch_better_covers.py`, pero no acá. Como el
+espejo local está ~100% AVIF, el gate `--min-gain` caía SIEMPRE al proxy de tamaño de
+ARCHIVO (`len(data)`), que para AVIF comprimido no guarda relación con los píxeles
+reales: mejoras legítimas se rechazaban y reemplazos sin ganancia real se aceptaban.
+Fix: `_pixels()` delega en `fetch_better_covers._get_pixels_from_bytes` (que a su vez
+cae a `_get_dims_from_bytes` con fallback PIL para AVIF/GIF/WebP-lossless, gotcha
+#132) — el 3er y último parser binario duplicado del repo queda eliminado; fallback a
+`len(data)` sólo si ni siquiera PIL puede leer el archivo (comportamiento degradado
+preexistente, sin cambios).
+
+**`_try_upgrade` es fail-closed sin espejo local de referencia (2026-07-08, hallazgo
+#4, gotcha #131).** El patrón Magento cache path (`needs_same_cover_validation`) exige
+validar identidad porque ~20% de esos CDNs devuelven una imagen DISTINTA. Antes, si el
+`old_local` de la entry estaba vacío (nunca se espejó localmente), el bloque entero de
+validación se saltaba y el script aceptaba la nueva URL a ciegas; y si `fetch_better_
+covers`/PIL no estaban disponibles, el `except (ImportError, Exception): pass` también
+aceptaba a ciegas (fail-open, contradiciendo la política fail-closed de la gotcha
+#131 — "cualquier capa incomputable ⇒ rechazo"). Ahora: sin referencia local utilizable
+Y sin poder validar `_same_cover`, el resultado es rechazo, no aceptación.
+
 ## Backfill de portadas externas en `scrape_full.sh` — `RUN_COVER_BACKFILL=1` (opt-in, 2026-07-07)
 
 `backfill_prh_covers.py` (CDN determinístico de Penguin Random House, ISBN EN) y
@@ -272,11 +320,14 @@ menor ≤ 170 px y la candidata es ≥ 2× más grande → par thumbnail↔full 
 en ±12% con el comentario "mismo que dedup", pero `dedup_carousel_images.THUMB_ASPECT_TOL`
 es en realidad 0.06 — éste es el ÚNICO de los dos scripts que muta `images[0]` SIN cola de
 revisión (dedup sólo decide qué queda en la galería), así que tener el umbral MÁS laxo era
-al revés de lo que hace falta. Corregido a 0.06 para matchear de verdad. Los 3 umbrales
-(`THUMB_MAX_SIDE`/`THUMB_HAMMING`/`THUMB_ASPECT_TOL`) siguen DUPLICADOS entre este script y
-`dedup_carousel_images.py` — ninguno es hoy el lugar canónico; centralizarlos en una
-constante compartida (candidato natural: `fetch_better_covers.py`, ya fuente única de
-`LOW_QUALITY_PX`/`SOFT_GUARD_PX`/`DETAIL_RATIO_MIN`/`DEFAULT_MAX_HASH_DIST`) queda pendiente.
+al revés de lo que hace falta. Corregido a 0.06 para matchear de verdad.
+
+**Centralización completada (2026-07-08, hallazgo #12)**: `THUMB_ASPECT_TOL` vive ahora en
+`image_store.THUMB_ASPECT_TOL` (0.06) — fuente ÚNICA importada por este script y por
+`dedup_carousel_images.py`, así que un futuro ajuste del umbral no puede volver a driftear
+entre los dos. `THUMB_MAX_SIDE`/`THUMB_HAMMING` siguen duplicados (menos sensibles al drift:
+sólo definen qué par se considera "thumbnail↔full" antes de aplicar el umbral ya
+centralizado) — no forman parte de este paquete de fixes.
 
 El thumbnail queda en la galería; ejecutar `dedup_carousel_images.py` después si se quiere
 eliminarlo. Tests: `tests/test_promote_hires_cover.py`. Flags: `--dry-run`,
@@ -320,6 +371,18 @@ upscale sobre el espejo ya normalizado. Fix: fallback a PIL (`Image.open(...).si
 para AVIF y cualquier formato no cubierto por el parser binario, antes del proxy de
 tamaño de archivo.
 
+**`--delete-original` (default ON) protege refs fuera de `images[]` (2026-07-08,
+hallazgo #3).** `_collect_targets` agrupa refs sólo vía `images[i].local` (que sí se
+actualiza al `local` nuevo); pero `sources[].image_local` (ref legacy per-fuente, no
+la actualiza este script) y `data/cover_preview.json` (`old_image`/
+`candidates[].new_image`/`current_images[].local` — la cola de revisión de portadas)
+pueden seguir apuntando al archivo VIEJO. Antes se borraba igual (`src_path.unlink()`
+sin chequear estas dos fuentes) → refs colgantes. Fix: `_protected_locals(items,
+preview_path)` (unión de `_sources_image_locals` + `_cover_preview_locals`) se computa
+una vez antes del loop; si el `local` viejo está protegido, el archivo se CONSERVA (se
+reporta como `kept_protected` en el resumen) en vez de borrarse. Tests:
+`tests/test_images_pkg.py`.
+
 ## Dedup de portada en el carrusel — `dedup_carousel_images.py`
 
 Cuando un item termina con la MISMA portada en dos resoluciones en `images[]` (ej.
@@ -330,6 +393,37 @@ resolución. Solo toca `kind=gallery` (los `extra` —cofres/tomos del box— so
 contenido curado y nunca se tocan) y exige dims válidas. Por defecto saltea items
 aprobados (`--include-approved` fuerza) — el dedup puede reordenar `images[0]` (la
 portada) de un golden record. Ver retrofit README.
+
+**Umbral thumbnail↔full centralizado (2026-07-08, hallazgo #12)**:
+`THUMB_ASPECT_TOL` (0.06) se importa de `image_store.THUMB_ASPECT_TOL` — fuente
+única compartida con `promote_hires_cover.py` (antes duplicado en los dos scripts,
+sin drift entre ellos porque ya se habían alineado a mano, pero sin protección contra
+un futuro drift).
+
+**Un `extra` no puede ascender a portada cuando la portada cae como dup (2026-07-08,
+hallazgo #12)**: cuando `images[0]` (la portada) cae como duplicado de menor
+resolución, el código viejo asumía que `new_imgs[0]` (el primer sobreviviente en
+orden original tras filtrar) era el hi-res que ganó la comparación — pero si un
+`extra` (bonus que viene CON el producto: postal, shikishi) estaba ubicado ENTRE la
+portada descartada y el hi-res sobreviviente, ese `extra` terminaba en `images[0]` por
+puro accidente de posición (mismo error de clase que `sync_cover_images._fix_bad_cover`
+promoviendo un extra, ver más abajo). Fix: si la portada cayó, se busca explícitamente
+el primer sobreviviente `kind=="gallery"` y se lo mueve a la posición 0 — un `extra`
+nunca es dedupable (ver `_dedupable`), así que si la portada cayó SIEMPRE hay otro
+`gallery` que le ganó la comparación.
+
+**Convenciones duras endurecidas (2026-07-08, hallazgo #5)**: (a) `backup_and_rotate`
+en vez de un slot fijo `.pre-dedup-bak` (se pisaba en cada corrida — el script corre en
+cada `scrape_full.sh`, fase `[4h]`); (b) flush incremental cada 50 items con cambios en
+vez de un write único al final (el loop baja imágenes de red por cada par a comparar —
+un crash a mitad de una corrida sobre `--all` perdía TODO); (c) `make_session` de
+`manga_watch.py` (retry + headers consistentes) en vez de un UA propio
+(`"Mozilla/5.0 (dedup)"` — fuentes como Manga-Sanctuary sirven 404 a UAs desconocidos,
+así que el dedup se omitía en silencio para esas fotos); (d) `_bytes_cache` con cota
+LRU (200 entradas) — sin tope, una corrida sobre `--all` podía acumular gigabytes en
+memoria; (e) `json.dumps(..., sort_keys=True)` + `encoding="utf-8"` explícito en la
+lectura (rompía la idempotencia byte-idéntica del corpus). Tests:
+`tests/test_dedup_carousel_images.py`.
 
 ## Limpieza de galería — `sync_cover_images.py`
 
@@ -423,6 +517,13 @@ intacta (std 66) porque borra solo por reglas estructurales/firma, nunca por rep
   como "sobrevivientes" para el GC aunque no se toque la entry, para no mandarlos a
   cuarentena si otro item no-aprobado que comparte el mismo archivo lo pierde en su
   propia pasada). Tests: `tests/test_purge_placeholder_images.py`.
+- **`backup_and_rotate` + `sort_keys=True` (2026-07-08, hallazgo #6)**: el backup usaba
+  un slot fijo propio (`.jsonl.pre-purge-placeholder-bak`, `shutil.copy`) en vez de la
+  convención dura (rota, máx 3, `data/backups/<filename>/`); y la escritura no ordenaba
+  las claves del dict (rompía la idempotencia byte-idéntica del corpus entre corridas).
+  Corrida real de dry-run post-fix (2026-07-08): 0 items afectados, 0 huérfanos — el
+  corpus ya estaba limpio desde la corrida inicial de abajo, confirmando que el cambio
+  de backup/serialización no alteró ningún resultado.
 
 Corre como paso **[4i]** del pipeline canónico (delta y full), después de
 `dedup_carousel_images` y antes de `build_web`, así un placeholder que reentre durante un
