@@ -106,11 +106,56 @@ _DEEPL_SOURCE_LANGS: frozenset[str] = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Helpers de traducción (thread-safe via locks laxos para rate-limit)
+# Helpers de traducción (rate-limiter por-servicio, sin serializar la request)
 # ---------------------------------------------------------------------------
+#
+# ANTES (auditoría S11, 2026-07-08): `_deepl_lock`/`_google_lock` envolvían la
+# llamada HTTP completa (`_translate_deepl`/`_translate_google`) MÁS el
+# `time.sleep(sleep_secs)` posterior — con --workers N, sólo podía haber 1
+# request de cada servicio en vuelo a la vez, sin importar N (el resto de los
+# workers esperaba el lock, no la red). --workers quedaba anulado.
+#
+# AHORA: `_RateLimiter` sólo serializa el CÁLCULO de "cuándo puede arrancar la
+# próxima request" (una sección crítica de microsegundos); la espera (si hace
+# falta) y la request en sí NO tienen lock — N requests pueden estar en vuelo
+# a la vez. Es seguro porque ninguno de los dos clientes tiene estado mutable
+# compartido entre threads en el hot path: `_translate_google` instancia un
+# `GoogleTranslator` NUEVO por llamada (deep_translator/google.py sólo usa
+# `requests.get()` con params locales a esa instancia, sin sesión compartida);
+# el `deepl_translator` SÍ es una única instancia compartida entre threads,
+# pero su cliente HTTP (`deepl.Translator`) está diseñado para uso concurrente
+# (pool de conexiones), igual que cualquier `requests.Session`/`urllib3`
+# estándar — no hay una `deepl_translator` mutable por-request que pisarse.
+# El intervalo mínimo entre ARRANQUES de request (rate-limit real ante la API)
+# sigue respetándose igual que antes.
 
-_deepl_lock = threading.Lock()
-_google_lock = threading.Lock()
+class _RateLimiter:
+    """Aplica un intervalo mínimo entre ARRANQUES de request sin serializarlas.
+
+    A diferencia de un lock que envuelve la llamada de red completa, acá el
+    lock sólo protege el cálculo de cuándo puede arrancar la próxima llamada;
+    el `time.sleep` de espera (si hace falta) y la request en sí quedan FUERA
+    del lock, así N workers pueden tener requests en vuelo simultáneamente.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._next_at = 0.0
+
+    def wait(self, min_interval: float) -> None:
+        if min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            start_at = self._next_at if self._next_at > now else now
+            self._next_at = start_at + min_interval
+        delay = start_at - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+
+
+_deepl_limiter = _RateLimiter()
+_google_limiter = _RateLimiter()
 
 
 # ---------------------------------------------------------------------------
@@ -274,12 +319,14 @@ def translate_to_es(
     last_service = ""
     last_error = ""
 
-    # Ruta upgrade: DeepL (si disponible y lang soportado)
+    # Ruta upgrade: DeepL (si disponible y lang soportado). `sleep_secs` ahora
+    # es el intervalo MÍNIMO entre arranques de request (rate-limit), no un
+    # sleep incondicional post-request — con --workers > 1 varias requests
+    # pueden estar en vuelo a la vez (S11, ver _RateLimiter arriba).
     if deepl_translator is not None and (lang in _DEEPL_SOURCE_LANGS or lang == "unknown"):
         try:
-            with _deepl_lock:
-                out = _translate_deepl(cleaned, deepl_translator)
-            time.sleep(sleep_secs)
+            _deepl_limiter.wait(sleep_secs)
+            out = _translate_deepl(cleaned, deepl_translator)
             if _normalize_ws(out) == _normalize_ws(cleaned):
                 # No-op barato: la API devolvió el mismo texto → ya estaba en destino
                 return TranslationResult(_ST_ALREADY_ES, "", "deepl", "")
@@ -290,9 +337,8 @@ def translate_to_es(
 
     # Ruta guaranteed: Google Translate (funciona siempre, sin API key)
     try:
-        with _google_lock:
-            out = _translate_google(cleaned)
-        time.sleep(sleep_secs)
+        _google_limiter.wait(sleep_secs)
+        out = _translate_google(cleaned)
         if _normalize_ws(out) == _normalize_ws(cleaned):
             return TranslationResult(_ST_ALREADY_ES, "", "google", "")
         return TranslationResult(_ST_TRANSLATED, out, "google", "")
@@ -523,9 +569,17 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0,
                         help="Procesar como máximo N items pendientes (0 = sin límite).")
     parser.add_argument("--workers", type=int, default=4,
-                        help="Threads paralelos para las llamadas a la API (default 4).")
+                        help="Threads paralelos para las llamadas a la API (default 4). "
+                             "Desde 2026-07-08 (S11) el rate-limiter por-servicio SÓLO pacea "
+                             "los arranques de request (--sleep); no serializa la llamada "
+                             "HTTP completa, así que con --workers>1 sí hay varias requests "
+                             "en vuelo a la vez (antes un lock global lo anulaba).")
     parser.add_argument("--sleep", type=float, default=0.15,
-                        help="Pausa en segundos entre llamadas a la API (default 0.15).")
+                        help="Intervalo MÍNIMO en segundos entre arranques de request al "
+                             "MISMO servicio (deepl y google se pacean por separado). "
+                             "Default 0.15. No es un sleep post-request incondicional — con "
+                             "varios workers, la próxima request puede arrancar apenas se "
+                             "cumple este intervalo aunque la anterior siga en vuelo.")
     parser.add_argument("--flush-every", type=int, default=50,
                         help="Guardar al disco cada N items procesados (default 50). "
                              "Permite retomar sin perder progreso si el proceso se interrumpe.")

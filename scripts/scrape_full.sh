@@ -78,10 +78,43 @@ fi
 # items.jsonl (escrituras concurrentes del flush). mkdir es atómico; el lock
 # se considera stale si el PID que lo creó ya no existe.
 LOCK_DIR="data/.scrape.lock"
+# Marker de aborto (Ctrl+C/SIGTERM a mitad de run, ver S4 auditoría 2026-07-08):
+# el trap de INT/TERM lo escribe ANTES de salir; el trap EXIT lo consulta para
+# decidir si es seguro liberar el lock. Nunca se borra "gate" solo — si esto
+# existe, un corpus a mitad de pasos pudo quedar inválido y nadie corrió
+# validate_corpus sobre él.
+ABORT_MARKER="data/.run-aborted"
+CURRENT_PHASE="init (pre-lock)"
+
+_release_lock_on_exit() {
+    if [ -f "$ABORT_MARKER" ]; then
+        echo
+        echo "⚠️  Salida por señal (INT/TERM) — el lock $LOCK_DIR NO se libera automáticamente."
+        echo "    Marker: $ABORT_MARKER. Antes de volver a correr un scrape:"
+        echo "      1) revisar el corpus:  .venv/bin/python scripts/validate_corpus.py"
+        echo "      2) si está OK, borrar el marker y el lock a mano: rm -f \"$ABORT_MARKER\"; rm -rf \"$LOCK_DIR\""
+        return
+    fi
+    rm -rf "$LOCK_DIR"
+}
+
+_on_abort_signal() {
+    local sig=$1
+    mkdir -p data
+    printf '{"signal":"%s","phase":"%s","at":"%s","pid":%s}\n' \
+        "$sig" "$CURRENT_PHASE" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$$" > "$ABORT_MARKER"
+    echo
+    echo "⚠️  Señal $sig recibida durante: $CURRENT_PHASE — abortando."
+    echo "    Marker escrito en $ABORT_MARKER (el lock queda tomado a propósito)."
+    exit 130
+}
+trap '_on_abort_signal INT' INT
+trap '_on_abort_signal TERM' TERM
+
 acquire_lock() {
     if mkdir "$LOCK_DIR" 2>/dev/null; then
         echo $$ > "$LOCK_DIR/pid"
-        trap 'rm -rf "$LOCK_DIR"' EXIT
+        trap '_release_lock_on_exit' EXIT
         return 0
     fi
     local old_pid
@@ -92,8 +125,16 @@ acquire_lock() {
     fi
     echo "⚠️  Lock stale (PID $old_pid ya no existe) — lo tomo."
     rm -rf "$LOCK_DIR"
-    mkdir "$LOCK_DIR" && echo $$ > "$LOCK_DIR/pid"
-    trap 'rm -rf "$LOCK_DIR"' EXIT
+    # Carrera (S2, auditoría 2026-07-08): si dos procesos detectan el lock stale
+    # a la vez, sólo uno gana el mkdir de abajo. Antes el perdedor seguía sin
+    # lock (mkdir && echo no aborta si mkdir falla) y su trap EXIT heredado
+    # borraba el lock del ganador al salir. Ahora el perdedor ABORTA.
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "❌ Perdí la carrera por el lock stale (otro proceso lo tomó primero). Abortando."
+        exit 1
+    fi
+    echo $$ > "$LOCK_DIR/pid"
+    trap '_release_lock_on_exit' EXIT
 }
 acquire_lock
 
@@ -101,8 +142,27 @@ TIMESTAMP=$(date '+%Y-%m-%d-%H%M%S')
 LOG_DIR="logs/scrape-full-${TIMESTAMP}"
 mkdir -p "$LOG_DIR"
 
+# Rotación de logs (B16, 2026-07-08): logs/scrape-* crece 1 directorio por
+# corrida sin límite. Podamos a los últimos 14 (ordenados por mtime; el recién
+# creado arriba ya cuenta como el más nuevo). data/metrics.jsonl NO se rota
+# acá — lo consume source_health.py (histórico de baseline), otro paquete lo toca.
+_prune_old_logs() {
+    local keep=14
+    ls -1dt logs/scrape-* 2>/dev/null | tail -n +$((keep + 1)) | while IFS= read -r old_dir; do
+        rm -rf "$old_dir"
+    done
+}
+_prune_old_logs
+
 GLOBAL_LOG="$LOG_DIR/scrape-full.log"
 exec > >(tee -a "$GLOBAL_LOG") 2>&1
+
+if [ -f "$ABORT_MARKER" ]; then
+    echo "⚠️  Se encontró $ABORT_MARKER de una corrida anterior interrumpida (INT/TERM)."
+    echo "    Detalle: $(cat "$ABORT_MARKER" 2>/dev/null)"
+    echo "    Se borra tras el backup pre-scrape de ESTA corrida (ver abajo)."
+    echo
+fi
 
 INCLUDE_WHAKOOM_SPIDER="${INCLUDE_WHAKOOM_SPIDER:-0}"
 INCLUDE_WAYBACK_RECOVERY="${INCLUDE_WAYBACK_RECOVERY:-0}"
@@ -157,6 +217,7 @@ phase_header() {
     local title=$2
     local started
     started=$(date '+%Y-%m-%d %H:%M:%S')
+    CURRENT_PHASE="PHASE $phase: $title"
     echo
     echo "════════════════════════════════════════════════════════"
     echo " PHASE $phase: $title"
@@ -195,6 +256,7 @@ record_step() {
 # Capturamos el PATH del backup (no solo lo logueamos): PHASE 4 lo usa para
 # restaurar automáticamente si el corpus post-run queda inválido.
 PRESCRAPE_BACKUP=""
+CURRENT_PHASE="backup pre-scrape"
 if [ -s data/items.jsonl ]; then
     echo ">>> Backup pre-scrape de data/items.jsonl"
     PRESCRAPE_BACKUP=$(env PYTHONUNBUFFERED=1 "$VENV_PY" -u -c \
@@ -206,6 +268,13 @@ if [ -s data/items.jsonl ]; then
         PRESCRAPE_BACKUP=""
     fi
     echo
+fi
+
+# Marker de una corrida anterior abortada por señal (S4): una vez que ESTA
+# corrida ya tiene su propio backup pre-scrape fresco, el marker viejo perdió
+# su utilidad informativa — se borra para no confundir la próxima corrida.
+if [ -f "$ABORT_MARKER" ]; then
+    rm -f "$ABORT_MARKER"
 fi
 
 # ============================================================
@@ -228,8 +297,15 @@ if [ "$SKIP_SCRAPE" != "1" ]; then
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/01-scrape.log" 2>&1
+    P1_RC=$?
     P1_END=$(date +%s)
     phase_done 1 $((P1_END - P1_START)) "$(count_lines)"
+    # S1 (auditoría 2026-07-08): antes un crash/timeout de la Fase 1 era
+    # invisible en FAILED_STEPS/SUMMARY porque no pasaba por record_step.
+    if [ "$P1_RC" -eq 124 ]; then
+        echo "    ⚠ Fase 1 alcanzó el TIMEOUT (3 h, rc=124) — se preservó lo ya flusheado por fuente."
+    fi
+    record_step "scrape-principal" "$P1_RC"
 else
     echo "[SKIP] PHASE 1 (scrape) saltada por SKIP_SCRAPE=1"
 fi
@@ -559,28 +635,34 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     record_step "filter_collectible" $?
     echo "    items: $(count_lines)"
 
+    # [4e]/[4e2]/[4e3] hacen 1 request HTTP por item pendiente — sin _run_timed
+    # antes (regresión de gotcha #33, S3 auditoría 2026-07-08): un host colgado
+    # bloqueaba el run entero (horas, en full) y mantenía el lock global tomado.
     echo ">>> [4e] backfill_metadata --only image_url"
-    "$VENV_PY" scripts/retrofit/backfill_metadata.py --only image_url --sleep 0.5 \
+    P4E_START=$(date +%s)
+    _run_timed 3600 "$VENV_PY" scripts/retrofit/backfill_metadata.py --only image_url --sleep 0.5 \
         > "$LOG_DIR/04e-backfill-images.log" 2>&1
     record_step "backfill_metadata:image_url" $?
-    echo "    items: $(count_lines)"
+    echo "    duración: $(($(date +%s) - P4E_START))s — items: $(count_lines)"
 
     echo ">>> [4e2] backfill_metadata --only images (carrusel multi-imagen)"
-    "$VENV_PY" scripts/retrofit/backfill_metadata.py --only images --sleep 0.5 \
+    P4E2_START=$(date +%s)
+    _run_timed 3600 "$VENV_PY" scripts/retrofit/backfill_metadata.py --only images --sleep 0.5 \
         > "$LOG_DIR/04e2-backfill-galleries.log" 2>&1
     record_step "backfill_metadata:images" $?
-    echo "    items: $(count_lines)"
+    echo "    duración: $(($(date +%s) - P4E2_START))s — items: $(count_lines)"
 
     echo ">>> [4e3] mirror_images --no-gc (descarga gallery images al espejo local)"
-    "$VENV_PY" scripts/retrofit/mirror_images.py --no-gc --workers 8 \
+    P4E3_START=$(date +%s)
+    _run_timed 3600 "$VENV_PY" scripts/retrofit/mirror_images.py --no-gc --workers 8 \
         > "$LOG_DIR/04e3-mirror-galleries.log" 2>&1
     record_step "mirror_images:galleries" $?
-    echo "    items: $(count_lines)"
+    echo "    duración: $(($(date +%s) - P4E3_START))s — items: $(count_lines)"
 
     if [ "$INCLUDE_WAYBACK_RECOVERY" = "1" ]; then
         echo ">>> [4f] wayback_recover (OPT-IN)"
         P4F_START=$(date +%s)
-        "$VENV_PY" -u scripts/retrofit/wayback_recover.py --sleep 1.0 \
+        _run_timed 3600 "$VENV_PY" -u scripts/retrofit/wayback_recover.py --sleep 1.0 \
             > "$LOG_DIR/04f-wayback-recover.log" 2>&1
         record_step "wayback_recover" $?
         echo "    duración: $(($(date +%s) - P4F_START))s — items: $(count_lines)"

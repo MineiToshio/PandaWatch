@@ -2,14 +2,20 @@
 #
 # bootstrap.sh — scraping profundo one-shot para construir el catálogo inicial.
 #
-# A diferencia de full_run.sh (incremental, ~30 min), este script:
-#   - Paginación AGRESIVA: hasta 50 páginas por fuente (vs 5 default)
+# A diferencia de scrape_delta.sh/scrape_full.sh (los 2 scripts canónicos),
+# este script:
+#   - Paginación AGRESIVA: hasta 50 páginas por fuente (vs 5 default; ni
+#     siquiera scrape_full.sh expone --max-pages como env var)
 #   - Sleep alto (1.5s) para evitar rate-limiting durante el run largo
 #   - Todos los modos activados: JS, fuzzy, fetch-details, diagnostic
 #   - Snapshot del items.jsonl pre-bootstrap para poder revertir si algo se rompe
+#   - SOLO scrapea sources.yml (NO corre wikis, cleanup retrofits, gate
+#     validate_corpus ni build_web — encadená eso vos con scrape_delta/full).
 #
-# Pensado para correr UNA vez (o cada 6-12 meses) para construir/refrescar
-# la base. Después usá ./scripts/full_run.sh para updates diarios/semanales.
+# Pensado para correr UNA vez (o cada 6-12 meses) cuando hace falta paginación
+# mucho más profunda que la del pipeline canónico. Para el uso diario/semanal
+# normal usá ./scripts/scrape_delta.sh (o ./scripts/scrape_full.sh 1x/mes).
+# (referencia corregida 2026-07-08 — antes apuntaba al deprecated full_run.sh)
 #
 # Tiempo estimado: 1-2 horas
 # Requests estimados: ~1500-3000 HTTP (depende de profundidad real de catálogos)
@@ -36,6 +42,36 @@ if [ ! -x "$VENV_PY" ]; then
     exit 1
 fi
 
+# ── Lock global compartido con scrape_delta.sh/scrape_full.sh (mismo archivo,
+# data/.scrape.lock): bootstrap.sh también escribe items.jsonl vía
+# manga_watch.py — correrlo a la vez que un delta/full corrompería el corpus
+# igual que dos scrapes simultáneos. Antes bootstrap.sh no tomaba lock alguno
+# (auditoría S8, 2026-07-08). Se adquiere ANTES del prompt de confirmación
+# para fallar rápido si ya hay un scrape corriendo.
+LOCK_DIR="data/.scrape.lock"
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo $$ > "$LOCK_DIR/pid"
+        trap 'rm -rf "$LOCK_DIR"' EXIT
+        return 0
+    fi
+    local old_pid
+    old_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "❌ Ya hay un scrape corriendo (PID $old_pid, lock $LOCK_DIR). Abortando."
+        exit 1
+    fi
+    echo "⚠️  Lock stale (PID $old_pid ya no existe) — lo tomo."
+    rm -rf "$LOCK_DIR"
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "❌ Perdí la carrera por el lock stale (otro proceso lo tomó primero). Abortando."
+        exit 1
+    fi
+    echo $$ > "$LOCK_DIR/pid"
+    trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+acquire_lock
+
 # ============================================================
 # Aviso inicial + confirmación
 # ============================================================
@@ -56,7 +92,7 @@ cat <<EOF
 ║                                                                ║
 ║  ⚠️  Esto NO es para el run diario.                            ║
 ║  Para updates incrementales rápidos usá:                       ║
-║     ./scripts/full_run.sh                                      ║
+║     ./scripts/scrape_delta.sh                                  ║
 ║                                                                ║
 ╚═══════════════════════════════════════════════════════════════╝
 
@@ -164,7 +200,8 @@ echo
 echo "==> Listo. Próximos pasos:"
 echo "    1. Abrir web:    open web/index.html"
 echo "    2. Log completo: less $LOG_FILE"
-echo "    3. Para updates incrementales:  ./scripts/full_run.sh"
+echo "    3. Para updates incrementales:  ./scripts/scrape_delta.sh (diario/semanal)"
+echo "                                     o ./scripts/scrape_full.sh (mensual/trimestral)"
 echo
 echo "    Si algo salió mal, rollback con:"
 if [ -n "${SNAPSHOT:-}" ]; then
