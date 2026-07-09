@@ -266,16 +266,42 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
 - Backup de `items.jsonl` antes de tocar (`backup_and_rotate`, 3 copias). **Desde
   2026-07-07** el primer backup ocurre AL INICIO del script (antes de Fase 1), no recién
   en un retrofit puntual de Fase 3 — cubre también scrape+wikis.
-- **`FAILED_STEPS` (2026-07-07)**: cada bootstrap/retrofit/build de la corrida se
-  envuelve en `record_step <nombre> $?`; los que fallan (rc≠0) quedan listados en el
-  FINAL SUMMARY. Con `set +e` un paso que crashea a mitad de la cadena era antes
-  invisible entre el resto de la salida.
-- **Lock global `data/.scrape.lock`** (2026-06-12): mkdir atómico + PID; una segunda
-  corrida (delta o full) aborta sola en vez de corromper items.jsonl. Lock stale
-  (PID muerto) se recupera automáticamente.
+- **`FAILED_STEPS` (2026-07-07, ampliado 2026-07-08)**: cada bootstrap/retrofit/build de
+  la corrida se envuelve en `record_step <nombre> $?`; los que fallan (rc≠0) quedan
+  listados en el FINAL SUMMARY. Con `set +e` un paso que crashea a mitad de la cadena era
+  antes invisible entre el resto de la salida. **Desde 2026-07-08 (S1)** la Fase 1
+  (scrape principal) TAMBIÉN pasa por `record_step "scrape-principal" $?` — antes un
+  crash o timeout (rc=124) de la fase más larga del run no dejaba rastro en
+  `FAILED_STEPS`; el SUMMARY decía "ninguno" con el scrape entero muerto.
+- **Lock global `data/.scrape.lock`** (2026-06-12, endurecido 2026-07-08): mkdir atómico
+  + PID; una segunda corrida (delta, full o `bootstrap.sh`) aborta sola en vez de
+  corromper items.jsonl. Lock stale (PID muerto) se recupera automáticamente. **S2**:
+  si dos procesos detectan el lock stale a la vez, sólo uno gana el `mkdir` que sigue —
+  antes el perdedor seguía corriendo SIN lock (y su trap heredado borraba el del
+  ganador al salir); ahora el perdedor aborta con rc=1. **`bootstrap.sh` ahora también
+  toma este lock** (antes no tomaba ninguno).
+- **Marker de aborto `data/.run-aborted` (S4, 2026-07-08)**: un Ctrl+C/SIGTERM a mitad
+  de run saltea el gate `validate_corpus` y dejaba el trap EXIT liberar el lock sin
+  validar nada — un corpus inter-pasos inválido podía quedar servido sin que nadie lo
+  supiera. Ahora el trap de INT/TERM escribe `data/.run-aborted` (señal + fase +
+  timestamp + PID) ANTES de salir; el trap EXIT lo consulta y, si existe, **NO libera
+  el lock** (hay que revisar el corpus a mano — `validate_corpus.py` — antes de borrar
+  el marker y el lock). Al arrancar, si el marker de una corrida previa existe, el
+  script avisa en el log y lo borra recién después de su propio backup pre-scrape.
 - **[4f3] `enforce_listadomanga_rules.py --fast`** corre en la FASE 3 de ambos
   (cadena completa de agrupación, incluye merge ISBN/series, dedup sintético,
   consolidate y slugs — invariantes DUPSYN/TITLE/DUPVOL/ISBNDUP).
+- **Retrofits network-bound de Fase 3 con `_run_timed` (S3, 2026-07-08)**:
+  `backfill_metadata.py --only image_url/images`, `mirror_images.py --no-gc` y
+  `wayback_recover.py` (opt-in) hacen 1 request HTTP por item — antes corrían SIN
+  timeout (regresión de gotcha #33): un host colgado bloqueaba el run entero y
+  mantenía el lock global tomado por horas. Ahora todos están envueltos en
+  `_run_timed` igual que el resto de los pasos de red del pipeline.
+- **Rotación de `logs/scrape-*` a 14 corridas (B16, 2026-07-08)**: antes de crear el
+  `LOG_DIR` de la corrida, se podan los directorios `logs/scrape-*` más viejos
+  dejando sólo los últimos 14 (por mtime). `data/metrics.jsonl` (histórico append-only
+  que consume `source_health.py` para el baseline) NO se toca acá — es responsabilidad
+  de otro paquete si algún día necesita rotación propia.
 - **PHASE 4 `validate_corpus.py`, ANTES del build (2026-07-07, gotcha #111)**: gate
   duro — exit 2 = violaciones duras → PHASE 5 (build) se OMITE, el build anterior
   queda intacto. **Cuarentena + restore automático (2026-07-07)**: si el corpus queda
@@ -490,6 +516,16 @@ Pobla `description_es` y `extras[].description_es`. **Último paso del skill #2*
   se preserva por el sticky (se deja re-traducir) — evita mostrar una traducción de un
   texto que ya cambió. Backward-compatible: rows sin el hash (traducciones previas a
   este cambio) nunca se consideran stale. Detalle: `docs/reference/architecture.md`.
+- **`--workers` ahora es paralelismo real (S11, 2026-07-08)** — antes `_deepl_lock`/
+  `_google_lock` envolvían la llamada HTTP completa + el `time.sleep(--sleep)`
+  posterior, así que con cualquier `--workers>1` sólo había 1 request DeepL y 1 Google
+  en vuelo a la vez (el resto de los threads esperaba el lock, no la red). Ahora
+  `_RateLimiter` sólo pacea los ARRANQUES de request (intervalo mínimo `--sleep` entre
+  el inicio de una y la siguiente, por servicio); la espera y la request en sí quedan
+  fuera del lock, así N workers sí tienen requests en vuelo simultáneamente. Seguro
+  porque ninguno de los dos clientes tiene estado mutable compartido en el hot path
+  (`GoogleTranslator` se instancia nuevo por llamada; el cliente HTTP de `deepl` está
+  hecho para uso concurrente).
 ```bash
 translate_descriptions.py --workers 4
 translate_descriptions.py --retry-empty          # recupera fallos de API viejos mal marcados

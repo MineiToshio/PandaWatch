@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 132 known gotchas
+## The 135 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1332,3 +1332,98 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     dimensiones. Verificado en vivo: una ref AVIF 357×500 medía 0, ahora mide 178 500. Tests:
     `tests/test_cover_engine_gates.py::test_get_pixels_from_bytes_measures_avif` (+ fast-paths
     intactos).
+133. **`search_discovery.py`/`wayback_recover.py`/`build_web.py` con footguns de escritura,
+    dedup y observabilidad — auditoría Fable A2, 2026-07-08.** Varios:
+    (a) `search_discovery.py` escribía items.jsonl con `open("a")` crudo al FINAL del run
+    (sin `backup_and_rotate`, sin el upsert/merge de `append_jsonl`) — un crash a mitad de
+    un run de ~1h de red quemaba todo el presupuesto de API sin persistir nada; ahora hace
+    `backup_and_rotate` una vez antes del loop + `append_jsonl` cada `--flush-every` queries
+    (default 8). (b) El dedup intra-run agregaba la URL CRUDA a un set de URLs
+    NORMALIZADAS (`known_urls.add(cand.url)` en vez de `normalize_url_for_dedup(cand.url)`),
+    así que la misma URL con OTRO tracking param se colaba como duplicado. (c) Los engines
+    agotados (DDG HTTP 202 soft-ban, Gemini 429 quota) se seguían golpeando query tras query;
+    ahora `SearchEngineExhaustedError` los desactiva (`dead_engines`) para el resto de la
+    corrida (gemini/google comparten cupo, se desactivan juntos). (d) `wayback_recover.py`
+    `_flush_wayback` decía "atómicamente" en el docstring pero usaba `write_text` (trunca
+    in-place) — un crash a mitad de escritura dejaba items.jsonl corrupto; ahora es
+    tmp+fsync+`os.replace`, y el backup previo aplica siempre que `--output` YA exista (antes
+    sólo corría si `dst == src` por igualdad de Path, así que un `--output` distinto se lo
+    saltaba). (e) No respetaba el guard homogéneo `approved_at` (ver gotcha #121/conventions.md)
+    — un golden record podía perder su título/autor/publisher por una recuperación de
+    Wayback; ahora salta items aprobados salvo `--include-approved`. (f) Escribía un campo
+    `name` espurio (la metadata genérica de `fetch_metadata_from_detail` usa esa key, pero
+    el schema de items.jsonl usa `title`) — se mapea `name`→`title` explícitamente, sin pisar
+    un título ya existente. (g) Re-escaneaba TODO el corpus de items 404 contra Wayback en
+    cada corrida (~70 min) sin caché — ahora `data/wayback_negative_cache.json` (TTL 90 días)
+    recuerda las URLs con "sin snapshot" CONFIRMADO por la API (200 + JSON válido); un 429 o
+    timeout nunca se cachea como negativo (`find_wayback_snapshot` devuelve
+    `(snapshot, definitive)`, y sólo `definitive=True` es cacheable). (h) `build_web.py`
+    escribía `index.html` con `write_text` (no atómico, mismo problema que (d)) — ahora usa
+    `_atomic_write_text`. (i) `build_web --embed`: `json.dumps` no escapa `/`, así que un
+    `</script>` literal en un título/descripción scrapeado cerraba el tag antes de tiempo y
+    corrompía el HTML — se escapa `payload.replace("</", r"<\/")` (escape válido de JSON,
+    cualquier parser lo interpreta igual que `/` sin escapar). Código muerto eliminado de
+    paso: `_DDG_SNIPPET_RE` (search_discovery), `items_by_url` + `from datetime import
+    datetime` sin uso (wayback_recover), `build_web._source_entry` (cero callers, ni en
+    tests). Tests: `tests/test_discovery_wayback_buildweb.py`.
+134. **Los scripts de cover-sync trataban "el catálogo no cargó" igual que "el catálogo
+    cambió" — auditoría Fable A1, 2026-07-08.** `sync_cover_preview.py` (Regla 1: slug
+    ausente de `items_by_slug` → entry eliminada) y `sync_cover_images.py`
+    (`_compute_junk_local`: `sizes.get(f, 0)` igualaba "0 bytes" con "no existe") NO
+    distinguían un catálogo vacío/corrupto de uno que de verdad cambió — un
+    `items.jsonl` ausente/truncado/con líneas mal parseadas vaciaba la cola de
+    aprobación entera (`cover_preview.json`, ~160 entries) en UN solo GET
+    `/api/cover-preview` (que persiste), y un `data/images/` ausente hacía que
+    `_fix_bad_cover` arrasara portadas en masa (TODO local caía en la rama junk).
+    **Fix**: (a) `sync_cover_preview.catalog_is_sane(preview, items_by_slug,
+    malformed_lines)` — aborta (CLI) o degrada a solo-lectura sin persistir (GET) si
+    `items_by_slug` está vacío con cola no vacía, si >20% de los slugs no matchean, o
+    si `_load_items_by_slug` contó líneas `JSONDecodeError`>0 (antes las tragaba en
+    silencio, ahora las cuenta y las expone). (b) `sync_cover_images.run()` aborta si
+    `not images_dir.exists()`; `_compute_junk_local` separa "no está en `sizes`" (skip,
+    legítimo) de "está con 0 bytes" (junk real). Además, en el mismo paquete: (c)
+    `_fix_bad_cover` ya no promueve `kind:"extra"` (postal/shikishi) a portada, y al no
+    encontrar reemplazo de galería válido conserva el resto de `images[]` en vez de
+    vaciarlo entero (antes perdía extras legítimas junto con la portada mala). (d)
+    `prune_soft_cover_candidates.py` marcaba `_is_soft_image` como DROP silencioso
+    (ninguna traza, la misma candidata podía re-proponerse); ahora marca
+    `status: "rejected"` + ledger, igual que `revalidate_cover_preview.py` — misma
+    condición, política unificada. (e) `promote_hires_cover.THUMB_ASPECT_TOL` decía
+    "0.12, igual que dedup" pero `dedup_carousel_images.THUMB_ASPECT_TOL` es 0.06 — el
+    único script que muta `images[0]` SIN cola de revisión tenía el umbral MÁS laxo,
+    no el mismo; corregido a 0.06 (centralización real en una constante compartida
+    queda pendiente — TODO en el docstring de `promote_hires_cover.py`, requiere tocar
+    `fetch_better_covers.py`, fuera del alcance de este paquete). (f) GC de archivos de
+    candidatas huérfanas: `sync_preview()` ahora borra el `new_image` de una candidata
+    podada/dropeada SOLO si no lo referencia nada más (ni `items_by_slug`, que comparte
+    el mismo `data/images/`, ni otra entry/candidata sobreviviente) — antes quedaban
+    huérfanos para siempre (ningún GC leía `cover_preview.json`). Tests:
+    `tests/test_cover_sync_guards.py`.
+135. **El lock global del scrape tenía una ventana de carrera y el trap EXIT liberaba
+    el lock aun con el corpus a mitad de pasos — auditoría Fable S2/S4, 2026-07-08.**
+    `scrape_delta.sh`/`scrape_full.sh` (y desde este mismo fix, `bootstrap.sh`): (a)
+    **S2** — si dos procesos detectaban `data/.scrape.lock` stale (PID muerto) al mismo
+    tiempo, ambos hacían `rm -rf "$LOCK_DIR"` y el `mkdir "$LOCK_DIR" && echo $$ >
+    "$LOCK_DIR/pid"` de la vieja `acquire_lock()` NO abortaba si el `mkdir` fallaba (el
+    `&&` sólo salteaba el segundo comando) — el perdedor seguía el scrape completo SIN
+    lock, y su `trap 'rm -rf "$LOCK_DIR"' EXIT` heredado borraba el lock del ganador al
+    salir. Fix: `if ! mkdir "$LOCK_DIR" 2>/dev/null; then exit 1; fi` — el perdedor
+    aborta explícitamente. (b) **S4** — un Ctrl+C/SIGTERM a mitad de Fase 2/3 saltea el
+    gate `validate_corpus` (PHASE 4) por completo, pero el trap EXIT igual corría `rm
+    -rf "$LOCK_DIR"` sin validar nada — un corpus inter-pasos corrupto podía quedar
+    SERVIDO (serve.py hace `fetch()` en vivo, decisión #5) sin que el lock reflejara
+    ningún problema. Fix: `trap '_on_abort_signal INT' INT` / `TERM` escribe
+    `data/.run-aborted` (señal + fase actual + timestamp + PID) y sale con rc=130 ANTES
+    de que el trap EXIT corra; el trap EXIT ahora chequea el marker — si existe, NO
+    libera el lock (hay que correr `validate_corpus.py` a mano y borrar marker+lock).
+    El marker de una corrida previa se avisa en el log y se borra recién después del
+    backup pre-scrape de la corrida siguiente (no antes — necesitás el aviso en el log
+    de ESA corrida). Verificado con un harness de sandbox (dos subshells compitiendo
+    por un lock stale con la ventana ensanchada a propósito; SIGINT real con job
+    control habilitado) — no hay test de pytest para esto (es mecánica de bash, no de
+    Python). Además (S1) la Fase 1 (scrape principal) ahora pasa por `record_step` —
+    antes un crash/timeout (rc=124) de esa fase no aparecía en `FAILED_STEPS`; y (S3)
+    los retrofits de red de Fase 3 sin timeout (`backfill_metadata --only image_url/
+    images`, `mirror_images --no-gc`, `wayback_recover`) quedaron envueltos en
+    `_run_timed` (regresión de gotcha #33). Detalle operativo completo en
+    `docs/scraper/PIPELINE-WALKTHROUGH.md` → "Convenciones de ambos scripts".

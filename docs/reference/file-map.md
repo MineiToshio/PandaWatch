@@ -30,10 +30,18 @@ data/  (todo gi salvo los .yml versionados)
   dup_decisions.jsonl        — log append-only de decisiones sobre "posibles
                                duplicados" del Panel de Calidad (merged|distinct,
                                por signature). data_quality.py no re-sugiere los
-                               ya decididos. Endpoints /api/dup/{merge,decide}.
+                               ya decididos — tanto `audit_items` (auditoría completa)
+                               como `check_urls` (live-update tras arreglar un item,
+                               desde 2026-07-08) recomputan la firma del grupo y la
+                               respetan. Endpoints /api/dup/{merge,decide}.
   edits.jsonl                — log append-only de ediciones inline (auditoría).
   quality_report.json        — output de audit/data_quality.py; lo lee quality.html.
   cover_preview.json         — candidatas de portada pendientes de aprobación.
+  wayback_negative_cache.json — {url: checked_at_iso} de URLs SIN snapshot
+                               confirmado en Wayback (TTL 90d). Escrito por
+                               wayback_recover.py; sólo cachea negativos
+                               DEFINITIVOS (200 + JSON válido sin snapshot) —
+                               nunca 429/timeout. Gotcha #133.
   non_manga_blacklist.jsonl  — items movidos fuera por /watch-standardize-catalog.
   unmapped_series.jsonl      — FUENTE ÚNICA para flagear cualquier registro
                                incierto (serie/edición/publisher). NUNCA crear
@@ -51,7 +59,12 @@ logs/  (gi)
   metrics.jsonl               — NUEVO (2026-07-07): 1 línea por fuente/run, appendeada por
                                source_health.py --metrics-file (idempotente por (run,source)).
                                Historial para --baseline-alert (mediana por modo delta/full).
+                               Append-forever, ~21 MB a 2026-07-08 (B16) — NO se rota desde
+                               scrape_delta/full.sh a propósito (source_health.py lo consume
+                               como serie histórica completa; rotarlo rompería el baseline).
   scrape-{delta,full}-<TS>/    — logs por fase de cada corrida canónica (ver PIPELINE-WALKTHROUGH.md).
+                               Podados a los últimos 14 directorios al arrancar cada corrida
+                               (B16, 2026-07-08) — antes crecían sin límite.
 scripts/
   manga_watch.py             — módulo principal (~7k líneas): filtros, scoring, IO,
                                loop paralelo, dispatchers Bluesky/Playwright/HTTP,
@@ -66,12 +79,32 @@ scripts/
   admin_serve.py             — DEPRECATED (absorbido por serve.py).
   script_registry.py         — fuente única del Panel de Control. Agregás un script
                                acá, aparece en la UI.
-  run_local.sh / serve.sh    — lanzan serve.py en :8000.
-  scrape_delta.sh            — ⭐ CANÓNICO INCREMENTAL (~30-60 min, diaria/semanal). Lock global + [4g2] merge ISBN + PHASE 6 source_health.
+  run_local.sh / serve.sh    — lanzan serve.py en :8000, ambos vía `.venv/bin/python`
+                               (serve.sh usaba `python3` del sistema hasta 2026-07-08 —
+                               S6: si el sistema no tiene bs4/requests, serve.py degrada
+                               en silencio y el merge de curación pierde `sources[]`).
+  scrape_delta.sh            — ⭐ CANÓNICO INCREMENTAL (~30-60 min, diaria/semanal). Lock
+                               global (con recuperación de carrera en lock stale, S2) +
+                               marker `data/.run-aborted` en INT/TERM que retiene el lock
+                               hasta validar (S4) + rotación de `logs/scrape-*` a 14 (B16)
+                               + [4g2] merge ISBN + PHASE 6 source_health.
   com.pandawatch.scrape-delta.plist — LaunchAgent macOS para delta diario 3:30 AM (instrucciones dentro; NO instalado por defecto).
-  scrape_full.sh             — ⭐ CANÓNICO FULL (~2-4 h, mensual/trimestral).
+  scrape_full.sh             — ⭐ CANÓNICO FULL (~2-4 h, mensual/trimestral). Mismas
+                               protecciones de lock/abort-marker/rotación que scrape_delta.sh.
   overnight_run.sh           — DEPRECATED (alias de scrape_delta.sh).
-  retry_failed.sh            — re-corre solo las fuentes que erraron en el último log.
+  full_run.sh                — DEPRECATED (alias de scrape_full.sh, 2026-07-08 — S8; antes
+                               no tenía lock ni gate validate_corpus y sus stats leían
+                               campos eliminados del schema).
+  bootstrap.sh                — scraping profundo one-shot (paginación hasta 50, sólo
+                               sources.yml — no wikis/cleanup/gate/build). Ahora toma el
+                               mismo lock global que scrape_delta/full (S8, 2026-07-08).
+                               Uso raro (construir/refrescar catálogo desde cero); para el
+                               día a día usar scrape_delta.sh/scrape_full.sh.
+  retry_failed.sh            — DEPRECATED (S9, 2026-07-08): reintentaba un set de fuentes
+                               HARDCODEADO de un incidente de mayo 2026 con el cleanup en
+                               el orden VIEJO (pre gotcha #110), sin lock/gate. Para
+                               reintentar una fuente rota: `source_health.py` para
+                               identificarla + `manga_watch.py --only-source <fuente>`.
   series_aliases.py          — canonical_series_key() + log_unmapped_series(). Ver #20.
   image_store.py             — primitivas del espejo local (hash, magic-bytes, idempotencia)
                                + normalize_image() (estandariza a AVIF Q60 ≤1600px al ingresar,
@@ -80,10 +113,21 @@ scripts/
   standardize_audit.py       — AUDIT de /watch-standardize-catalog (fuente única
                                skill+workflow, anti-drift): tiering + proyecciones
                                tier{1,2,3}.json con proposed_*, existing_edition_key,
-                               known_edition_keys (#69). Flags --limit/--force-all.
+                               known_edition_keys (#69), MÁS summary.json (contrato
+                               de conteos {total,pending,tier1,tier2,tier3,exhausted},
+                               auditoría 2026-07-08 hallazgo F6 — reemplaza el parseo
+                               por regex del reporte de un subagente). Flags
+                               --limit/--force-all/--base. Run dir default
+                               `data/standardize-run/` (persistente; antes
+                               `/tmp/manga-standardize-run`, volátil ante reboot —
+                               hallazgo F3).
   standardize_apply.py       — APPLY de /watch-standardize-catalog (fuente única):
                                subcomandos tier1 y merge. El merge PRESERVA el
                                edition_key existente; sin keys usables → PENDIENTE.
+                               Su propio DEFAULT_BASE sigue en /tmp (no tocado en el
+                               movimiento de F3) — todo invocador pasa `--base
+                               data/standardize-run` explícito para que coincida con
+                               standardize_audit.py.
   wikis/                     — parsers dedicados. País + scope; detalles en gotchas/docs:
     listadomanga.py            ES — calendario mensual (delta).
     listadomanga_collections.py ES — coleccion.php?id=N (full vía lista.php). URLs
@@ -145,8 +189,18 @@ scripts/
     backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.
     backfill_cluster_key.py    backfill cluster_key tras cambiar derive_cluster_key.
     consolidate_sources.py     colapsa filas del mismo cluster en 1 con sources[] (paso [4g]).
-    search_discovery.py        discovery multi-engine (Gemini + Tavily + DDG).
+    search_discovery.py        discovery multi-engine (Gemini + Tavily + DDG). Escritura vía
+                               backup_and_rotate + append_jsonl con flush cada --flush-every
+                               queries (default 8, no write único al final); dedup intra-run por
+                               URL normalizada; engines agotados (DDG 202 / Gemini 429) se
+                               desactivan para el resto de la corrida. Gotcha #133.
     wayback_recover.py         recupera items 404/410 vía archive.org (no 403/429, ver #13).
+                               Guard `approved_at` (--include-approved), flush atómico
+                               (tmp+fsync+os.replace), mapea metadata `name`→`title` (nunca
+                               escribe `name`), caché negativa persistente en
+                               `data/wayback_negative_cache.json` (TTL 90d, --no-negative-cache
+                               para ignorarla; sólo cachea "sin snapshot" CONFIRMADO, nunca
+                               429/timeout). Gotcha #133.
     expand_whakoom_ediciones.py / expand_index_pages.py  expanden páginas-índice (#14, #16, #17).
     strip_legacy_cover_fields.py  migración one-shot (2026-06-09): elimina image_url/
                                image_local top-level del item; portada = images[0].
@@ -223,17 +277,39 @@ scripts/
     source_health.py           clasifica fuentes desde N logs recientes. Desde 2026-07-07 también
                                acumula logs/metrics.jsonl (--metrics-file) y alerta regresiones de
                                yield vs. mediana histórica del mismo modo (--baseline-alert --mode
-                               delta|full, warm-up ≥3 runs).
+                               delta|full, warm-up ≥3 runs). Auditoría 2026-07-08 (paquete
+                               B-observabilidad): parsea categorías SKIP con guion (no-links/js-shell),
+                               `[CHALLENGE_DETECTED]` como categoría propia `broken_challenge` (antes
+                               una fuente bloqueada por anti-bot salía "healthy", gotcha #107), nombres
+                               de search-template con ':' adentro sin truncar, siembra `unseen` con las
+                               fuentes enabled de sources.yml + los 26 wikis (`wiki:<id>`, parseados
+                               desde el log `[BOOTSTRAP-WIKI]`/`[RESUMEN BOOTSTRAP-WIKI]` de cada uno —
+                               antes 100% invisibles), y excluye runs con error de la mediana de yield
+                               (evita que ceros falsos apaguen la detección de regresión para siempre).
     staleness_report.py        NUEVO — read-only, sin red. Cuenta por fuente cuántas URLs de
                                data/state.json llevan >N días (default 90) sin verse. No propone
                                borrar nada, siempre exit 0. Invocado al final de scrape_delta/full.sh.
     unmapped_series.py         series_keys sin alias, fuzzy-matched. Lo lee enrich-series-aliases.
     data_quality.py            audit SOLO LECTURA → quality_report.json + check_urls(). Ver quality.html.
+                               Auditoría 2026-07-08: "archivo_tiny"/"pixelada" (y check_urls, el
+                               live-update del panel) juzgan por PÍXELES vía `image_store.
+                               placeholder_reason()` (fuente única: broken/tiny:WxH/solid:STD/
+                               signature:LABEL), NO por bytes<6KB — el espejo es 100% AVIF y comprime
+                               tan bien que portadas reales de ~600x900 pesan <6KB (~1060 falsos
+                               positivos medidos, corregido a 0 sobre el corpus real); fallback a
+                               bytes<6KB sólo sin Pillow/--no-measure. `check_urls` ahora también
+                               respeta `data/dup_decisions.jsonl` (antes sólo `audit_items`).
 .claude/skills/              — skills MANUALES (solo bajo pedido explícito, ver política arriba):
   feature-spec/                Vía C: entrevista + exploración → spec en docs/specs/. No implementa.
   ship-check/                  gate pre-commit: checks por área tocada + auditoría docs-sync.
   product-pulse/               post-launch: PostHog + feedback.jsonl → backlog priorizado.
   standardize-catalog/         items sin standardized_at → asigna keys, mueve non-manga, dedup (#21).
+    prompt-rules.md             FUENTE ÚNICA de las reglas de negocio del prompt LLM
+                                 (edition_key, publisher/país/tipo de edición, 画集付き,
+                                 coleccion=edición, allowlists) — SKILL.md y
+                                 .claude/workflows/watch-standardize-catalog.js la leen,
+                                 ninguno la copia (auditoría 2026-07-08, hallazgo F7: la
+                                 regla 画集付き vivía solo en SKILL.md, drift confirmado).
   enrich-series-aliases/       cola unmapped → series_aliases.yml vía Anilist (#20).
   evaluate-sources/            evalúa fuentes candidatas antes de implementar.
   review-feedback/             procesa feedback.jsonl (14 categorías A–N).

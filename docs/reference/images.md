@@ -266,7 +266,17 @@ red — trabaja con lo que ya está en el catálogo.
 de listadomanga (~100×150 px) degrada el hash lo suficiente como para superar el umbral
 estricto de `_same_cover`. Por eso usa un umbral relajado: si la portada actual tiene lado
 menor ≤ 170 px y la candidata es ≥ 2× más grande → par thumbnail↔full → aHash ≤ 14/64 bits
-+ aspect ratio ≤ 12%. Si no cumple ese par, se aplica `_same_cover` estricto (AND-gate).
++ aspect ratio ≤ 6%. Si no cumple ese par, se aplica `_same_cover` estricto (AND-gate).
+
+**Drift corregido (2026-07-08, hallazgo #3)**: el aspect ratio del par thumbnail↔full estaba
+en ±12% con el comentario "mismo que dedup", pero `dedup_carousel_images.THUMB_ASPECT_TOL`
+es en realidad 0.06 — éste es el ÚNICO de los dos scripts que muta `images[0]` SIN cola de
+revisión (dedup sólo decide qué queda en la galería), así que tener el umbral MÁS laxo era
+al revés de lo que hace falta. Corregido a 0.06 para matchear de verdad. Los 3 umbrales
+(`THUMB_MAX_SIDE`/`THUMB_HAMMING`/`THUMB_ASPECT_TOL`) siguen DUPLICADOS entre este script y
+`dedup_carousel_images.py` — ninguno es hoy el lugar canónico; centralizarlos en una
+constante compartida (candidato natural: `fetch_better_covers.py`, ya fuente única de
+`LOW_QUALITY_PX`/`SOFT_GUARD_PX`/`DETAIL_RATIO_MIN`/`DEFAULT_MAX_HASH_DIST`) queda pendiente.
 
 El thumbnail queda en la galería; ejecutar `dedup_carousel_images.py` después si se quiere
 eliminarlo. Tests: `tests/test_promote_hires_cover.py`. Flags: `--dry-run`,
@@ -275,7 +285,9 @@ sin cola de revisión).
 
 Cuándo usarlo: después de `upgrade_image_resolution.py` (paso 3 del sub-pipeline de imágenes)
 y antes de cualquier retrofit que necesite ir a la red, ya que resuelve el problema sin costo
-de red cuando la hi-res ya está en el cluster.
+de red cuando la hi-res ya está en el cluster. Lee cada archivo (portada + candidatas) UNA
+sola vez (`_read_and_px`, hallazgo #13, 2026-07-08) — antes `_px`/`_read_local` releían el
+mismo archivo por separado.
 
 ## AI upscale de portadas pixeladas — `upscale_images.py`
 
@@ -318,6 +330,34 @@ resolución. Solo toca `kind=gallery` (los `extra` —cofres/tomos del box— so
 contenido curado y nunca se tocan) y exige dims válidas. Por defecto saltea items
 aprobados (`--include-approved` fuerza) — el dedup puede reordenar `images[0]` (la
 portada) de un golden record. Ver retrofit README.
+
+## Limpieza de galería — `sync_cover_images.py`
+
+Limpia `images[]` alrededor de la portada (`images[0]`, única fuente de verdad): si la
+portada es un placeholder/banner conocido la reemplaza por la primera foto real de la
+galería (o la limpia si no hay ninguna); quita duplicados exactos y basura conocida de
+las posiciones ≥1; limpia refs basura en `sources[]`. Idempotente, guard `is_approved`,
+backup vía `backup_and_rotate`.
+
+- **Guard de espejo ausente (2026-07-08, hallazgo #2, ALTA)**: `run()` aborta si
+  `not images_dir.exists()`. Antes, `_compute_junk_local` igualaba "el archivo no está en
+  `data/images/`" con "el archivo pesa 0 bytes" (`sizes.get(f, 0)`) — si el espejo entero
+  faltaba (o un archivo simplemente no se había mirroreado todavía), CADA `local`
+  referenciado caía en la rama junk y `_fix_bad_cover` arrasaba portadas en masa. Ahora
+  "no está en el espejo" es un skip legítimo; sólo "está pero pesa 0 bytes" es basura real.
+- **`_fix_bad_cover` no promueve `extra` a portada (2026-07-08, hallazgo #8)**: sólo
+  `kind: "gallery"` es elegible para reemplazar una portada basura — un `extra` (postal,
+  shikishi) es un bonus que viene CON el producto, nunca la ficha del producto. Y cuando NO
+  hay reemplazo de galería válido, ya no vacía `images[]` entero: conserva el resto
+  (extras legítimas incluidas), sólo quita la portada basura de la posición 0.
+- **Clave "misma imagen" alineada a `manga_watch._img_stem` (2026-07-08, hallazgo #10)**:
+  `_norm()` era un cuarto criterio de dedup propio, divergente del canónico documentado
+  arriba en "Clave de dedup de imágenes — paridad de 3 lugares". Ahora compone
+  `image_store.normalize_image_url` (sufijo WordPress -NxM + query Magento) con `_img_stem`
+  (sufijo Shopify + query genérico + esquema + minúsculas).
+- **`is_approved()` + `sort_keys=True` (2026-07-08, hallazgo #12)**: usaba
+  `it.get("approved_at")` directo en vez del helper de `manga_watch.py`, y era el único
+  escritor de `items.jsonl` cuya serialización dependía del orden de inserción del dict.
 
 ## Purga de placeholders / 1×1 / rotas — `purge_placeholder_images.py`
 
@@ -438,7 +478,12 @@ vive en el SKILL.md; el gist:
    en la octava superior medida a 384px). Las grandes-pero-blandas pasan (se muestran
    reducidas → nítidas). Mismo gate (`_is_soft_image`) en el script de producción
    (`fetch_better_covers._process_item`) y en `sc_validate.py` — fuente única. La cola ya
-   armada se limpia con `prune_soft_cover_candidates.py`. Tests: `tests/test_detail_ratio.py`.
+   armada se re-evalúa con `prune_soft_cover_candidates.py`: candidatas `pending` que dan
+   blandas se marcan `status: "rejected"` + `reject_reason: "soft_image"` y se appendean al
+   ledger de rechazos (2026-07-08, hallazgo #9 — antes las eliminaba en silencio SIN dejar
+   rastro, política divergente de `revalidate_cover_preview.py` que sí marca rejected+ledger
+   para el mismo gate; ahora ambos scripts comparten la misma política, reusando
+   `sync_cover_preview._ledger_record_from_candidate`). Tests: `tests/test_detail_ratio.py`.
 5. Guarda imágenes válidas en `data/images/` (nombre sha256) y flushea **atómico** a
    `data/cover_preview.json` después de cada item.
 
@@ -546,6 +591,65 @@ lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` 
   `gl` de país) y `_MARKET_PREFERRED_DOMAINS` cubren los 14 idiomas (KO/ZH/TH/VI/PL/TR/CS
   agregados; dominios de mercado KR/PL/CZ/TR + JP ampliado).
 
+### Motor de portadas — footguns cerrados (A3-fbc, auditoría Fable 2026-07-08)
+
+Paquete de fixes de bajo riesgo sobre `fetch_better_covers.py`, posterior al overhaul de arriba.
+Ningún cambio toca `_same_cover`, `_is_soft_image` ni los umbrales default (`DEFAULT_MAX_HASH_DIST`,
+`LOW_QUALITY_PX`) — el harness `scripts/eval/eval_cover_gate.py` sigue en 0 FP tras el paquete.
+Tests: `tests/test_fbc_footguns.py` (+ la suite existente de portadas, sin regresiones).
+
+- **`--apply-preview --dry-run` es un dry-run REAL**: antes la CLI nunca pasaba `dry_run` a
+  `apply_preview()` (el flag no tenía ningún efecto), y aun pasado, la implementación vieja
+  sólo saltaba el ledger — igual escribía `items.jsonl` y borraba archivos con `unlink()`. Ahora
+  `dry_run=True` no muta nada en disco (ni `items.jsonl`, ni imágenes, ni `cover_preview.json`,
+  ni el ledger) pero el resumen impreso/retornado sí refleja lo que una corrida real aplicaría
+  (mismos contadores `replaced`/`reverted`/`cleaned_old`/`cleaned_new`) — útil como reporte antes
+  de aplicar de verdad.
+- **Gate fail-closed sin referencia: cerrado el hueco vacuo (#4)**: `_validate_page_content("")`
+  aceptaba SIEMPRE sin mirar `fail_open` (el chequeo "obligatorio" en modo fail-closed era en
+  realidad un no-op para cualquier vía sin `link` — que era todas menos Lens, porque
+  `_search_serper_for_cover` descartaba el campo `link` que Serper sí trae). Ahora: (a)
+  `_search_serper_for_cover` captura `link`, así que la vía text también corre la validación real
+  cuando la API lo provee; (b) `_validate_page_content("")` devuelve `fail_open` en vez de `True`
+  fijo — sin página que validar, el modo fail-closed rechaza. La vía **CDN** (Amazon/PRH/
+  OpenLibrary/Google Books) no tiene página que scrapear — su confianza es el match determinístico
+  por ISBN — así que `_passes_no_ref_gate(..., require_page_validation=False)` la exceptúa
+  explícitamente y conserva su comportamiento documentado sin cambios.
+- **`_fetch` requotea URLs no-ASCII (#10)**: `requests.utils.requote_uri()` antes de cada
+  descarga (URLs con caracteres thai/chino/etc. sin escapar) + catch de `UnicodeError` además del
+  `requests.RequestException` existente. El self-heal de `apply_preview()` (re-descarga de
+  archivo faltante) ahora corre dentro de un `try/except` propio.
+- **`_validate_page_content` verifica el publisher como señal adicional NO bloqueante (#11)**:
+  `pub_keywords` se computaba y nunca se usaba (promesa incumplida en el docstring). Ahora se
+  compara contra el texto de la página y se reporta en `--verbose`; un miss NO rechaza (el nombre
+  del publisher en la página varía mucho — imprint/sello local/nombre corto — así que no es una
+  señal confiable por sí sola, a diferencia del match de serie que sí bloquea).
+- **fsync antes del `replace()` atómico (#12)**: `_atomic_write` (items.jsonl) y `_write_preview`
+  (cover_preview.json) ahora hacen `f.flush(); os.fsync(f.fileno())` antes del `tmp.replace()`,
+  igual que la vía canónica `append_jsonl`. Sin esto, un crash justo después del write podía
+  promover un tmp truncado/vacío.
+- **Errores por item visibles sin `--verbose` (#15)**: `run()` imprime `⚠ WARN [slug]: Tipo: msg`
+  por cada excepción de item SIEMPRE (antes: solo con `-v`, una corrida silenciosa podía terminar
+  con "Errores: 40" sin ninguna pista). Con `--verbose` además imprime el traceback completo.
+- **Código muerto eliminado (#16, grep-verificado)**: `_text_matches_item` (sin ningún caller);
+  el cómputo local de `edition_hint`/`ed_slug`/`ed_hints` dentro de `_build_search_query` (se
+  calculaba y nunca se usaba en el query — el título ya trae el tipo de edición cuando
+  corresponde); la condición `f"{e}?" in path` en `_search_serper_lens` (`urlparse().path` NUNCA
+  contiene `?`, la query queda en `.query` — condición imposible). **NO se tocaron** `_EDITION_HINT`
+  ni `_edition_slug` como símbolos del módulo — el skill `watch-search-covers` los importa
+  directo (`fbc._EDITION_HINT`, `fbc._edition_slug`) para su propio armado de queries.
+- **Portada leída UNA vez por item (#17)**: antes `_get_current_pixels`/`_get_current_bytes`/
+  `_is_upscaled` releían y re-parseaban el MISMO archivo de portada hasta 3-4 veces por item (en
+  el filtro de candidatos de `run()`, y de nuevo en `_process_item`). Ahora `_get_current_pixels`
+  y `_is_upscaled` aceptan un parámetro opcional `_bytes` con los bytes ya leídos; `_process_item`
+  y el filtro `_is_candidate` de `run()` leen una sola vez y reusan.
+- **`--limit` refleja el consumo real de API (#18)**: un item con `isbn` no-vacío pero de longitud
+  inválida (ni 10 dígitos, ni 13 con prefijo 978/979) no produce NINGUNA candidata CDN — cae igual
+  a Serper/Tavily (créditos reales) — pero antes `--limit` lo contaba como "gratis" (`bool(isbn)`
+  alcanzaba). El nuevo helper `_isbn_len_ok()` (misma validación de longitud/prefijo que
+  `_candidates_from_isbn*`, sin checksum) reemplaza el `bool(isbn)` en el contador de `--limit` y
+  en el desglose `con ISBN / sin ISBN` del resumen.
+
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
 - Dos scripts son **permanentes** (nunca borrar ni reimplementar inline):
@@ -596,8 +700,30 @@ lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` 
   resolución que QUEDA guardada, no la del original pre-resize (que inflaba el ratio xN). El
   skill (`sc_validate`) y el script (`fetch_better_covers`) ya registran el px del archivo
   normalizado al crear la candidata; el sync auto-corrige las que quedaron con valor viejo.
-  Si hubo cambios (incluido `pixels_recomputed`), persiste el JSON atómicamente antes de responder.
-  El CLI manual: `.venv/bin/python scripts/retrofit/sync_cover_preview.py [--dry-run]`.
+  La detección de "hubo cambios" compara `synced != preview` (2026-07-08, hallazgo #4 — antes
+  sólo miraba counters de poda, así que un refresh de Regla 2 sin ninguna poda NUNCA se
+  persistía). Si hubo cambios, persiste el JSON atómicamente (con `backup_and_rotate` antes de
+  escribir, hallazgo #5) antes de responder. El CLI manual:
+  `.venv/bin/python scripts/retrofit/sync_cover_preview.py [--dry-run]`.
+- **Guard de catálogo sano (2026-07-08, hallazgo #1, ALTA)**: tanto el CLI como el GET (que
+  persiste) corren `sync_cover_preview.catalog_is_sane(preview, items_by_slug,
+  malformed_lines)` ANTES de sincronizar. Sin esto, un `items.jsonl` ausente/truncado/con
+  líneas que no parsean hacía que CADA slug de la cola se viera como "item borrado" (Regla 1) —
+  un solo GET podía vaciar `cover_preview.json` entero (~160 entries) en un momento
+  equivocado. Aborta (CLI, exit 1) o degrada a solo-lectura sin persistir nada (GET: sirve la
+  cola tal cual está en disco + loguea `[serve][WARN]`) si: `items_by_slug` sale vacío con la
+  cola no vacía, >20% de los slugs de la cola no matchean ningún item, o
+  `_load_items_by_slug` contó ≥1 línea con `JSONDecodeError` (antes se tragaban en silencio).
+- **GC de candidatas huérfanas (2026-07-08, hallazgo #14)**: cuando `sync_preview()` poda una
+  candidata o dropea una entry entera, el archivo `new_image` descargado queda huérfano en
+  `data/images/` — nada más lo GC-eaba. Ahora se borra automáticamente SI (y sólo si) nada
+  más lo referencia: ni `images[].local` **ni `sources[].image_local`** de ningún item real
+  (la ref legacy per-fuente, ~5.9k items la tienen poblada — misma protección que el GC de
+  mirror_images), ni ninguna otra entry/candidata sobreviviente (el espejo de candidatas
+  comparte el MISMO directorio flat que el espejo de portadas de items, así que un borrado
+  ciego por nombre podía arrancarle la portada a un item real). Gatea con el mismo flag que
+  el ledger (`write_ledger`) — nunca corre en un probe puro (`revalidate_cover_preview.py`
+  lo llama con `write_ledger=False`) ni en `--dry-run`.
 
 ### Re-validación OFFLINE de la cola (`revalidate_cover_preview.py`, 2026-07-08)
 
@@ -619,12 +745,13 @@ la candidata (`new_image`) ya están espejadas en `data/images/`, se re-validan 
 - **El ledger NO se escribe acá** (escritor único = `apply_preview`/`sync`): la candidata rechazada se
   ledgerea cuando el owner la aplica. Idempotente: status ≠ pending o pending-con-`verified` no se
   reprocesan → correr 2× = JSON byte-idéntico. Backup + escritura atómica.
-- **Píxeles de referencia vía PIL** (reusa `sync_cover_preview._get_local_pixels`): el parser de bytes
-  del motor (`_get_pixels_from_bytes`) NO cubre AVIF y el espejo está normalizado a AVIF Q60 → mediría
-  0 px para todas. **Corolario/limitación**: `_is_soft_image` usa ese mismo parser como guard interno,
-  así que sobre candidatas YA normalizadas a AVIF es un no-op (devuelve `False`) — el gate real es
-  `_same_cover`. En el flujo LIVE del skill esto no aplica (la candidata se valida ANTES de normalizar,
-  en su formato original); sólo afecta la re-validación offline de archivos ya normalizados.
+- **Píxeles de referencia vía PIL** (reusa `sync_cover_preview._get_local_pixels`). Nota
+  (2026-07-08, hallazgo #11): un comentario viejo acá y en el código decía que el parser de
+  bytes del motor (`_get_pixels_from_bytes`) NO cubre AVIF — eso dejó de ser cierto con el
+  fix de la gotcha #132 (`_get_dims_from_bytes` ya tiene fallback PIL para AVIF/GIF/WebP
+  lossless). Se sigue delegando en `_get_local_pixels` de todos modos porque acá partimos de
+  un `Path`, no de bytes ya leídos — evita una lectura+decode redundante, no por la limitación
+  de AVIF que ya no existe.
 - CLI: `--dry-run` (default, reporta desglose por categoría + distribución de `match_dist`) / `--apply`.
   Tests: `tests/test_revalidate_cover_preview.py` (pasa/falla/sin-ref/moot/idempotencia/no-ledger).
 

@@ -31,6 +31,35 @@ si no es manga-only (la comics blacklist aplica igual). Tag `"new-source"` para
 (`parse_calendar_page`, `fetch_calendar_month`, `iter_year_months`, `bootstrap`) + wirear
 en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/full + registry.
 
+### Scripts shell del pipeline (lock / timeout / abort marker)
+
+`scrape_delta.sh`/`scrape_full.sh` son la referencia; cualquier script shell nuevo (o
+`bootstrap.sh`) que mute `items.jsonl` debe seguir el mismo patrón (endurecido
+2026-07-08, auditoría S1-S4/B16):
+
+- **Lock**: `mkdir "data/.scrape.lock" 2>/dev/null` (atómico). Si falla, chequeá
+  `kill -0 <pid-guardado>`; si sigue vivo, abortá; si está muerto (stale), `rm -rf` y
+  reintentá el `mkdir` — pero el reintento debe **abortar explícitamente si también
+  falla** (carrera con otro proceso que lo tomó primero): `if ! mkdir "$LOCK_DIR"
+  2>/dev/null; then exit 1; fi`. Nunca `mkdir ... && echo ...` suelto (el `&&` no aborta
+  si `mkdir` falla, sólo saltea el segundo comando — bug real, ver gotcha #135).
+- **Trap EXIT** libera el lock (`rm -rf "$LOCK_DIR"`) SÓLO si no hay un marker de aborto
+  activo (ver abajo). Se instala DESPUÉS de adquirir el lock, nunca antes.
+- **Traps INT/TERM**: escriben `data/.run-aborted` (señal + fase actual + timestamp +
+  PID) y salen con un rc distinto de 0 ANTES de que corra el trap EXIT — así el corpus
+  a mitad de pasos no queda servido sin que quede rastro. El marker se borra recién
+  después del backup pre-scrape de la SIGUIENTE corrida (avisando en el log primero).
+- **`_run_timed <segundos> <comando>`**: cualquier paso que haga HTTP (scrape, wiki
+  bootstrap, retrofit de imagen/red) va envuelto — un host colgado no debe bloquear el
+  resto del pipeline ni mantener el lock tomado indefinidamente. `backfill_metadata`,
+  `mirror_images`, `wayback_recover` y similares NO son excepción.
+- **`record_step "<nombre>" $?`**: TODO paso relevante de la corrida (incluida la Fase
+  1 de scrape principal, no sólo los retrofits/wikis) — con `set +e` un paso que
+  crashea a mitad de la cadena es invisible sin esto.
+- **Rotación de logs**: al crear el `LOG_DIR` de la corrida, podar `logs/scrape-*`
+  viejos (quedarse con los últimos ~14). `data/metrics.jsonl` es la excepción — es
+  histórico append-only que consume `source_health.py`, no se rota desde acá.
+
 ### Anti-bot (challenge detection + política 403)
 
 - **`detect_challenge(html, status)` en `manga_watch.py` es la FUENTE ÚNICA** para
@@ -73,6 +102,14 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   Antes del rename atómico hace `file.flush()` + `os.fsync(file.fileno())` (2026-07-07):
   sin eso, un corte de energía justo tras escribir el `.tmp` podía dejarlo en el page
   cache pero no en disco.
+- **Cualquier archivo (no sólo JSONL vía append_jsonl)**: el mismo patrón tmp+fsync+
+  `os.replace` aplica a CUALQUIER escritura de un archivo que otro proceso pueda leer a
+  medio escribir — `web/index.html` (`build_web._atomic_write_text`), un flush manual de
+  items.jsonl fuera de `append_jsonl` (`wayback_recover._flush_wayback`, reescribe el
+  archivo entero por índice de URL), o una caché JSON (`wayback_recover.save_negative_cache`).
+  `write_text`/`open(path,'w')` truncan in-place — un kill a mitad de la escritura deja el
+  archivo corrupto (gotcha #133, auditoría 2026-07-08: pasaba con `index.html` y con el
+  `_flush_wayback` que decía "atómicamente" en el docstring pero no lo era).
 - **Backups**: todo script que modifique un archivo de datos usa `backup_and_rotate(path,
   label)` importada de `manga_watch.py`, UNA vez ANTES del loop. Escribe en
   `data/backups/<filename>/` (rota, máx 3). NUNCA `cp ... /tmp/`, NUNCA path propio (un

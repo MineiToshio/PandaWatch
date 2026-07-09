@@ -125,6 +125,17 @@ está disponible (servidor viejo), el frontend cae al fetch estático `cover_pre
 `GET /api/cover-preview-meta` (y recalcula `approved_unapplied` del lado cliente vía
 `approvedCount()`). Si `synced` incluye cambios (> 0), se muestra un toast.
 
+**Degradación a solo-lectura (2026-07-08, hallazgo #1, ALTA)**: antes de sincronizar, el
+servidor corre `sync_cover_preview.catalog_is_sane(preview, items_by_slug,
+malformed_lines)`. Si `items.jsonl` no cargó bien (ausente, truncado, o con líneas que no
+parsean como JSON) — o si >20% de los slugs de la cola no matchean ningún item del
+catálogo — el GET NO sincroniza ni persiste nada: devuelve la cola TAL CUAL está en disco
+(`synced: {"degraded": true, "reason": "<motivo>"}`) y el servidor loguea `[serve][WARN]`
+a stderr. Antes de este guard, un `items.jsonl` corrupto en el momento equivocado hacía
+que este mismo GET vaciara la cola de aprobación entera (cada slug se veía como "item
+borrado"). El frontend no necesita tratar `synced.degraded` de forma especial — `entries`
+sigue siendo la cola completa, sólo que sin refrescar contra el catálogo en ese request.
+
 **Orden best-first de la cola (2026-07-08)**: `sortBestFirst()` en Alpine reordena `entries`
 tras cada carga (ambas rutas: `GET /api/cover-preview` y el fallback estático). Prioridad:
 (1) entries con alguna candidata **pendiente** con `match_dist` numérico, ascendente por el
@@ -324,3 +335,27 @@ cache-bust: el favicon se cachea por origen de forma muy agresiva y un refresh n
 lo vuelve a pedir; bumpeá `v` si cambia el ícono. Los assets se generan con
 `scripts/gen_html_favicon.py` (panda sobre fondo rosa de acento para diferenciar de la app
 pública Next.js).
+
+## Panel de Calidad — "archivo_tiny" por píxeles + live-update respeta duplicados decididos (2026-07-08)
+
+`scripts/audit/data_quality.py` (lo lee `web/quality.html` vía `data/quality_report.json`
++ `check_urls()` para el live-update tras arreglar un item) tenía dos bugs de criterio:
+
+- **"Imagen diminuta" juzgaba por BYTES (<6KB), no por píxeles.** El espejo local es
+  100% AVIF Q60 y comprime tan bien que una portada real de ~600×900 pesa <6KB — sobre
+  el corpus real eso daba ~1060 falsos positivos "archivo_tiny" (portadas de 642×600,
+  520×604… marcadas como "ícono"). Ahora usa `image_store.placeholder_reason()` (fuente
+  única, la misma que usan los retrofits de imágenes): detecta placeholders reales
+  (`broken`/`tiny:WxH`/`solid:STD`/`signature:LABEL`) sin importar cuánto pese el
+  archivo. Sin Pillow o con `--no-measure`, cae al umbral de bytes viejo (heurística
+  imperfecta pero mejor que nada). Mismo fix en `check_urls` (live-update).
+- **El live-update (`check_urls`, llamado tras editar/aprobar un item desde el panel)
+  ignoraba `data/dup_decisions.jsonl`.** El owner marcaba un grupo "productos distintos"
+  desde el panel, tocaba otra cosa del mismo item, y `check_urls` volvía a flaggearlo
+  como `dup_product` (sólo `audit_items`, la auditoría completa periódica, respetaba el
+  archivo). Ahora `check_urls` recomputa la MISMA firma de grupo
+  (`display_key + sha1(urls ordenadas)`) que `audit_items`/`_emit_dup_group` y saltea
+  las decididas — paridad completa entre el audit completo y el live-update.
+
+Ninguno de los dos cambia qué se persiste en `items.jsonl` — `data_quality.py` sigue
+siendo 100% de solo lectura; sólo cambia qué reporta el panel.
