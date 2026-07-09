@@ -28,11 +28,12 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import os
 import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -42,11 +43,30 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 try:
-    from scripts.manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
+    from scripts.manga_watch import (  # type: ignore
+        backup_and_rotate,
+        fetch_metadata_from_detail,
+        is_approved,
+        make_session,
+    )
     from scripts import image_store  # type: ignore
 except ImportError:
-    from manga_watch import fetch_metadata_from_detail, make_session, backup_and_rotate  # type: ignore
+    from manga_watch import (  # type: ignore
+        backup_and_rotate,
+        fetch_metadata_from_detail,
+        is_approved,
+        make_session,
+    )
     import image_store  # type: ignore
+
+
+# Caché negativa persistente (hallazgo #13, auditoría 2026-07-08): sin esto,
+# cada corrida re-consulta Wayback para TODO el corpus de items 404 (~70 min),
+# incluidos los miles que ya sabemos que no tienen snapshot. TTL 90 días: un
+# sitio puede llegar a tener snapshot nuevo con el tiempo, así que no es
+# indefinido.
+DEFAULT_NEGATIVE_CACHE = Path("data/wayback_negative_cache.json")
+NEGATIVE_CACHE_TTL_DAYS = 90
 
 
 WAYBACK_API = "http://archive.org/wayback/available"
@@ -67,30 +87,79 @@ def check_url_status(url: str, session: requests.Session, timeout: int = 10) -> 
 
 def find_wayback_snapshot(
     url: str, session: requests.Session, timeout: int = 15,
-) -> dict | None:
-    """Consulta Wayback Availability API. Devuelve dict con snapshot o None.
+) -> tuple[dict | None, bool]:
+    """Consulta Wayback Availability API.
 
     Response format:
       {"available": True, "url": "http://web.archive.org/web/.../<orig>",
        "timestamp": "20230501123456", "status": "200"}
+
+    Devuelve (snapshot, definitive):
+      - `snapshot`: dict del closest si hay uno disponible, None si no.
+      - `definitive`: True cuando la API RESPONDIÓ (200 + JSON válido) y
+        confirmó que no hay snapshot — recién ahí es seguro cachear como
+        negativo. False ante timeout/error de red/status≠200/JSON roto: un
+        429 o un timeout NO significa "no hay snapshot", así que nunca se
+        cachea (hallazgo #13, auditoría 2026-07-08 — antes ambos casos eran
+        indistinguibles, un rate-limit se leía igual que "sin snapshot").
     """
     try:
         r = session.get(
             WAYBACK_API, params={"url": url}, timeout=timeout,
         )
     except requests.RequestException:
-        return None
+        return None, False
     if r.status_code != 200:
-        return None
+        return None, False
     try:
         data = r.json()
     except (ValueError, KeyError):
-        return None
+        return None, False
     snapshots = data.get("archived_snapshots") or {}
     closest = snapshots.get("closest")
     if not closest or not closest.get("available"):
-        return None
-    return closest
+        return None, True
+    return closest, True
+
+
+def load_negative_cache(path: Path) -> dict[str, str]:
+    """Carga la caché negativa `{url: checked_at_iso}`. Tolerante a archivo
+    ausente/corrupto (devuelve {} en vez de romper el run)."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_negative_cache(path: Path, cache: dict[str, str]) -> None:
+    """Escritura atómica (tmp + fsync + os.replace) — mismo patrón que
+    `_flush_wayback`, no es un archivo de items pero igual queremos que un
+    crash a mitad de escritura no lo deje truncado."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    content = json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True)
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def negative_cache_is_fresh(checked_at: str, ttl_days: int = NEGATIVE_CACHE_TTL_DAYS) -> bool:
+    """True si `checked_at` (ISO) está dentro del TTL — no hace falta re-chequear."""
+    if not checked_at:
+        return False
+    try:
+        checked = dt.datetime.fromisoformat(checked_at)
+    except ValueError:
+        return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=dt.timezone.utc)
+    now = dt.datetime.now(dt.timezone.utc)
+    return (now - checked).days < ttl_days
 
 
 def recover_from_snapshot(
@@ -119,11 +188,22 @@ def recover_from_snapshot(
         # Wayback no devolvió nada útil
         return {}
 
+    # fetch_metadata_from_detail devuelve metadata GENÉRICA con la key `name`
+    # para el nombre del producto, pero el schema de items.jsonl usa `title`
+    # (nunca `name` — hallazgo #6, auditoría 2026-07-08: escribir `name`
+    # tal cual metía un campo espurio que el resto del pipeline ignora).
+    _MD_TO_ITEM_FIELD = {
+        "name": "title",
+        "author": "author",
+        "isbn": "isbn",
+        "release_date": "release_date",
+        "publisher": "publisher",
+        "description": "description",
+    }
     recovered: dict = {}
-    for field in ("name", "author", "isbn",
-                  "release_date", "publisher", "description"):
-        if md.get(field) and not item.get(field):
-            recovered[field] = md[field]
+    for md_field, item_field in _MD_TO_ITEM_FIELD.items():
+        if md.get(md_field) and not item.get(item_field):
+            recovered[item_field] = md[md_field]
     # Portada = images[0]: si el item no tiene portada, sembrarla desde wayback
     # (no como campo top-level, que ya no existe).
     if md.get("image_url") and not image_store.cover_url(item):
@@ -153,6 +233,21 @@ def main() -> int:
                    help="Lista de URLs separadas por coma para recovery puntual.")
     p.add_argument("--check-timeout", type=int, default=8)
     p.add_argument("--fetch-timeout", type=int, default=20)
+    p.add_argument(
+        "--include-approved", action="store_true",
+        help="No saltear items con approved_at (golden records). Por defecto "
+             "se excluyen: son metadata confirmada manualmente por el owner, "
+             "wayback no debe pisarla (guard homogéneo, ver conventions.md).",
+    )
+    p.add_argument(
+        "--negative-cache-file", default=str(DEFAULT_NEGATIVE_CACHE),
+        help=f"Caché de URLs sin snapshot confirmado (default: {DEFAULT_NEGATIVE_CACHE}). "
+             f"TTL {NEGATIVE_CACHE_TTL_DAYS} días.",
+    )
+    p.add_argument(
+        "--no-negative-cache", action="store_true",
+        help="Ignora y no actualiza la caché negativa (re-consulta todo).",
+    )
     args = p.parse_args()
 
     src = Path(args.input)
@@ -167,7 +262,7 @@ def main() -> int:
         target_urls = [u.strip() for u in args.urls.split(",") if u.strip()]
         print(f"[INFO] Recovery puntual de {len(target_urls)} URLs")
         for u in target_urls:
-            snap = find_wayback_snapshot(u, session)
+            snap, _definitive = find_wayback_snapshot(u, session)
             if snap:
                 print(f"  ✓ {u[:80]}")
                 print(f"    snapshot: {snap.get('timestamp','')} → {snap.get('url','')[:80]}")
@@ -192,7 +287,10 @@ def main() -> int:
 
     print(f"[INFO] {len(items)} items totales en {src}")
 
-    # Identificar candidatos: URL no-empty, no es ya wayback recovered, no es URL canónica de social
+    # Identificar candidatos: URL no-empty, no es ya wayback recovered, no es
+    # URL canónica de social, no está aprobado (golden record — guard
+    # homogéneo `approved_at`, hallazgo #5 auditoría 2026-07-08).
+    skipped_approved = 0
     candidates = []
     for it in items:
         if "_raw" in it:
@@ -202,12 +300,16 @@ def main() -> int:
             continue
         if it.get("recovered_from_wayback"):
             continue  # ya fue procesado
+        if is_approved(it) and not args.include_approved:
+            skipped_approved += 1
+            continue
         # Saltar URLs de social que no soporten Wayback bien
         if any(d in url for d in ("bsky.app/profile/", "facebook.com/", "instagram.com/")):
             continue
         candidates.append(it)
 
-    print(f"[INFO] {len(candidates)} candidatos a verificar (excluidos: social, ya recovered)")
+    print(f"[INFO] {len(candidates)} candidatos a verificar (excluidos: social, "
+          f"ya recovered, {skipped_approved} aprobados — usar --include-approved)")
 
     if args.limit > 0:
         candidates = candidates[: args.limit]
@@ -262,30 +364,73 @@ def main() -> int:
     # Phase 2: consultar Wayback para cada uno
     print(f"\n[PHASE 2] Consultando Wayback Machine...")
     recovered_count = 0
-    items_by_url = {it.get("url", ""): it for it in items if not it.get("_raw")}
     dst = Path(args.output)
 
-    # Backup antes del loop: los flushes incrementales necesitan un punto de retorno seguro
-    if not args.dry_run and dst.exists() and dst == src:
-        backup = backup_and_rotate(src, "wayback")
+    # Backup antes del loop: los flushes incrementales necesitan un punto de
+    # retorno seguro. Aplica siempre que `dst` YA tenga contenido que
+    # estamos por pisar — antes sólo corría si dst == src (por igualdad de
+    # Path), así que un --output distinto (p.ej. absoluto) se saltaba el
+    # backup y lo pisaba igual (hallazgo #3, auditoría 2026-07-08).
+    if not args.dry_run and dst.exists():
+        backup = backup_and_rotate(dst, "wayback")
         print(f"[OK] Backup: {backup}")
 
     def _flush_wayback() -> None:
-        """Serializa items al destino atómicamente."""
+        """Serializa items al destino ATÓMICAMENTE (tmp + fsync + os.replace).
+
+        Antes usaba `write_text` (abre en modo "w", trunca in-place): un
+        crash a mitad de la escritura dejaba items.jsonl truncado/corrupto,
+        pese al docstring que decía "atómicamente" (hallazgo #3, auditoría
+        2026-07-08). Mismo patrón que `append_jsonl` en manga_watch.py.
+        """
         out_lines: list[str] = []
         for it in items:
             if "_raw" in it:
                 out_lines.append(it["_raw"])
             else:
                 out_lines.append(json.dumps(it, ensure_ascii=False))
-        dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+        content = "\n".join(out_lines) + "\n"
+        tmp = dst.with_name(dst.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, dst)
+
+    # Caché negativa: URLs ya consultadas sin snapshot confirmado. Evita
+    # re-golpear Wayback para los miles de items que ya sabemos que no
+    # tienen snapshot (hallazgo #13). --no-negative-cache la ignora del todo
+    # (ni lee ni escribe) para forzar un re-scan completo.
+    use_cache = not args.no_negative_cache
+    neg_cache_path = Path(args.negative_cache_file)
+    neg_cache = load_negative_cache(neg_cache_path) if use_cache else {}
+    if use_cache:
+        print(f"[INFO] Caché negativa: {len(neg_cache)} URLs conocidas sin snapshot "
+              f"(TTL {NEGATIVE_CACHE_TTL_DAYS}d) en {neg_cache_path}")
+    cache_hits = 0
+    cache_new_negatives = 0
 
     _FLUSH_EVERY = 10  # flush cada N recuperaciones
+    _CACHE_SAVE_EVERY = 25  # persistir la caché cada N items chequeados
     for idx, (it, status) in enumerate(dead_items, 1):
-        snap = find_wayback_snapshot(it["url"], session)
+        url = it["url"]
+        cached_checked_at = neg_cache.get(url) if use_cache else None
+        if cached_checked_at and negative_cache_is_fresh(cached_checked_at):
+            cache_hits += 1
+            continue  # ya confirmado "sin snapshot" hace menos del TTL
+
+        snap, definitive = find_wayback_snapshot(url, session)
         if not snap:
+            if use_cache and definitive:
+                neg_cache[url] = dt.datetime.now(dt.timezone.utc).isoformat()
+                cache_new_negatives += 1
+            # `definitive=False` (429/timeout/error) NUNCA se cachea — no
+            # sabemos si hay snapshot o no, sólo que esta consulta falló.
             time.sleep(args.sleep)
+            if use_cache and idx % _CACHE_SAVE_EVERY == 0 and not args.dry_run:
+                save_negative_cache(neg_cache_path, neg_cache)
             continue
+
         md = recover_from_snapshot(snap, it, session, (5, args.fetch_timeout))
         if md:
             recovered_count += 1
@@ -298,8 +443,16 @@ def main() -> int:
                     _flush_wayback()
                     print(f"  → flush parcial ({recovered_count} recuperados)", flush=True)
         time.sleep(args.sleep)
+        if use_cache and idx % _CACHE_SAVE_EVERY == 0 and not args.dry_run:
+            save_negative_cache(neg_cache_path, neg_cache)
 
     print(f"\n[PHASE 2] {recovered_count} items recuperados con metadata de Wayback")
+    if use_cache:
+        print(f"[PHASE 2] Caché negativa: {cache_hits} hits (saltados sin red), "
+              f"{cache_new_negatives} nuevos negativos confirmados")
+
+    if not args.dry_run and use_cache:
+        save_negative_cache(neg_cache_path, neg_cache)
 
     if args.dry_run:
         print("[DRY-RUN] No se escribió items.jsonl")

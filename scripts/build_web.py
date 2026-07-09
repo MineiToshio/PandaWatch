@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -36,6 +37,22 @@ SCRIPT_TAG_REGEX = re.compile(
     r'(<script id="manga-data" type="application/json">).*?(</script>)',
     re.DOTALL,
 )
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Escribe `content` en `path` atómicamente (tmp + fsync + os.replace).
+
+    `write_text` trunca in-place (modo "w"): un kill a mitad de la escritura
+    de un embed pesado (~30 MB con --embed) deja index.html corrupto, sin el
+    tag `<script id="manga-data">` — el próximo `inject()` aborta y hay que
+    restaurar de git. Hallazgo #8, auditoría 2026-07-08.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
 
 
 def _run_validate_corpus(input_path: Path) -> int:
@@ -127,11 +144,6 @@ def _mw():
     return mw
 
 
-def _source_entry(item: dict) -> dict:
-    """Subconjunto por-source. Delega en manga_watch.source_entry (única impl.)."""
-    return _mw().source_entry(item)
-
-
 def _merged_canonical(group: list[dict], pick=None) -> dict:
     """Combina N items del mismo producto en uno con sources[].
 
@@ -139,6 +151,14 @@ def _merged_canonical(group: list[dict], pick=None) -> dict:
     (la divergencia entre sitios de merge causó los bugs de fotos de
     2026-06-02). `pick` se ignora: merge_cluster elige la canónica internamente
     (aprobada > estandarizada > ISBN > imagen > precio).
+
+    NOTA (auditoría 2026-07-08, hallazgo #14): este wrapper no tiene
+    callers en el pipeline de build_web (que agrupa vía `_group_by_cluster_key`
+    → `consolidate_by_cluster`); lo único que lo ejercita es
+    `tests/test_extraction.py` (cobertura directa de `merge_cluster` con la
+    interfaz fina de este módulo). Se conserva por eso, a diferencia de
+    `_source_entry` (sin ningún caller, ni siquiera en tests) que se eliminó
+    en la misma auditoría.
     """
     return _mw().merge_cluster(group)
 
@@ -158,6 +178,12 @@ def inject(html: str, items: list[dict]) -> str:
             "Asegurate de tener la versión del template que lo incluye."
         )
     payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+    # json.dumps no escapa `/`: un `</script>` literal en título/descripción
+    # de un item cierra el tag antes de tiempo y corrompe el HTML resultante
+    # (sólo afecta --embed; el default embebe []). `<\/` es un escape válido
+    # de `/` en JSON — cualquier parser (incluido JSON.parse) lo lee igual
+    # que `/` sin escapar. Hallazgo #9, auditoría 2026-07-08.
+    payload = payload.replace("</", r"<\/")
     return SCRIPT_TAG_REGEX.sub(
         lambda m: f"{m.group(1)}{payload}{m.group(2)}",
         html,
@@ -215,7 +241,7 @@ def main() -> int:
 
     if args.clear:
         new_html = inject(html, [])
-        output.write_text(new_html, encoding="utf-8")
+        _atomic_write_text(output, new_html)
         print(f"[OK] data embebida limpiada en {output}")
         return 0
 
@@ -232,7 +258,7 @@ def main() -> int:
         # Default: embed vacío. La página usa el fetch en vivo de items.jsonl
         # (decisión #5); el HTML queda en ~130 KB en vez de ~30 MB.
         new_html = inject(html, [])
-        output.write_text(new_html, encoding="utf-8")
+        _atomic_write_text(output, new_html)
         print(f"[OK] embed vacío en {output} (~{output.stat().st_size // 1024} KB). "
               f"La página usa el fetch en vivo de data/items.jsonl.")
         print("     Para embeber el catálogo (fallback file://) corré con --embed.")
@@ -247,7 +273,7 @@ def main() -> int:
         print(f"[INFO] {len(items)} líneas en {input_path}, {len(deduped)} items únicos tras dedup.")
 
     new_html = inject(html, deduped)
-    output.write_text(new_html, encoding="utf-8")
+    _atomic_write_text(output, new_html)
 
     # Stats útiles
     if deduped:

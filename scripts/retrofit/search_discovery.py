@@ -59,10 +59,13 @@ try:
     from scripts.manga_watch import (  # type: ignore[import-not-found]
         Candidate,
         Source,
+        append_jsonl,
+        backup_and_rotate,
         candidate_from_source,
         fetch_metadata_from_detail,
         is_collectible_edition,
         is_likely_manga,
+        normalize_url_for_dedup,
         score_candidate,
         candidate_to_json,
         derive_product_type,
@@ -80,10 +83,13 @@ except ImportError:
     from manga_watch import (  # type: ignore[no-redef]
         Candidate,
         Source,
+        append_jsonl,
+        backup_and_rotate,
         candidate_from_source,
         fetch_metadata_from_detail,
         is_collectible_edition,
         is_likely_manga,
+        normalize_url_for_dedup,
         score_candidate,
         candidate_to_json,
         derive_product_type,
@@ -121,6 +127,16 @@ DEFAULT_SLEEP_TAVILY = 1.0
 
 class SearchEngineError(Exception):
     """Error transitorio del search engine (rate-limit, captcha, etc.)."""
+
+
+class SearchEngineExhaustedError(SearchEngineError):
+    """El engine agotó su cupo para el RESTO de la corrida.
+
+    A diferencia de un `SearchEngineError` puntual (se reintenta en la
+    siguiente query), esto le dice al runner que desactive el engine hasta
+    que el proceso termine — insistir contra un soft-ban (DDG 202) o una
+    quota diaria agotada (Gemini 429) sólo quema tiempo/requests sin
+    resultado (hallazgo #8, auditoría 2026-07-08)."""
 
 
 # Default model. Flash es free 500-1500 RPD en 2026, suficiente para 50-200
@@ -214,7 +230,7 @@ def search_gemini_grounding(
     except requests.RequestException as exc:
         raise SearchEngineError(f"HTTP error: {exc}") from exc
     if response.status_code == 429:
-        raise SearchEngineError("Gemini quota exhausted (429)")
+        raise SearchEngineExhaustedError("Gemini quota exhausted (429)")
     if response.status_code in (401, 403):
         try:
             err = response.json().get("error", {}).get("message", "")
@@ -372,10 +388,6 @@ _DDG_RESULT_RE = re.compile(
     r'<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)</a>',
     re.DOTALL,
 )
-_DDG_SNIPPET_RE = re.compile(
-    r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
-    re.DOTALL,
-)
 
 
 def search_ddg_html(
@@ -407,9 +419,10 @@ def search_ddg_html(
     if response.status_code == 429:
         raise SearchEngineError("DDG rate-limit (429)")
     # 202 Accepted: DDG soft-rate-limit / captcha placeholder. Esperar 1h
-    # antes de reintentar — insistir empeora.
+    # antes de reintentar — insistir empeora, así que el runner desactiva
+    # DDG para el resto de esta corrida.
     if response.status_code == 202:
-        raise SearchEngineError(
+        raise SearchEngineExhaustedError(
             "DDG HTTP 202 (soft rate-limit) — esperá ~1h o usá Google"
         )
     if response.status_code != 200:
@@ -454,10 +467,6 @@ def parse_ddg_html(html_text: str, max_results: int = 10) -> list[dict[str, str]
 
 def url_already_known(url: str, known_urls: set[str]) -> bool:
     """Dedup contra items existentes (por URL normalizada simple)."""
-    try:
-        from scripts.manga_watch import normalize_url_for_dedup  # type: ignore[import-not-found]
-    except ImportError:
-        from manga_watch import normalize_url_for_dedup  # type: ignore[no-redef]
     return normalize_url_for_dedup(url) in known_urls
 
 
@@ -561,8 +570,14 @@ def process_query(
     sleep_ddg: float,
     sleep_google: float,
     max_results: int = 10,
+    dead_engines: set[str] | None = None,
 ) -> tuple[list[Candidate], str, int]:
     """Procesa una query: intenta cada engine en orden hasta éxito.
+
+    `dead_engines` es un set MUTABLE compartido entre llamadas (una por
+    query) — si un engine se agota (DDG 202 soft-ban, Gemini 429 quota) se
+    agrega acá y las queries siguientes lo saltean directo, sin volver a
+    golpearlo (hallazgo #8, auditoría 2026-07-08).
 
     Returns: (candidates_kept, engine_used, results_count).
     """
@@ -570,12 +585,16 @@ def process_query(
     if not q_text:
         return [], "", 0
     engines_pref = query.get("engines") or ["google", "ddg"]
+    if dead_engines is None:
+        dead_engines = set()
 
     results: list[dict[str, str]] = []
     engine_used = ""
     last_error = ""
     for engine in engines_pref:
         if engine not in engines_avail:
+            continue
+        if engine in dead_engines:
             continue
         cfg = engines_avail[engine]
         try:
@@ -590,6 +609,13 @@ def process_query(
                 )
             elif engine == "ddg":
                 results = search_ddg_html(q_text, num=max_results, timeout=timeout)
+        except SearchEngineExhaustedError as exc:
+            last_error = f"{engine}: {exc}"
+            dead_engines.add(engine)
+            # gemini/google son alias del mismo cupo — desactivar ambos.
+            dead_engines.add("gemini" if engine == "google" else "google")
+            print(f"    [{engine}] agotado — desactivado para el resto de la corrida ({exc})")
+            continue
         except SearchEngineError as exc:
             last_error = f"{engine}: {exc}"
             continue
@@ -648,8 +674,10 @@ def process_query(
                 skipped_whakoom_blocked = True
                 continue
             cands_to_process = expanded
-            # Marcar la URL padre como conocida también, para no re-procesarla
-            known_urls.add(url)
+            # Marcar la URL padre como conocida también, para no re-procesarla.
+            # Normalizada: known_urls es un set de URLs NORMALIZADAS (hallazgo
+            # #7, auditoría 2026-07-08) — agregar la cruda rompía el dedup.
+            known_urls.add(normalize_url_for_dedup(url))
         else:
             cand = candidate_from_search_result(
                 url, r.get("title", ""), r.get("snippet", ""),
@@ -677,7 +705,7 @@ def process_query(
             if not is_c:
                 continue
             kept.append(cand)
-            known_urls.add(cand.url)
+            known_urls.add(normalize_url_for_dedup(cand.url))
         # Sleep entre detail-fetches dentro de la misma query
         time.sleep(0.3)
 
@@ -691,10 +719,6 @@ def process_query(
 
 def load_known_urls(items_path: Path) -> set[str]:
     """Carga URLs ya conocidas para dedupear search results."""
-    try:
-        from scripts.manga_watch import normalize_url_for_dedup  # type: ignore[import-not-found]
-    except ImportError:
-        from manga_watch import normalize_url_for_dedup  # type: ignore[no-redef]
     known: set[str] = set()
     if not items_path.exists():
         return known
@@ -729,9 +753,15 @@ def main() -> int:
     p.add_argument("--connect-timeout", type=int, default=10)
     p.add_argument("--read-timeout", type=int, default=20)
     p.add_argument("--max-results", type=int, default=10, help="Max URLs por query (Google cap=10).")
+    p.add_argument(
+        "--flush-every", type=int, default=8,
+        help="Flush a items.jsonl cada N queries procesadas (default 8; "
+             "conventions.md pide 5-10 para loops de red lentos).",
+    )
     p.add_argument("--dry-run", action="store_true",
                    help="No fetchea ni escribe; solo lista las queries a correr.")
     args = p.parse_args()
+    args.flush_every = max(1, args.flush_every)
 
     # Cargar queries
     qpath = Path(args.queries_file)
@@ -793,31 +823,55 @@ def main() -> int:
     known_urls = load_known_urls(items_path)
     print(f"[INFO] URLs conocidas (dedup): {len(known_urls)}")
 
+    # Backup UNA vez antes del loop (convención de escritura de datos —
+    # docs/reference/conventions.md). El loop de red puede tardar ~1h; un
+    # crash a mitad de camino no debe perder el backup del estado previo.
+    if items_path.exists():
+        backup = backup_and_rotate(items_path, "search-discovery")
+        print(f"[OK] Backup: {backup}")
+
+    def _flush(pending: list[Candidate]) -> None:
+        """Escribe `pending` vía append_jsonl (upsert + atomic rename + fsync,
+        la fuente única — nunca open('a') crudo, hallazgo #2 auditoría
+        2026-07-08) y vacía la lista in-place."""
+        if not pending:
+            return
+        append_jsonl(items_path, [candidate_to_json(c) for c in pending])
+        print(f"    [flush] +{len(pending)} items → {items_path}")
+        pending.clear()
+
     engine_counter: Counter[str] = Counter()
+    dead_engines: set[str] = set()
     kept_total: list[Candidate] = []
+    pending: list[Candidate] = []
     for idx, q in enumerate(queries, start=1):
         print(f"\n[{idx}/{len(queries)}] {q.get('q','')[:80]}")
         kept, engine_used, n_results = process_query(
             q, engines_avail, session, known_urls, timeout,
             args.sleep_ddg, args.sleep_google, args.max_results,
+            dead_engines=dead_engines,
         )
         engine_counter[engine_used or "skip"] += 1
         kept_total.extend(kept)
+        pending.extend(kept)
         print(f"    → +{len(kept)} candidates kept (acumulado: {len(kept_total)})")
+
+        # Flush incremental cada N queries: un write único al final de un run
+        # de ~1h de red quema todo el presupuesto de API si crashea antes.
+        if pending and idx % args.flush_every == 0:
+            _flush(pending)
 
     print(f"\n[OK] Engines usados:")
     for e, n in engine_counter.most_common():
         print(f"  {e:10s}  {n} queries")
     print(f"\n[OK] Total candidates: {len(kept_total)}")
 
+    # Flush final: el resto acumulado desde el último múltiplo de flush_every.
+    _flush(pending)
+
     if not kept_total:
         return 0
-
-    # Append a items.jsonl
-    with items_path.open("a", encoding="utf-8") as fh:
-        for c in kept_total:
-            fh.write(json.dumps(candidate_to_json(c), ensure_ascii=False) + "\n")
-    print(f"[OK] Appended {len(kept_total)} items a {items_path}")
+    print(f"[OK] {len(kept_total)} items totales escritos en {items_path}")
     return 0
 
 
