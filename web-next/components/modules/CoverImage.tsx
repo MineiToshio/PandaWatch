@@ -85,6 +85,9 @@ export function CoverImage({
       className={className}
       loading={priority ? 'eager' : 'lazy'}
       decoding="async"
+      // Muchas tiendas bloquean hotlinks por Referer (auditoría #15); sin
+      // esto el fallback remoto fallaba más seguido de lo necesario.
+      referrerPolicy="no-referrer"
       style={
         fill
           ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }

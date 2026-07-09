@@ -98,6 +98,10 @@ export type Facets = {
   languages: FacetOption[]
   publishers: FacetOption[]
   signalTypes: FacetOption[]
+  // Opcional: buildFacets() (lib/data.ts, protegido en el paquete
+  // H2-webnext-ui) no lo computa — lo agrega lib/facets.ts en el Server
+  // Component (auditoría #21, product_type como facet expuesta en la UI).
+  productTypes?: FacetOption[]
 }
 
 export type SortKey =

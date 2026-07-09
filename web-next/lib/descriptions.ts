@@ -10,27 +10,12 @@
  * lives here so localized variants are a later addition, not a rewrite.
  */
 import type { Cluster, Series } from '@/lib/types'
+import { signalProseLabel } from '@/lib/vocab'
 
-/** Spanish labels for signal_types. Mirrors the vocabulary in SignalChip.tsx. */
-const SIGNAL_ES: Record<string, string> = {
-  limited: 'edición limitada',
-  special_edition: 'edición especial',
-  collector: 'edición de coleccionista',
-  box_set: 'box set',
-  variant_cover: 'portada variante',
-  artbook: 'artbook',
-  deluxe: 'edición deluxe',
-  hardcover: 'tapa dura',
-  kanzenban: 'kanzenban',
-  lore_edition: 'lore edition',
-  omnibus: 'ómnibus',
-  bonus: 'con extras',
-  retailer_exclusive: 'exclusiva de tienda',
-}
-
+/** Fuente única del vocabulario de señales: lib/vocab.ts (auditoría #12). */
 function signalsToEs(signals: string[], limit = 3): string {
   return signals
-    .map(s => SIGNAL_ES[s] ?? s.replace(/_/g, ' '))
+    .map(s => signalProseLabel(s))
     .slice(0, limit)
     .join(', ')
 }

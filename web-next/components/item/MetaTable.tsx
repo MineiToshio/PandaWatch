@@ -17,11 +17,10 @@ export function MetaTable({ item }: { item: Item }) {
     { label: 'Idioma',        value: item.language },
     { label: 'Tipo',          value: item.product_type && (PRODUCT_TYPE_LABELS[item.product_type] ?? item.product_type) },
     { label: 'Rareza',        value: item.rarity ? (RARITY_META[item.rarity as RarityValue]?.label ?? item.rarity) : undefined },
-    { label: 'Detectado',     value: item.detected_at && formatDate(item.detected_at) },
-    {
-      label: 'Estandarizado',
-      value: item.standardized_at ? formatDate(item.standardized_at) : 'Pendiente',
-    },
+    // "Detectado"/"Estandarizado" eran jerga interna del pipeline de scraping,
+    // no atributos del producto (auditoría #18). "Estandarizado: Pendiente"
+    // además era inalcanzable: data.ts sólo carga items con standardized_at.
+    { label: 'En el catálogo desde', value: item.detected_at && formatDate(item.detected_at) },
   ].filter(r => r.value !== undefined && r.value !== null && r.value !== '')
 
   return (

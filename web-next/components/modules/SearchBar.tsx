@@ -1,12 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useRouter, useSearchParams, usePathname } from 'next/navigation'
+import { useCatalogParams } from '@/lib/useCatalogParams'
 
 export function SearchBar() {
-  const router     = useRouter()
-  const pathname   = usePathname()
-  const params     = useSearchParams()
+  const { params, pathname, isPending, goTo, set } = useCatalogParams()
 
   const [focused, setFocused] = useState(false)
   const [query, setQuery]     = useState(params.get('q') ?? '')
@@ -37,19 +35,10 @@ export function SearchBar() {
     // del catálogo: desde una ficha/edición/serie navega a `/?q=…` (la página
     // de detalle es estática e ignora searchParams).
     if (pathname !== '/') {
-      if (value.trim()) router.push(`/?q=${encodeURIComponent(value.trim())}`)
+      if (value.trim()) goTo(`/?q=${encodeURIComponent(value.trim())}`)
       return
     }
-    // URL viva (no el snapshot del hook): si un filtro cambió durante la
-    // ventana del debounce, no hay que pisarlo con params stale.
-    const next = new URLSearchParams(window.location.search)
-    if (value.trim()) {
-      next.set('q', value.trim())
-    } else {
-      next.delete('q')
-    }
-    next.delete('page')
-    router.replace(`${pathname}?${next.toString()}`)
+    set('q', value.trim() || null)
   }
 
   function handleChange(value: string) {
@@ -80,10 +69,7 @@ export function SearchBar() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = null
     if (pathname !== '/') return // en detalle no hay búsqueda aplicada que limpiar
-    const next = new URLSearchParams(window.location.search)
-    next.delete('q')
-    next.delete('page')
-    router.replace(`${pathname}?${next.toString()}`)
+    set('q', null)
   }
 
   return (
@@ -142,11 +128,20 @@ export function SearchBar() {
         }}
       />
 
-      {query && (
+      {/* Pending — feedback discreto mientras el catálogo re-renderiza (auditoría #7) */}
+      {isPending && (
+        <span
+          aria-hidden="true"
+          className="pw-spinner"
+          style={{ flexShrink: 0, borderTopColor: '#1A8A5A' }}
+        />
+      )}
+
+      {query && !isPending && (
         <button
           type="button"
           onClick={handleClear}
-          aria-label="Clear search"
+          aria-label="Limpiar búsqueda"
           style={{
             display: 'flex',
             cursor: 'pointer',

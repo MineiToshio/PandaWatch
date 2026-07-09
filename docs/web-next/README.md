@@ -81,11 +81,10 @@ The app:
 |---|---|---|
 | Framework | Next.js 16 (App Router) | SSR/SSG via Server Components |
 | Language | TypeScript | Strict mode |
-| Styling | Tailwind CSS v4 | `@theme` OKLCH tokens from PandaTrack |
-| Components | CVA (class-variance-authority) | Variant recipes |
+| Styling | CSS vars + clases `.pw-*` en `app/globals.css` | Tailwind v4, CVA y tailwind-merge **desinstalados** 2026-07-08 (auditoría #14, 0 usos reales fuera de 2 utility classes en `CountryFlag`) — ver "Dirección de estilos" abajo |
 | Data | `fs.readFileSync` on `data/items.jsonl` | No API routes; direct server read |
 | Images | Symlink `public/images → ../../data/images/` | Python pipeline unchanged |
-| State (filters) | URL search params | `useSearchParams` + `router.replace()` (paginación usa `push`) |
+| State (filters) | URL search params | `lib/useCatalogParams.ts` (hook único, auditoría #11) — `set`/`toggle`/`clearAll` sobre la URL viva, envueltos en `useTransition` |
 | Fonts | `next/font/google` (self-hosted) | Space Grotesk / DM Sans / JetBrains Mono vía CSS vars |
 | React | 19.x | Server Components default |
 
@@ -204,15 +203,18 @@ web-next/
 │   │                              decodeRouteParam(), ogImage()
 │   ├── jsonld.ts                ← schema.org builders
 │   ├── descriptions.ts          ← per-entity template descriptions
-│   └── styles.ts                ← cn() utility
-├── app/{robots,sitemap,manifest}.ts   ← SEO surfaces (FRD-008)
+│   ├── vocab.ts                 ← vocabulario único de señales/tipos de edición (auditoría #12)
+│   ├── useCatalogParams.ts      ← hook único de mutación de URL (auditoría #11)
+│   └── facets.ts                ← productTypeFacet() (auditoría #21)
+├── app/{robots,sitemap,manifest,not-found,error}.tsx   ← SEO + estados de sistema (FRD-008, auditoría #7)
 ├── public/
 │   └── images → ../../data/images/   ← symlink
 └── package.json
 ```
 
 (`components/core/` se eliminó 2026-06-12: era código muerto sin consumidores.
-`lib/slugs.ts` nunca existió — los lookups viven en `lib/data.ts`.)
+`lib/slugs.ts` nunca existió — los lookups viven en `lib/data.ts`. `lib/styles.ts`
+[`cn()`] se eliminó 2026-07-08 junto con `tailwind-merge`/`clsx` — auditoría #14.)
 
 ---
 
@@ -232,3 +234,53 @@ precomputado); facets globales e índice `bySeries` cacheados en `DataCache` (au
 (auditoría #5); vía de deploy documentada + habilitada por env vars (`ITEMS_PATH`,
 `ALIASES_PATH`, `NEXT_PUBLIC_IMAGE_BASE_URL`) SIN deployar (auditoría #4); tests de
 `descriptions`/`jsonld`/`seo` + búsqueda (54→95). Ver la sección "Deploy" de arriba.)*
+
+---
+
+## Dirección de estilos (auditoría #14, 2026-07-08)
+
+**CSS vars + clases `.pw-*` en `app/globals.css`.** Tailwind v4,
+`class-variance-authority` y `tailwind-merge` se desinstalaron — su único uso
+real en todo el árbol era `CountryFlag.tsx` (2 utility classes: `inline-flex
+items-center gap-1` y `text-xs`), reemplazado por una clase `.pw-country-flag`.
+`clsx` se desinstaló junto con ellos (mismo único consumidor).
+
+- El design system ya definía clases semánticas (`.pw-h1`…`.pw-caption`) que
+  estaban sin uso — la dirección elegida las adopta en vez de introducir un
+  segundo sistema.
+- **No se migró todo el árbol.** La mayoría de los componentes sigue en
+  inline `style={{}}` — sólo se consolidaron a `.pw-*` los estilos repetidos
+  de los componentes que este work order YA tocaba (`SidebarFilters` →
+  `.pw-filter-section`/`.pw-check-row*`, home → `.catalog-h1`, el drawer/
+  lightbox → `.pw-drawer-dialog`/`.pw-lightbox-dialog`). Migrar el resto
+  (EditionCard, ItemCard, SeriesCard, etc.) queda para cuando se toquen por
+  otro motivo — la regla es oportunista, no un rewrite.
+- **Próximo candidato natural si se retoma**: los `<style>` embebidos en
+  componentes (`ItemHero.tsx`, `VolumeGrid.tsx`) para media queries — inline
+  `style={{}}` no soporta `@media`, por eso ya conviven 3 mecanismos
+  (inline / `<style>` embebido / `globals.css`). Documentado, no resuelto acá.
+
+## Assets — panda-mark y compresión (auditoría #3, 2026-07-08)
+
+`public/panda-mark.png` (1024×1024, 2.10 MB) se servía en el `<img>` de 32×32
+del header en TODAS las páginas sin pasar por el optimizer de Next (es un
+`<img>` plano, a propósito — ver `Header.tsx`). Reemplazado por
+`public/panda-mark-64.png` (64×64, ~8 KB — 2x para retina), generado con
+`sips -Z 64`. `og-default.png`/`icon-512.png`/`icon-192.png` se recomprimieron
+con ImageMagick (`png:compression-level=9`, lossless) — ~10% menos sin
+herramientas de quantización (pngquant/oxipng no estaban disponibles en la
+máquina; `sips`/ImageMagick sí). Si se instala pngquant más adelante, esos
+tres archivos tienen más margen.
+
+## Tests de componentes (auditoría #20, 2026-07-08)
+
+`vitest.config.ts` corre en `environment: 'jsdom'` (vitest 4.1.7 ya no trae
+`environmentMatchGlobs` per-glob ni el docblock `@vitest-environment` de v3 —
+se evaluó y no existe en esta versión; ver `node_modules/vitest`). jsdom
+sigue siendo Node.js completo por debajo (fs, etc. intactos), así que los
+tests de `lib/` puros no se vieron afectados por el cambio global.
+`__tests__/setup.ts` registra `cleanup()` de `@testing-library/react` después
+de cada test (si no, el DOM se acumula entre `it()` del mismo archivo y
+`getByRole`/`getByText` empiezan a matchear duplicados). Nuevas devDependencies
+(permitidas por el work order): `jsdom`, `@testing-library/react`,
+`@testing-library/jest-dom`.

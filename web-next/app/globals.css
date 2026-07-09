@@ -1,4 +1,3 @@
-@import "tailwindcss";
 /* Fuentes self-hosted vía next/font en layout.tsx — expone
    --font-space-grotesk / --font-dm-sans / --font-jetbrains-mono en <html> */
 
@@ -45,8 +44,13 @@
   --ink-200: #DDD8CF;   /* borders */
   --ink-300: #C6BEB4;   /* placeholder text, disabled */
   --ink-400: #A89E93;   /* tertiary text */
-  --ink-500: #8C8178;   /* secondary text */
-  --ink-600: #706560;   /* medium text */
+  --ink-500: #8C8178;   /* secondary text (uso decorativo — NO usar para texto, 3.8:1 falla AA) */
+  /* Paso intermedio agregado (auditoría #8): --ink-500 mide 3.8:1 sobre
+     blanco, por debajo del mínimo AA (4.5:1) para texto <18px — el fix
+     "ink-400→ink-500" que proponía el audit para el terciario en realidad NO
+     alcanza AA. --ink-550 sí (5.1:1 blanco / 4.53:1 sobre --ink-50). */
+  --ink-550: #776C66;   /* tertiary text — mínimo que pasa AA en ambos fondos */
+  --ink-600: #706560;   /* medium text / secondary text */
   --ink-700: #554D49;   /* body text */
   --ink-800: #3B3632;   /* emphasis text */
   --ink-900: #1C1915;   /* primary text / ink black */
@@ -89,9 +93,13 @@
   --color-border:         var(--ink-200);         /* default border */
   --color-border-subtle:  var(--ink-100);         /* subtle divider */
 
+  /* --ink-500/--ink-400 daban 3.8:1 / 2.63:1 sobre blanco — bajo el mínimo
+     AA de 4.5:1 para texto <18px (auditoría #8). --ink-600 (5.65:1 blanco /
+     5.02:1 sobre --ink-50) y el paso intermedio --ink-550 (5.1:1 / 4.53:1)
+     pasan AA en ambos fondos — ver el cálculo junto a --ink-550 arriba. */
   --color-text-primary:   var(--ink-900);
-  --color-text-secondary: var(--ink-500);
-  --color-text-tertiary:  var(--ink-400);
+  --color-text-secondary: var(--ink-600);
+  --color-text-tertiary:  var(--ink-550);
   --color-text-disabled:  var(--ink-300);
   --color-text-inverse:   #FFFFFF;
 
@@ -408,32 +416,144 @@ body {
   .catalog-grid-inner { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
+/* ── SIDEBAR FILTERS (consolidación oportunista, auditoría #14) ── */
+/* Antes: ~30 bloques style={{...}} repetidos por cada fila de facet
+   (country/language/publisher, hasta ~35 filas). Consolidado a clases —
+   HTML más liviano y hover/focus declarativos que inline no permite. */
+.pw-filter-section { padding: 14px 16px 0; }
+.pw-filter-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+.pw-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  text-align: left;
+}
+.pw-check-row:hover { background: var(--color-bg); }
+.pw-check-row[aria-pressed="true"] {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+}
+.pw-check-row-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--color-border);
+  background: transparent;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pw-check-row[aria-pressed="true"] .pw-check-row-box {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+.pw-check-row-count { font-size: 11px; color: var(--color-text-tertiary); }
+
+/* ── PENDING SPINNER (auditoría #7) ── */
+/* Feedback discreto para useTransition() en SidebarFilters/SortBar/
+   SearchBar/Pagination mientras el Server Component del catálogo re-renderiza. */
+.pw-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--ink-200);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: pw-spin 0.6s linear infinite;
+}
+@keyframes pw-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── HOME H1 (auditoría #19) ── */
+/* Discreto: texto pequeño, mismo tratamiento visual que un eyebrow — no es
+   un hero, pero le da a la home su título semántico/SEO. */
+.catalog-h1 {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  padding: 12px 16px 0;
+  margin: 0;
+}
+
 /* ── RESPONSIVE VISIBILITY ── */
 /* Sidebar: desktop sticky aside vs mobile slide-over drawer */
 @media (max-width: 1023px) {
   .sidebar-desktop { display: none !important; }
 }
 @media (min-width: 1024px) {
-  .sidebar-mobile-overlay { display: none !important; }
+  .pw-drawer-dialog       { display: none !important; }
   .sidebar-close-btn      { display: none !important; }
   .sort-filter-btn        { display: none !important; }
+  /* El buscador del header ya cubre desktop — no duplicar en el sidebar (#16) */
+  .sidebar-search-mobile-only { display: none !important; }
 }
 
-/* ── TAILWIND v4 THEME BRIDGE ── */
-/* Expose design tokens to Tailwind's utility class system */
+/* ── FILTER DRAWER <dialog> (auditoría #13) ── */
+/* showModal() posiciona centrado por default (UA stylesheet) — se sobreescribe
+   a panel deslizado desde la derecha. Focus trap + Escape + backdrop-click
+   (ver handleBackdropClick) vienen gratis del elemento nativo. */
+.pw-drawer-dialog {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  margin: 0;
+  width: min(320px, 90vw);
+  height: 100vh;
+  max-width: 90vw;
+  max-height: 100vh;
+  border: none;
+  padding: 0;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xl);
+}
+.pw-drawer-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
 
-@theme inline {
-  --color-primary:          var(--bamboo-500);
-  --color-primary-hover:    var(--bamboo-600);
-  --color-primary-subtle:   var(--bamboo-50);
-  --color-secondary:        var(--vermillion-500);
-  --color-bg:               var(--ink-50);
-  --color-surface:          #FFFFFF;
-  --color-border:           var(--ink-200);
-  --color-border-subtle:    var(--ink-100);
-  --color-text-primary:     var(--ink-900);
-  --color-text-secondary:   var(--ink-500);
-  --color-text-tertiary:    var(--ink-400);
-  --color-text-inverse:     #FFFFFF;
-  --color-focus:            var(--bamboo-500);
+/* ── LIGHTBOX <dialog> (auditoría #13) ── */
+.pw-lightbox-dialog {
+  border: none;
+  padding: 24px;
+  background: transparent;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: auto; /* centrado — comportamiento default de showModal() */
+}
+.pw-lightbox-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.92);
+}
+
+/* ── COUNTRY FLAG (auditoría #14) ── */
+/* Antes eran 2 clases utility de Tailwind (inline-flex items-center gap-1) —
+   único consumidor real de Tailwind en todo el árbol (aparte del bridge de
+   abajo, sin consumidores). Tailwind v4 + class-variance-authority +
+   tailwind-merge se desinstalaron: la dirección de estilos del proyecto es
+   CSS vars + clases `.pw-*` en este archivo (ver docs/web-next/README.md). */
+.pw-country-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }

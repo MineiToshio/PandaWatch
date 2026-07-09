@@ -1,5 +1,6 @@
 import type { Cluster, FilterParams, SortKey, Item } from './types'
 import { sortableDate } from './format'
+import { LIMITED_SIGNAL_TYPES } from './vocab'
 
 /**
  * Normalización de texto para búsqueda (determinista, sin LLM):
@@ -53,19 +54,6 @@ function queryTokens(q: string): string[] {
       return /^\d{10,13}$/.test(digits) ? digits : tok
     })
 }
-
-const LIMITED_SIGNALS = new Set([
-  'limited',
-  'special_edition',
-  'collector',
-  'lore_edition',
-  'variant_cover',
-  'artbook',
-  'kanzenban',
-  'deluxe',
-  'box_set',
-  'retailer_exclusive',
-])
 
 const SORT_KEYS: ReadonlySet<string> = new Set([
   'date_desc', 'date_asc', 'title_asc', 'title_desc',
@@ -160,7 +148,7 @@ export function filterClusters(
       return false
 
     // Only limited
-    if (params.only_limited && !c.signalTypes.some(s => LIMITED_SIGNALS.has(s)))
+    if (params.only_limited && !c.signalTypes.some(s => LIMITED_SIGNAL_TYPES.has(s)))
       return false
 
     return true

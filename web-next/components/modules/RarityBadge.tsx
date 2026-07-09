@@ -2,7 +2,11 @@ import type { CSSProperties, ReactNode } from 'react'
 
 // Fuente ÚNICA de labels/colores/íconos de rareza. Antes vivía copiada en
 // EditionCard, ItemHero, SidebarFilters y MetaTable — cambiar un color exigía
-// tocar 4 archivos.
+// tocar 4 archivos. (No se mueve a lib/vocab.ts: esa tabla es el eje
+// señal/tipo de edición; la rareza es otro eje, y sus íconos son ReactNode —
+// exigen .tsx.)
+// Labels en ESPAÑOL (auditoría #10 — sitio lang="es"; antes "Accessible",
+// "Rare"… en inglés). Formas femeninas: la rareza califica a la edición.
 export const RARITY_VALUES = ['common', 'rare', 'super_rare', 'ultra_rare'] as const
 export type RarityValue = (typeof RARITY_VALUES)[number]
 
@@ -11,7 +15,7 @@ export const RARITY_META: Record<
   { label: string; color: string; icon: ReactNode }
 > = {
   common: {
-    label: 'Accessible',
+    label: 'Accesible',
     color: '#9CA3AF',
     icon: (
       <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
@@ -20,7 +24,7 @@ export const RARITY_META: Record<
     ),
   },
   rare: {
-    label: 'Rare',
+    label: 'Rara',
     color: '#8BA8F8',
     icon: (
       <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -29,7 +33,7 @@ export const RARITY_META: Record<
     ),
   },
   super_rare: {
-    label: 'Super Rare',
+    label: 'Súper rara',
     color: '#C4A8FF',
     icon: (
       <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -38,7 +42,7 @@ export const RARITY_META: Record<
     ),
   },
   ultra_rare: {
-    label: 'Ultra Rare',
+    label: 'Ultra rara',
     color: '#FDE68A',
     icon: (
       <svg width={9} height={9} viewBox="0 0 24 24" fill="currentColor">

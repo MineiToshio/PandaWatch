@@ -1,45 +1,10 @@
 import type { CSSProperties } from 'react'
-import {
-  Star,
-  Sparkles,
-  Package,
-  Layers,
-  BookOpen,
-  Gem,
-  Globe,
-  Trophy,
-  type LucideIcon,
-} from 'lucide-react'
+import { signalChipMeta } from '@/lib/vocab'
 
 // Spec source: preview/components-edition-badges.html → "Signal Chips — Why It Was Detected"
 // Pill shape (radius 999), tight padding, small icon. NOT the rectangular filter-chip
 // shape from `core/Chip.tsx`. Keeps the visual distinction the bundle established.
-
-type SignalMeta = {
-  IconComponent: LucideIcon
-  label: string
-  /** Light tint + fg pair from the bundle's signal-chip examples (or neutral default). */
-  bg: string
-  fg: string
-}
-
-const NEUTRAL: Pick<SignalMeta, 'bg' | 'fg'> = { bg: '#EDE9E2', fg: '#706560' }
-
-const SIGNAL_META: Record<string, SignalMeta> = {
-  limited:            { IconComponent: Star,      label: 'Limited Edition',  bg: '#FEF3EF', fg: '#D93D1A' },
-  special_edition:    { IconComponent: Sparkles,  label: 'Special Edition',  bg: '#EDFAF3', fg: '#1A8A5A' },
-  collector:          { IconComponent: Trophy,    label: 'Collector',        bg: '#EDFAF3', fg: '#1A8A5A' },
-  box_set:            { IconComponent: Package,   label: 'Box Set',          bg: '#EEF2FF', fg: '#2D52CC' },
-  variant_cover:      { IconComponent: Layers,    label: 'Variant Cover',    bg: '#FFFBEB', fg: '#9E6C00' },
-  artbook:            { IconComponent: BookOpen,  label: 'Artbook',          bg: '#EEF2FF', fg: '#2D52CC' },
-  deluxe:             { IconComponent: Gem,       label: 'Deluxe',           bg: '#EEF2FF', fg: '#2D52CC' },
-  hardcover:          { IconComponent: BookOpen,  label: 'Hardcover',        ...NEUTRAL },
-  kanzenban:          { IconComponent: Layers,    label: 'Kanzenban',        bg: '#EEF2FF', fg: '#2D52CC' },
-  lore_edition:       { IconComponent: Sparkles,  label: 'Lore Edition',     bg: '#EDFAF3', fg: '#1A8A5A' },
-  omnibus:            { IconComponent: BookOpen,  label: 'Omnibus',          ...NEUTRAL },
-  bonus:              { IconComponent: Package,   label: 'With Extra',       bg: '#EDFAF3', fg: '#1A8A5A' },
-  retailer_exclusive: { IconComponent: Globe,     label: 'Store Exclusive',  bg: '#FFFBEB', fg: '#9E6C00' },
-}
+// Vocabulario (icon/label/bg/fg) en lib/vocab.ts — fuente única (auditoría #12).
 
 type SignalChipSize = 'sm' | 'md'
 
@@ -57,7 +22,7 @@ type SignalChipProps = {
 }
 
 export function SignalChip({ signal, size = 'md', className }: SignalChipProps) {
-  const meta = SIGNAL_META[signal]
+  const meta = signalChipMeta(signal)
   if (!meta) return null
   const sz = SIZE[size]
 
@@ -76,7 +41,7 @@ export function SignalChip({ signal, size = 'md', className }: SignalChipProps) 
         ...sz,
       }}
     >
-      <meta.IconComponent
+      <meta.icon
         size={ICON_SIZE[size]}
         strokeWidth={2.5}
         style={{ flexShrink: 0 }}

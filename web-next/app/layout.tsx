@@ -40,8 +40,13 @@ export const metadata: Metadata = {
   },
 }
 
+// #F5F1EB = --ink-50 (fondo de página). El sitio es light-only (globals.css) —
+// un theme-color oscuro pintaba la barra del navegador/splash de PWA negro
+// sobre un sitio crema (auditoría #17). Se eligió el fondo de página (no el
+// verde bamboo) para que la barra se funda con el catálogo en vez de
+// bloquear un color de acento.
 export const viewport: Viewport = {
-  themeColor: '#0d0d0f',
+  themeColor: '#F5F1EB',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -59,8 +59,11 @@ describe('itemDescription', () => {
         language: 'en',
       }),
     })
+    // "deluxe" (no "edición deluxe"): lib/vocab.ts usa un único labelEs por
+    // señal para chip + prosa (auditoría #12) — el chip badge manda la forma
+    // corta; sigue siendo español válido y determinístico.
     expect(itemDescription(cluster)).toBe(
-      'Berserk Deluxe Edition, Vol. 1 — edición deluxe, tapa dura en en publicada por Dark Horse · USA.'
+      'Berserk Deluxe Edition, Vol. 1 — deluxe, tapa dura en en publicada por Dark Horse · USA.'
     )
   })
 

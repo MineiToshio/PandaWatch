@@ -332,3 +332,37 @@ export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
 - [ ] No emoji anywhere in the UI
 - [ ] No dark mode toggle / ThemeToggle component visible
 - [ ] `npm run build` has no TypeScript errors
+
+---
+
+## Addendum 2026-07-08 — paquete H2-webnext-ui (auditoría Fable)
+
+- **Dirección de estilos fijada (auditoría #14)**: `class-variance-authority`,
+  `tailwind-merge`, `tailwindcss` y `clsx` se **desinstalaron** — 0 usos reales
+  fuera de `CountryFlag.tsx` (2 utility classes). La dirección es **CSS vars +
+  clases `.pw-*` en `app/globals.css`** (ya existían y estaban sin uso). Migración
+  oportunista: `SidebarFilters` (FilterSection/CheckRow → `.pw-filter-section`/
+  `.pw-check-row`), `CountryFlag` (→ `.pw-country-flag`), home (`.catalog-h1`).
+  El resto del árbol sigue en inline `style={{}}` — no se migró todo de una,
+  sólo lo que este paquete ya tocaba (regla del work order).
+- **Contraste AA (auditoría #8)**: `--color-text-secondary` → `var(--ink-600)`
+  (5.65:1 sobre blanco) y `--color-text-tertiary` → un token nuevo
+  `--ink-550` (#776C66, 5.1:1 blanco / 4.53:1 sobre `--ink-50`) — el paso
+  `ink-400→ink-500` que proponía el audit para terciario en realidad daba
+  3.8:1 (falla AA); se agregó el escalón intermedio para cumplir 4.5:1 real.
+- **Vocabulario único (auditoría #10/#12)**: `lib/vocab.ts` reemplaza
+  `KIND_RANK`/`EDITION_TYPE_LABELS`/`SIGNALS_EQUIV_TO_EDITION`/`SIGNAL_META`/
+  `SIGNAL_ES`/`LIMITED_SIGNALS`. Labels visibles en **español** (chips y
+  badges). Fix de la divergencia `integral`/`integrale` (antes sólo una tenía
+  label, la otra sólo rank). Los labels de **rareza** también pasaron a
+  español ("Accesible" / "Rara" / "Súper rara" / "Ultra rara" — femeninas,
+  califican a la edición) editando `RARITY_META` en `RarityBadge.tsx`, que ya
+  era la fuente única de ese eje; NO se movió a `vocab.ts` (es otro eje —
+  rareza, no señal/tipo de edición — y sus íconos ReactNode exigen .tsx).
+  Nota: esto supersede la regla "Language: English throughout" de las UI Copy
+  Rules de arriba — el copy visible del sitio es español desde esta pasada.
+- **Assets (auditoría #3)**: `panda-mark.png` (1024×1024, 2.1 MB) →
+  `panda-mark-64.png` (64×64, ~8 KB); `og-default.png`/`icon-512.png`/
+  `icon-192.png` recomprimidos (PNG lossless, ~10% menos).
+- **themeColor/manifest (auditoría #17)**: `#0d0d0f` → `#F5F1EB` (`--ink-50`,
+  el fondo de página) — el sitio es light-only, un splash oscuro desentonaba.

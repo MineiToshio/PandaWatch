@@ -1,8 +1,8 @@
 'use client'
 
-import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { SlidersHorizontal } from 'lucide-react'
 import type { SortKey } from '@/lib/types'
+import { useCatalogParams } from '@/lib/useCatalogParams'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'date_desc',   label: 'Más reciente' },
@@ -22,15 +22,10 @@ type SortBarProps = {
 }
 
 export function SortBar({ sort, page, pages, totalTomos, totalEditions, totalObras, onOpenFilters }: SortBarProps) {
-  const router   = useRouter()
-  const pathname = usePathname()
-  const params   = useSearchParams()
+  const { isPending, set } = useCatalogParams()
 
   function handleSort(value: string) {
-    const next = new URLSearchParams(params.toString())
-    next.set('sort', value)
-    next.delete('page')
-    router.replace(`${pathname}?${next.toString()}`)
+    set('sort', value)
   }
 
   return (
@@ -44,6 +39,8 @@ export function SortBar({ sort, page, pages, totalTomos, totalEditions, totalObr
         background: 'var(--color-surface)',
         gap: 12,
         flexShrink: 0,
+        opacity: isPending ? 0.6 : 1,
+        transition: 'opacity 120ms',
       }}
     >
       {/* Stats: tomos · ediciones · obras · pág */}

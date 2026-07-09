@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type { Item, Cluster, Facets, Series } from './types'
 import { buildSearchText, normalize } from './filters'
+import { editionSlugRank, signalRank } from './vocab'
 
 // Path relative to web-next/ (process.cwd() in Next.js). Overridable via env
 // for deploys where the data lives elsewhere (pending: migración a DB).
@@ -76,37 +77,27 @@ export function compareVolumes(a?: string, b?: string): number {
 // Rango de kind para desempate dentro del mismo volumen (gotcha #60).
 // Orden global: regular(0) → variant(1) → special/limited(2) →
 // deluxe/kanzenban(3) → artbook/fanbook(4) → boxset(5) → desconocido(10).
-const KIND_RANK: Record<string, number> = {
-  regular: 0,
-  variant: 1, alternativa: 1,
-  special: 2, especial: 2, limited: 2, limitada: 2, collector: 2, premium: 2,
-  deluxe: 3, kanzenban: 3, omnibus: 3, hardcover: 3,
-  artbook: 4, fanbook: 4, guidebook: 4,
-  box: 5, boxset: 5, coffret: 5,  // coffret = box set francés (muy frecuente)
-  ultimate: 3, integrale: 3,      // ediciones recopilatorias FR
-}
-
+// Vocabulario (rank por slug/señal) en lib/vocab.ts — fuente única (auditoría #12).
 function kindRank(c: Cluster): number {
   // Tier 1: cluster_key lmc → kind en posición 2 ("lmc:ID:kind:vol")
   if (c.clusterKey.startsWith('lmc:')) {
     const parts = c.clusterKey.split(':')
-    if (parts.length >= 3 && parts[2] in KIND_RANK) return KIND_RANK[parts[2]]
+    if (parts.length >= 3) {
+      const r = editionSlugRank(parts[2])
+      if (r !== undefined) return r
+    }
   }
   // Tier 2: edition_key slug → penúltimo segmento antes del país
   if (c.editionKey) {
     const parts = c.editionKey.split('-')
     if (parts.length >= 2) {
-      const k = parts[parts.length - 2]
-      if (k in KIND_RANK) return KIND_RANK[k]
+      const r = editionSlugRank(parts[parts.length - 2])
+      if (r !== undefined) return r
     }
   }
   // Tier 3: signal_types
-  const sigs = c.signalTypes
-  if (sigs.includes('variant_cover')) return 1
-  if (sigs.some(s => ['special_edition','limited','collector','premium_format'].includes(s))) return 2
-  if (sigs.some(s => ['artbook','fanbook'].includes(s))) return 4
-  if (sigs.some(s => ['box_set','bundle'].includes(s))) return 5
-  return 10
+  const r = signalRank(c.signalTypes)
+  return r !== undefined ? r : 10
 }
 
 // Portada canónica de un item: `images[0]` es la ÚNICA fuente de verdad (los

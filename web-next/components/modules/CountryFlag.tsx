@@ -1,5 +1,3 @@
-import { cn } from '@/lib/styles'
-
 const COUNTRY_FLAGS: Record<string, string> = {
   // Spanish names (as stored in items.jsonl)
   'Japón':          '🇯🇵',
@@ -39,12 +37,12 @@ export function CountryFlag({ country, showLabel = false, className }: CountryFl
   return (
     // Sin label visible, el país sigue existiendo para lectores de pantalla
     <span
-      className={cn('inline-flex items-center gap-1', className)}
+      className={className ? `pw-country-flag ${className}` : 'pw-country-flag'}
       {...(!showLabel && { role: 'img', 'aria-label': country })}
     >
       <span aria-hidden="true">{flag}</span>
       {showLabel && (
-        <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
           {country}
         </span>
       )}

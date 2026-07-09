@@ -6,22 +6,7 @@ import { CoverImage } from '@/components/modules/CoverImage'
 import { SignalChip } from '@/components/modules/SignalChip'
 import { EditionTypeChip } from '@/components/modules/EditionTypeChip'
 import { editionTypeLabel, editionSlugFromKey } from '@/lib/format'
-
-// Señales que repiten el concepto del chip de tipo de edición — se omiten
-// para no mostrar "Box Set Box Set" / "Omnibus Omnibus" en la misma tarjeta.
-const SIGNALS_EQUIV_TO_EDITION: Record<string, string[]> = {
-  boxset:    ['box_set'],
-  coffret:   ['box_set'],
-  cofanetto: ['box_set'],
-  special:   ['special_edition'],
-  limited:   ['limited'],
-  collector: ['collector'],
-  deluxe:    ['deluxe'],
-  kanzenban: ['kanzenban'],
-  omnibus:   ['omnibus'],
-  artbook:   ['artbook'],
-  variant:   ['variant_cover'],
-}
+import { equivSignalsForSlug } from '@/lib/vocab'
 import { CountryFlag } from '@/components/modules/CountryFlag'
 import { RarityBadge } from '@/components/modules/RarityBadge'
 
@@ -47,7 +32,7 @@ export function EditionCard({ cluster, priority = false }: EditionCardProps) {
   // lleva inyectado) + signal chips. Máximo 2 chips para mantener la tarjeta
   // compacta: con chip de edición entra 1 signal, sin él entran 2.
   const editionType = editionTypeLabel(cluster.canonical.edition_key)
-  const equivSignals = SIGNALS_EQUIV_TO_EDITION[editionSlugFromKey(cluster.canonical.edition_key)] ?? []
+  const equivSignals = equivSignalsForSlug(editionSlugFromKey(cluster.canonical.edition_key))
   const candidateSignals = editionType
     ? signalTypes.filter(s => !equivSignals.includes(s))
     : signalTypes

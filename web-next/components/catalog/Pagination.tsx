@@ -1,7 +1,7 @@
 'use client'
 
-import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useCatalogParams } from '@/lib/useCatalogParams'
 
 type PaginationProps = {
   total: number
@@ -24,20 +24,12 @@ function buildPageWindow(current: number, total: number): (number | '...')[] {
 }
 
 export function Pagination({ total, current }: PaginationProps) {
-  const router   = useRouter()
-  const pathname = usePathname()
-  const params   = useSearchParams()
+  const { isPending, set } = useCatalogParams()
 
   function goTo(page: number) {
-    const next = new URLSearchParams(params.toString())
-    if (page === 1) {
-      next.delete('page')
-    } else {
-      next.set('page', String(page))
-    }
     // push (no replace): cada página es una entrada de historial — "atrás"
     // desde la pág. 5 vuelve a la 4, no sale del sitio
-    router.push(`${pathname}?${next.toString()}`)
+    set('page', page === 1 ? null : String(page), { push: true })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -85,6 +77,8 @@ export function Pagination({ total, current }: PaginationProps) {
         gap: 6,
         padding: '24px 16px 40px',
         flexWrap: 'wrap',
+        opacity: isPending ? 0.6 : 1,
+        transition: 'opacity 120ms',
       }}
     >
       {/* Prev */}

@@ -31,9 +31,11 @@ export function Header() {
           flexShrink: 0,
         }}
       >
+        {/* 64×64 (2x retina) — antes 1024×1024 / 2 MB servido a 32×32 sin
+            redimensionar (auditoría #3); ahora ~8 KB. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/panda-mark.png"
+          src="/panda-mark-64.png"
           width={32}
           height={32}
           alt="PandaWatch"

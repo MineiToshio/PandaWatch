@@ -264,3 +264,28 @@ When filters produce 0 results:
 - FRD-001 (data layer) — `loadClusters()`, `filterClusters()`, `buildFacets()`
 - FRD-002 (design system) — Button, Chip, Badge, Typography
 - FRD-006 (slug generation) — needed only for card click navigation
+
+---
+
+## Addendum 2026-07-08 — paquete H2-webnext-ui (auditoría Fable)
+
+- **`useCatalogParams()` (`lib/useCatalogParams.ts`, auditoría #11)**: fuente
+  única de mutación de URL — antes reimplementada en SidebarFilters/
+  SearchBar/SortBar/Pagination con matices propios (algunos leían
+  `window.location.search`, otros el snapshot del hook — bug latente si dos
+  mutadores disparaban en la misma ventana). `set`/`toggle`/`clearAll` SIEMPRE
+  leen la URL viva y borran `page`. Envuelve la navegación en `useTransition`
+  — `isPending` da feedback (opacity/spinner) mientras el Server Component
+  re-renderiza (auditoría #7).
+- **Un solo buscador visible en desktop (auditoría #16)**: el input del
+  sidebar se eliminó — reutiliza el `<SearchBar/>` del header (mismo
+  componente, mismo debounce 600ms) SOLO dentro del drawer móvil.
+- **`product_type` como facet (auditoría #21)**: antes `FilterParams`/
+  `filterClusters` ya lo soportaban pero sin UI — ahora hay chips en el
+  sidebar (`lib/facets.ts` → `productTypeFacet()`, labels de
+  `PRODUCT_TYPE_LABELS`). `hasActiveFilters`/`clearAll` ahora también
+  consideran `product_type`/`source_class`.
+- **Drawer móvil vía `<dialog>` (auditoría #13)**: `showModal()` da focus
+  trap + Escape + backdrop-click gratis, sin dependencia — antes el foco se
+  escapaba con Tab pese a `aria-modal="true"`.
+- **`hasActiveFilters` completo (auditoría #21)**.

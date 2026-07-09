@@ -1,3 +1,5 @@
+import { editionTypeLabelFromSlug } from './vocab'
+
 // El corpus trae release_date en 4 formatos reales: YYYY-MM-DD (ISO),
 // YYYY-MM, YYYY (fechas parciales de fuentes de referencia) y DD/MM/YYYY
 // (legacy de algunas fuentes ES). Cada granularidad se muestra con su propio
@@ -83,40 +85,13 @@ export function editionSlugFromKey(editionKey?: string): string {
   return parts.length >= 2 ? parts[parts.length - 1] : ''
 }
 
-/** Label en español del tipo de edición; null para regular/desconocido. */
-export const EDITION_TYPE_LABELS: Record<string, string> = {
-  special:     'Edición especial',
-  limited:     'Edición limitada',
-  collector:   'Coleccionista',
-  deluxe:      'Deluxe',
-  kanzenban:   'Kanzenban',
-  perfect:     'Perfect',
-  coffret:     'Coffret',
-  boxset:      'Box Set',
-  cofanetto:   'Cofanetto',
-  variant:     'Variante',
-  anniversary: 'Aniversario',
-  celebration: 'Celebración',
-  color:       'Color',
-  maximum:     'Maximum',
-  ultimate:    'Ultimate',
-  master:      'Master',
-  library:     'Library',
-  integral:    'Integral',
-  artbook:     'Artbook',
-  fanbook:     'Fanbook',
-  guidebook:   'Guidebook',
-  magazine:    'Revista',
-  steelbox:    'Steelbox',
-  slipcase:    'Slipcase',
-  prestige:    'Prestige',
-  grimorio:    'Grimorio',
-  grimoire:    'Grimoire',
-  omnibus:     'Omnibus',
-}
-
+/**
+ * Label en español del tipo de edición; null para regular/desconocido.
+ * Fuente única del vocabulario: lib/vocab.ts (auditoría #12) — antes vivía acá
+ * duplicado (EDITION_TYPE_LABELS) y en 5 archivos más.
+ */
 export function editionTypeLabel(editionKey?: string): string | null {
   const slug = editionSlugFromKey(editionKey)
   if (!slug || slug === 'regular') return null
-  return EDITION_TYPE_LABELS[slug] ?? null
+  return editionTypeLabelFromSlug(slug)
 }

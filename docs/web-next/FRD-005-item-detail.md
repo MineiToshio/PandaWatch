@@ -284,3 +284,22 @@ export async function generateMetadata({ params }) {
 - FRD-001 (data layer) — `clusterBySlug()`, `allSlugs()`
 - FRD-002 (design system) — all core components
 - FRD-006 (slug generation) — `slug` field must exist in items.jsonl
+
+---
+
+## Addendum 2026-07-08 — paquete H2-webnext-ui (auditoría Fable)
+
+- **Carrusel sin interactivos anidados (auditoría #9)**: antes las flechas
+  prev/next eran `<button>` DENTRO de un `<div role="button">` — inválido en
+  ARIA. Ahora: contenedor neutro `role="group"`, un único
+  `<button aria-label="Ampliar imagen">` que envuelve SOLO la imagen, flechas
+  como hermanas absolutas.
+- **Dots táctiles 24×24 (auditoría #22)**: el botón mide 24×24 (WCAG 2.5.8),
+  el punto visual sigue siendo 8px, centrado.
+- **Lightbox vía `<dialog>` (auditoría #13)**: `showModal()` reemplaza el
+  manejo manual de foco/Escape/scroll-lock — focus trap gratis.
+- **`referrerPolicy="no-referrer"` en `<img>` remotos** (auditoría #15) —
+  muchas tiendas bloquean hotlinks por Referer.
+- **MetaTable sin jerga de pipeline (auditoría #18)**: se quitaron
+  "Detectado"/"Estandarizado: Pendiente" (esta última rama era inalcanzable);
+  "Detectado" se reformuló como "En el catálogo desde".

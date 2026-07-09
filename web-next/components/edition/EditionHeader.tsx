@@ -83,8 +83,10 @@ export function EditionHeader({ cluster, totalVolumes, signalTypes }: EditionHea
             )}
           </div>
 
-          {/* Series name */}
-          {cluster.seriesDisplay && (
+          {/* Series name — h1. Sin seriesDisplay (auditoría #19: la página no
+              debe quedar sin h1), el h1 cae a editionDisplay ?? editionKey y
+              no se repite el h2 de abajo. */}
+          {cluster.seriesDisplay ? (
             <h1
               style={{
                 fontSize: 28,
@@ -97,10 +99,23 @@ export function EditionHeader({ cluster, totalVolumes, signalTypes }: EditionHea
             >
               {cluster.seriesDisplay}
             </h1>
+          ) : (
+            <h1
+              style={{
+                fontSize: 22,
+                fontWeight: 700,
+                fontFamily: 'var(--font-display)',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1.2,
+                margin: 0,
+              }}
+            >
+              {cluster.editionDisplay ?? cluster.editionKey}
+            </h1>
           )}
 
           {/* Edition name */}
-          {cluster.editionDisplay && (
+          {cluster.seriesDisplay && cluster.editionDisplay && (
             <h2
               style={{
                 fontSize: 18,

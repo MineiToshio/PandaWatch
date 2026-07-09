@@ -1,5 +1,6 @@
 import { loadClusters, loadFacets, groupByEdition, seriesFromClusters, aliasSearchIndex } from '@/lib/data'
 import { parseFilterParams, filterClusters, sortClusters, paginate } from '@/lib/filters'
+import { productTypeFacet } from '@/lib/facets'
 import { CatalogControls } from '@/components/catalog/CatalogControls'
 import { CatalogGrid } from '@/components/catalog/CatalogGrid'
 import { Pagination } from '@/components/catalog/Pagination'
@@ -56,22 +57,32 @@ export default async function CatalogPage({
     ...facets,
     languages: facets.languages.slice(0, 8),
     publishers: facets.publishers.slice(0, 12),
+    // product_type como facet (auditoría #21) — no cacheada en dataCache()
+    // (buildFacets() es archivo protegido en este paquete); es un solo pase
+    // O(n) sobre clusters ya cargados, costo despreciable.
+    productTypes: productTypeFacet(allClusters),
   }
 
   return (
-    <CatalogControls
-      facets={uiFacets}
-      current={fp}
-      sort={fp.sort}
-      page={page}
-      pages={pages}
-      totalTomos={totalTomos}
-      totalEditions={totalEditions}
-      totalObras={totalObras}
-    >
-      <SeriesHighlights series={highlightSeries} />
-      <CatalogGrid clusters={items} eagerCovers={4} />
-      {pages > 1 && <Pagination total={pages} current={page} />}
-    </CatalogControls>
+    <>
+      {/* h1 de la home — discreto sobre el grid, no hace falta un hero
+          (auditoría #19: la home no tenía ningún h1, el primer heading era
+          el h2 "Obras destacadas"). */}
+      <h1 className="catalog-h1">Ediciones especiales de manga</h1>
+      <CatalogControls
+        facets={uiFacets}
+        current={fp}
+        sort={fp.sort}
+        page={page}
+        pages={pages}
+        totalTomos={totalTomos}
+        totalEditions={totalEditions}
+        totalObras={totalObras}
+      >
+        <SeriesHighlights series={highlightSeries} />
+        <CatalogGrid clusters={items} eagerCovers={4} />
+        {pages > 1 && <Pagination total={pages} current={page} />}
+      </CatalogControls>
+    </>
   )
 }
