@@ -53,6 +53,28 @@ _UNMAPPED_LOCK = threading.Lock()
 # series_key — el writer dedupea contra este set en memoria.
 _UNMAPPED_LOGGED_THIS_RUN: set[str] = set()
 
+# Gate del logging de unmapped (Fable 2026-07-08 — mecanismo, no síntoma).
+# `candidate_to_json` (manga_watch.py, "Paso D") llama `log_unmapped_series` al
+# DERIVAR una fila. Ese es un EFECTO colateral (escritura al archivo), pero la
+# derivación la ejecutan también rescore/backfill_metadata/dry-runs, que NO
+# ingieren series nuevas — sólo re-derivan filas del corpus. Antes appendeaban a
+# la cola aunque no fueran a escribir items.jsonl (contaminación + git dirty).
+# Separamos derivación de efecto: el logging está APAGADO por default y sólo lo
+# encienden los entrypoints de INGESTIÓN real (el scraper `run()` no-dry y los
+# retrofits de descubrimiento). Un context/lectura no toca el archivo.
+_UNMAPPED_LOGGING_ENABLED: bool = False
+
+
+def set_unmapped_logging(enabled: bool) -> None:
+    """Enciende/apaga el efecto de `log_unmapped_series` a nivel módulo.
+
+    Lo encienden SÓLO los entrypoints que descubren series nuevas (scraper
+    `run()` no-dry, retrofits de descubrimiento). Todo lo demás — rescore,
+    backfill_metadata, dry-runs, tests — lo deja apagado y la derivación de
+    filas NO produce escrituras a `unmapped_series.jsonl`."""
+    global _UNMAPPED_LOGGING_ENABLED
+    _UNMAPPED_LOGGING_ENABLED = bool(enabled)
+
 
 def _normalize(s: str) -> str:
     """Lowercase, sin diacríticos, sin puntuación. Preserva CJK."""
@@ -334,9 +356,12 @@ def log_unmapped_series(
     Thread-safe (escritura serializada vía `_UNMAPPED_LOCK`).
 
     NO loguea si:
+    - el logging está apagado (default — ver `set_unmapped_logging`).
     - `series_key` está vacío.
     - `series_key` es una canonical key conocida (ya está mapeada).
     """
+    if not _UNMAPPED_LOGGING_ENABLED:
+        return
     if not series_key:
         return
     if is_canonical_key(series_key):

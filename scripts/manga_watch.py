@@ -45,12 +45,18 @@ import email.utils
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import sys
 import threading
 import time
 import unicodedata
+
+try:
+    import fcntl  # POSIX file locking (macOS/Linux). Ausente en Windows.
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1208,29 +1214,53 @@ def _box_set_signal_present(normalized: str) -> bool:
     return False
 
 
+# A11 (Fable 2026-07-08): pre-compilar las 269 reglas de KEYWORD_RULES UNA sola
+# vez a nivel módulo. Antes `detect_signals` re-normalizaba (casefold + NFKD +
+# regex) `rule["phrase"]` para CADA candidato — ~48 % de su CPU medida (el
+# sub-auditor midió 0.53 ms de 1.12 ms/call). La transformación es PURA y las
+# reglas son ESTÁTICAS (nada las muta en runtime), así que se precomputa la
+# tupla (phrase, pattern, score, type, fuzzy) una vez. Los tokens/patrones fuzzy
+# también son estáticos: el modo `_DETECT_FUZZY` sólo decide SI se evalúan, no
+# cambia su valor. `detect_signals` itera esta tabla en vez de re-derivar.
+#   (phrase, pattern|None, score, type, [(token, token_pattern), ...])
+_CompiledRule = tuple
+
+
+def _compile_keyword_rules() -> list[_CompiledRule]:
+    compiled: list[_CompiledRule] = []
+    for rule in KEYWORD_RULES:
+        phrase = str(rule["phrase"])
+        normalized_phrase = normalize_text(phrase)
+        pattern = _phrase_pattern(normalized_phrase) if normalized_phrase else None
+        fuzzy: list[tuple[str, re.Pattern[str]]] = [
+            (token, re.compile(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"))
+            for token in _derive_fuzzy_tokens(phrase)
+        ]
+        compiled.append(
+            (phrase, pattern, int(rule["score"]), str(rule["type"]), fuzzy)
+        )
+    return compiled
+
+
+_COMPILED_RULES: list[_CompiledRule] = _compile_keyword_rules()
+
+
 def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
     normalized = normalize_text(text)
     matched_phrases: list[str] = []
     matched_types: list[str] = []
     score = 0
 
-    for rule in KEYWORD_RULES:
-        phrase = str(rule["phrase"])
-        normalized_phrase = normalize_text(phrase)
-        rule_score = int(rule["score"])
-        rule_type = str(rule["type"])
-
-        if normalized_phrase and _phrase_pattern(normalized_phrase).search(normalized):
+    for phrase, pattern, rule_score, rule_type, fuzzy in _COMPILED_RULES:
+        if pattern is not None and pattern.search(normalized):
             matched_phrases.append(phrase)
             matched_types.append(rule_type)
             score += rule_score
             continue
 
         if _DETECT_FUZZY:
-            tokens = _derive_fuzzy_tokens(phrase)
-            for token in tokens:
-                pattern = rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
-                if re.search(pattern, normalized):
+            for token, token_pattern in fuzzy:
+                if token_pattern.search(normalized):
                     matched_phrases.append(f"{phrase} [fuzzy:{token}]")
                     matched_types.append(rule_type)
                     score += rule_score // _DETECT_FUZZY_DIVISOR
@@ -1723,6 +1753,15 @@ PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
         "cofre", "cofanetto", "coffret",
     ]),
     ("novel", ["light novel", "novel", "novela", "ranobe", "ライトノベル"]),
+]
+
+# A11 (Fable 2026-07-08): patrones de PRODUCT_TYPE_KEYWORDS pre-compilados UNA vez
+# (mismo motivo que _COMPILED_RULES). Antes `derive_product_type` hacía
+# `normalize_text(w) + _phrase_pattern(...)` por keyword por item. La lista es
+# estática → se precomputa (ptype, [patterns]) y el bucle sólo hace `.search`.
+_PRODUCT_TYPE_COMPILED: list[tuple[str, list[re.Pattern[str]]]] = [
+    (ptype, [_phrase_pattern(normalize_text(w)) for w in words])
+    for ptype, words in PRODUCT_TYPE_KEYWORDS
 ]
 
 
@@ -2424,10 +2463,10 @@ def _img_anchor_full_url(img_node: Any, source_url: str) -> str:
         if not url:
             continue
         # No salir del dominio del producto (gotcha #31): el href debe ser del
-        # mismo host que source_url, o relativo.
-        from urllib.parse import urlparse as _urlparse
-        src_host = _urlparse(source_url).netloc
-        href_host = _urlparse(url).netloc
+        # mismo host que source_url, o relativo. (urlparse ya está importado a
+        # nivel módulo — B19: sin re-import en el hot path.)
+        src_host = urlparse(source_url).netloc
+        href_host = urlparse(url).netloc
         if src_host and href_host and src_host != href_host:
             continue
         return url
@@ -2687,8 +2726,7 @@ def _extract_images_from_detail_soup(
     # (`.../fumetti-cover/thumbnail/...`). Comparar el directorio padre exacto
     # los descarta (gotcha #31).
     if len(out) >= 2:
-        from urllib.parse import urlparse
-
+        # urlparse ya está importado a nivel módulo (B19: sin re-import en el hot path).
         def _parent_dir(u: str) -> str:
             try:
                 p = urlparse(u).path.rstrip("/")
@@ -2874,7 +2912,13 @@ def fetch_metadata_from_detail(
         if not response.encoding:
             response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, "html.parser")
-    except (requests.RequestException, Exception):
+    except requests.RequestException:
+        # B19 (Fable 2026-07-08): antes `(requests.RequestException, Exception)` —
+        # la tupla era redundante (Exception ya cubre RequestException) y tragaba
+        # cualquier bug de parsing silenciosamente. Un fallo de RED devuelve
+        # metadata vacía (comportamiento correcto); un error inesperado propaga a
+        # la try/except del caller (loop de detail-fetch / retrofits) donde se
+        # loguea, en vez de esconderse.
         return result
 
     # === Schema.org/JSON-LD primero (es la fuente más confiable) ===
@@ -3879,18 +3923,19 @@ def is_comic_not_manga(title: str, publisher: str) -> tuple[bool, str]:
         return False, ""
     if publisher and publisher.strip() in _COMICS_PUBLISHERS:
         return True, f"comic_publisher:{publisher.strip()}"
-    if title and _COMICS_FRANCHISE_PATTERN and _COMICS_FRANCHISE_PATTERN.search(title):
+    # B19 (Fable 2026-07-08): guardar el match en vez de re-.search() el patrón.
+    m_franchise = _COMICS_FRANCHISE_PATTERN.search(title) if (title and _COMICS_FRANCHISE_PATTERN) else None
+    if m_franchise:
         # Antes de rechazar, verificar si el título está en title_exceptions:
         # títulos que contienen una keyword de franquicia occidental pero son
         # manga reales (crossovers, adaptaciones japonesas oficiales, etc.).
         if _COMICS_TITLE_EXCEPTION_PATTERN and _COMICS_TITLE_EXCEPTION_PATTERN.search(title):
             pass  # excepción activa → no rechazar por franchise
         else:
-            m = _COMICS_FRANCHISE_PATTERN.search(title)
-            return True, f"comic_franchise:{m.group(0)}"
-    if title and _COMICS_FORMAT_PATTERN and _COMICS_FORMAT_PATTERN.search(title):
-        m = _COMICS_FORMAT_PATTERN.search(title)
-        return True, f"comic_format:{m.group(0)}"
+            return True, f"comic_franchise:{m_franchise.group(0)}"
+    m_format = _COMICS_FORMAT_PATTERN.search(title) if (title and _COMICS_FORMAT_PATTERN) else None
+    if m_format:
+        return True, f"comic_format:{m_format.group(0)}"
     return False, ""
 
 
@@ -3956,14 +4001,14 @@ def is_pure_novel(title: str, description: str = "", url: str = "") -> tuple[boo
     # Bypass: si menciona manga/light novel/cómic, NO es novela pura.
     if _NOVEL_BYPASS_PATTERNS.search(blob):
         return False, ""
-    # URL en sección literaria/novela
-    if url and _NOVEL_URL_PATTERNS.search(url):
-        m = _NOVEL_URL_PATTERNS.search(url)
-        return True, f"novel_url:{m.group(0)}"
+    # URL en sección literaria/novela (B19: guardar el match, sin re-.search()).
+    m_url = _NOVEL_URL_PATTERNS.search(url) if url else None
+    if m_url:
+        return True, f"novel_url:{m_url.group(0)}"
     # Indicadores explícitos en title/desc
-    if _NOVEL_INDICATOR_PATTERNS.search(blob):
-        m = _NOVEL_INDICATOR_PATTERNS.search(blob)
-        return True, f"novel_indicator:{m.group(0)[:30]}"
+    m_ind = _NOVEL_INDICATOR_PATTERNS.search(blob)
+    if m_ind:
+        return True, f"novel_indicator:{m_ind.group(0)[:30]}"
     return False, ""
 
 
@@ -4124,11 +4169,11 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
     # Word-boundary match (igual que detect_signals). Antes hacíamos substring
     # match, lo que causaba que "Manga Artbooks" en descripción etiquetara
     # tomos regulares como product_type=artbook (Rin-ne, Bleach, etc.).
-    for ptype, words in PRODUCT_TYPE_KEYWORDS:
+    for ptype, patterns in _PRODUCT_TYPE_COMPILED:
         if ptype == "artbook" and suppress_artbook:
             continue
-        for w in words:
-            if _phrase_pattern(normalize_text(w)).search(text):
+        for pattern in patterns:
+            if pattern.search(text):
                 return ptype
     # Fallback por signal_types (señales del scoring)
     if signal_types:
@@ -4564,6 +4609,14 @@ def isbn13(raw: str) -> str:
     return ""
 
 
+# B19 (Fable 2026-07-08): constante de módulo — antes se recreaba el dict en CADA
+# llamada a derive_cluster_key (hot path del consolidate por-fila). Canonicaliza el
+# kind de listadomanga (español del synthetic URL / inglés del lm_kind viejo) a UN
+# vocabulario para que el mismo producto comparta cluster (gotcha #52).
+_LMC_KIND_CANON = {"especial": "special", "alternativa": "variant",
+                   "limitada": "limited"}
+
+
 def derive_cluster_key(item: dict[str, Any]) -> str:
     """Devuelve la clave de agrupación para deduplicar items entre fuentes.
 
@@ -4620,9 +4673,8 @@ def derive_cluster_key(item: dict[str, Any]) -> str:
         # Canonicalizar el kind: el synthetic URL usa español (especial/alternativa/
         # limitada) y el lm_kind viejo usa el edition_slug inglés (special/variant/
         # limited). Mapeamos a UN vocabulario para que el MISMO producto (old-format
-        # std vs new raw) comparta cluster y deduplique (gotcha #52).
-        _LMC_KIND_CANON = {"especial": "special", "alternativa": "variant",
-                           "limitada": "limited"}
+        # std vs new raw) comparta cluster y deduplique (gotcha #52). El mapa
+        # _LMC_KIND_CANON es una constante de módulo (B19).
         _it = re.search(r"[?&]item=([a-z]+)-([^-&]+)", item.get("url") or "")
         if _it:
             kind = _LMC_KIND_CANON.get(_it.group(1), _it.group(1))
@@ -5090,9 +5142,16 @@ def is_approved(item: dict[str, Any]) -> bool:
 # lógica en otro lado (la divergencia entre sitios de merge fue la raíz de los
 # bugs de fotos de 2026-06-02).
 
+# B19 (Fable 2026-07-08): `image_url`/`image_local` REMOVIDOS — eran siempre ""
+# por entry (los campos top-level se eliminaron 2026-06-09; la portada vive en
+# images[0]). Ningún consumidor los lee (verificado en web/, web-next/ y los
+# retrofits) — sólo estaban declarados en web-next/lib/types.ts (SourceEntry),
+# ya sincronizado. Menos bytes muertos por fuente. El corpus existente conserva
+# sus sources[] tal cual (merge_cluster usa el sources[] guardado); source_entry
+# sólo se llama para filas SIN sources[].
 _SOURCE_FIELDS = (
     "source", "source_class", "country", "publisher", "language", "url",
-    "image_url", "image_local", "stock_type", "detected_at",
+    "stock_type", "detected_at",
     "release_date", "score",
 )
 
@@ -5333,6 +5392,144 @@ def _translation_is_stale(old: dict[str, Any], new_description: str) -> bool:
     return old_hash != description_src_hash(new_description)
 
 
+# ---------------------------------------------------------------------------
+# Lock inter-proceso sobre items.jsonl (A12 / S10, Fable 2026-07-08)
+# ---------------------------------------------------------------------------
+# El scraper, el dashboard (serve.py) y los jobs del Panel hacen todos
+# read-modify-write del items.jsonl ENTERO con rename atómico. El rename es
+# atómico pero NO impide el last-writer-wins entre procesos: una aprobación o
+# curación en el dashboard que caiga entre el "leer" y el "renombrar" de un
+# flush del scraper se pisa en silencio. El lock `.scrape.lock` (mkdir en los
+# .sh) sólo cubre scrape-vs-scrape; los `@_serialized` de serve sólo cubren
+# request-vs-request DENTRO del mismo proceso. Este flock cierra el hueco
+# cross-proceso: TODO writer de items.jsonl toma `data/items.jsonl.lock` sobre
+# el intervalo COMPLETO read→modify→write.
+#
+# Reentrancia + no auto-bloqueo: `append_jsonl` llama a `write_items_atomic`
+# adentro; ambos toman el lock. Un flock por-fd NO es reentrante entre dos
+# open() del mismo proceso (se auto-bloquearía), así que serializamos in-proceso
+# con un RLock (reentrante, mismo hilo) y mantenemos UN solo fd flock mientras la
+# profundidad sea >0. Orden de locks (SIEMPRE este, para no deadlockear): primero
+# el RLock in-proceso, después el flock cross-proceso. serve.py toma el MISMO
+# archivo de lock con su propio helper (interoperan: flock es sobre el archivo,
+# no sobre el código). Timeout para no colgar: si no se adquiere en
+# `_ITEMS_LOCK_TIMEOUT`s se levanta TimeoutError (los writes reales son
+# sub-segundo; un timeout indica un proceso trabado, mejor fallar que colgar).
+_ITEMS_LOCK_RLOCK = threading.RLock()
+_ITEMS_LOCK_DEPTH = 0
+_ITEMS_LOCK_FD: int | None = None
+_ITEMS_LOCK_TIMEOUT = 30.0
+
+
+def _items_lock_path(path: Path) -> Path:
+    return path.with_name(path.name + ".lock")
+
+
+@contextmanager
+def items_write_lock(path: Path, timeout: float = _ITEMS_LOCK_TIMEOUT):
+    """Lock EXCLUSIVO cross-proceso sobre `<path>.lock` para el intervalo
+    read→modify→write de items.jsonl. Reentrante en el MISMO hilo. Ver el
+    comentario de arriba. No-op cross-proceso si `fcntl` no está disponible
+    (Windows) — el RLock igual serializa in-proceso."""
+    global _ITEMS_LOCK_DEPTH, _ITEMS_LOCK_FD
+    _ITEMS_LOCK_RLOCK.acquire()
+    try:
+        if fcntl is not None and _ITEMS_LOCK_DEPTH == 0:
+            lock_path = _items_lock_path(path)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        os.close(fd)
+                        raise TimeoutError(
+                            f"items_write_lock: no se pudo adquirir {lock_path} "
+                            f"en {timeout}s (¿otro proceso trabado?)"
+                        )
+                    time.sleep(0.05)
+            _ITEMS_LOCK_FD = fd
+        _ITEMS_LOCK_DEPTH += 1
+        yield
+    finally:
+        _ITEMS_LOCK_DEPTH -= 1
+        if _ITEMS_LOCK_DEPTH == 0 and _ITEMS_LOCK_FD is not None:
+            try:
+                fcntl.flock(_ITEMS_LOCK_FD, fcntl.LOCK_UN)
+            finally:
+                os.close(_ITEMS_LOCK_FD)
+                _ITEMS_LOCK_FD = None
+        _ITEMS_LOCK_RLOCK.release()
+
+
+# ---------------------------------------------------------------------------
+# Spool de flush incremental (A10, Fable 2026-07-08)
+# ---------------------------------------------------------------------------
+# `append_jsonl` es O(corpus): relee + parsea + consolida + reescribe las ~13 k
+# filas / 33 MB del items.jsonl COMPLETO en cada llamada. El flush incremental lo
+# invocaba por-fuente (~60 veces/run) → ~4 GB de I/O y ~1.7 M de (de)serializac.
+# en el MAIN thread, bloqueando a los workers detrás de cada flush. Ahora el
+# flush por-fuente escribe sólo sus filas a un SPOOL append-only
+# (`items.jsonl.spool`, O(filas)); la consolidación O(corpus) corre UNA vez, en
+# el `append_jsonl` final del run, que absorbe el spool y lo borra.
+#
+# Durabilidad (invariante (a)): el spool se fsync-ea en cada append, así que un
+# crash a mitad de run NO pierde lo flusheado (sobrevive en el spool) y el
+# items.jsonl queda intacto → parseable y válido (posiblemente sin las filas
+# nuevas, que quedan en el spool). El próximo `append_jsonl` (del run siguiente o
+# de cualquier retrofit) absorbe el spool ANTES de escribir — recuperación
+# automática. `save_state` corre DESPUÉS del append final (A3), así que un crash
+# re-reporta las fuentes como new/changed y el upsert idempotente las reabsorbe.
+#
+# Concurrencia (invariante (b)): el spool NO es leído por el dashboard; sólo el
+# `append_jsonl` final (que toma `items_write_lock`, A12) lo lee/borra. La
+# relectura O(corpus) que antes "absorbía" ediciones concurrentes de serve la
+# reemplaza ese lock — por eso el lock DEBE existir antes de quitar la relectura.
+
+
+def _items_spool_path(path: Path) -> Path:
+    return path.with_name(path.name + ".spool")
+
+
+def _append_spool(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Appendea `rows` al spool de `path` (append-only + fsync). O(len(rows)).
+
+    Bajo `items_write_lock` para no cruzarse con el `append_jsonl` final que
+    lee+borra el spool (mismo hilo en el scraper, pero un retrofit del Panel
+    podría solaparse)."""
+    if not rows:
+        return
+    spool = _items_spool_path(path)
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    with items_write_lock(path):
+        with spool.open("a", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
+
+def _read_spool(path: Path) -> list[dict[str, Any]]:
+    """Lee las filas del spool de `path` (o [] si no existe/está vacío)."""
+    spool = _items_spool_path(path)
+    if not spool.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with spool.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
 def write_items_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     """Escribe `rows` (dicts ya serializables) como JSONL atómicamente.
 
@@ -5348,19 +5545,24 @@ def write_items_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
 
     Crea `path.parent` si hace falta. No hace upsert ni consolidación — el
     caller ya debe traer la lista final de filas a escribir.
+
+    Toma `items_write_lock(path)` (A12): serializa la escritura contra otros
+    procesos (scraper / dashboard / retrofits). Reentrante — si el caller ya
+    tomó el lock (p.ej. `append_jsonl`), no se re-adquiere.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as file:
-        for item in rows:
-            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
-        # Durabilidad: forzar el flush del buffer de Python + fsync del FD antes
-        # del rename atómico, para que un corte de energía justo tras el replace
-        # no deje el archivo truncado/vacío (el .tmp podría estar en el page
-        # cache pero no en disco).
-        file.flush()
-        os.fsync(file.fileno())
-    tmp_path.replace(path)
+    with items_write_lock(path):
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with tmp_path.open("w", encoding="utf-8") as file:
+            for item in rows:
+                file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+            # Durabilidad: forzar el flush del buffer de Python + fsync del FD antes
+            # del rename atómico, para que un corte de energía justo tras el replace
+            # no deje el archivo truncado/vacío (el .tmp podría estar en el page
+            # cache pero no en disco).
+            file.flush()
+            os.fsync(file.fileno())
+        tmp_path.replace(path)
 
 
 def write_lines_atomic(path: Path, lines: list[str]) -> None:
@@ -5372,17 +5574,22 @@ def write_lines_atomic(path: Path, lines: list[str]) -> None:
     línea corrupta que no se pudo parsear (patrón B11 raw-preserve) o un
     dump que ya trae las líneas formateadas — en vez de reserializar un
     dict. Mismo patrón de durabilidad que `write_items_atomic`.
+
+    Toma `items_write_lock(path)` (A12): cuando el `path` es items.jsonl (dumps
+    raw-preserve de retrofits B11) serializa contra otros procesos; sobre otro
+    archivo toma su propio lock sibling (no contendido).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    text = "\n".join(lines)
-    if lines:
-        text += "\n"
-    with tmp_path.open("w", encoding="utf-8") as file:
-        file.write(text)
-        file.flush()
-        os.fsync(file.fileno())
-    tmp_path.replace(path)
+    with items_write_lock(path):
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        text = "\n".join(lines)
+        if lines:
+            text += "\n"
+        with tmp_path.open("w", encoding="utf-8") as file:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        tmp_path.replace(path)
 
 
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -5400,31 +5607,62 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
     Si dos items distintos comparten URL normalizada (raro), gana el último.
     Si una row no tiene URL, se appendea sin merge.
+
+    A12 (Fable 2026-07-08): TODA la sección read→modify→write corre bajo
+    `items_write_lock(path)` — un flush del scraper y una curación del dashboard
+    ya no se pisan cross-proceso (last-writer-wins).
+
+    A10 (Fable 2026-07-08): absorbe el SPOOL de flush incremental
+    (`items.jsonl.spool`) si existe: sus filas se procesan ANTES que `rows` con
+    la MISMA lógica de upsert (chaining idéntico al flush por-fuente histórico —
+    cada spool-row se mergea contra el corpus preservando curados; las `rows`
+    finales enriquecidas ganan sobre su versión de spool). Tras escribir, borra
+    el spool. Así la consolidación O(corpus) corre UNA vez por run, no ~60.
     """
-    if not rows:
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
+    with items_write_lock(path):
+        spool_rows = _read_spool(path)
+        if not rows and not spool_rows:
+            return
 
-    # 1. Cargar existentes en un dict {key -> row}.
-    existing: dict[str, dict[str, Any]] = {}
-    no_url_rows: list[dict[str, Any]] = []
-    if path.exists():
-        with path.open("r", encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                url = item.get("url", "")
-                if not url:
-                    no_url_rows.append(item)
-                    continue
-                key = normalize_url_for_dedup(url)
-                existing[key] = item  # last-wins si hubiera duplicados en el archivo
+        # 1. Cargar existentes en un dict {key -> row}.
+        existing: dict[str, dict[str, Any]] = {}
+        no_url_rows: list[dict[str, Any]] = []
+        if path.exists():
+            with path.open("r", encoding="utf-8") as file:
+                for line in file:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    url = item.get("url", "")
+                    if not url:
+                        no_url_rows.append(item)
+                        continue
+                    key = normalize_url_for_dedup(url)
+                    existing[key] = item  # last-wins si hubiera duplicados en el archivo
 
+        _append_jsonl_upsert(path, existing, no_url_rows, spool_rows + rows)
+        # Spool absorbido → borrarlo (dentro del lock, tras el write exitoso).
+        spool = _items_spool_path(path)
+        if spool_rows and spool.exists():
+            spool.unlink()
+
+
+def _append_jsonl_upsert(
+    path: Path,
+    existing: dict[str, dict[str, Any]],
+    no_url_rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> None:
+    """Núcleo del upsert de `append_jsonl` (extraído para claridad, A10).
+
+    Llamar SIEMPRE bajo `items_write_lock` con `existing`/`no_url_rows` ya
+    cargados del corpus. Muta `existing`/`no_url_rows` y hace el
+    consolidate + write final. No toca el spool (eso lo maneja el caller)."""
     # 2. Upsert con las rows nuevas (last-wins por URL).
     #
     # Excepción: si el row existente tiene `standardized_at`, preservamos los
@@ -5639,6 +5877,7 @@ def flush_source_candidates(
     items_path: Path,
     min_score: int,
     dry_run: bool = False,
+    spool: bool = True,
 ) -> int:
     """Escribe al JSONL los candidatos new/changed de UNA fuente inmediatamente.
 
@@ -5653,6 +5892,13 @@ def flush_source_candidates(
 
     Si el run completa normalmente, el `append_jsonl` final sobreescribe estas
     entradas con datos enriquecidos (detail-fetch), lo cual es correcto.
+
+    A10 (Fable 2026-07-08): con `spool=True` (default) las filas van al SPOOL
+    append-only (`items.jsonl.spool`, O(filas)) en vez de disparar un
+    `append_jsonl` O(corpus) por-fuente; el `append_jsonl` final del run absorbe
+    el spool en UNA consolidación. `spool=False` conserva el comportamiento
+    viejo (append inmediato al items.jsonl) para callers que no cierran con un
+    append final.
 
     Retorna la cantidad de filas escritas.
     """
@@ -5679,7 +5925,10 @@ def flush_source_candidates(
             continue  # "seen" — ya está en el JSONL sin cambios
         to_write.append(candidate_to_json(c))
     if to_write:
-        append_jsonl(items_path, to_write)
+        if spool:
+            _append_spool(items_path, to_write)
+        else:
+            append_jsonl(items_path, to_write)
     return len(to_write)
 
 
@@ -6056,10 +6305,24 @@ def _playwright_worker_loop(req_queue: _queue_mod.Queue) -> None:
                 # en ESTE thread, donde vive permanentemente).
                 if browser is None:
                     from playwright.sync_api import sync_playwright
-                    pw_instance = sync_playwright().start()
-                    browser = pw_instance.chromium.launch(
-                        headless=True, args=launch_args
-                    )
+                    # B18(b) (Fable 2026-07-08): reusar el driver ya iniciado
+                    # (no re-.start() si un launch previo falló) y, si
+                    # chromium.launch() falla, DETENER el driver antes de
+                    # re-levantar — antes el `pw_instance` quedaba huérfano y
+                    # cada job siguiente iniciaba OTRO driver (fuga de procesos).
+                    if pw_instance is None:
+                        pw_instance = sync_playwright().start()
+                    try:
+                        browser = pw_instance.chromium.launch(
+                            headless=True, args=launch_args
+                        )
+                    except Exception:
+                        try:
+                            pw_instance.stop()
+                        except Exception:
+                            pass
+                        pw_instance = None
+                        raise
                 result = _fetch_with_playwright_impl(
                     browser, url, timeout_ms, wait_until
                 )
@@ -6129,10 +6392,15 @@ def fetch_with_playwright(
         )
     req_q = _ensure_playwright_worker()
     resp_q: _queue_mod.Queue = _queue_mod.Queue()
+    # B18(a) (Fable 2026-07-08): el worker es UN solo thread que procesa los jobs
+    # en serie. Con ≥4 fuentes `js` el job de esta llamada espera detrás del
+    # backlog; un timeout fijo (timeout_ms + 60) daba `queue.Empty` espurio
+    # aunque el job aún no se hubiera ejecutado. Escalar el timeout por la cantidad
+    # de jobs por delante (aprox: qsize al encolar) × el presupuesto por-job.
+    per_job_budget = (timeout_ms / 1000) + 60  # fetch + launch/waits/scroll buffer
+    backlog = req_q.qsize()  # jobs por delante (aproximado; Queue.qsize es best-effort)
     req_q.put((url, timeout_ms, wait_until, resp_q))
-    # Espera con timeout generoso (timeout_ms del fetch + buffer para
-    # launch del browser + cola si hay backlog de jobs).
-    status, value = resp_q.get(timeout=(timeout_ms / 1000) + 60)
+    status, value = resp_q.get(timeout=per_job_budget * (backlog + 1))
     if status == "err":
         raise value
     return value
@@ -6185,6 +6453,7 @@ def _fetch_with_playwright_impl(
     page = context.new_page()
     start = time.perf_counter()
     response = None
+    final_url = url  # B18(c): fallback si goto() falla antes de leer page.url
     try:
         response = page.goto(url, timeout=timeout_ms, wait_until=wait_until)
         # Si la página parece ser un challenge de Cloudflare/Akamai, esperar más.
@@ -6220,6 +6489,11 @@ def _fetch_with_playwright_impl(
         except Exception:
             pass
         html = page.content()
+        # B18(c) (Fable 2026-07-08): leer la URL final (tras redirects) MIENTRAS
+        # la page sigue abierta. Antes se leía `page.url` DESPUÉS del finally que
+        # cierra la page → `is_closed()` era True → siempre caía al `url` original,
+        # y `final_url` nunca reflejaba el redirect.
+        final_url = page.url
     finally:
         page.close()
         context.close()
@@ -6228,7 +6502,7 @@ def _fetch_with_playwright_impl(
         "http_status": response.status if response else None,
         "content_type": "text/html (playwright)",
         "fetch_ms": elapsed_ms,
-        "final_url": page.url if not page.is_closed() else url,
+        "final_url": final_url,
         "rendered_with": "playwright",
     }
     return html, metadata
@@ -6245,7 +6519,10 @@ def candidate_from_source(source: Source, title: str, url: str, description: str
         language=source.language,
         publisher=source.publisher,
         source_class=source.source_class,
-        tags=source.tags,
+        # B19 (Fable 2026-07-08): COPIA de tags — antes el Candidate aliasaba la
+        # MISMA lista de Source.tags; un mutador de candidate.tags (o dos threads
+        # sobre candidatos de la misma fuente) pisaba la lista compartida.
+        tags=list(source.tags),
         description=description[:2500],
         published_at=published_at,
     )
@@ -6550,7 +6827,6 @@ def detect_product_clusters(soup: BeautifulSoup, source_url: str) -> list[Any]:
         # Score: tamaño * (1 + log2 calidad de descripción) + bonus de keywords.
         # Esto hace que un cluster de cards reales (median 200) le gane a uno de
         # solo imágenes (median 5) aunque tenga menos elementos.
-        import math
         quality = math.log2(max(median_desc, 1) + 1)
         score = len(usable) * (1 + quality * 0.4) + keyword_bonus * 3
         candidates_with_score.append((score, usable))
@@ -9204,6 +9480,20 @@ def run(args: argparse.Namespace) -> int:
         fuzzy_divisor=int(getattr(args, "fuzzy_divisor", 3)),
     )
 
+    # Punto 5 (Fable 2026-07-08): la INGESTIÓN real (scraper no-dry, incluyendo
+    # bootstrap-wiki y sitemap, que se despachan desde acá) es el único
+    # entrypoint autorizado a poblar la cola de unmapped_series. `candidate_to_json`
+    # la llena vía `log_unmapped_series`, pero ese efecto está apagado por default
+    # (rescore/backfill/dry-runs re-derivan filas sin descubrir series nuevas —
+    # no deben tocar el archivo). Acá lo encendemos sólo si NO es dry-run, y
+    # reseteamos el dedup por-corrida.
+    try:
+        from series_aliases import set_unmapped_logging, reset_unmapped_run_state
+        set_unmapped_logging(not args.dry_run)
+        reset_unmapped_run_state()
+    except ImportError:
+        pass
+
     sources_path = Path(args.sources)
     data_dir = Path(args.data_dir)
     reports_dir = Path(args.reports_dir)
@@ -9280,8 +9570,12 @@ def run(args: argparse.Namespace) -> int:
     # fuentes que comparten infraestructura remota (p. ej. borde Shopify). Ver
     # ThrottleRegistry. host_to_group se arma desde las fuentes cargadas (no sólo
     # las activas: el enriquecimiento de detalles puede tocar hosts agrupados).
+    # B19 (Fable 2026-07-08): armar desde `sources_all`, no `sources` — el comentario
+    # ya decía "no sólo las activas" pero el código iteraba la lista FILTRADA, así que
+    # el enriquecimiento de detalles hacia un host agrupado pero inactivo no respetaba
+    # el throttle_group.
     host_to_group: dict[str, str] = {}
-    for _s in sources:
+    for _s in sources_all:
         grp = getattr(_s, "throttle_group", "")
         if grp:
             _h = (urlparse(_s.url).hostname or "").lower()

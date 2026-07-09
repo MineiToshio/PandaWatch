@@ -42,6 +42,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import gzip
 import http.server
@@ -55,6 +56,11 @@ import sys
 import threading
 import time
 import uuid
+
+try:
+    import fcntl  # POSIX file locking (macOS/Linux)
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -398,12 +404,57 @@ def _scrape_lock_pid() -> int | None:
     return pid
 
 
+# Lock CROSS-PROCESO sobre items.jsonl (A12/S10, Fable 2026-07-08). `_ITEMS_LOCK`
+# (arriba) sólo serializa requests DE ESTE proceso; el `@_serialized` no protege
+# contra el proceso SEPARADO del scraper (append_jsonl) ni contra un retrofit del
+# Panel corriendo en otro proceso. Este flock toma el MISMO archivo
+# `data/items.jsonl.lock` que `manga_watch.items_write_lock` (interoperan: flock
+# es sobre el archivo, no sobre el código), cubriendo el intervalo read→modify→
+# write COMPLETO de cada handler mutador. El guard 423 de `_scrape_lock_pid()`
+# sigue siendo la protección coarse (no escribir DURANTE un scrape); este flock
+# cierra la ventana fina entre chequeo y escritura. Orden de locks: primero
+# `_ITEMS_LOCK` (in-proceso), después el flock (cross-proceso) — mismo orden en
+# todos lados para no deadlockear. Timeout para no colgar la UI.
+_ITEMS_FLOCK_PATH = ITEMS_PATH.with_name(ITEMS_PATH.name + ".lock")
+_ITEMS_FLOCK_TIMEOUT = 30.0
+
+
+@contextlib.contextmanager
+def _items_flock(timeout: float = _ITEMS_FLOCK_TIMEOUT):
+    """flock EXCLUSIVO sobre data/items.jsonl.lock (no-op si fcntl ausente)."""
+    if fcntl is None:
+        yield
+        return
+    _ITEMS_FLOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(_ITEMS_FLOCK_PATH), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"_items_flock: no se pudo adquirir {_ITEMS_FLOCK_PATH} "
+                        f"en {timeout}s"
+                    )
+                time.sleep(0.05)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def _serialized(fn):
-    """Serializa la ejecución de la función con _ITEMS_LOCK (read-modify-write
-    atómico sobre items.jsonl)."""
+    """Serializa la ejecución de la función con _ITEMS_LOCK (in-proceso) +
+    `_items_flock` (cross-proceso) para el read-modify-write atómico sobre
+    items.jsonl. Ver comentario de arriba (A12/S10)."""
     @functools.wraps(fn)
     def _wrapper(*args, **kwargs):
-        with _ITEMS_LOCK:
+        with _ITEMS_LOCK, _items_flock():
             return fn(*args, **kwargs)
     return _wrapper
 

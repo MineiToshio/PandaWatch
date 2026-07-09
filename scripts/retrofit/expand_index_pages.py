@@ -240,6 +240,15 @@ def main() -> int:
     ap.add_argument("--timeout-read", type=int, default=30)
     args = ap.parse_args()
 
+    # Ingesta real (descubre items/series nuevas): habilitar el logging de la
+    # cola de unmapped, salvo en dry-run (Fable 2026-07-08, punto 5 — el efecto
+    # está apagado por default en series_aliases).
+    try:
+        from series_aliases import set_unmapped_logging
+        set_unmapped_logging(not args.dry_run)
+    except ImportError:
+        pass
+
     src = Path(args.input)
     out = Path(args.output)
     if not src.exists():

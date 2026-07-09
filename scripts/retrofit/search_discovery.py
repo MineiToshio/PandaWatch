@@ -817,6 +817,15 @@ def main() -> int:
             print(f"  ... y {len(queries)-20} más")
         return 0
 
+    # Ingesta real (descubre items/series nuevas): habilitar el logging de la
+    # cola de unmapped (Fable 2026-07-08, punto 5 — apagado por default; el
+    # dry-run ya retornó arriba, acá siempre es escritura).
+    try:
+        from series_aliases import set_unmapped_logging
+        set_unmapped_logging(True)
+    except ImportError:
+        pass
+
     timeout = (args.connect_timeout, args.read_timeout)
     session = make_session("Mozilla/5.0 (compatible; manga-watch-search/1.0)")
     items_path = Path(args.items_file)

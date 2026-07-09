@@ -47,8 +47,8 @@ export type SourceEntry = {
   publisher?: string
   language?: string
   url: string
-  image_url?: string
-  image_local?: string
+  // image_url/image_local removidos de sources[] (Fable 2026-07-08): eran
+  // siempre "" — la portada vive en images[0] (top-level eliminado 2026-06-09).
   stock_type?: string
   detected_at?: string
   release_date?: string
