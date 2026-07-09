@@ -60,17 +60,97 @@ except ImportError:
 #   [ES - Listado Manga Calendario] candidatos con señales: 5 (3 págs)
 #   [ERROR] ES - Misión Tokyo: error inesperado Page.goto: Timeout ...
 #   [SKIP-js] ES - Kibook Novedades: requiere JavaScript
+#   [SKIP-no-links] ListadoManga (colecciones): Sin enlaces con texto significativo...
+#   [CHALLENGE_DETECTED] source=ES - Foo Tienda type=cloudflare
 #
 # Formato LEGACY (overnight runs antiguos, source en línea propia):
 #   [12/184] ES - Listado Manga Calendario :: https://...
 #       candidatos con señales: 5 (3 págs)
+#
+# Formato WIKIS (_run_wiki_bootstrap, un log por wiki, ver manga_watch.py:8469):
+#   [BOOTSTRAP-WIKI] fuente: manga-sanctuary
+#   ...
+#   [RESUMEN BOOTSTRAP-WIKI]
+#     candidates totales: 719
 _CANDIDATES_COMBINED_RE = re.compile(
     r"^\s*\[(?P<name>.+?)\]\s+candidatos con señales:\s*(?P<n>\d+)"
 )
 _SOURCE_LINE_RE = re.compile(r"^\s*\[(\d+)/(\d+)\]\s+([^:]+?)\s*::\s*(\S+)\s*$")
 _CANDIDATES_RE = re.compile(r"^\s+candidatos con señales:\s*(\d+)")
-_ERROR_RE = re.compile(r"^\[ERROR\]\s+([^:]+):\s+(.+)$")
-_SKIP_RE = re.compile(r"^\[SKIP-(\w+)\]\s+([^:]+):\s+(.+)$")
+
+# (#3, 2026-07-08) Los nombres de search-templates llevan ":" adentro (p.ej.
+# "US - Dark Horse Direct (search) [search: limited edition]"). Un split naive
+# en el primer ":" corta el nombre ahí y trunca el resto contra el mensaje →
+# error atribuido a una fuente fantasma. Se ancla el MENSAJE a los prefijos
+# conocidos que emite manga_watch.py (grep `[ERROR]` ahí para la lista
+# completa) para que el backtracking de `.+?` salte de largo los ":" falsos
+# dentro del nombre.
+_ERROR_MSG_PREFIXES = (
+    "HTTP error",
+    "request error",
+    "error inesperado",
+    "bloqueada con 403",
+    "Playwright no instalado",
+    "URL de Bluesky sin handle",
+    "error en worker",
+)
+_ERROR_RE = re.compile(
+    r"^\[ERROR\]\s+(?P<name>.+?):\s+(?P<msg>(?:"
+    + "|".join(re.escape(p) for p in _ERROR_MSG_PREFIXES)
+    + r").*)$"
+)
+# Fallback: split naive (comportamiento pre-fix) para un mensaje NUEVO que no
+# esté en la lista de arriba — mejor una atribución imperfecta que perder el
+# error por completo.
+_ERROR_RE_LEGACY = re.compile(r"^\[ERROR\]\s+([^:]+):\s+(.+)$")
+
+# (#1, 2026-07-08) `\w+` no capturaba categorías con guion — manga_watch.py
+# emite `no-links` y `js-shell` (ver detect_empty_or_js, manga_watch.py:6297)
+# además de `empty`; sólo `empty`/`js` matcheaban antes, dejando invisible el
+# síntoma más común de ListadoManga.
+_SKIP_RE = re.compile(r"^\[SKIP-([\w-]+)\]\s+([^:]+):\s+(.+)$")
+
+# (#2, 2026-07-08) Un 200 OK que es en realidad un challenge anti-bot
+# (Cloudflare/WAF, gotcha #107) NO imprime `[ERROR]` ni la línea de
+# candidatos — sólo esta línea (manga_watch.py:9063). Sin parsearla, una
+# fuente bloqueada quedaba con stats todo-None → "healthy".
+_CHALLENGE_RE = re.compile(
+    r"^\[CHALLENGE_DETECTED\]\s+source=(?P<name>.+?)\s+type=(?P<type>\S+)\s*$"
+)
+
+# (#4, 2026-07-08) Los wikis (26, fuera de sources.yml) van por
+# `_run_wiki_bootstrap` — un log distinto por wiki con un header + resumen
+# uniformes (ver arriba). IDs = choices= de `--bootstrap-wiki` en
+# manga_watch.py:9536; actualizar esta lista si se agrega/quita un wiki (no
+# hay constante exportada para importar sin tocar manga_watch.py, que está
+# fuera de scope de este script).
+_WIKI_IDS = frozenset({
+    "listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary",
+    "otaku-calendar", "manga-mexico", "mangavariant", "socialanime",
+    "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections",
+    "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress",
+    "shueisha", "viz", "sevenseas", "kodansha-us", "jd-intl", "spp-tw",
+    "kimdong", "ipm", "yaakz",
+})
+_WIKI_HEADER_RE = re.compile(r"^\[BOOTSTRAP-WIKI\]\s+fuente:\s*(?P<name>\S+)\s*$")
+_WIKI_SUMMARY_RE = re.compile(r"^\s*candidates totales:\s*(?P<n>\d+)\s*$")
+
+
+def _parse_error_line(line: str) -> tuple[str, str] | None:
+    """Extrae (nombre_fuente, mensaje) de una línea `[ERROR] ...`.
+
+    Intenta primero `_ERROR_RE` (anclado a prefijos conocidos, corrige #3); si
+    el mensaje no matchea ninguno (línea nueva no catalogada), cae al split
+    naive `_ERROR_RE_LEGACY`.
+    """
+    m = _ERROR_RE.match(line)
+    if m:
+        return m.group("name").strip(), m.group("msg").strip()
+    m = _ERROR_RE_LEGACY.match(line)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return None
+
 
 # Nombres entre corchetes que NO son sources (markers de estado del scraper).
 _NON_SOURCE_BRACKETS = {"ERROR", "OK", "WARN", "INFO", "SKIP"}
@@ -114,27 +194,37 @@ def _run_date(run_name: str) -> str:
 
 
 def collect_run_dirs(log_root: Path, last_n: int = 10) -> list[Path]:
-    """Devuelve los directorios de run más recientes."""
-    candidates: list[tuple[float, Path]] = []
+    """Devuelve los directorios de run más recientes.
+
+    Ordena por el timestamp embebido en el NOMBRE del run dir (`infer_run_ts`,
+    ISO → ordena igual lexicográfica que cronológicamente), NO por mtime
+    (#10, 2026-07-08): un restore, un `cp -r`, o cualquier operación que toque
+    el filesystem después del run corrompe el orden basado en mtime sin tocar
+    el nombre. Esto también intercala correctamente prefijos legacy distintos
+    (overnight-/retry-/scrape-delta-/scrape-full-) por fecha real en vez de
+    por el orden alfabético del prefijo.
+    """
+    candidates: list[Path] = []
     for d in log_root.iterdir():
         if not d.is_dir():
             continue
         if d.name.startswith(("overnight-", "retry-", "scrape-delta-", "scrape-full-")):
-            candidates.append((d.stat().st_mtime, d))
-    candidates.sort(reverse=True)
-    return [d for _, d in candidates[:last_n]]
+            candidates.append(d)
+    candidates.sort(key=lambda d: infer_run_ts(d.name), reverse=True)
+    return candidates[:last_n]
+
+
+def _blank_stats() -> dict:
+    return {"candidates": None, "error": None, "skipped": None, "challenge": None}
 
 
 def parse_run_log(run_dir: Path) -> dict[str, dict]:
     """Parsea logs de un run y devuelve {source_name: stats}.
 
-    Stats per-source: {candidates, errors, skipped, status}.
+    Stats per-source: {candidates, error, skipped, challenge}. Los wikis
+    (formato `[BOOTSTRAP-WIKI]`, #4) se agregan con la clave `wiki:<id>`.
     """
-    sources: dict[str, dict] = defaultdict(lambda: {
-        "candidates": None,
-        "error": None,
-        "skipped": None,
-    })
+    sources: dict[str, dict] = defaultdict(_blank_stats)
 
     # Buscar logs típicos del scrape (01-scrape.log, 02b-*, etc.)
     log_files = list(run_dir.glob("*.log"))
@@ -144,6 +234,7 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
         except OSError:
             continue
         current_source: str | None = None
+        current_wiki: str | None = None
         for line in content.splitlines():
             # Formato ACTUAL: source + candidatos en una sola línea.
             m_comb = _CANDIDATES_COMBINED_RE.match(line)
@@ -151,7 +242,7 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
                 name = m_comb.group("name").strip()
                 if name not in _NON_SOURCE_BRACKETS and not name.startswith("SKIP-"):
                     if name not in sources:
-                        sources[name] = {"candidates": None, "error": None, "skipped": None}
+                        sources[name] = _blank_stats()
                     sources[name]["candidates"] = int(m_comb.group("n"))
                 continue
             # Formato LEGACY: header de source en su propia línea.
@@ -159,17 +250,35 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
             if m_src:
                 current_source = m_src.group(3).strip()
                 if current_source not in sources:
-                    sources[current_source] = {"candidates": None, "error": None, "skipped": None}
+                    sources[current_source] = _blank_stats()
                 continue
             if current_source:
                 m_cand = _CANDIDATES_RE.match(line)
                 if m_cand:
                     sources[current_source]["candidates"] = int(m_cand.group(1))
                     continue
-            m_err = _ERROR_RE.match(line)
-            if m_err:
-                name = m_err.group(1).strip()
-                sources[name]["error"] = m_err.group(2).strip()[:80]
+            # Formato WIKIS: header identifica el wiki activo del resto del
+            # archivo; el resumen final trae el total de candidates.
+            m_wiki_hdr = _WIKI_HEADER_RE.match(line)
+            if m_wiki_hdr:
+                current_wiki = f"wiki:{m_wiki_hdr.group('name').strip()}"
+                if current_wiki not in sources:
+                    sources[current_wiki] = _blank_stats()
+                continue
+            if current_wiki:
+                m_wiki_sum = _WIKI_SUMMARY_RE.match(line)
+                if m_wiki_sum:
+                    sources[current_wiki]["candidates"] = int(m_wiki_sum.group("n"))
+                    continue
+            m_challenge = _CHALLENGE_RE.match(line)
+            if m_challenge:
+                name = m_challenge.group("name").strip()
+                sources[name]["challenge"] = m_challenge.group("type").strip()
+                continue
+            parsed_err = _parse_error_line(line)
+            if parsed_err:
+                name, msg = parsed_err
+                sources[name]["error"] = msg[:80]
                 continue
             m_skip = _SKIP_RE.match(line)
             if m_skip:
@@ -187,7 +296,8 @@ def aggregate_health(
 
     Returns: {source_name: {
         runs_seen, runs_with_zero, runs_with_error, runs_with_skip,
-        total_candidates, avg_candidates, last_status, trend, enabled, kind
+        runs_with_challenge, total_candidates, avg_candidates, last_status,
+        trend, enabled, kind
     }}
     """
     yaml_lookup = {s.name: s for s in sources_yaml}
@@ -197,13 +307,26 @@ def aggregate_health(
         "runs_with_zero": 0,
         "runs_with_error": 0,
         "runs_with_skip": 0,
+        "runs_with_challenge": 0,
         "total_candidates": 0,
         "candidates_per_run": [],
         "errors": [],
         "skips": [],
+        "challenges": [],
         "enabled": True,
         "kind": "",
     })
+
+    # (#4, 2026-07-08) Sembrado: las fuentes enabled del YAML y los wikis
+    # conocidos que NO aparecen en ningún log del batch analizado deben
+    # clasificar "unseen" en vez de faltar del reporte en silencio —
+    # `runs_seen` sólo se poblaba antes desde los logs, así que la rama
+    # "unseen" de `classify()` era código muerto (siempre runs_seen>=1).
+    for s in sources_yaml:
+        if getattr(s, "enabled", True):
+            _ = agg[s.name]
+    for wiki_id in _WIKI_IDS:
+        _ = agg[f"wiki:{wiki_id}"]
 
     for run_dir, source_stats in runs:
         for name, stats in source_stats.items():
@@ -212,6 +335,9 @@ def aggregate_health(
             if stats["error"]:
                 a["runs_with_error"] += 1
                 a["errors"].append((run_dir.name, stats["error"]))
+            elif stats.get("challenge"):
+                a["runs_with_challenge"] += 1
+                a["challenges"].append((run_dir.name, stats["challenge"]))
             elif stats["skipped"]:
                 a["runs_with_skip"] += 1
                 a["skips"].append((run_dir.name, stats["skipped"]))
@@ -221,19 +347,25 @@ def aggregate_health(
                 if stats["candidates"] == 0:
                     a["runs_with_zero"] += 1
 
-    # Enrichment from sources.yml
+    # Enrichment from sources.yml / wiki registry
     for name, a in agg.items():
-        src = yaml_lookup.get(name)
-        # Para search-templates, el name expandido tiene formato "X (search) [search: Y]"
-        # — buscamos por prefijo si el directo falla.
-        if src is None:
-            for k, v in yaml_lookup.items():
-                if name.startswith(k):
-                    src = v
-                    break
-        if src:
-            a["enabled"] = src.enabled
-            a["kind"] = src.kind
+        if name.startswith("wiki:"):
+            # Los wikis no viven en sources.yml (registro aparte, #4); se
+            # tratan como siempre-enabled ya que no hay flag equivalente.
+            a["kind"] = "wiki"
+            a["enabled"] = True
+        else:
+            src = yaml_lookup.get(name)
+            # Para search-templates, el name expandido tiene formato "X (search) [search: Y]"
+            # — buscamos por prefijo si el directo falla.
+            if src is None:
+                for k, v in yaml_lookup.items():
+                    if name.startswith(k):
+                        src = v
+                        break
+            if src:
+                a["enabled"] = src.enabled
+                a["kind"] = src.kind
         # Stats derivadas
         cpr = a["candidates_per_run"]
         a["avg_candidates"] = round(sum(cpr) / len(cpr), 1) if cpr else 0.0
@@ -260,8 +392,14 @@ def classify(stats: dict) -> str:
     if runs == 0:
         return "unseen"
     error_rate = stats["runs_with_error"] / runs
+    challenge_rate = stats.get("runs_with_challenge", 0) / runs
     skip_rate = stats["runs_with_skip"] / runs
     zero_rate = stats["runs_with_zero"] / runs
+    # (#2, 2026-07-08) Anti-bot primero: una fuente bloqueada por Cloudflare/WAF
+    # (gotcha #107) NO es "healthy" aunque nunca tire un [ERROR] HTTP — es el
+    # síntoma más insidioso (200 OK que en realidad es un muro).
+    if challenge_rate >= 0.5:
+        return "broken_challenge"
     if error_rate >= 0.5:
         return "broken_http"   # bloqueado / caído
     if skip_rate >= 0.5:
@@ -280,21 +418,23 @@ def _single_run_agg(stats: dict) -> dict:
 
     Con runs_seen=1 el clasificador nunca dispara selector_dead/low_yield/decline
     (exigen >=2 runs); por eso la métrica per-run sólo distingue broken_http /
-    broken_skip / healthy. Ese es justamente el límite que metrics.jsonl + el
-    baseline vienen a cubrir acumulando historia.
+    broken_skip / broken_challenge / healthy. Ese es justamente el límite que
+    metrics.jsonl + el baseline vienen a cubrir acumulando historia.
     """
     error = stats.get("error")
+    challenge = stats.get("challenge")
     skipped = stats.get("skipped")
     candidates = stats.get("candidates")
     a = {
         "runs_seen": 1,
         "runs_with_error": 1 if error else 0,
-        "runs_with_skip": 1 if (skipped and not error) else 0,
+        "runs_with_challenge": 1 if (challenge and not error) else 0,
+        "runs_with_skip": 1 if (skipped and not error and not challenge) else 0,
         "runs_with_zero": 0,
         "avg_candidates": 0.0,
         "trend": "—",
     }
-    if not error and not skipped and candidates is not None:
+    if not error and not challenge and not skipped and candidates is not None:
         a["avg_candidates"] = float(candidates)
         if candidates == 0:
             a["runs_with_zero"] = 1
@@ -349,8 +489,18 @@ def append_metrics(metrics_path: Path, run_dir: Path, source_stats: dict[str, di
 
     if new_lines:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        # (#10, 2026-07-08) Guard de '\n' final: si el archivo existente NO
+        # termina en newline (escritura externa interrumpida, edición manual),
+        # un `open(..., 'a')` directo fusionaría la primera línea nueva con la
+        # última vieja, corrompiendo ambos registros JSON.
+        prefix = ""
+        if metrics_path.exists() and metrics_path.stat().st_size > 0:
+            with metrics_path.open("rb") as fh:
+                fh.seek(-1, 2)
+                if fh.read(1) != b"\n":
+                    prefix = "\n"
         with metrics_path.open("a", encoding="utf-8") as fh:
-            fh.write("\n".join(new_lines) + "\n")
+            fh.write(prefix + "\n".join(new_lines) + "\n")
     return len(new_lines), skipped
 
 
@@ -375,6 +525,14 @@ def compute_yield_regressions(
             continue
         if rec.get("run") == current_run_name:
             continue  # la historia excluye el run que estamos evaluando
+        if rec.get("errors"):
+            # (#5, 2026-07-08) Un run con error persiste candidates=0 (ver
+            # append_metrics), pero ese 0 NO es yield real — es el run que
+            # falló. Sin este filtro, una fuente flaky (429s intermitentes)
+            # acumula ceros falsos → mediana se hunde a 0 → `median <= 0:
+            # continue` más abajo apaga la detección de regresión justo para
+            # la fuente que más la necesita.
+            continue
         cand = rec.get("candidates")
         if cand is None:
             continue
@@ -451,6 +609,7 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         by_class[classify(stats)].append((name, stats))
 
     order = [
+        ("broken_challenge", "🛡️ Broken (anti-bot / challenge)"),
         ("broken_http", "🔴 Broken (HTTP errors)"),
         ("broken_skip", "🟠 Broken (skip/JS issues)"),
         ("selector_dead", "🟡 Selector probably dead (always 0 candidates)"),
@@ -464,18 +623,20 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         items = by_class.get(cls, [])
         if not items:
             continue
-        items.sort(key=lambda x: -x[1]["runs_with_error"] - x[1]["runs_with_zero"])
+        items.sort(key=lambda x: (
+            -x[1]["runs_with_challenge"] - x[1]["runs_with_error"] - x[1]["runs_with_zero"]
+        ))
         lines.append(f"## {label} ({len(items)})")
         lines.append(f"")
-        lines.append("| Source | Kind | Enabled | Runs | Avg cand | Errors | Skips | Zero runs | Last issue |")
-        lines.append("|---|---|---|---:|---:|---:|---:|---:|---|")
+        lines.append("| Source | Kind | Enabled | Runs | Avg cand | Errors | Challenge | Skips | Zero runs | Last issue |")
+        lines.append("|---|---|---|---:|---:|---:|---:|---:|---:|---|")
         for name, s in items[:30]:  # cap por categoría
             # Recencia (#3): anotar la fecha del run MÁS RECIENTE donde se vio el
             # síntoma, para que un 403 viejo ya resuelto no parezca activo cuando
             # se corre con --last-n > 1. La fecha se deriva del nombre del run
             # (robusto al orden de iteración).
             last_issue = ""
-            issues = s["errors"] or s["skips"]
+            issues = s["errors"] or s.get("challenges") or s["skips"]
             if issues:
                 text = max(issues, key=lambda ri: infer_run_ts(ri[0]))
                 last_run = max((r for r, _ in issues), key=infer_run_ts, default="")
@@ -486,8 +647,8 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
             lines.append(
                 f"| {name[:55]} | {s['kind'] or '?'} | {enabled} "
                 f"| {s['runs_seen']} | {s['avg_candidates']} "
-                f"| {s['runs_with_error']} | {s['runs_with_skip']} "
-                f"| {s['runs_with_zero']} | {last_issue} |"
+                f"| {s['runs_with_error']} | {s.get('runs_with_challenge', 0)} "
+                f"| {s['runs_with_skip']} | {s['runs_with_zero']} | {last_issue} |"
             )
         lines.append(f"")
         if len(items) > 30:
@@ -583,9 +744,10 @@ def main() -> int:
         # JSON serializable
         agg_clean = {}
         for k, v in agg.items():
-            agg_clean[k] = {kk: vv for kk, vv in v.items() if kk not in ("errors", "skips")}
+            agg_clean[k] = {kk: vv for kk, vv in v.items() if kk not in ("errors", "skips", "challenges")}
             agg_clean[k]["errors"] = [e[1] for e in v["errors"][-3:]]
             agg_clean[k]["skips"] = [s[1] for s in v["skips"][-3:]]
+            agg_clean[k]["challenges"] = [c[1] for c in v.get("challenges", [])[-3:]]
             agg_clean[k]["classification"] = classify(v)
         payload = {"runs": [r.name for r in runs], "sources": agg_clean}
         if regressions is not None:

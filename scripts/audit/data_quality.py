@@ -19,7 +19,7 @@ Uso: .venv/bin/python scripts/audit/data_quality.py [--px 90000] [--examples 8]
                                                      [--no-measure] [--no-json]
 """
 from __future__ import annotations
-import argparse, hashlib, json, re, sys
+import argparse, hashlib, io, json, re, sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +27,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
+
+# Gotcha de import dual "manga_watch" (bare, resuelve a scripts/manga_watch.py
+# vía el sys.path.insert de arriba) vs el WRAPPER manga_watch.py de la raíz
+# (sólo reexporta parse_args/run). Bajo pytest, con varios test files en la
+# misma sesión, otro módulo importado ANTES (p.ej. scripts/audit/
+# source_health.py, que también hace `from manga_watch import load_sources`)
+# puede dejar `sys.modules["manga_watch"]` cacheado apuntando al wrapper de la
+# raíz — y ese cache envenena TODOS los `import manga_watch` bare posteriores
+# en el mismo proceso, incluidos los de módulos que ESTE archivo importa
+# transitivamente (image_store.py, generate_slugs.py). Se corrige de raíz
+# ANTES de cualquier import bare: si ya hay algo cacheado que no sea el
+# archivo real, se re-registra con el módulo real. `try/except` porque en
+# invocación standalone (`python scripts/audit/data_quality.py`, sin pytest)
+# `scripts` no es un paquete importable (ROOT no está en sys.path) — ahí no
+# hace falta: el import bare de abajo ya resuelve bien en un proceso fresco.
+_cached_mw = sys.modules.get("manga_watch")
+_real_mw_path = str(ROOT / "scripts" / "manga_watch.py")
+if _cached_mw is None or getattr(_cached_mw, "__file__", "") != _real_mw_path:
+    try:
+        import scripts.manga_watch as _real_mw  # noqa: E402
+        sys.modules["manga_watch"] = _real_mw
+    except ImportError:
+        pass
+
 from manga_watch import (  # noqa: E402
     IMAGE_URL_BAD_PATTERNS, _cluster_completeness,
     _TOKUTEN_SOURCES, _SINGLE_RUN_KEYWORDS, _SINGLE_RUN_PATTERNS,
@@ -105,6 +129,62 @@ DEFAULT_JSON_OUT = ROOT / "data" / "quality_report.json"
 # sin inflar el archivo si una categoría se dispara por un bug.
 MAX_ITEMS_PER_CATEGORY = 3000
 
+
+def _measure_cover(path: Path) -> tuple[int | None, str]:
+    """(n_px, tiny_reason) de un archivo de portada, con UN solo read de disco.
+
+    `tiny_reason` viene de `image_store.placeholder_reason()` —fuente ÚNICA
+    del proyecto para "esto no es una portada real" (`broken` / `tiny:WxH` /
+    `solid:STD` / `signature:LABEL`)— usada en vez del viejo umbral bytes<6KB
+    (#7, 2026-07-08): el espejo local es 100% AVIF Q60 y comprime tan bien que
+    una portada real de ~600x900 pesa <6KB, dando ~1060 falsos positivos
+    "archivo_tiny" medidos sobre el corpus real (portadas de 642×600, 520×604…
+    marcadas como "ícono"). `n_px` es `None` cuando el archivo es un
+    placeholder (`tiny_reason` no vacío) o no se pudo abrir.
+
+    Sólo llamar con `HAVE_PIL` en `True` — no hay guard interno para evitar
+    que `Image` (importado condicionalmente arriba) esté indefinido.
+    """
+    try:
+        body = path.read_bytes()
+    except OSError:
+        return None, "broken"
+    reason = image_store.placeholder_reason(body)
+    if reason:
+        return None, reason
+    try:
+        with Image.open(io.BytesIO(body)) as im:
+            return im.size[0] * im.size[1], ""
+    except Exception:
+        return None, "broken"
+
+
+def _load_items(path: Path | None = None) -> list[dict]:
+    """Carga data/items.jsonl con encoding explícito, tolerando líneas
+    corruptas (#9/#11, 2026-07-08).
+
+    `open()` sin `encoding=` cae al locale del proceso — bajo POSIX/C (cron)
+    eso revienta con `UnicodeDecodeError` ante cualquier título no-ASCII en
+    vez de auditar. Una línea JSON corrupta (escritura interrumpida a mitad)
+    tumbaba el audit entero en vez de saltear esa fila — ahora se cuenta y se
+    loguea (WARN), nunca se silencia."""
+    p = path or (ROOT / "data" / "items.jsonl")
+    items: list[dict] = []
+    corrupt = 0
+    with open(p, encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                items.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                corrupt += 1
+                print(f"[WARN] {p.name}:{lineno} línea corrupta, salteada ({exc})", file=sys.stderr)
+    if corrupt:
+        print(f"[WARN] {corrupt} línea(s) corrupta(s) salteada(s) en {p}", file=sys.stderr)
+    return items
+
 # Prompts de fix copiables: para categorías que necesitan JUICIO (no hay script
 # mecánico seguro). El usuario copia el prompt y lo pega en Claude, que lo
 # resuelve. Son self-contained (el Claude que los recibe no tiene contexto).
@@ -119,12 +199,15 @@ _FIX_PROMPT_DUP = (
     "backup con backup_and_rotate antes de escribir. Reportá qué fusionaste."
 )
 _FIX_PROMPT_REF_ROTA = (
-    "En el repo manga-watch, en data/items.jsonl hay items cuyo campo "
-    "image_local apunta a un archivo que YA NO EXISTE en data/images/. Por cada "
-    "uno: si image_url sigue vivo, re-descargá la portada al espejo local "
-    "(scripts/image_store.py / mirror_candidate_images) y actualizá image_local + "
-    "images[0]; si image_url está muerto, limpiá image_local para que caiga al "
-    "fallback. Hacé backup antes. Reportá cuántos arreglaste."
+    "En el repo manga-watch, en data/items.jsonl hay items cuya entrada de "
+    "images[] (images[N].local, la portada es SIEMPRE images[0]) apunta a un "
+    "archivo que YA NO EXISTE en data/images/. Por cada uno: si images[N].url "
+    "sigue vivo, re-descargá la portada al espejo local (scripts/image_store.py "
+    "/ mirror_candidate_images) y actualizá images[N].local; si images[N].url "
+    "está muerto, vaciá images[N].local para que la UI caiga al placeholder "
+    "(📚). NO uses image_local/image_url top-level: se ELIMINARON del schema "
+    "el 2026-06-09 (ver docs/reference/images.md). Hacé backup con "
+    "backup_and_rotate antes. Reportá cuántos arreglaste."
 )
 _FIX_PROMPT_NO_SOURCES = (
     "En el repo manga-watch, en data/items.jsonl hay items sin sources[]. "
@@ -221,7 +304,7 @@ CATEGORY_META = {
     "archivo_tiny": {
         "label": "Imagen diminuta (no es una portada)", "group": "imagenes",
         "severity": "warn", "target": "image",
-        "desc": "La imagen guardada pesa menos de 6KB: es un ícono o un puntito, no una portada de verdad.",
+        "desc": "La imagen guardada es un placeholder estructural (dimensiones ínfimas, casi de un solo color, o el archivo está roto): no es una portada de verdad.",
         "fix": _fix("script", script_id="fetch_better_covers",
                     hint="Busca una portada de mejor resolución por ISBN / web. Seguro: hace backup."),
     },
@@ -371,7 +454,13 @@ def _compute_readiness(items: list[dict], *, multi_clusters: int,
             # (ni exacto ni como prefijo de un sufijo de colisión -b/-c).
             if stored and base and stored != base and not stored.startswith(base + "-"):
                 slug_stale += len(grp)
-    except Exception:
+    except Exception as exc:
+        # (#12, 2026-07-08) Antes se tragaba en silencio (except: 0) — una
+        # rotura real en generate_slugs (p.ej. un import que se rompe) hacía
+        # que "Slugs — desincronizados" reportara 0 falsamente, un readiness
+        # falso positivo. Ahora se loguea WARN y se sigue reportando 0 (mejor
+        # esfuerzo: no hay forma segura de recuperar el conteo parcial).
+        print(f"[WARN] slug_stale: fallo al calcular ({exc}); reportando 0", file=sys.stderr)
         slug_stale = 0
 
     # --- Traducción: misma condición base que translate_descriptions (KEY
@@ -567,21 +656,15 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
                 file_to_works[loc].add(work)
     shared_files = {f for f, w in file_to_works.items() if len(w) >= 4}
 
-    dim_cache: dict[str, int | None] = {}
+    # (#7, 2026-07-08) Cache por filename de (n_px, tiny_reason) — un solo
+    # read+PIL-open por archivo local, reusado por `il_healthy` (portada
+    # basura) y `archivo_tiny`/`pixelada` para el MISMO item más abajo.
+    measure_cache: dict[str, tuple[int | None, str]] = {}
 
-    def dims(local: str) -> int | None:
-        if not local or not HAVE_PIL or not measure:
-            return None
-        if local in dim_cache:
-            return dim_cache[local]
-        p = IMAGES / local
-        try:
-            with Image.open(p) as im:
-                d = im.size[0] * im.size[1]
-        except Exception:
-            d = None
-        dim_cache[local] = d
-        return d
+    def cached_measure(local: str) -> tuple[int | None, str]:
+        if local not in measure_cache:
+            measure_cache[local] = _measure_cover(IMAGES / local)
+        return measure_cache[local]
 
     cat: dict[str, list] = defaultdict(list)
     for it in items:
@@ -596,7 +679,19 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
         il_path = IMAGES / il if il else None
         il_exists = bool(il) and il_path.exists()
         il_size = il_path.stat().st_size if il_exists else 0
-        il_healthy = il_exists and il_size >= 6 * 1024
+        # (#7, 2026-07-08) il_healthy/archivo_tiny juzgan por PÍXELES vía
+        # image_store.placeholder_reason() (fuente única: broken/tiny:WxH/
+        # solid:STD/signature:LABEL), no bytes<6KB — el espejo es 100% AVIF
+        # Q60 y comprime tan bien que portadas reales de ~600x900 pesan <6KB,
+        # dando ~1060 falsos positivos "archivo_tiny" medidos sobre el corpus
+        # real. Sin Pillow o con --no-measure cae al umbral de bytes viejo
+        # (heurística imperfecta pero mejor que no reportar nada).
+        can_measure = il_exists and HAVE_PIL and measure
+        il_px, il_tiny_reason = cached_measure(il) if can_measure else (None, "")
+        il_healthy = (
+            (il_exists and not il_tiny_reason) if can_measure
+            else (il_exists and il_size >= 6 * 1024)
+        )
 
         # Portada basura: solo si la imagen QUE SE VE es basura. El dashboard
         # muestra `image_local` cuando existe; si hay una copia local sana, un
@@ -611,12 +706,13 @@ def audit_items(items: list[dict], px: int = 90000, measure: bool = True) -> dic
         if il in shared_files:
             cat["archivo_compartido"].append(_entry(it, detail=il))
         if il_exists:
-            if il_size < 6 * 1024:
+            if can_measure:
+                if il_tiny_reason:
+                    cat["archivo_tiny"].append(_entry(it, detail=il_tiny_reason))
+                elif il_px is not None and il_px < px:
+                    cat["pixelada"].append(_entry(it, detail=f"{il_px} px"))
+            elif il_size < 6 * 1024:
                 cat["archivo_tiny"].append(_entry(it, detail=f"{il_size} bytes"))
-            elif measure:
-                d = dims(il)
-                if d is not None and d < px:
-                    cat["pixelada"].append(_entry(it, detail=f"{d} px"))
         # Card != primera del carrusel: comparar la imagen QUE SE VE, no la URL
         # de origen. La card muestra `image_local` (si existe); el carrusel[0]
         # muestra `images[0].local`. Si ambas resuelven al MISMO archivo local,
@@ -779,30 +875,54 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
     mide píxeles de los items pedidos (1 Pillow open c/u). Las condiciones DEBEN
     coincidir con `audit_items` — si cambiás una allá, cambiala acá."""
     if items is None:
-        items = [json.loads(l) for l in open(ROOT / "data/items.jsonl") if l.strip()]
+        items = _load_items()
     targets = set(urls or [])
     if not targets:
         return {}
 
+    # (#6, 2026-07-08) Mismo shape que audit_items (grupos por ISBN / triple
+    # serie+edición+volumen con la lista de MIEMBROS completa, no sólo el set
+    # de cluster_keys) — necesario para recomputar la MISMA firma que
+    # `_emit_dup_group` y respetar data/dup_decisions.jsonl (antes check_urls
+    # ignoraba las decisiones "distinct" del panel y re-flageaba el grupo en
+    # cada live-update, rompiendo la idempotencia).
+    decided = _load_dup_decisions()
     file_to_works: dict[str, set] = defaultdict(set)
     cluster_counts: dict[str, int] = defaultdict(int)
-    isbn_ck: dict[str, set] = defaultdict(set)
-    trip_ck: dict[tuple, set] = defaultdict(set)
+    isbn_groups: dict[str, list] = defaultdict(list)
+    trip_groups: dict[tuple, list] = defaultdict(list)
     for it in items:
         cluster_counts[it.get("cluster_key", "")] += 1
         work = (it.get("series_key") or (it.get("title") or "")[:24]).lower()
         for im in (it.get("images") or []):
             if im.get("local"):
                 file_to_works[im["local"]].add(work)
-        _ck = it.get("cluster_key") or ""
-        _isbn = (it.get("isbn") or "").strip()
-        if _isbn:
-            isbn_ck[_isbn].add(_ck)
-        _sk = it.get("series_key") or ""
-        _ek = it.get("edition_key") or ""
-        if _sk and _ek:
-            trip_ck[(_sk, _ek, it.get("volume") or "")].add(_ck)
+        isbn = (it.get("isbn") or "").strip()
+        if isbn:
+            isbn_groups[isbn].append(it)
+        sk = it.get("series_key") or ""
+        ek = it.get("edition_key") or ""
+        if sk and ek:
+            trip_groups[(sk, ek, it.get("volume") or "")].append(it)
     shared_files = {f for f, w in file_to_works.items() if len(w) >= 4}
+
+    def _group_is_dup_and_undecided(members: list[dict], display_key: str) -> bool:
+        """Misma firma que `_emit_dup_group` en `audit_items` — recomputa la
+        firma del grupo y respeta `data/dup_decisions.jsonl` (#6)."""
+        cks = {(m.get("cluster_key") or "") for m in members}
+        if len(cks) < 2:
+            return False
+        urls_sorted = sorted(m.get("url", "") for m in members)
+        sig = display_key + "|" + hashlib.sha1(
+            "\n".join(urls_sorted).encode("utf-8")).hexdigest()[:12]
+        return sig not in decided
+
+    measure_cache: dict[str, tuple[int | None, str]] = {}
+
+    def cached_measure(local: str) -> tuple[int | None, str]:
+        if local not in measure_cache:
+            measure_cache[local] = _measure_cover(IMAGES / local)
+        return measure_cache[local]
 
     result: dict[str, list] = {}
     for it in items:
@@ -823,12 +943,17 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
         if any(not s.get("url") for s in (it.get("sources") or [])):
             cats.add("src_no_url")
         _isbn = (it.get("isbn") or "").strip()
-        if _isbn and len(isbn_ck.get(_isbn, ())) > 1:
-            cats.add("dup_product")
+        if _isbn:
+            members = isbn_groups.get(_isbn, [])
+            if _group_is_dup_and_undecided(members, f"ISBN {_isbn}"):
+                cats.add("dup_product")
         _sk = it.get("series_key") or ""
         _ek = it.get("edition_key") or ""
-        if _sk and _ek and len(trip_ck.get((_sk, _ek, it.get("volume") or ""), ())) > 1:
-            cats.add("dup_product")
+        if _sk and _ek:
+            _vol = it.get("volume") or ""
+            members = trip_groups.get((_sk, _ek, _vol), [])
+            if _group_is_dup_and_undecided(members, f"{_ek} · vol {_vol or '—'}"):
+                cats.add("dup_product")
         # imágenes (portada = images[0])
         imgs = it.get("images") or []
         iu = image_store.cover_url(it)
@@ -839,7 +964,14 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
             il_path = IMAGES / il if il else None
             il_exists = bool(il) and il_path.exists()
             il_size = il_path.stat().st_size if il_exists else 0
-            il_healthy = il_exists and il_size >= 6 * 1024
+            # (#7, 2026-07-08) mismo criterio pixel-based que audit_items —
+            # ver _measure_cover.
+            can_measure = il_exists and HAVE_PIL
+            il_px, il_tiny_reason = cached_measure(il) if can_measure else (None, "")
+            il_healthy = (
+                (il_exists and not il_tiny_reason) if can_measure
+                else (il_exists and il_size >= 6 * 1024)
+            )
             if is_junk_url(iu) and not il_healthy:
                 cats.add("portada_url_basura")
             if il and not il_exists:
@@ -847,16 +979,13 @@ def check_urls(urls, items=None, px: int = 90000) -> dict:
             if il in shared_files:
                 cats.add("archivo_compartido")
             if il_exists:
-                if il_size < 6 * 1024:
+                if can_measure:
+                    if il_tiny_reason:
+                        cats.add("archivo_tiny")
+                    elif il_px is not None and il_px < px:
+                        cats.add("pixelada")
+                elif il_size < 6 * 1024:
                     cats.add("archivo_tiny")
-                elif HAVE_PIL:
-                    try:
-                        with Image.open(il_path) as im:
-                            d = im.size[0] * im.size[1]
-                        if d < px:
-                            cats.add("pixelada")
-                    except Exception:
-                        pass
             if imgs:
                 fl = imgs[0].get("local") or ""
                 fu = imgs[0].get("url") or ""
@@ -930,7 +1059,7 @@ def main():
                     help="ruta del reporte JSON estructurado")
     args = ap.parse_args()
 
-    items = [json.loads(l) for l in open(ROOT / "data/items.jsonl") if l.strip()]
+    items = _load_items()
     report = audit_items(items, px=args.px, measure=not args.no_measure)
 
     _print_human(report, args.examples)
