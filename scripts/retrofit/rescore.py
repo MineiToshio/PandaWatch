@@ -44,6 +44,7 @@ from manga_watch import (  # type: ignore
     candidate_to_json,
     backup_and_rotate,
     is_approved,
+    write_lines_atomic,
 )
 import image_store  # type: ignore
 
@@ -100,6 +101,7 @@ def main() -> int:
     drift_st = 0
     drift_pt = 0
     drift_score = 0
+    drift_hash = 0
     skipped_approved = 0
     skipped_standardized = 0
     pt_changes: Counter[tuple[str, str]] = Counter()
@@ -116,19 +118,20 @@ def main() -> int:
         # Golden records: el owner aprobó esta card; no la re-scoreamos.
         if is_approved(item) and not args.include_approved:
             skipped_approved += 1
-            out_lines.append(json.dumps(item, ensure_ascii=False))
+            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
             continue
 
         # Items estandarizados: re-scorear su texto limpio lava las señales
         # (gotcha #61) — se saltean salvo override explícito.
         if item.get("standardized_at") and not args.include_standardized:
             skipped_standardized += 1
-            out_lines.append(json.dumps(item, ensure_ascii=False))
+            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
             continue
 
         old_st = set(item.get("signal_types") or [])
         old_pt = item.get("product_type", "") or ""
         old_score = int(item.get("score") or 0)
+        old_hash = item.get("content_hash", "") or ""
 
         cand = _item_to_candidate(item)
         score_candidate(cand)
@@ -151,7 +154,16 @@ def main() -> int:
         for k in ("signal_types", "signals", "score", "product_type",
                   "stock_type", "content_hash"):
             updated[k] = updated_from_cand.get(k, updated.get(k))
-        out_lines.append(json.dumps(updated, ensure_ascii=False))
+        # B13 (Fable 2026-07-08): si sólo el content_hash recomputado difiere
+        # (drift silencioso — signal_types/product_type/score iguales pero el
+        # hash cambió, p.ej. tras un fix upstream que afecta el hash sin
+        # afectar la derivación), el chequeo de arriba no lo contaba como
+        # drift → "nada cambió" y el item quedaba stale. Se cuenta acá
+        # también, sin duplicar el contador de score.
+        new_hash = updated_from_cand.get("content_hash", "") or ""
+        if new_hash != old_hash and new_st == old_st and new_pt == old_pt and new_score == old_score:
+            drift_hash += 1
+        out_lines.append(json.dumps(updated, ensure_ascii=False, sort_keys=True))
 
     total = len(out_lines)
     print(f"[INFO] {total} items procesados")
@@ -163,6 +175,8 @@ def main() -> int:
     print(f"[INFO] signal_types cambió:  {drift_st} ({drift_st*100//max(total,1)}%)")
     print(f"[INFO] product_type cambió:  {drift_pt} ({drift_pt*100//max(total,1)}%)")
     print(f"[INFO] score cambió:         {drift_score} ({drift_score*100//max(total,1)}%)")
+    if drift_hash:
+        print(f"[INFO] sólo content_hash cambió: {drift_hash} ({drift_hash*100//max(total,1)}%)")
 
     if pt_changes:
         print("\nTop product_type transitions (old → new):")
@@ -173,7 +187,7 @@ def main() -> int:
         print("\n[DRY-RUN] No se escribió ningún archivo.")
         return 0
 
-    if drift_st + drift_pt + drift_score == 0:
+    if drift_st + drift_pt + drift_score + drift_hash == 0:
         print("\n[OK] Nada cambió. items.jsonl ya está al día.")
         return 0
 
@@ -182,7 +196,7 @@ def main() -> int:
         backup = backup_and_rotate(out_path, "rescore")
         print(f"\n[OK] Backup en {backup}")
 
-    out_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(out_path, out_lines)
     print(f"[OK] Escribí {out_path} con {total} items refrescados.")
     return 0
 

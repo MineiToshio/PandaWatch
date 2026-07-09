@@ -27,7 +27,7 @@ Uso:
   .venv/bin/python scripts/retrofit/align_raw_to_std_coleccion.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, collections
+import json, re, sys, argparse, collections
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +38,17 @@ try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
 except (ImportError, AttributeError):  # pragma: no cover
     import scripts.manga_watch as mw  # type: ignore  # noqa: E402
 
+# B9 (Fable 2026-07-08): reusar la extracción POSICIONAL de edition_slug de
+# unify_coleccion_edition (fuente única) en vez de un substring-match propio
+# (ver _std_has_slug más abajo).
+_RETRO_DIR = str(Path(__file__).resolve().parent)
+if _RETRO_DIR not in sys.path:
+    sys.path.insert(0, _RETRO_DIR)
+try:
+    from unify_coleccion_edition import _edition_slug  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.retrofit.unify_coleccion_edition import _edition_slug  # type: ignore  # noqa: E402
+
 ITEMS = ROOT / "data" / "items.jsonl"
 _COLE_RE = re.compile(r"coleccion\.php\?id=(\d+)")
 
@@ -45,6 +56,17 @@ _COLE_RE = re.compile(r"coleccion\.php\?id=(\d+)")
 def _cole(url: str) -> str | None:
     m = _COLE_RE.search(url or "")
     return m.group(1) if m else None
+
+
+def _std_has_slug(std_it: dict, slug: str) -> bool:
+    """B9 (Fable 2026-07-08): match POSICIONAL vía `_edition_slug` (fuente
+    única de unify_coleccion_edition) en vez de substring — antes un
+    series_key que CONTENÍA el token (ej. "…-variant-…" en el nombre de la
+    serie, no en el edition_slug real) alineaba el raw a la std equivocada.
+    Hoisteado a nivel de módulo (antes vivía dentro de `main()`) para poder
+    testearla directamente."""
+    ek = std_it.get("edition_key") or ""
+    return _edition_slug(ek) == slug
 
 
 def main() -> int:
@@ -55,7 +77,21 @@ def main() -> int:
                           "defecto se saltean: alinear re-deriva series_key/edition_key/"
                           "cluster_key, la identidad que approved_at confirma.")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual en vez
+    # de tumbar el script; se mantiene fuera de `items` y se reinyecta
+    # verbatim al escribir.
+    items: list[dict] = []
+    raw_lines: list[str] = []
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                raw_lines.append(l.rstrip("\n"))
+    if raw_lines:
+        print(f"[align-raw][WARN] {len(raw_lines)} línea(s) corrupta(s) preservada(s) tal cual.")
 
     # Agrupar por coleccion; identificar el item estandarizado autoritativo.
     by_cole: dict[str, list[dict]] = collections.defaultdict(list)
@@ -74,10 +110,6 @@ def main() -> int:
     def _raw_kind(it):
         m = re.search(r"item=([a-z]+)-", it.get("url", "") or "")
         return m.group(1) if m else ""
-
-    def _std_has_slug(std_it, slug):
-        ek = std_it.get("edition_key") or ""
-        return f"-{slug}-" in ek or ek.endswith(f"-{slug}")
 
     changed, diffs, skipped_approved = 0, [], 0
     for c, grp in by_cole.items():
@@ -125,12 +157,11 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[align-raw] consolidate: {before} → {len(items)} ({before - len(items)} fusionados)")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-alignraw-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        # A13 (Fable 2026-07-08): backup_and_rotate en vez de shutil.copy a un
+        # path propio sin rotar.
+        mw.backup_and_rotate(ITEMS, "align-raw")
+        out_lines = [json.dumps(it, ensure_ascii=False, sort_keys=True) for it in items] + raw_lines
+        mw.write_lines_atomic(ITEMS, out_lines)
         print(f"[align-raw] escrito {ITEMS}.")
     return 0
 

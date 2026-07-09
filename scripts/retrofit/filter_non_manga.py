@@ -27,7 +27,10 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import is_likely_manga, load_sources, backup_and_rotate, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    is_likely_manga, load_sources, backup_and_rotate, is_approved,
+    write_lines_atomic,
+)
 
 
 def _build_source_purity_map() -> dict[str, str]:
@@ -158,12 +161,19 @@ def main() -> int:
     if kept_path.exists() and kept_path == src:
         backup = backup_and_rotate(kept_path, "filter")
         print(f"\n[OK] Backup guardado en {backup}")
+    # B12 (Fable 2026-07-08): el diagnóstico de rechazados también se rota
+    # (no se pisa en silencio) — así la evidencia de la corrida anterior
+    # sigue disponible en data/backups/ para comparar/revisar.
+    if rejected_path.exists():
+        backup_and_rotate(rejected_path, "filter-rejected")
 
-    kept_path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
-    print(f"[OK] Escribí {kept_path} con {len(kept_lines)} mangas.")
-
-    rejected_path.write_text("\n".join(rejected_lines) + "\n", encoding="utf-8")
+    # A7 (Fable 2026-07-08): escribir `rejected` ANTES que `kept` — un crash
+    # entre ambos writes no deja los rechazados fuera de AMBOS archivos.
+    write_lines_atomic(rejected_path, rejected_lines)
     print(f"[OK] Escribí {rejected_path} con {len(rejected_lines)} non-manga (para revisión).")
+
+    write_lines_atomic(kept_path, kept_lines)
+    print(f"[OK] Escribí {kept_path} con {len(kept_lines)} mangas.")
 
     return 0
 

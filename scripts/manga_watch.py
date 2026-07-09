@@ -5005,9 +5005,16 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
+    # A7 (Fable 2026-07-08): flush+fsync antes del rename atómico — sin esto,
+    # un corte justo tras el .tmp podía dejarlo sólo en page cache. Un
+    # state.json vacío/truncado tras un corte reporta TODO el corpus como
+    # "new" en el próximo run (re-flush completo).
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    with tmp.open("w", encoding="utf-8") as file:
+        file.write(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+        file.flush()
+        os.fsync(file.fileno())
     tmp.replace(path)
 
 
@@ -5042,8 +5049,20 @@ def backup_and_rotate(path: Path, label: str, max_keep: int = 3,
     else:
         dest = backups_dir / f"{path.name}.pre-{label}-bak"
         dest.write_bytes(path.read_bytes())
-        # Rotar: ordenar por mtime, borrar los más viejos (toda la carpeta).
-        family = sorted(backups_dir.iterdir(), key=lambda f: f.stat().st_mtime)
+        # A6 (Fable 2026-07-08): rotar SÓLO por-label, nunca la carpeta
+        # entera. Antes esto ordenaba TODO `backups_dir` por mtime y podaba a
+        # max_keep GLOBAL — con ~20 labels distintos escribiendo en la misma
+        # carpeta (rescore, cluster, translate, apply-approvals, dedup-isbn,
+        # dup-merge de serve…), una cadena de 3+ llamadas fixed-slot (el
+        # enforcer encadena 5+) dejaba 3 archivos EN TOTAL, borrando el
+        # snapshot pre-run inicial y los backups timestamped=True que
+        # prometen conservarse. El slot fijo de este label es SIEMPRE 1
+        # archivo (se pisa arriba), así que acá sólo hay que asegurarse de no
+        # tocar los demás labels ni los timestamped.
+        family = sorted(
+            backups_dir.glob(f"{path.name}.pre-{label}-bak"),
+            key=lambda f: f.stat().st_mtime,
+        )
     for old in family[:-max_keep]:
         old.unlink()
     return dest
@@ -5314,6 +5333,58 @@ def _translation_is_stale(old: dict[str, Any], new_description: str) -> bool:
     return old_hash != description_src_hash(new_description)
 
 
+def write_items_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Escribe `rows` (dicts ya serializables) como JSONL atómicamente.
+
+    Helper único (A7, Fable 2026-07-08): tmp + flush + fsync + os.replace.
+    `append_jsonl` ya usaba este patrón para su dump completo (upsert +
+    consolidate); este helper lo generaliza para que los retrofits que hacen
+    un dump-completo de `items.jsonl` (ya con la lista final de filas, sin
+    necesidad de upsert) dejen de usar `write_text`/tmp-sin-fsync directo —
+    un kill a mitad de esa escritura corrompía/truncaba el archivo (gotcha
+    #133). Serializa con `sort_keys=True`, el mismo formato que usa
+    `append_jsonl`, para que la prueba de idempotencia byte-a-byte sea válida
+    entre pasadas de scripts distintos.
+
+    Crea `path.parent` si hace falta. No hace upsert ni consolidación — el
+    caller ya debe traer la lista final de filas a escribir.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
+        for item in rows:
+            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+        # Durabilidad: forzar el flush del buffer de Python + fsync del FD antes
+        # del rename atómico, para que un corte de energía justo tras el replace
+        # no deje el archivo truncado/vacío (el .tmp podría estar en el page
+        # cache pero no en disco).
+        file.flush()
+        os.fsync(file.fileno())
+    tmp_path.replace(path)
+
+
+def write_lines_atomic(path: Path, lines: list[str]) -> None:
+    """Escribe `lines` (strings YA serializadas, típicamente JSON-por-línea)
+    atómicamente: tmp + flush + fsync + os.replace.
+
+    Complemento de `write_items_atomic` (A7, Fable 2026-07-08) para los
+    writers que preservan el texto crudo de la línea original — p.ej. una
+    línea corrupta que no se pudo parsear (patrón B11 raw-preserve) o un
+    dump que ya trae las líneas formateadas — en vez de reserializar un
+    dict. Mismo patrón de durabilidad que `write_items_atomic`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    text = "\n".join(lines)
+    if lines:
+        text += "\n"
+    with tmp_path.open("w", encoding="utf-8") as file:
+        file.write(text)
+        file.flush()
+        os.fsync(file.fileno())
+    tmp_path.replace(path)
+
+
 def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     """Upsert por URL normalizada: una línea por item único en disco.
 
@@ -5559,19 +5630,7 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     # fila nueva, suma su fuente al array. Idempotente.
     consolidated = consolidate_by_cluster(list(existing.values()))
     sorted_rows = sorted(consolidated, key=_detected_key)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as file:
-        for item in sorted_rows:
-            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
-        for item in no_url_rows:
-            file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
-        # Durabilidad: forzar el flush del buffer de Python + fsync del FD antes
-        # del rename atómico, para que un corte de energía justo tras el replace
-        # no deje items.jsonl truncado/vacío (el .tmp podría estar en el page
-        # cache pero no en disco).
-        file.flush()
-        os.fsync(file.fileno())
-    tmp_path.replace(path)
+    write_items_atomic(path, sorted_rows + no_url_rows)
 
 
 def flush_source_candidates(
@@ -5625,9 +5684,26 @@ def flush_source_candidates(
 
 
 class RobotsCache:
-    def __init__(self, user_agent: str) -> None:
+    """Cachea el robots.txt por host. Sólo se usa con `--respect-robots`
+    (opt-in, ver conventions.md).
+
+    M10 (Fable 2026-07-08): antes `parser.read()` usaba `urlopen` SIN
+    timeout — el único fetch del pipeline sin límite, capaz de colgar el
+    worker para siempre si un host no responde. Ahora fetchea con la
+    `session` del proyecto (Retry + timeout de `make_session`/`fetch_text`,
+    fuente única) y alimenta al parser vía `parser.parse(text.splitlines())`
+    en vez de dejar que el propio parser abra la conexión. El dict `cache`
+    se muta desde N threads (workers HTTP en paralelo) → protegido con un
+    lock.
+    """
+
+    def __init__(self, user_agent: str, session: requests.Session | None = None,
+                 timeout: tuple[int, int] = (10, 15)) -> None:
         self.user_agent = user_agent
+        self.session = session or make_session(user_agent)
+        self.timeout = timeout
         self.cache: dict[str, RobotFileParser | None] = {}
+        self._lock = threading.Lock()
 
     def allowed(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -5635,16 +5711,20 @@ class RobotsCache:
             return True
         base = f"{parsed.scheme}://{parsed.netloc}"
         robots_url = urljoin(base, "/robots.txt")
-        if base not in self.cache:
+        with self._lock:
+            cached = base in self.cache
+            parser = self.cache.get(base)
+        if not cached:
             parser = RobotFileParser()
             parser.set_url(robots_url)
             try:
-                parser.read()
-                self.cache[base] = parser
+                text = fetch_text(self.session, robots_url, timeout=self.timeout)
+                parser.parse(text.splitlines())
             except Exception as exc:
                 print(f"[WARN] No pude leer robots.txt de {base}: {exc}. Permito por defecto.")
-                self.cache[base] = None
-        parser = self.cache[base]
+                parser = None
+            with self._lock:
+                self.cache[base] = parser
         if parser is None:
             return True
         try:
@@ -8733,6 +8813,7 @@ def mirror_candidate_images(
 
     cover_results: list[tuple[Candidate, str]] = []
     extra_results: list[tuple[Candidate, int, str]] = []
+    future_errors = 0
     if workers <= 1:
         cover_results = [_one_cover(c) for c in cover_targets]
         extra_results = [_one_extra(t) for t in extra_targets]
@@ -8741,14 +8822,22 @@ def mirror_candidate_images(
             futs = [pool.submit(_one_cover, c) for c in cover_targets]
             futs.extend(pool.submit(_one_extra, t) for t in extra_targets)
             for fut in as_completed(futs):
-                res = fut.result()
+                # M7 (Fable 2026-07-08): un future que levanta (bug de
+                # image_store, URL malformada, etc.) NO debe abortar el resto
+                # del mirror — se cuenta como fallo y seguimos, igual que el
+                # loop de detail-fetch.
+                try:
+                    res = fut.result()
+                except Exception:
+                    future_errors += 1
+                    continue
                 if len(res) == 2:
                     cover_results.append(res)
                 else:
                     extra_results.append(res)
 
     downloaded = 0
-    failed = 0
+    failed = future_errors
     for cand, filename in cover_results:
         if filename:
             cand.image_local = filename
@@ -8928,7 +9017,11 @@ def _run_wiki_bootstrap(
     )
 
     if not args.dry_run:
-        save_state(state_path, state)
+        # A3 (Fable 2026-07-08): state se persiste DESPUÉS de que las filas
+        # lleguen a items.jsonl — mismo motivo que en run() (ver comentario
+        # allí): si save_state corre antes y el proceso muere (o
+        # mirror_candidate_images levanta) entre medio, state ya marca estos
+        # candidates como conocidos pero items.jsonl nunca los recibió.
         if not getattr(args, "skip_image_download", False):
             _wk = max(1, int(getattr(args, "workers", 1) or 1))
             dl, fail = mirror_candidate_images(
@@ -8940,6 +9033,7 @@ def _run_wiki_bootstrap(
             candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
         ]
         append_jsonl(items_path, new_or_changed)
+        save_state(state_path, state)
         write_markdown_report(
             path=report_path,
             reportable=reportable,
@@ -9064,7 +9158,8 @@ def _run_sitemap_mining(
     )
 
     if not args.dry_run:
-        save_state(state_path, state)
+        # A3 (Fable 2026-07-08): mismo orden que run()/wiki-bootstrap — state
+        # se persiste después de que items.jsonl ya tiene las filas.
         if not getattr(args, "skip_image_download", False):
             _wk = max(1, int(getattr(args, "workers", 1) or 1))
             dl, fail = mirror_candidate_images(
@@ -9076,6 +9171,7 @@ def _run_sitemap_mining(
             candidate_to_json(c) for c in reportable if c.status in {"new", "changed"}
         ]
         append_jsonl(items_path, new_or_changed)
+        save_state(state_path, state)
         write_markdown_report(
             path=report_path,
             reportable=reportable,
@@ -9150,7 +9246,8 @@ def run(args: argparse.Namespace) -> int:
 
     state = load_state(state_path)
     session = make_session(args.user_agent)
-    robots = RobotsCache(args.user_agent)
+    robots = RobotsCache(args.user_agent, session=session,
+                          timeout=(args.connect_timeout, args.read_timeout))
 
     # === Fase 2: bootstrap desde wiki comunitaria ===
     if args.bootstrap_wiki:
@@ -9266,6 +9363,34 @@ def run(args: argparse.Namespace) -> int:
         def _record_problem(category: str, message: str) -> None:
             local_problems.append({"source": source.name, "category": category, "message": message})
 
+        # M8 (Fable 2026-07-08): inicializados ANTES del try (no dentro, tras
+        # los early-return de robots/js) para que estén siempre definidos
+        # cuando un except dispare `_finalize_partial_pages()` — incluidas
+        # excepciones que ocurran antes de llegar al loop de paginación.
+        all_candidates_source: list[Candidate] = []
+        pages_visited = 0
+        skipped_for_js = False
+        challenge_hit = False
+
+        def _finalize_partial_pages() -> None:
+            """M8 (Fable 2026-07-08): scorea y guarda lo acumulado en
+            `all_candidates_source` hasta el momento del error — un
+            HTTPError/timeout/Blocked403 en la página N de una fuente
+            paginada ya NO descarta las páginas 1..N-1 que sí se scrapearon
+            con éxito. El problema/error ya se registró aparte; esto sólo
+            recupera el trabajo parcial."""
+            if not all_candidates_source:
+                return
+            scored = [score_candidate(candidate) for candidate in all_candidates_source]
+            local_candidates.extend(scored)
+            diagnostic.record_candidates(scored, entry=entry)
+            if diagnostic.enabled and entry is not None:
+                entry["pages_visited"] = pages_visited
+            pages_note = f" ({pages_visited} págs)" if pages_visited > 1 else ""
+            _safe_print(
+                f"    [{source.name}] candidatos con señales: {len(scored)}{pages_note} [parcial, error en página siguiente]"
+            )
+
         try:
             if args.respect_robots and not robots.allowed(source.url):
                 message = f"robots.txt no permite acceder a {source.url}"
@@ -9308,10 +9433,6 @@ def run(args: argparse.Namespace) -> int:
 
             visited_urls: set[str] = set()
             current_url = source.url
-            all_candidates_source: list[Candidate] = []
-            pages_visited = 0
-            skipped_for_js = False
-            challenge_hit = False
 
             for page_num in range(1, effective_max_pages + 1):
                 visited_urls.add(current_url)
@@ -9457,12 +9578,14 @@ def run(args: argparse.Namespace) -> int:
             local_errors.append(message)
             _record_problem("http", str(exc))
             diagnostic.record_status("http", str(exc), entry=entry)
+            _finalize_partial_pages()
         except requests.RequestException as exc:
             message = f"{source.name}: request error {exc}"
             _safe_print(f"[ERROR] {message}")
             local_errors.append(message)
             _record_problem("request", str(exc))
             diagnostic.record_status("request", str(exc), entry=entry)
+            _finalize_partial_pages()
         except Blocked403Error:
             # 403 persistente tras el reintento con UA alternativo: fuente
             # abandonada en este run (BLOCKED_403 ya se logueó en _fetch_source_html).
@@ -9471,12 +9594,14 @@ def run(args: argparse.Namespace) -> int:
             local_errors.append(message)
             _record_problem("blocked-403", "403 persistente tras reintento con UA alternativo")
             diagnostic.record_status("blocked-403", "BLOCKED_403", entry=entry)
+            _finalize_partial_pages()
         except Exception as exc:
             message = f"{source.name}: error inesperado {exc}"
             _safe_print(f"[ERROR] {message}")
             local_errors.append(message)
             _record_problem("other", str(exc))
             diagnostic.record_error(exc, entry=entry)
+            _finalize_partial_pages()
 
         return {
             "candidates": local_candidates, "errors": local_errors,
@@ -9642,7 +9767,13 @@ def run(args: argparse.Namespace) -> int:
         )
 
     if not args.dry_run:
-        save_state(state_path, state)
+        # A3 (Fable 2026-07-08): save_state va DESPUÉS de mirror+append, no
+        # antes. `_apply_metadata` ya actualizó `state[key]["content_hash"]`
+        # con el hash POST-detail-fetch; si persistíamos ese state ANTES de
+        # que la fila enriquecida llegara a items.jsonl, un crash entre medio
+        # (o una excepción en mirror_candidate_images) dejaba el
+        # enriquecimiento perdido para siempre: el próximo run ve el hash ya
+        # "al día" en state y nunca re-escribe ni re-hace el detail-fetch.
         # Espejo local de portadas (Image storage, Fase 1): descarga la
         # imagen de cada item nuevo/cambiado a data/images/ y guarda el
         # filename en image_local. Ver "Image storage" en CLAUDE.md.
@@ -9657,6 +9788,7 @@ def run(args: argparse.Namespace) -> int:
             candidate_to_json(candidate) for candidate in reportable if candidate.status in {"new", "changed"}
         ]
         append_jsonl(items_path, new_or_changed_rows)
+        save_state(state_path, state)
         write_markdown_report(
             path=report_path,
             reportable=reportable,

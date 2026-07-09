@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -130,7 +129,21 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual en vez
+    # de tumbar el script; se mantiene fuera de `items` y se reinyecta
+    # verbatim al escribir.
+    items: list[dict] = []
+    raw_lines: list[str] = []
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                raw_lines.append(l.rstrip("\n"))
+    if raw_lines:
+        print(f"[edition-slugs][WARN] {len(raw_lines)} línea(s) corrupta(s) preservada(s) tal cual.")
     changed, ex = 0, []
     for it in items:
         if it.get("approved_at") or _is_lmc(it):
@@ -157,12 +170,11 @@ def main() -> int:
         before = len(items)
         items = mw.consolidate_by_cluster(items)
         print(f"[edition-slugs] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-edslug-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        # A13 (Fable 2026-07-08): backup_and_rotate en vez de shutil.copy a un
+        # path propio sin rotar.
+        mw.backup_and_rotate(ITEMS, "edslug")
+        out_lines = [json.dumps(it, ensure_ascii=False, sort_keys=True) for it in items] + raw_lines
+        mw.write_lines_atomic(ITEMS, out_lines)
         print(f"[edition-slugs] escrito {ITEMS}.")
     return 0
 

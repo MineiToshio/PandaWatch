@@ -245,16 +245,21 @@ record_step() {
 }
 
 # ── Backup pre-scrape de items.jsonl (convención backup_and_rotate del repo:
-# escribe en data/backups/items.jsonl/, rota máx 3). Un snapshot ANTES de que
-# el run toque nada permite restaurar si algo corrompe el corpus.
+# escribe en data/backups/items.jsonl/, rota máx 3 POR LABEL). Un snapshot ANTES
+# de que el run toque nada permite restaurar si algo corrompe el corpus.
+# timestamped=True (A6, Fable 2026-07-08): es el snapshot de NIVEL-RUN — no debe
+# pisarse entre corridas ni ser evictado por la rotación fixed-slot de los
+# retrofits de la Fase 3/4 (rotación por-label: sólo compite con sus propios
+# hermanos `items.jsonl.*.pre-scrape-delta-bak`, se conservan los 3 más recientes).
 # Capturamos el PATH del backup (no solo lo logueamos): PHASE 4 lo usa para
-# restaurar automáticamente si el corpus post-run queda inválido.
+# restaurar automáticamente si el corpus post-run queda inválido — usa SIEMPRE
+# esta variable, nunca un filename fijo, así el formato timestamped no la afecta.
 PRESCRAPE_BACKUP=""
 CURRENT_PHASE="backup pre-scrape"
 if [ -s data/items.jsonl ]; then
     echo ">>> Backup pre-scrape de data/items.jsonl"
     PRESCRAPE_BACKUP=$(env PYTHONUNBUFFERED=1 "$VENV_PY" -u -c \
-        "import sys; sys.path.insert(0,'scripts'); from pathlib import Path; from manga_watch import backup_and_rotate; print(backup_and_rotate(Path('data/items.jsonl'), 'scrape-delta'))")
+        "import sys; sys.path.insert(0,'scripts'); from pathlib import Path; from manga_watch import backup_and_rotate; print(backup_and_rotate(Path('data/items.jsonl'), 'scrape-delta', timestamped=True))")
     if [ -n "$PRESCRAPE_BACKUP" ] && [ -f "$PRESCRAPE_BACKUP" ]; then
         echo "    backup → $PRESCRAPE_BACKUP"
     else

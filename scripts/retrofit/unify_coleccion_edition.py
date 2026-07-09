@@ -22,7 +22,7 @@ Uso:
   .venv/bin/python scripts/retrofit/unify_coleccion_edition.py
 """
 from __future__ import annotations
-import json, re, sys, argparse, shutil, collections
+import json, re, sys, argparse, collections
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -217,7 +217,21 @@ def main() -> int:
                           "que tampoco se toca). Riesgo de fragmentación: ver el paso final "
                           "'apply_approvals' en enforce_listadomanga_rules.py.")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual en vez
+    # de tumbar el script; se mantiene fuera de `items` (el resto del código
+    # asume dicts reales) y se reinyecta verbatim al escribir.
+    items: list[dict] = []
+    raw_lines: list[str] = []
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                raw_lines.append(l.rstrip("\n"))
+    if raw_lines:
+        print(f"[unify-coleccion][WARN] {len(raw_lines)} línea(s) corrupta(s) preservada(s) tal cual.")
 
     by_cole: dict[str, list[dict]] = collections.defaultdict(list)
     for it in items:
@@ -332,15 +346,19 @@ def main() -> int:
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
+    # A13 (Fable 2026-07-08): antes escribía SIEMPRE (bak + reescritura
+    # completa) aunque `changed==0` — no-op en cada delta. Ahora early-return
+    # si nada cambió, igual que el resto de los retrofits compute-only.
+    if changed == 0:
+        print("[OK] Nada que unificar. items.jsonl ya está al día.")
+        return 0
     before = len(items)
     items = mw.consolidate_by_cluster(items)
     print(f"[unify-coleccion] consolidate: {before} → {len(items)}")
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-unifycole-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
+    # A13: backup_and_rotate en vez de shutil.copy a un path propio sin rotar.
+    mw.backup_and_rotate(ITEMS, "unify-coleccion")
+    out_lines = [json.dumps(it, ensure_ascii=False, sort_keys=True) for it in items] + raw_lines
+    mw.write_lines_atomic(ITEMS, out_lines)
     print(f"[unify-coleccion] escrito {ITEMS}.")
     return 0
 

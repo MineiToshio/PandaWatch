@@ -34,9 +34,15 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from manga_watch import backup_and_rotate, consolidate_by_cluster, derive_cluster_key  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        backup_and_rotate, consolidate_by_cluster, derive_cluster_key,
+        write_lines_atomic,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, consolidate_by_cluster, derive_cluster_key  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        backup_and_rotate, consolidate_by_cluster, derive_cluster_key,
+        write_lines_atomic,
+    )
 
 DEFAULT_ITEMS = _SCRIPTS_DIR.parent / "data" / "items.jsonl"
 
@@ -59,7 +65,22 @@ def consolidate(rows: list[dict]) -> tuple[list[dict], dict]:
 
 
 def run(items_path: Path, *, dry_run: bool) -> None:
-    rows = [json.loads(l) for l in items_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta ya no tumba el script — se
+    # preserva tal cual (no participa del consolidate, que necesita dicts
+    # válidos con cluster_key derivable) y se cuenta/warnea.
+    rows: list[dict] = []
+    raw_lines: list[str] = []
+    corrupt = 0
+    for l in items_path.read_text(encoding="utf-8").splitlines():
+        if not l.strip():
+            continue
+        try:
+            rows.append(json.loads(l))
+        except json.JSONDecodeError:
+            raw_lines.append(l)
+            corrupt += 1
+    if corrupt:
+        print(f"[WARN] {corrupt} línea(s) corrupta(s) preservada(s) tal cual (no consolidadas).")
     out, stats = consolidate(rows)
 
     print(f"Filas antes:           {len(rows)}")
@@ -82,9 +103,8 @@ def run(items_path: Path, *, dry_run: bool) -> None:
             return
 
     backup_and_rotate(items_path, "consolidate-sources")
-    with items_path.open("w", encoding="utf-8") as fh:
-        for r in out:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    out_lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in out] + raw_lines
+    write_lines_atomic(items_path, out_lines)
     print(f"\n✓ Escrito {items_path} ({len(out)} filas, 1 por producto, con sources[]).")
 
 

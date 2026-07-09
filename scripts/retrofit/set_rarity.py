@@ -42,7 +42,9 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import derive_rarity_tier, backup_and_rotate, is_approved  # type: ignore
+from manga_watch import (  # type: ignore
+    derive_rarity_tier, backup_and_rotate, is_approved, write_lines_atomic,
+)
 
 RARITY_LABEL = {
     "common": "⬜ common",
@@ -87,22 +89,34 @@ def main() -> int:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual (patrón
+    # `_raw`) en vez de tumbar el script con una excepción sin capturar.
     items: list[dict] = []
+    corrupt = 0
     with input_path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 items.append(json.loads(line))
+            except json.JSONDecodeError:
+                items.append({"_raw": line})
+                corrupt += 1
+    if corrupt:
+        print(f"[WARN] {corrupt} línea(s) corrupta(s) preservada(s) tal cual.")
 
     print(f"Items cargados: {len(items)}")
 
-    before: Counter = Counter(i.get("rarity", "") for i in items)
+    before: Counter = Counter(i.get("rarity", "") for i in items if "_raw" not in i)
 
     changed = 0
     skipped = 0
     skipped_approved = 0
     skipped_verified = 0
     for item in items:
+        if "_raw" in item:
+            continue
         # Ground truth verificado a mano (skill watch-validate-rarity): NUNCA
         # recalcular, ni siquiera con --force. Usar --include-verified para override.
         if item.get("rarity_verified_at") and not args.include_verified:
@@ -141,7 +155,7 @@ def main() -> int:
                 item["rarity"] = new
             changed += 1
 
-    after: Counter = Counter(i.get("rarity", "") for i in items)
+    after: Counter = Counter(i.get("rarity", "") for i in items if "_raw" not in i)
 
     print(f"Items con rarity ya asignado (saltados): {skipped}")
     print(f"Items verificados a mano (saltados): {skipped_verified}")
@@ -158,6 +172,8 @@ def main() -> int:
         # Recalcular distribución simulada para el reporte
         sim: Counter = Counter()
         for item in items:
+            if "_raw" in item:
+                continue
             old = item.get("rarity", "")
             # Guard: verificados a mano son ground truth incluso en simulación
             if item.get("rarity_verified_at") and not args.include_verified:
@@ -193,11 +209,11 @@ def main() -> int:
     if output_path == input_path:
         backup_and_rotate(input_path, "set-rarity")
 
-    tmp = output_path.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        for item in items:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-    tmp.replace(output_path)
+    out_lines = [
+        it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False, sort_keys=True)
+        for it in items
+    ]
+    write_lines_atomic(output_path, out_lines)
     print(f"\n✓ {output_path} actualizado.")
     return 0
 

@@ -31,7 +31,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate  # type: ignore
+from manga_watch import backup_and_rotate, write_lines_atomic  # type: ignore
 
 
 def _cluster_of(item: dict) -> str:
@@ -83,10 +83,26 @@ def main() -> int:
           f"{len(by_cluster)} clusters, {len(by_url)} urls con estado final.")
 
     # 2. Aplicar a items.jsonl.
-    items = [json.loads(l) for l in items_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual
+    # (patrón `_raw`, mismo que backfill_cluster_key.py) en vez de tumbar el
+    # script — se cuenta y warnea, no participa del matching de aprobaciones.
+    items: list[dict] = []
+    corrupt = 0
+    for l in items_path.read_text(encoding="utf-8").splitlines():
+        if not l.strip():
+            continue
+        try:
+            items.append(json.loads(l))
+        except json.JSONDecodeError:
+            items.append({"_raw": l})
+            corrupt += 1
+    if corrupt:
+        print(f"[WARN] {corrupt} línea(s) corrupta(s) preservada(s) tal cual (sin aprobaciones aplicadas).")
     set_count = 0
     clear_count = 0
     for it in items:
+        if "_raw" in it:
+            continue
         ck = _cluster_of(it)
         url = it.get("url", "")
         # Prioridad: cluster_key; fallback a url.
@@ -118,10 +134,11 @@ def main() -> int:
 
     backup = backup_and_rotate(items_path, "apply-approvals")
     print(f"[OK] Backup en {backup}")
-    items_path.write_text(
-        "\n".join(json.dumps(it, ensure_ascii=False) for it in items) + "\n",
-        encoding="utf-8",
-    )
+    out_lines = [
+        it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False, sort_keys=True)
+        for it in items
+    ]
+    write_lines_atomic(items_path, out_lines)
     print(f"[OK] Escribí {items_path} con {len(items)} items.")
     return 0
 

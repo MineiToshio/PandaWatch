@@ -31,7 +31,7 @@ Uso:
   .venv/bin/python scripts/retrofit/fix_edition_key_anomalies.py
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, re, sys, argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,8 +101,18 @@ def _isbn_country(isbn: str) -> str:
 
 
 def _publisher_slug(ek: str) -> str:
-    """editorial del edition_key `{serie}-{pub}-{slug}-{pais}` → parts[-3]."""
+    """editorial del edition_key `{serie}-{pub}-{slug}[-cNNNN]-{pais}` → el
+    tercer segmento contando desde el final.
+
+    B10 (Fable 2026-07-08): antes usaba `parts[-3]` a secas, que sólo es
+    correcto SIN el desambiguador `-cNNNN`. Con él (`serie-pub-special-c1234-es`),
+    `parts[-3]` apuntaba a `special` (el slug de edición) en vez de a `pub` —
+    el lookup en `_PUB_COUNTRY` fallaba en silencio. Se saltea el token
+    `cNNNN` (si el que precede al país lo es) antes de indexar.
+    """
     parts = ek.split("-")
+    if len(parts) >= 2 and re.fullmatch(r"c\d+", parts[-2]):
+        parts = parts[:-2] + parts[-1:]  # drop sólo el token -cNNNN
     return parts[-3] if len(parts) >= 3 else ""
 
 
@@ -146,11 +156,38 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual en vez
+    # de tumbar el script; se mantiene fuera de `items` y se reinyecta
+    # verbatim al escribir.
+    items: list[dict] = []
+    raw_lines: list[str] = []
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                raw_lines.append(l.rstrip("\n"))
+    if raw_lines:
+        print(f"[ek-anomalies][WARN] {len(raw_lines)} línea(s) corrupta(s) preservada(s) tal cual.")
+
     changed, ex = 0, []
     # ek original -xx → país resuelto (para propagar a hermanos sin evidencia
     # propia: misma edición ⇒ mismo país por definición).
     resolved_xx: dict[str, str] = {}
+    # B10 (Fable 2026-07-08): sembrar resolved_xx con ediciones YA resueltas
+    # en corridas ANTERIORES (persistidas en items.jsonl con país real) — antes
+    # sólo se acumulaba en memoria durante ESTA corrida, así que un hermano
+    # `-xx` llegado en un scrape posterior (después de que la edición ya se
+    # resolvió) no heredaba el país: la evidencia vivía sólo en el proceso
+    # viejo, no en el estado persistido.
+    for it in items:
+        ek = it.get("edition_key", "") or ""
+        parts = ek.split("-")
+        country = parts[-1] if parts else ""
+        if country and country != "xx" and country in _VALID:
+            resolved_xx.setdefault(ek[: -len(country)] + "xx", country)
     for it in items:
         if it.get("approved_at"):
             continue
@@ -192,12 +229,11 @@ def main() -> int:
         before = len(items)
         items = consolidate_by_cluster(items)
         print(f"[ek-anomalies] consolidate: {before} → {len(items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-ekanom-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        # A13 (Fable 2026-07-08): backup_and_rotate en vez de shutil.copy a un
+        # path propio sin rotar.
+        mw.backup_and_rotate(ITEMS, "ek-anomalies")
+        out_lines = [json.dumps(it, ensure_ascii=False, sort_keys=True) for it in items] + raw_lines
+        mw.write_lines_atomic(ITEMS, out_lines)
         print(f"[ek-anomalies] escrito {ITEMS}.")
     return 0
 

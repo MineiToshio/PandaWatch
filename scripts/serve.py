@@ -482,10 +482,17 @@ def _load_items() -> list[dict]:
 
 
 def _write_items(items: list[dict]) -> None:
+    # A7 (Fable 2026-07-08): flush+fsync antes del rename atómico — sin esto
+    # un corte de energía justo tras el rename podía dejar el .tmp sólo en
+    # page cache (no en disco), truncando items.jsonl. No depende del import
+    # opcional de manga_watch (que puede fallar en modo degradado, ver S6) —
+    # implementado inline con la misma primitiva de os.fsync.
     tmp = ITEMS_PATH.with_suffix(".jsonl.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
         for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(ITEMS_PATH)
 
 
@@ -1137,13 +1144,19 @@ def _update_item_images(item_url: str, images: list[dict]) -> tuple[bool, list[s
             # images[0] es la portada (única fuente de verdad). Ya no hay campos
             # top-level image_url/image_local que sincronizar.
             row["images"] = [dict(im) for im in images]
-            new_lines.append(json.dumps(row, ensure_ascii=False))
+            new_lines.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
         else:
             new_lines.append(raw)
     if not found:
         return False, []
+    # A7 (Fable 2026-07-08): mismo patrón fsync que _write_items — este
+    # writer reescribe items.jsonl entero por índice de línea (sync de
+    # imágenes por cluster), no vía _write_items.
     tmp = ITEMS_PATH.with_suffix(".tmp")
-    tmp.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write("\n".join(new_lines) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(ITEMS_PATH)
 
     removed_locals = old_locals - new_locals

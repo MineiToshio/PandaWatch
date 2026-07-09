@@ -23,7 +23,9 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import derive_cluster_key, backup_and_rotate  # type: ignore
+from manga_watch import (  # type: ignore
+    derive_cluster_key, backup_and_rotate, write_lines_atomic,
+)
 
 
 def main() -> int:
@@ -106,8 +108,8 @@ def main() -> int:
         if "_raw" in it:
             out_lines.append(raw)
         else:
-            out_lines.append(json.dumps(it, ensure_ascii=False))
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+            out_lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True))
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escrito {dst}")
     return 0
 

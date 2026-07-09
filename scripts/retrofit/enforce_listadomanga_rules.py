@@ -55,9 +55,16 @@ RETRO = ROOT / "scripts" / "retrofit"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import backup_and_rotate, is_approved  # noqa: E402
+    from manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # noqa: E402
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import backup_and_rotate, is_approved  # noqa: E402
+    from scripts.manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # noqa: E402
+
+# B8 (Fable 2026-07-08): tope de longitud para el primer segmento de
+# `description` que se acepta como edition_display — un título oficial real
+# es corto (nombre de la edición); una description entera sin separador (ver
+# guard `" · " in desc` abajo) o con un separador tardío puede colar un bloque
+# de texto largo como "título".
+_MAX_EDITION_DISPLAY_LEN = 120
 
 
 def _recover_edition_display(include_approved: bool = False) -> tuple[int, int]:
@@ -66,27 +73,51 @@ def _recover_edition_display(include_approved: bool = False) -> tuple[int, int]:
 
     Items aprobados (`approved_at`) se saltean por defecto (WO-D 2026-07-07):
     devuelve (n_recuperados, n_aprobados_saltados)."""
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual (patrón
+    # `_raw`) en vez de tumbar el paso con una excepción sin capturar.
+    items: list[dict] = []
+    corrupt = 0
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                items.append({"_raw": l.rstrip("\n")})
+                corrupt += 1
+    if corrupt:
+        print(f"[enforce][WARN] {corrupt} línea(s) corrupta(s) preservada(s) tal cual.")
     n = 0
     skipped_approved = 0
     for it in items:
+        if "_raw" in it:
+            continue
         if "coleccion.php" not in (it.get("url", "") or ""):
             continue
         if is_approved(it) and not include_approved:
             skipped_approved += 1
             continue
         desc = it.get("description", "") or ""
+        # B8 (Fable 2026-07-08): exigir el separador " · " — sin él,
+        # `desc.split(" · ")[0]` devolvía la description ENTERA (p.ej. la
+        # ficha de una tienda sin el formato `collection_title · edition · …`
+        # del parser de listadomanga) como si fuera el título oficial.
+        if " · " not in desc:
+            continue
         official = desc.split(" · ")[0].strip()
-        # sólo si parece un título real (no vacío, no un slug) y difiere
-        if official and len(official) > 1 and it.get("edition_display") != official:
+        # sólo si parece un título real (no vacío, no un slug, no un bloque
+        # de texto largo) y difiere
+        if (official and 1 < len(official) <= _MAX_EDITION_DISPLAY_LEN
+                and it.get("edition_display") != official):
             it["edition_display"] = official
             n += 1
     if n:
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        out_lines = [
+            it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False, sort_keys=True)
+            for it in items
+        ]
+        write_lines_atomic(ITEMS, out_lines)
     return n, skipped_approved
 
 
@@ -125,7 +156,13 @@ def main() -> int:
     # El enforcer reescribe items.jsonl vía su cadena de retrofits; un snapshot al
     # inicio permite restaurar si la cadena aborta a media pasada.
     if ITEMS.exists() and ITEMS.stat().st_size > 0:
-        bak = backup_and_rotate(ITEMS, "enforce-lmc")
+        # A6 (Fable 2026-07-08): timestamped=True — este es el snapshot de
+        # nivel-run que "restaurar si la cadena aborta a media pasada"
+        # necesita. En el slot fijo (timestamped=False, default) la rotación
+        # GLOBAL de backup_and_rotate (antes de este fix) podía evictarlo en
+        # cuanto la cadena de 20+ pasos escribiera 3+ backups de otros labels
+        # en la misma carpeta — justo el peor momento para perderlo.
+        bak = backup_and_rotate(ITEMS, "enforce-lmc", timestamped=True)
         print(f"[enforce] 0) backup → {bak}")
     print("[enforce] 1) edition_display oficial (desde description, sin red)")
     n, skipped = _recover_edition_display(include_approved=args.include_approved)

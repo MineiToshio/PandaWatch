@@ -37,7 +37,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -233,7 +232,22 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    # B11 (Fable 2026-07-08): una línea corrupta se preserva tal cual en vez
+    # de tumbar el script con una excepción sin capturar. Se mantiene FUERA
+    # de `items` (apply_merges/consolidate_by_cluster/derive_cluster_key
+    # esperan dicts reales) y se reinyecta verbatim al escribir.
+    items: list[dict] = []
+    raw_lines: list[str] = []
+    with ITEMS.open(encoding="utf-8") as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            try:
+                items.append(json.loads(l))
+            except json.JSONDecodeError:
+                raw_lines.append(l.rstrip("\n"))
+    if raw_lines:
+        print(f"[isbn-dup][WARN] {len(raw_lines)} línea(s) corrupta(s) preservada(s) tal cual.")
 
     before_n = len(items)
     result = apply_merges(items)
@@ -248,15 +262,15 @@ def main() -> int:
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
+    # A13 (Fable 2026-07-08): backup_and_rotate en vez de shutil.copy a un
+    # path propio (data/items.jsonl.pre-isbndup-bak sin rotar, sumaba a los
+    # 38 siblings sueltos / 1.1 GB del hallazgo). Sólo escribe si changed>0.
     if changed:
         new_items = result["items"]
         print(f"[isbn-dup] consolidate: {before_n} → {len(new_items)}")
-        shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-isbndup-bak"))
-        tmp = ITEMS.with_suffix(".jsonl.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            for it in new_items:
-                fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-        tmp.replace(ITEMS)
+        mw.backup_and_rotate(ITEMS, "isbn-dup")
+        out_lines = [json.dumps(it, ensure_ascii=False, sort_keys=True) for it in new_items] + raw_lines
+        mw.write_lines_atomic(ITEMS, out_lines)
         print(f"[isbn-dup] escrito {ITEMS}.")
     return 0
 

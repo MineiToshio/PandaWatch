@@ -2,11 +2,16 @@
 """generate_slugs.py — genera el campo `slug` en items.jsonl para la ruta /item/[slug].
 
 Prioridad de derivación (por cluster):
-  1. cluster_key = "isbn:{isbn13}"  →  "isbn-{isbn13}"
-  2. edition_key + volume           →  "{edition_key}-{vol}"
-  3. edition_key solo (sin volumen) →  "{edition_key}"
-  4. sin edition_key + isbn field   →  "isbn-{isbn}"
-  5. fallback                       →  "item-{sha1(url)[:12]}"
+  1. edition_key + volume           →  "{edition_key}-{vol}"
+  2. edition_key solo (sin volumen) →  "{edition_key}"
+  3. sin edition_key + campo isbn   →  "isbn-{isbn}"
+  4. fallback                       →  "item-{sha1(url)[:12]}"
+
+(B2, Fable 2026-07-08: la Regla vieja "cluster_key = isbn:{isbn13}" se quitó —
+el tier `isbn:` de `derive_cluster_key` fue eliminado 2026-07-07 [un ISBN
+pelado repite entre ediciones/series distintas en manga]; la rama nunca
+ejecutaba, 0 de los items del corpus tenían ese prefijo. La Regla 3 por
+CAMPO `isbn` del item —no del cluster_key— sigue viva sin cambios.)
 
 Colisiones entre clusters distintos se resuelven con sufijos -b/-c (el más
 antiguo, por detected_at, conserva el slug limpio).
@@ -36,7 +41,9 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13  # type: ignore
+from manga_watch import (  # type: ignore
+    FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13, write_lines_atomic,
+)
 
 
 _SLUG_VALID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
@@ -119,22 +126,12 @@ def _sanitize(s: str) -> str:
 
 def _derive_base_slug(item: dict) -> str:
     """Derives the candidate slug for a cluster representative (before collision resolution)."""
-    cluster_key = (item.get("cluster_key") or "").strip()
     edition_key = (item.get("edition_key") or "").strip()
     volume = (item.get("volume") or "").strip()
     isbn = (item.get("isbn") or "").strip()
     url = (item.get("url") or "").strip()
 
-    # Rule 1: isbn cluster key → "isbn-{isbn13}"
-    # Normaliza SIEMPRE a ISBN-13 (via _isbn_slug_part) para que un cluster con
-    # el ISBN-10 y otro con el ISBN-13 no oscilen. Maneja el check digit 'X' del
-    # ISBN-10 y colones full-width pegados (e.g. isbn:： 9784847037412).
-    if cluster_key.startswith("isbn:"):
-        part = _isbn_slug_part(cluster_key[5:])
-        if part:
-            return f"isbn-{part}"
-
-    # Rule 2: edition_key + volume → "{edition_key}-{vol}"
+    # Rule 1: edition_key + volume → "{edition_key}-{vol}"
     if edition_key and volume:
         vol_fmt = _format_volume(volume)
         if vol_fmt:
@@ -146,7 +143,7 @@ def _derive_base_slug(item: dict) -> str:
             if sanitized and _SLUG_VALID_RE.match(sanitized):
                 return sanitized
 
-    # Rule 3: edition_key alone
+    # Rule 2: edition_key alone
     if edition_key:
         if _SLUG_VALID_RE.match(edition_key):
             return edition_key
@@ -154,7 +151,7 @@ def _derive_base_slug(item: dict) -> str:
         if sanitized and _SLUG_VALID_RE.match(sanitized):
             return sanitized
 
-    # Rule 4: no edition_key but has isbn field
+    # Rule 3: no edition_key but has isbn field
     # Derivado SIEMPRE del ISBN-13 normalizado (idempotente 10↔13); si no es un
     # ISBN válido cae al limpiado crudo, igual que antes.
     if isbn:
@@ -162,7 +159,7 @@ def _derive_base_slug(item: dict) -> str:
         if isbn_clean and len(isbn_clean) >= 2:
             return f"isbn-{isbn_clean}"
 
-    # Rule 5: fallback hash
+    # Rule 4: fallback hash
     if url:
         return f"item-{_sha1_short(url)}"
 
@@ -279,34 +276,57 @@ def main() -> int:
 
     cluster_final_slug: dict[str, str] = dict(cluster_existing_slug)  # start from preserved
 
+    # A8 (Fable 2026-07-08): `taken_slugs` acumula GLOBALMENTE (no por-grupo)
+    # y arranca en `reserved_slugs` — así en modo full (donde antes
+    # `reserved_slugs` quedaba vacío) dos clusters con bases DISTINTAS que
+    # por coincidencia derivaran el mismo slug final ya no pueden colisionar
+    # entre grupos (antes sólo se dedupeaba dentro del propio grupo de
+    # `base_slug`).
+    taken_slugs: set[str] = set(reserved_slugs)
+
     collision_count = 0
-    for base_slug, ck_list in base_to_clusters.items():
-        # Sort by detected_at ascending: oldest gets the clean slug
+    # Iterar `base_to_clusters` en orden alfabético de `base_slug` (no el
+    # orden de inserción, que sale de iterar el SET `to_assign` y por lo
+    # tanto varía con PYTHONHASHSEED) — necesario para que qué grupo "gana"
+    # un slug ya tomado por otro grupo (vía `taken_slugs`, ahora global) sea
+    # determinista entre corridas.
+    for base_slug in sorted(base_to_clusters.keys()):
+        ck_list = base_to_clusters[base_slug]
+        # A8 (Fable 2026-07-08): tie-break estable — antes el sort sólo usaba
+        # `cluster_oldest` y, para dos clusters con la MISMA fecha más vieja
+        # (ingresados en el mismo scrape), el orden salía de `ck_list`, que a
+        # su vez viene de iterar el set `to_assign` — con PYTHONHASHSEED
+        # aleatorio (default) ese orden cambia entre procesos y el sort
+        # estable de Python preserva esa relatividad para los empates. Se
+        # agrega `ck` (el propio cluster_key, siempre comparable) como
+        # segundo criterio para que el resultado no dependa del orden de
+        # entrada.
         ck_list_sorted = sorted(
-            ck_list, key=lambda ck: cluster_oldest.get(ck, "9999-99-99")
+            ck_list, key=lambda ck: (cluster_oldest.get(ck, "9999-99-99"), ck)
         )
 
         # Find a non-colliding slug for each cluster in the group
-        used_in_group: set[str] = set()
         for ck in ck_list_sorted:
             # Try clean slug first
             candidate = base_slug
-            if candidate not in reserved_slugs and candidate not in used_in_group:
+            if candidate not in taken_slugs:
                 cluster_final_slug[ck] = candidate
-                used_in_group.add(candidate)
+                taken_slugs.add(candidate)
                 continue
             # Try suffixes -b, -c, …
             assigned = False
             for suffix in _COLLISION_SUFFIXES:
                 candidate = f"{base_slug}-{suffix}"
-                if candidate not in reserved_slugs and candidate not in used_in_group:
+                if candidate not in taken_slugs:
                     cluster_final_slug[ck] = candidate
-                    used_in_group.add(candidate)
+                    taken_slugs.add(candidate)
                     assigned = True
                     break
             if not assigned:
                 # Very unlikely: fallback to hash
-                cluster_final_slug[ck] = f"item-{_sha1_short(ck)}"
+                candidate = f"item-{_sha1_short(ck)}"
+                cluster_final_slug[ck] = candidate
+                taken_slugs.add(candidate)
 
         if len(ck_list) > 1:
             collision_count += len(ck_list)
@@ -388,10 +408,10 @@ def main() -> int:
         print(f"\n[OK] Backup en {backup}")
 
     out_lines = [
-        json.dumps(it, ensure_ascii=False) if it is not None else raw_lines[i]
+        json.dumps(it, ensure_ascii=False, sort_keys=True) if it is not None else raw_lines[i]
         for i, it in enumerate(new_items)
     ]
-    dst.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    write_lines_atomic(dst, out_lines)
     print(f"[OK] Escribí {dst} con {updates} slugs actualizados.")
     return 0
 

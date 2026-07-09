@@ -43,6 +43,7 @@ try:
         detect_signals,
         backup_and_rotate,
         is_approved,
+        write_lines_atomic,
     )
 except ImportError:
     from manga_watch import (  # type: ignore  # cuando se ejecuta directamente
@@ -51,6 +52,7 @@ except ImportError:
         detect_signals,
         backup_and_rotate,
         is_approved,
+        write_lines_atomic,
     )
 
 
@@ -194,12 +196,18 @@ def main() -> int:
     if kept_path.exists() and kept_path == src:
         backup = backup_and_rotate(kept_path, "collectible")
         print(f"\n[OK] Backup guardado en {backup}")
+    # B12 (Fable 2026-07-08): rotar el diagnóstico de rechazados en vez de
+    # pisarlo en silencio — conserva la evidencia de la corrida anterior.
+    if rejected_path.exists():
+        backup_and_rotate(rejected_path, "collectible-rejected")
 
-    kept_path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
-    print(f"[OK] Escribí {kept_path} con {len(kept_lines)} coleccionables.")
-
-    rejected_path.write_text("\n".join(rejected_lines) + "\n", encoding="utf-8")
+    # A7 (Fable 2026-07-08): `rejected` ANTES que `kept` — un crash entre
+    # ambos writes no deja los rechazados fuera de AMBOS archivos.
+    write_lines_atomic(rejected_path, rejected_lines)
     print(f"[OK] Escribí {rejected_path} con {len(rejected_lines)} no-coleccionables.")
+
+    write_lines_atomic(kept_path, kept_lines)
+    print(f"[OK] Escribí {kept_path} con {len(kept_lines)} coleccionables.")
 
     return 0
 
