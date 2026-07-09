@@ -4,13 +4,35 @@ export const meta = {
   phases: [
     { title: 'Análisis de código',   detail: 'Lee parser, enforcer y scripts de auditoría en paralelo (haiku)' },
     { title: 'Selección de muestra', detail: 'Extrae IDs de colecciones representativas por tipo de caso del corpus local (haiku)' },
-    { title: 'Inspección Chrome',    detail: 'Navega lista.php, calendario.php y muestra estratificada de colecciones — TODOS los tipos de caso (fable)' },
+    { title: 'Inspección Chrome',    detail: 'Navega lista.php, calendario.php y muestra estratificada de colecciones — TODOS los tipos de caso (sonnet)' },
     { title: 'Síntesis',             detail: 'Identifica gaps reales entre sitio y parser, prioriza por impacto (sonnet)' },
     { title: 'Implementación',       detail: 'Aplica mejoras críticas, verifica enforcer + validador (sonnet)' },
   ],
 }
 
 const BASE = '/Users/Shared/Proyectos/manga-watch'
+
+// Checkpoint persistente de las fases 1-3 (auditoría 2026-07-08, hallazgo
+// F11.1): la fase Chrome es la más cara del workflow (~15-25 navegaciones);
+// antes, si moría a mitad de camino, se perdía TODO y había que re-navegar
+// desde cero. Mismo patrón que data/standardize-progress.json.
+const CHECKPOINT_FILE = 'data/listadomanga-audit-progress.json'
+
+// args: { chrome_model?: string, resume?: boolean }
+// chrome_model — override del modelo de los steps Chrome (default 'sonnet').
+//   Antes hardcodeado a 'fable' (modelo temporal) — auditoría 2026-07-08,
+//   hallazgo F1: la tarea es EXTRACCIÓN MECÁNICA (JS pre-escrito abajo +
+//   salida constreñida por schema S_CHROME), no razonamiento sobre HTML
+//   libre — sonnet alcanza de sobra y no depende de un modelo que puede
+//   dejar de existir. Parametrizable para experimentar con otro modelo.
+// resume — si true, carga el checkpoint de ${CHECKPOINT_FILE} y saltea las
+//   fases 1-3 (o los grupos Chrome) ya completados.
+let ARGS = args
+if (typeof ARGS === 'string') {
+  try { ARGS = JSON.parse(ARGS) } catch { ARGS = {} }
+}
+const CHROME_MODEL = (ARGS && ARGS.chrome_model) || 'sonnet'
+const doResume = !!(ARGS && ARGS.resume)
 
 // ─── SCHEMAS ────────────────────────────────────────────────────────────────
 
@@ -104,12 +126,95 @@ const S_IMPROVEMENTS = {
   required: ['critical', 'medium', 'low', 'skip'],
 }
 
+// Checkpoint de las fases 1-3 (hallazgo F11.1). Reusa S_CODE/S_SAMPLE/S_CHROME
+// para las sub-formas en vez de declarar objetos libres.
+const S_PROGRESS = {
+  type: 'object',
+  properties: {
+    exists:          { type: 'boolean' },
+    has_analysis:    { type: 'boolean' },
+    has_sample:      { type: 'boolean' },
+    parser_analysis:   S_CODE,
+    enforcer_analysis: S_CODE,
+    audit_analysis:    S_CODE,
+    sample:            S_SAMPLE,
+    chrome_results: {
+      type: 'array',
+      description: 'Resultados Chrome ya completados en una corrida anterior, por label',
+      items: {
+        type: 'object',
+        properties: { label: { type: 'string' }, result: S_CHROME },
+        required: ['label', 'result'],
+      },
+    },
+  },
+  required: ['exists'],
+}
+
+// Gate final (hallazgo F11.3): SOLO reporta PASS/FAIL + evidencia — el
+// verificador ya no "corrige" nada por su cuenta (antes lo hacía sin dejar
+// registro de qué tocó, y el workflow igual retornaba éxito).
+const S_FINAL_CHECK = {
+  type: 'object',
+  properties: {
+    status:           { type: 'string', enum: ['PASS', 'FAIL'] },
+    tests_output:      { type: 'string' },
+    validator_output:  { type: 'string' },
+    violations:        { type: 'array', items: { type: 'string' }, description: 'Violaciones ERROR del validador o tests que fallaron, si status=FAIL' },
+  },
+  required: ['status', 'tests_output', 'validator_output'],
+}
+
+async function writeCheckpoint(progress, phaseName) {
+  await agent(
+    `Write this JSON to ${BASE}/${CHECKPOINT_FILE} (create or overwrite): ${JSON.stringify(progress)}`,
+    { label: 'save-checkpoint', phase: phaseName || 'Análisis de código', model: 'haiku' }
+  )
+}
+
+// ─── Checkpoint: cargar progreso anterior (si args.resume) ──────────────────
+let progress = {
+  exists: false, has_analysis: false, has_sample: false,
+  parser_analysis: null, enforcer_analysis: null, audit_analysis: null,
+  sample: null, chrome_results: [],
+}
+if (doResume) {
+  const checkpoint = await agent(
+    `Check if ${BASE}/${CHECKPOINT_FILE} exists using Bash (ls command).
+If it exists, read it with the Read tool and return its contents parsed as structured output.
+If it does not exist, return { "exists": false }.`,
+    { label: 'load-checkpoint', phase: 'Análisis de código', schema: S_PROGRESS, model: 'haiku' }
+  )
+  if (checkpoint && checkpoint.exists) {
+    progress = {
+      exists: true,
+      has_analysis: !!checkpoint.has_analysis,
+      has_sample: !!checkpoint.has_sample,
+      parser_analysis: checkpoint.parser_analysis || null,
+      enforcer_analysis: checkpoint.enforcer_analysis || null,
+      audit_analysis: checkpoint.audit_analysis || null,
+      sample: checkpoint.sample || null,
+      chrome_results: checkpoint.chrome_results || [],
+    }
+    log(`Checkpoint cargado — análisis:${progress.has_analysis ? '✅' : '⏳'} muestra:${progress.has_sample ? '✅' : '⏳'} chrome:${progress.chrome_results.length}/6`)
+  } else {
+    log('Sin checkpoint previo — empezando de cero')
+  }
+}
+
 // ─── FASE 1: Análisis de código ──────────────────────────────────────────────
 phase('Análisis de código')
 
-const [parserAnalysis, enforcerAnalysis, auditAnalysis] = await parallel([
+let parserAnalysis, enforcerAnalysis, auditAnalysis
+if (progress.has_analysis) {
+  log('Fase 1 (Análisis de código) — cargada del checkpoint, salteando')
+  parserAnalysis = progress.parser_analysis
+  enforcerAnalysis = progress.enforcer_analysis
+  auditAnalysis = progress.audit_analysis
+} else {
+  [parserAnalysis, enforcerAnalysis, auditAnalysis] = await parallel([
 
-  () => agent(`
+    () => agent(`
 Lee COMPLETO el archivo ${BASE}/scripts/wikis/listadomanga_collections.py (~2034 líneas) y el doc ${BASE}/docs/scraper/sources/listadomanga.md.
 
 Identifica:
@@ -124,10 +229,10 @@ Identifica:
 key_patterns: los H2 exactos que el parser usa (ej. "Números editados (Ediciones Especiales)", "Cofres de regalo con las primeras ediciones de")
 gaps: posibles casos no cubiertos
 `.trim(),
-    { label: 'leer-parser', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
-  ),
+      { label: 'leer-parser', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
+    ),
 
-  () => agent(`
+    () => agent(`
 Lee estos archivos en ${BASE}:
 - scripts/retrofit/enforce_listadomanga_rules.py
 - scripts/validate_corpus.py
@@ -142,10 +247,10 @@ Identifica:
 key_patterns: nombres exactos de invariantes del validador
 gaps: fragilidades y posibles mejoras
 `.trim(),
-    { label: 'leer-enforcer', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
-  ),
+      { label: 'leer-enforcer', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
+    ),
 
-  () => agent(`
+    () => agent(`
 Lee estos archivos en ${BASE}:
 - scripts/scrape_delta.sh
 - scripts/scrape_full.sh (si no existe, lee scripts/ingest_listadomanga_full.py)
@@ -161,16 +266,28 @@ Identifica:
 key_patterns: las fases del pipeline delta vs full
 gaps: diferencias injustificadas entre delta y full, checks que faltan
 `.trim(),
-    { label: 'leer-scripts-pipeline', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
-  ),
-])
+      { label: 'leer-scripts-pipeline', phase: 'Análisis de código', schema: S_CODE, model: 'haiku' }
+    ),
+  ])
+
+  progress.has_analysis = true
+  progress.parser_analysis = parserAnalysis
+  progress.enforcer_analysis = enforcerAnalysis
+  progress.audit_analysis = auditAnalysis
+  await writeCheckpoint(progress, 'Análisis de código')
+}
 
 // ─── FASE 2: Selección de muestra estratificada ───────────────────────────────
 phase('Selección de muestra')
 
-// Extraer IDs de colecciones representativas del corpus local por tipo de caso
-// cluster_key de listadomanga tiene formato: lmc:{cole}:{kind}:{vol}
-const sample = await agent(`
+let sample
+if (progress.has_sample) {
+  log('Fase 2 (Selección de muestra) — cargada del checkpoint, salteando')
+  sample = progress.sample
+} else {
+  // Extraer IDs de colecciones representativas del corpus local por tipo de caso
+  // cluster_key de listadomanga tiene formato: lmc:{cole}:{kind}:{vol}
+  sample = await agent(`
 Ejecuta este script Python en ${BASE} para extraer IDs de colecciones representativas del corpus:
 
   cd ${BASE} && .venv/bin/python - << 'PYEOF'
@@ -240,18 +357,24 @@ PYEOF
 
 Devuelve el resultado como objeto JSON estructurado.
 `.trim(),
-  { label: 'seleccion-muestra', phase: 'Selección de muestra', schema: S_SAMPLE, model: 'haiku' }
-)
+    { label: 'seleccion-muestra', phase: 'Selección de muestra', schema: S_SAMPLE, model: 'haiku' }
+  )
+
+  progress.has_sample = true
+  progress.sample = sample
+  await writeCheckpoint(progress, 'Selección de muestra')
+}
 
 log(`Muestra lista — tipos encontrados: ${Object.entries(sample).filter(([k,v]) => Array.isArray(v) && v.length > 0).map(([k]) => k).join(', ')}`)
 
 // ─── FASE 3: Inspección Chrome ────────────────────────────────────────────────
 phase('Inspección Chrome')
 
-// NOTA: Fable se usa aquí por su capacidad superior de razonamiento sobre HTML complejo
-// y su mejor manejo de interacciones multi-paso con herramientas MCP de Chrome.
 const CHROME_PREAMBLE = `
-Primero carga los schemas de Chrome con ToolSearch, query: "select:mcp__Claude_in_Chrome__navigate,mcp__Claude_in_Chrome__get_page_text,mcp__Claude_in_Chrome__javascript_tool,mcp__Claude_in_Chrome__find".
+Primero carga los schemas de Chrome con ToolSearch, query: "select:mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__get_page_text,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__find".
+Si ese select no devuelve tools (el server MCP puede tener otro nombre en esta
+máquina), reintentá con ToolSearch por PALABRAS CLAVE: query "chrome navigate
+javascript" (max_results alto) y usá los nombres reales que aparezcan.
 
 Reglas para no saturar el contexto:
 - Nunca extraigas el DOM completo. Usa javascript_tool con selectores específicos.
@@ -274,10 +397,17 @@ const KNOWN_H2 = [
   'Otras ediciones de',
 ]
 
-const [discoveryResult, ...collectionResults] = await parallel([
-
-  // ── Chrome A: lista.php + calendario.php (estructura de discovery) ──────────
-  () => agent(`
+// Los 6 grupos de inspección Chrome. Modelo mecánico (extracción con JS
+// pre-escrito abajo + schema S_CHROME, no razonamiento sobre HTML libre —
+// ver nota de CHROME_MODEL arriba). Antes corrían los 6 en parallel() sobre
+// UN solo browser (hallazgo F11.2): listadomanga es un sitio chico y 6
+// clientes simultáneos del mismo origen es poco cortés además de propenso a
+// contención de tabs. Ahora corren de a 2 (paralelismo 2), checkpointeando
+// después de cada par.
+const chromeTasks = [
+  {
+    label: 'chrome-discovery',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Navega las dos páginas de discovery y extrae su estructura.
@@ -313,11 +443,13 @@ Busca en calendario.php: ¿cómo navegar meses anteriores? ¿fecha por item? ¿n
 Secciones conocidas del parser (para detectar nuevas):
 ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 `.trim(),
-    { label: 'chrome-discovery', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-discovery', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
 
-  // ── Chrome B: Ediciones normales + con cofres/extras (Layout B) ─────────────
-  () => agent(`
+  {
+    label: 'chrome-normal-cofres',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Inspecciona colecciones de tipo: edición normal y con cofres/extras.
@@ -343,11 +475,13 @@ ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 
 Busca especialmente: secciones Layout B (tablas de 920px de ancho con cofres/extras), si los cofres usan <table width="920"> o otra clase/estructura diferente.
 `.trim(),
-    { label: 'chrome-normal-cofres', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-normal-cofres', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
 
-  // ── Chrome C: Ediciones especiales + variantes + packs ──────────────────────
-  () => agent(`
+  {
+    label: 'chrome-especiales-variantes-packs',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Inspecciona colecciones con ediciones especiales, portadas variantes y packs.
@@ -375,11 +509,13 @@ Busca especialmente:
 Secciones conocidas del parser:
 ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 `.trim(),
-    { label: 'chrome-especiales-variantes-packs', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-especiales-variantes-packs', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
 
-  // ── Chrome D: Ediciones premium (kanzenban, cartoné) ────────────────────────
-  () => agent(`
+  {
+    label: 'chrome-premium',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Inspecciona colecciones premium: kanzenban, cartoné, tapa dura, A5, tomo doble.
@@ -405,11 +541,13 @@ Busca ESPECIALMENTE:
 Secciones conocidas del parser:
 ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 `.trim(),
-    { label: 'chrome-premium', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-premium', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
 
-  // ── Chrome E: Colecciones recientes (id alto >= 6000) ───────────────────────
-  () => agent(`
+  {
+    label: 'chrome-recientes',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Inspecciona colecciones recientes (IDs altos) para detectar cambios de HTML o nuevos tipos.
@@ -438,11 +576,13 @@ Busca: ¿el HTML de las colecciones recientes es idéntico al de las antiguas? �
 Secciones conocidas del parser:
 ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 `.trim(),
-    { label: 'chrome-recientes', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-recientes', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
 
-  // ── Chrome F: Limited + gallery (si hay IDs) ─────────────────────────────────
-  () => agent(`
+  {
+    label: 'chrome-limited-gallery',
+    build: () => agent(`
 ${CHROME_PREAMBLE}
 
 Inspecciona colecciones con ediciones limitadas y/o con galería de fotos (extras vinculados).
@@ -469,12 +609,33 @@ Busca especialmente:
 Secciones conocidas del parser:
 ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
 `.trim(),
-    { label: 'chrome-limited-gallery', phase: 'Inspección Chrome', schema: S_CHROME, model: 'fable' }
-  ),
+      { label: 'chrome-limited-gallery', phase: 'Inspección Chrome', schema: S_CHROME, model: CHROME_MODEL }
+    ),
+  },
+]
 
-])
+const chromeResultsMap = new Map((progress.chrome_results || []).map(r => [r.label, r.result]))
+const pendingChromeTasks = chromeTasks.filter(t => !chromeResultsMap.has(t.label))
 
-const allChromeResults = [discoveryResult, ...collectionResults].filter(Boolean)
+if (pendingChromeTasks.length === 0) {
+  log('Fase 3 (Inspección Chrome) — 6/6 cargados del checkpoint, salteando')
+} else {
+  if (chromeResultsMap.size > 0) {
+    log(`Fase 3 (Inspección Chrome) — ${chromeResultsMap.size}/6 ya del checkpoint, corriendo ${pendingChromeTasks.length} restantes`)
+  }
+  // Paralelismo 2 (no los 6 juntos): listadomanga es un sitio chico — 6
+  // clientes simultáneos del mismo origen es poco cortés y propenso a
+  // contención de tabs sobre el mismo browser (hallazgo F11.2).
+  for (let i = 0; i < pendingChromeTasks.length; i += 2) {
+    const pair = pendingChromeTasks.slice(i, i + 2)
+    const results = await parallel(pair.map(t => t.build))
+    pair.forEach((t, idx) => chromeResultsMap.set(t.label, results[idx]))
+    progress.chrome_results = Array.from(chromeResultsMap, ([label, result]) => ({ label, result }))
+    await writeCheckpoint(progress, 'Inspección Chrome')
+  }
+}
+
+const allChromeResults = chromeTasks.map(t => chromeResultsMap.get(t.label)).filter(Boolean)
 log(`Chrome completado — ${allChromeResults.length} grupos inspeccionados`)
 const totalPagesInspected = allChromeResults.reduce((n, r) => n + (r.pages_inspected?.length || 0), 0)
 log(`Total páginas visitadas: ~${totalPagesInspected}`)
@@ -495,19 +656,19 @@ CONTEXTO DEL PROYECTO:
 - Gotchas ya RESUELTAS (no re-proponer): #43-#60
 
 ANÁLISIS DEL PARSER:
-${JSON.stringify(parserAnalysis, null, 2)}
+${JSON.stringify(parserAnalysis)}
 
 ANÁLISIS DEL ENFORCER Y VALIDADOR:
-${JSON.stringify(enforcerAnalysis, null, 2)}
+${JSON.stringify(enforcerAnalysis)}
 
 ANÁLISIS DEL PIPELINE DELTA/FULL:
-${JSON.stringify(auditAnalysis, null, 2)}
+${JSON.stringify(auditAnalysis)}
 
 MUESTRA DE CORPUS (tipos y cantidades encontradas):
-${JSON.stringify(sample, null, 2)}
+${JSON.stringify(sample)}
 
 HALLAZGOS DE CHROME (${allChromeResults.length} grupos, ~${totalPagesInspected} páginas):
-${JSON.stringify(allChromeResults, null, 2)}
+${JSON.stringify(allChromeResults)}
 
 Criterios de priorización:
 - CRÍTICO: evidencia de items perdiéndose O datos incorrectos entrando. Solo con evidencia de Chrome o código.
@@ -520,15 +681,24 @@ NO proponer nada sin evidencia directa de los hallazgos.
 NO proponer nada que rompa idempotencia o las invariantes del validador.
 NO re-proponer gotchas #43-#60 ya resueltas.
 `.trim(),
-  { label: 'sintesis-mejoras', phase: 'Síntesis', schema: S_IMPROVEMENTS }
+  { label: 'sintesis-mejoras', phase: 'Síntesis', schema: S_IMPROVEMENTS, model: 'sonnet' }
 )
 
 log(`Críticas: ${synthesis.critical.length} | Medias: ${synthesis.medium.length} | Bajas: ${synthesis.low.length} | Skip: ${synthesis.skip.length}`)
 
+// Checkpoint de fases 1-3 ya no hace falta a partir de acá — la parte cara
+// (Chrome) está resuelta y la síntesis/implementación son baratas. Se
+// limpia al final (éxito o "no hay críticas").
+async function cleanupCheckpoint() {
+  await agent(`Run: rm -f ${BASE}/${CHECKPOINT_FILE} && echo "Cleanup OK"`,
+    { label: 'cleanup-checkpoint', phase: 'Síntesis', model: 'haiku' })
+}
+
 // ─── FASE 5: Implementación ───────────────────────────────────────────────────
 if (synthesis.critical.length === 0) {
   log('No hay mejoras críticas con evidencia suficiente — el proceso está bien calibrado.')
-  return { status: 'no-critical-improvements', synthesis, chrome_pages: totalPagesInspected }
+  await cleanupCheckpoint()
+  return { status: 'no-critical-improvements', synthesis, chrome_pages: totalPagesInspected, final_check_status: 'not_applicable' }
 }
 
 phase('Implementación')
@@ -573,25 +743,35 @@ print(f'OK — {len(items)} items cole 1606')
 
 Reporta: archivos tocados, qué líneas cambiaron, resultado de tests.
 `.trim(),
-    { label: `impl-${improvement.title.slice(0, 25)}`, phase: 'Implementación' }
+    { label: `impl-${improvement.title.slice(0, 25)}`, phase: 'Implementación', model: 'sonnet' }
   )
 )
 
-// Gate final: enforcer + validador
+// Gate final: SOLO reporta PASS/FAIL + evidencia (hallazgo F11.3). El
+// verificador ya NO diagnostica ni corrige nada por su cuenta — si hay
+// violaciones duras o tests rotos, el workflow retorna FAIL con la
+// evidencia y la corrección es un paso explícito posterior (fuera de este
+// gate), no algo que el propio gate haga sin dejar rastro.
 const finalCheck = await agent(`
-Verifica el estado final del corpus tras todos los cambios implementados.
+Verifica el estado final del corpus tras todos los cambios implementados. NO
+corrijas nada — este paso es SOLO de verificación/reporte.
 
 Ejecuta en ${BASE}, en orden:
-1. .venv/bin/python -m pytest tests/test_extraction.py -q 2>&1 | tail -5
-2. .venv/bin/python scripts/validate_corpus.py 2>&1 | grep -E "(ERROR|WARN|OK|items|violations)" | head -20
+1. .venv/bin/python -m pytest tests/test_extraction.py -q 2>&1 | tail -20
+2. .venv/bin/python scripts/validate_corpus.py 2>&1 | tail -30
 
-Si el validador reporta violaciones duras (ERROR), diagnostica y corrige antes de cerrar.
-Si hay test failures, identifica cuál y por qué.
-
-Reporta el output limpio de cada comando.
+Reporta:
+- status: "PASS" si los tests pasaron Y el validador NO reportó violaciones
+  ERROR; "FAIL" en cualquier otro caso.
+- tests_output: el output relevante del comando 1 (verbatim).
+- validator_output: el output relevante del comando 2 (verbatim).
+- violations: lista de violaciones ERROR del validador o tests que fallaron
+  (vacía si status=PASS).
 `.trim(),
-  { label: 'verificacion-final', phase: 'Implementación' }
+  { label: 'verificacion-final', phase: 'Implementación', schema: S_FINAL_CHECK, model: 'sonnet' }
 )
+
+await cleanupCheckpoint()
 
 return {
   improvements_implemented: synthesis.critical.length,
@@ -600,4 +780,5 @@ return {
   medium_titles: synthesis.medium.map(i => i.title),
   chrome_pages_inspected: totalPagesInspected,
   final_check: finalCheck,
+  final_check_status: finalCheck.status,
 }

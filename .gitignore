@@ -38,6 +38,13 @@ data/quality_report.json
 # Archivos de progreso de scripts largos (estado de runtime, no versionar)
 data/*_progress.json
 data/standardize-progress.json
+data/listadomanga-audit-progress.json
+
+# Run dir del skill/workflow watch-standardize-catalog — tiers/chunks/resultados
+# LLM por chunk + summary.json (antes vivía en /tmp/manga-standardize-run,
+# auditoría 2026-07-08 hallazgo F3: se movió a data/ para que sobreviva un
+# reboot sin tener que duplicar los resultados LLM en el checkpoint).
+data/standardize-run/
 
 # Dependencias de Node (regenerables con npm install — nunca versionar)
 node_modules/

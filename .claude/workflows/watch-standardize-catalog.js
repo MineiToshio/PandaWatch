@@ -10,204 +10,101 @@ export const meta = {
   ],
 }
 
+const BASE = '/Users/Shared/Proyectos/manga-watch'
+
+// Reglas de negocio del prompt (edition_key, publisher/país/tipo de edición,
+// 画集付き, coleccion=edición, allowlists…) NO viven acá — viven en UNA
+// fuente única (auditoría 2026-07-08, hallazgo F7: la regla 画集付き estaba
+// SOLO en SKILL.md, 0 veces en este workflow — drift confirmado). Cada
+// subagente Tier 2/3 lee ese archivo con su propia tool Read antes de
+// procesar. Cambiar una regla ahí alcanza para los dos caminos (SKILL.md
+// manual + este workflow).
+const PROMPT_RULES_FILE = `${BASE}/.claude/skills/watch-standardize-catalog/prompt-rules.md`
+
+// Run dir persistente del skill/workflow (auditoría 2026-07-08, hallazgo F3):
+// antes vivía en /tmp/manga-standardize-run (volátil ante reboot), lo que
+// forzaba a duplicar los resultados LLM completos dentro del checkpoint
+// data/standardize-progress.json "por si acaso" — una bomba de tokens (hasta
+// 2000 items × 8 campos, DOS veces). Ahora vive en data/ (gitignored) y
+// sobrevive un reboot, así que el checkpoint solo necesita flags + qué
+// chunks YA tienen result_*.jsonl en disco (detectable listando el dir) —
+// nunca los payloads. `scripts/standardize_apply.py` declara su PROPIO
+// DEFAULT_BASE idéntico (otra ola de la auditoría, no se toca acá); por eso
+// TODAS las invocaciones de ambos scripts pasan `--base` explícito.
+const RUN_DIR = 'data/standardize-run'
+const PROGRESS_FILE = 'data/standardize-progress.json'
+
 // --- Schemas for structured output ---
 
-const TIER2_ITEM_SCHEMA = {
+// Contrato de scripts/standardize_audit.py (hallazgo F6): el script escribe
+// `${RUN_DIR}/summary.json` con estos campos — el agente los COPIA, nunca
+// los recalcula ni los infiere de texto libre. Reemplaza el parseo por regex
+// (`PENDING:\d+`, etc.) que fallaba silenciosamente ante cualquier
+// reformateo del reporte de un subagente.
+const S_AUDIT_SUMMARY = {
   type: 'object',
   properties: {
-    url: { type: 'string', description: 'URL of the item (copy from input exactly)' },
-    accept_proposal: { type: 'boolean', description: 'True if you kept the proposed values unchanged' },
-    // The output fields below are ALWAYS the FINAL value for the item: copy the
-    // proposed_* value when accepting, or your corrected value when fixing.
-    // They are required so the agent can never leave them implicit — the merge
-    // step also falls back to the heuristic proposal if any come back empty.
-    series_key: { type: 'string', description: 'FINAL series_key (copy proposed_series_key when accepting, else corrected)' },
-    series_display: { type: 'string', description: 'FINAL series_display' },
-    edition_key: { type: 'string', description: 'FINAL edition_key (copy proposed_edition_key when accepting, else corrected)' },
-    edition_display: { type: 'string', description: 'FINAL edition_display' },
-    volume: { type: 'string', description: 'FINAL volume (digits only or empty)' },
-    is_manga: { type: 'boolean', description: 'Whether this is manga (not figure/LN/comic)' },
-    non_manga_reason: { type: 'string', description: 'Reason if is_manga=false' },
+    total:     { type: 'integer' },
+    pending:   { type: 'integer' },
+    tier1:     { type: 'integer' },
+    tier2:     { type: 'integer' },
+    tier3:     { type: 'integer' },
+    exhausted: { type: 'integer' },
   },
-  required: ['url', 'accept_proposal', 'is_manga', 'series_key', 'edition_key', 'volume'],
+  required: ['total', 'pending', 'tier1', 'tier2', 'tier3'],
 }
 
-const TIER2_BATCH_SCHEMA = {
+// Cuántos chunks escribió el paso de partición — reemplaza el regex
+// `/(\d+)\s*chunk/` sobre el reporte libre del agente (hallazgo F6): si el
+// agente reformateaba la frase, el fallback a 1 procesaba un solo chunk y
+// dejaba el resto pendiente en silencio.
+const S_CHUNK_COUNT = {
+  type: 'object',
+  properties: { chunks: { type: 'integer' } },
+  required: ['chunks'],
+}
+
+// Índices NN de los `result_t{2,3}_NN.jsonl` YA presentes en el run dir —
+// usado solo en modo resume para saltear chunks ya resueltos.
+const S_EXISTING_RESULTS = {
   type: 'object',
   properties: {
-    items: {
-      type: 'array',
-      items: TIER2_ITEM_SCHEMA,
-      description: 'One entry per input item, same order',
-    },
+    existing_indices: { type: 'array', items: { type: 'integer' } },
   },
-  required: ['items'],
+  required: ['existing_indices'],
 }
 
-const TIER3_ITEM_SCHEMA = {
+// Salida de CADA subagente Tier 2/3 (hallazgo F3): antes devolvía el batch
+// COMPLETO de items (series_key/edition_key/... por item) como structured
+// output — datos que el merge NUNCA leyó de ahí (los lee de los
+// result_*.jsonl que el propio subagente escribe con la tool Write). Ese
+// duplicado costaba ~50% de los tokens de salida de la fase más cara del
+// workflow. Ahora el structured output es solo un resumen chico.
+const S_CHUNK_SUMMARY = {
   type: 'object',
   properties: {
-    url: { type: 'string', description: 'URL of the item (copy from input exactly)' },
-    is_manga: { type: 'boolean', description: 'Whether this is manga' },
-    non_manga_reason: { type: 'string', description: 'Reason if is_manga=false' },
-    series_key: { type: 'string', description: 'Lowercase kebab-case canonical series name' },
-    series_display: { type: 'string', description: 'Display name for the series' },
-    edition_key: { type: 'string', description: 'Format: {series}-{publisher_slug}-{edition_slug}-{country_slug}' },
-    edition_display: { type: 'string', description: 'Display name for the edition' },
-    volume: { type: 'string', description: 'Volume number as string, or empty' },
+    count:       { type: 'integer', description: 'Items processed in this chunk' },
+    urls_ok:     { type: 'array', items: { type: 'string' }, description: 'URLs standardized successfully' },
+    urls_failed: { type: 'array', items: { type: 'string' }, description: 'URLs that could not be processed' },
   },
-  required: ['url', 'is_manga', 'series_key', 'edition_key', 'volume'],
+  required: ['count'],
 }
 
-const TIER3_BATCH_SCHEMA = {
-  type: 'object',
-  properties: {
-    items: {
-      type: 'array',
-      items: TIER3_ITEM_SCHEMA,
-      description: 'One entry per input item, same order',
-    },
-  },
-  required: ['items'],
-}
-
-// Schema para cargar data/standardize-progress.json
+// Checkpoint MÍNIMO (hallazgo F3d): solo flags, nunca payloads. Los chunks
+// Tier 2/3 ya completados se detectan listando result_*.jsonl en el run dir
+// persistente — no hace falta guardarlos acá.
 const PROGRESS_LOAD_SCHEMA = {
   type: 'object',
   properties: {
-    exists:        { type: 'boolean', description: 'true si el archivo existe' },
-    tier1_done:    { type: 'boolean', description: 'Tier 1 ya completado en la corrida anterior' },
-    has_tier2:     { type: 'boolean', description: 'Resultados Tier 2 guardados' },
-    has_tier3:     { type: 'boolean', description: 'Resultados Tier 3 guardados' },
-    tier2_results: { type: 'array',   items: { type: 'object' }, description: 'Resultados LLM Tier 2' },
-    tier3_results: { type: 'array',   items: { type: 'object' }, description: 'Resultados LLM Tier 3' },
+    exists:     { type: 'boolean', description: 'true si el archivo existe' },
+    tier1_done: { type: 'boolean', description: 'Tier 1 ya completado en la corrida anterior' },
   },
-  required: ['exists', 'tier1_done', 'has_tier2', 'has_tier3'],
-}
-
-// --- Publisher and edition slug allowlists for prompts ---
-
-const PUBLISHER_SLUGS = `"darkhorse", "glenat", "viz", "panini", "norma", "planeta", "ivrea", "ivrea-ar",
-"kana", "pika", "kaze", "kioon", "star", "kodansha", "kodansha-us", "shueisha",
-"squareenix", "kadokawa", "meian", "ecc", "arechi", "delcourt", "tokyopop", "jbc",
-"devir", "newpop", "kamite", "mangaline", "mangadreams", "funside", "milkyway",
-"dokidoki", "nobinobi", "tomodomo", "fandogamia", "kurokawa", "akita", "hakusensha",
-"ichijinsha", "futabasha", "takeshobo", "tokuma", "asciimw", "frontier", "yenpress",
-"carlsen", "noeve", "distrito", "001edizioni", "goen", "gpmanga", "jpop", "dynit",
-"edizionibd", "magicpress", "coconino", "tora", "dokusho", "tokyomangasha", "kbooks",
-"luckpim", "ipm", "isan", "nxb", "mpeg", "sevenseas", "titan", "inklore", "vertical",
-"udon", "shogakukan", "gentosha", "maggarden", "egmont", "dokico", "papertoons",
-"crosscult", "mangacult", "loewe", "reprodukt", "altraverse", "universe",
-"pipoca-nanquim", "kim-dong", "panini-mx", "panini-es", "panini-ar", "panini-br",
-"crunchyroll", "rakuten"`
-
-const EDITION_SLUGS = `"deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant",
-"limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate",
-"master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine",
-"steelbox", "slipcase", "prestige", "grimorio", "grimoire", "special", "regular"`
-
-const COUNTRY_SLUGS = `"jp", "it", "es", "fr", "de", "us", "vn", "mx", "br", "th", "ar", "tw", "gb",
-"pt", "pe", "cl", "kr", "eslatam"`
-
-// Reglas compartidas por los prompts Tier 2 y Tier 3 (gotcha #69): tabla
-// determinística término→slug + reuso de keys existentes. En sync con
-// manga_watch.edition_slug_from_text / canonicalize_edition_slugs.py.
-const EDITION_TYPE_RULES = `- HARD TERM TABLE (gotcha #69) — the title term decides the edition-type slug,
-  ALWAYS the same way (a deterministic post-pass re-applies this table; never
-  contradict it): 限定版 → "limited" · 特装版/同梱版 → "special" · 愛蔵版 → "deluxe" ·
-  完全版 → "kanzenban" · "edición limitada"/"edizione limitata"/"édition limitée"/
-  "limited edition" → "limited" · "coleccionista"/"collector" → "collector" ·
-  "edición de lujo"/"deluxe" → "deluxe". NAMED editions (Maximum, Perfect,
-  Ultimate, Master, Grimorio…) win over type terms.
-- KEY REUSE (gotcha #69): if the item has \`known_edition_keys\` (keys already in
-  the catalog for this series) and one matches this item's publisher+type+country,
-  REUSE that exact key. NEVER mint a new key differing from an existing one only
-  in the type slug (special/limited/collector/deluxe) — that splits one edition
-  into two pages.
-- PRESERVE (decisión 2026-06-07): if the item has \`existing_edition_key\`, do NOT
-  re-derive the edition — the merge keeps the existing key; you only provide the
-  canonical series, the translated VOLUME title, and the is_manga verdict.
-- SERIES-NAME GUARD: if the edition-looking word is part of the SERIES' own name
-  ("Trigun Maximum", "Ultimate Muscle"), it is NOT an edition type: pick the slug
-  from the actual edition evidence (or "regular") and NEVER repeat the word in the
-  title ("Trigun Maximum Maximum 2" is wrong → "Trigun Maximum 2").
-- regular editions: the title carries NO edition word ("Noragami 27", never
-  "Noragami Regular 27").`
-
-// --- Prompt templates ---
-
-function tier2Prompt(itemsJson) {
-  return `You are validating manga catalog entries. The scraper already assigned series_key, edition_key, and volume using heuristics. Your job: check if they look correct and fix if not.
-
-## INPUT (JSON array)
-${itemsJson}
-
-## RULES
-- Each item has proposed_series_key, proposed_edition_key, proposed_volume.
-- ALWAYS output the FINAL series_key, series_display, edition_key, edition_display and
-  volume for EVERY item — never leave them empty.
-- TITLE POLICY (hard): the item's \`title\` is the OFFICIAL name as published by the
-  source. It is NEVER translated, renamed to the canonical series, or modified — do NOT
-  output any title field.
-- If the proposal looks correct → set accept_proposal=true AND copy the proposed_* values
-  verbatim into the output fields.
-- If something is wrong → set accept_proposal=false and put your corrected values in the fields.
-- is_manga: Mangavariant items → always true. Figures/statues/LNs/western comics → false.
-- edition_key format: {series}-{publisher_slug}-{edition_slug}-{country_slug}. Pick ONE edition_slug, never compound.
-- HARD RULE (país=edición, gotcha #46): edition_key ENDS with the country code of the EDITION
-  (from the item's publisher/language, NOT the store). Two markets NEVER share an edition_key.
-  country_slug allowlist: ${COUNTRY_SLUGS}. Unknown country → "xx".
-- Publisher slugs: ${PUBLISHER_SLUGS}
-- Edition slugs: ${EDITION_SLUGS}
-${EDITION_TYPE_RULES}
-- volume: digits only ("1", "18"), "" if none. If item has a volume → never "artbook" as edition_slug.
-
-Process ALL items. Output count MUST equal input count.`
-}
-
-function tier3Prompt(itemsJson) {
-  return `You are standardizing manga catalog entries from scratch. Derive series_key, edition_key and volume for each item. The item's \`title\` is the OFFICIAL name as published by the source — it is NEVER translated, renamed or modified; do NOT output any title field.
-
-## INPUT (JSON array)
-${itemsJson}
-
-## RULES
-
-### series_key
-Lowercase kebab-case, no diacritics, max ~35 chars. Use globally-recognized name (EN preferred, JP romaji if canonical).
-Examples: "berserk", "demon-slayer", "spy-x-family", "attack-on-titan", "one-piece", "fullmetal-alchemist".
-
-### edition_key = {series_key}-{publisher_slug}-{edition_slug}-{country_slug}
-- Publisher slugs: ${PUBLISHER_SLUGS}
-- Edition slugs (pick ONE, never compound): ${EDITION_SLUGS}
-- HARD RULE (país=edición, gotcha #46): edition_key ENDS with the country code of the EDITION
-  (from the item's publisher/language, NOT the store). Two markets NEVER share an edition_key
-  even if series+publisher+edition match (Panini IT vs Panini ES/MX/BR).
-  country_slug allowlist: ${COUNTRY_SLUGS}. Unknown country → "xx".
-  Since the country goes in the suffix, prefer "panini" over "panini-es" as publisher_slug
-  (country-embedded publisher slugs only for legally distinct companies, e.g. "ivrea-ar").
-- ANTI-COMPOUND: Never "deluxe-box", "ultimate-variant". Format vs name conflict → pick the name.
-${EDITION_TYPE_RULES}
-- If item has volume number → edition_slug is "special" (never "artbook").
-- Artbook = standalone illustration book WITHOUT volume numbering.
-
-### is_manga
-- Mangavariant → ALWAYS true.
-- Slipcases/box sets/coffrets/variant covers/artbooks/fanbooks → valid manga.
-- Marvel/DC/IDW comics → false (unless "manga" in title).
-- Figures/statues/t-shirts/trading cards → false.
-- Light novels → false (non_manga_reason="light_novel").
-- When in doubt → true.
-
-### volume
-Digits only. "1", "100", "1-3" for sets, "" if absent.
-
-Process ALL items. Same series/publisher → same keys consistently. Output count MUST equal input count.`
+  required: ['exists'],
 }
 
 // ====== WORKFLOW BODY ======
 
-// args: { limit?: number, force_all?: boolean }
+// args: { limit?: number, force_all?: boolean, resume_progress?: boolean }
 // limit   — max items to process (0 = unlimited)
 // force_all — if true, re-process already-standardized items too (within limit);
 //             if false, only process items missing standardized_at
@@ -227,71 +124,74 @@ if (limit || forceAll) {
   log(`Mode: ${forceAll ? 'force-all' : 'incremental'}, limit: ${limit || 'none'}`)
 }
 
-// --- Progreso persistente ---
-// data/standardize-progress.json guarda los resultados LLM de corridas anteriores.
-// Si args.resume_progress === true, cargamos ese estado y saltamos las fases ya completadas.
-// Al finalizar exitosamente, el archivo se elimina.
-const PROGRESS_FILE = 'data/standardize-progress.json'
-const resumeProgress = !!(ARGS && ARGS.resume_progress)
+function tierProgressPayload(fields) {
+  return { limit: limit || 0, force_all: forceAll, tier1_done: false, ...fields }
+}
 
+async function writeProgress(fields) {
+  await agent(
+    `Write this JSON to ${PROGRESS_FILE} (create or overwrite): ${JSON.stringify(tierProgressPayload(fields))}`,
+    { label: 'checkpoint', phase: 'Audit', model: 'haiku' }
+  )
+}
+
+// --- Progreso persistente ---
+// Si args.resume_progress === true, cargamos el checkpoint chico (solo
+// tier1_done) y saltamos Tier 1 si ya corrió. Tier 2/3 se resumen SOLOS
+// detectando qué result_*.jsonl ya existen en ${RUN_DIR} — no dependen de
+// este archivo. Si NO es resume, limpiamos el run dir primero para no
+// reusar chunks/resultados de una corrida anterior con otro limit/force_all.
+const resumeProgress = !!(ARGS && ARGS.resume_progress)
 let savedTier1Done = false
-let savedTier2Results = null   // null = aún no procesado; array = ya procesado (puede estar vacío)
-let savedTier3Results = null
 
 if (resumeProgress) {
   const prog = await agent(
     `Check if ${PROGRESS_FILE} exists using Bash (ls command).
 If it exists, read it with the Read tool and return its contents parsed as structured output.
-If it does not exist, return { "exists": false, "tier1_done": false, "has_tier2": false, "has_tier3": false, "tier2_results": [], "tier3_results": [] }.`,
+If it does not exist, return { "exists": false, "tier1_done": false }.`,
     { label: 'load-progress', phase: 'Audit', schema: PROGRESS_LOAD_SCHEMA, model: 'haiku' }
   )
   if (prog && prog.exists) {
-    savedTier1Done    = !!prog.tier1_done
-    savedTier2Results = prog.has_tier2 ? (prog.tier2_results || []) : null
-    savedTier3Results = prog.has_tier3 ? (prog.tier3_results || []) : null
-    log(`Progreso cargado — T1:${savedTier1Done ? '✅' : '⏳'}  T2:${prog.has_tier2 ? `✅ (${(savedTier2Results||[]).length} items)` : '⏳'}  T3:${prog.has_tier3 ? `✅ (${(savedTier3Results||[]).length} items)` : '⏳'}`)
+    savedTier1Done = !!prog.tier1_done
+    log(`Progreso cargado — T1:${savedTier1Done ? '✅' : '⏳'}. T2/T3 se resumen solos detectando result_*.jsonl en ${RUN_DIR}/.`)
   } else {
     log('No se encontró archivo de progreso — empezando de cero')
   }
+} else {
+  await agent(`Run: rm -rf ${RUN_DIR} && echo "Clean OK"`,
+    { label: 'clean-run-dir', phase: 'Audit', model: 'haiku' })
 }
 
 phase('Audit')
 
 // Step 1: Read pending items and compute tier distribution.
-// La lógica vive en scripts/standardize_audit.py (fuente única, compartida con
-// el SKILL.md) — escribe tier{1,2,3}.json con proposed_*, existing_edition_key
-// y known_edition_keys (keys ya existentes en el corpus para cada serie).
-const auditResult = await agent(
-  `Run this command and report its output verbatim:
+// La lógica vive en scripts/standardize_audit.py (fuente única, compartida
+// con el SKILL.md) — escribe tier{1,2,3}.json con proposed_*,
+// existing_edition_key y known_edition_keys, MÁS summary.json (el contrato
+// de conteos, hallazgo F6). El agente copia summary.json tal cual, nunca
+// recalcula ni parsea texto libre.
+const auditSummary = await agent(
+  `Run this command:
 
 \`\`\`bash
-.venv/bin/python scripts/standardize_audit.py${forceAll ? ' --force-all' : ''}${limit ? ` --limit ${limit}` : ''}
+.venv/bin/python scripts/standardize_audit.py --base ${RUN_DIR}${forceAll ? ' --force-all' : ''}${limit ? ` --limit ${limit}` : ''}
 \`\`\`
 
-Report the TOTAL/PENDING/TIER1/TIER2/TIER3 numbers. If PENDING is 0, say "nothing to standardize".`,
-  // Agente mecánico (corre un comando y reporta) → haiku alcanza y ahorra tokens.
-  { label: 'audit', phase: 'Audit', model: 'haiku' }
+Then read ${RUN_DIR}/summary.json with the Read tool and return ITS CONTENTS
+as structured output verbatim — copy the numbers from the file, do not
+recompute or guess them from the command's stdout.`,
+  { label: 'audit', phase: 'Audit', schema: S_AUDIT_SUMMARY, model: 'haiku' }
 )
 
-log(`Audit complete: ${auditResult}`)
-
-// Parse audit results — tolerate spaces around colon (agent may reformat)
-function parseMarker(text, key) {
-  const re = new RegExp(key + '\\s*[:=]\\s*(\\d+)', 'i')
-  const m = text.match(re)
-  return m ? parseInt(m[1]) : 0
-}
-
-const pendingCount = parseMarker(auditResult, 'PENDING')
-
+const pendingCount = auditSummary.pending || 0
 if (pendingCount === 0) {
   log('Nothing to standardize — corpus is up to date.')
   return { status: 'nothing_to_standardize', items_processed: 0 }
 }
 
-const tier1Count = parseMarker(auditResult, 'TIER1')
-const tier2Count = parseMarker(auditResult, 'TIER2')
-const tier3Count = parseMarker(auditResult, 'TIER3')
+const tier1Count = auditSummary.tier1 || 0
+const tier2Count = auditSummary.tier2 || 0
+const tier3Count = auditSummary.tier3 || 0
 
 log(`Tier 1 (auto): ${tier1Count}, Tier 2 (validate): ${tier2Count}, Tier 3 (derive): ${tier3Count}`)
 
@@ -306,192 +206,118 @@ if (savedTier1Done) {
 fuente única compartida con el SKILL.md). Run this command and report the count:
 
 \`\`\`bash
-.venv/bin/python scripts/standardize_apply.py tier1${forceAll ? ' --force-all' : ''}
+.venv/bin/python scripts/standardize_apply.py tier1 --base ${RUN_DIR}${forceAll ? ' --force-all' : ''}
 \`\`\``,
     { label: 'auto-t1', phase: 'Auto-standardize', model: 'haiku' }
   )
   log(`Tier 1 auto-standardized: ${tier1Count} items`)
-  // Checkpoint: Tier 1 completo, T2/T3 aún pendientes
-  await agent(
-    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
-${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: false, has_tier3: false, tier2_results: null, tier3_results: null }, null, 2)}`,
-    { label: 'checkpoint-t1', phase: 'Auto-standardize', model: 'haiku' }
-  )
+  // Checkpoint mínimo: solo el flag (hallazgo F3d — nada de payloads acá).
+  await writeProgress({ tier1_done: true })
 } else {
   log('No Tier 1 items to auto-standardize.')
 }
 
+// --- Helper: subagente Tier 2/3 para UN chunk. Lee las reglas de la fuente
+// única (prompt-rules.md) en vez de recibirlas inlineadas (hallazgo F7). ---
+function tierChunkTask({ tier, idx, model, phase: phaseName }) {
+  const label = String(idx).padStart(2, '0')
+  const chunkFile = `${RUN_DIR}/t${tier}_chunk_${label}.json`
+  const resultFile = `${RUN_DIR}/result_t${tier}_${label}.jsonl`
+  const tierInstructions = tier === 2
+    ? `Estos son items Tier 2 — el scraper ya propuso series_key/edition_key/volume
+(campos proposed_*). Tu trabajo es VALIDAR cada propuesta contra las reglas
+del archivo de arriba, sección "Reglas específicas por tier" → Tier 2.`
+    : `Estos son items Tier 3 — sin heurística confiable. Derivá todo desde cero
+siguiendo las reglas del archivo de arriba, sección "Reglas específicas por
+tier" → Tier 3.`
+  return () => agent(
+    `Antes de procesar, leé COMPLETO ${PROMPT_RULES_FILE} — son las reglas
+OBLIGATORIAS de negocio (edition_key, publisher/país/tipo de edición,
+画集付き, coleccion=edición, allowlists…). Aplicalas literalmente, no las
+reinterpretes ni las resumas de memoria.
+
+Leé ${chunkFile}. ${tierInstructions}
+
+1. Con la tool Write, escribí tus resultados a ${resultFile} — UN objeto
+   JSON compacto por línea (JSONL), una línea por item de entrada, MISMO
+   ORDEN. Cada línea debe tener exactamente estos campos: url, is_manga,
+   non_manga_reason, series_key, series_display, edition_key,
+   edition_display, volume.
+2. Devolvé la salida estructurada: count = items procesados, urls_ok = URLs
+   estandarizadas con éxito, urls_failed = URLs que no pudiste procesar.
+
+Procesá TODOS los items. La cantidad de líneas del JSONL debe igualar la
+cantidad de items de entrada.`,
+    { label: `${tier === 2 ? 'validate' : 'derive'}-t${tier}-${label}`, phase: phaseName, schema: S_CHUNK_SUMMARY, model }
+  )
+}
+
+// --- Helper: partición + resume selectivo, compartido por Tier 2 y Tier 3. ---
+async function runTierChunks({ tier, tierCount, chunkSize, model, phaseName }) {
+  if (tierCount === 0) {
+    log(`No Tier ${tier} items.`)
+    return
+  }
+  const chunkResult = await agent(
+    `Read ${RUN_DIR}/tier${tier}.json. Split into chunks of ${chunkSize} items.
+Write each chunk to ${RUN_DIR}/t${tier}_chunk_NN.json (00, 01, 02, ...).`,
+    { label: `chunk-t${tier}`, phase: phaseName, schema: S_CHUNK_COUNT, model: 'haiku' }
+  )
+  const chunkCount = chunkResult.chunks || 0
+  if (chunkCount === 0) {
+    log(`Tier ${tier}: 0 chunks creados.`)
+    return
+  }
+
+  const allIndices = Array.from({ length: chunkCount }, (_, i) => i)
+  let missingIndices = allIndices
+  // Resume selectivo (hallazgo F3): solo re-lanza los chunks SIN result file
+  // — el resto ya está resuelto en disco (run dir persistente).
+  if (resumeProgress) {
+    const existing = await agent(
+      `List files matching ${RUN_DIR}/result_t${tier}_*.jsonl using Bash (ls). For
+each file found, extract the NN index from its name (e.g. result_t${tier}_03.jsonl -> 3).`,
+      { label: `check-t${tier}-results`, phase: phaseName, schema: S_EXISTING_RESULTS, model: 'haiku' }
+    )
+    const existingSet = new Set(existing.existing_indices || [])
+    missingIndices = allIndices.filter(i => !existingSet.has(i))
+    if (missingIndices.length < allIndices.length) {
+      log(`Tier ${tier}: ${allIndices.length - missingIndices.length}/${allIndices.length} chunks ya resueltos (checkpoint) — corriendo ${missingIndices.length} restantes`)
+    }
+  }
+
+  if (missingIndices.length > 0) {
+    await parallel(missingIndices.map(idx => tierChunkTask({ tier, idx, model, phase: phaseName })))
+  }
+  log(`Tier ${tier}: ${chunkCount} chunk(s) totales — ${missingIndices.length} corridos esta vez`)
+}
+
 // Step 3: Process Tier 2 with haiku (lightweight validation)
 phase('Classify')
-
-const tier2Results = savedTier2Results ? [...savedTier2Results] : []
-if (savedTier2Results !== null) {
-  log(`Tier 2: saltando — ${savedTier2Results.length} resultados cargados del progreso guardado`)
-} else if (tier2Count > 0) {
-  const t2ChunkSize = 20
-  const t2Agent = await agent(
-    `Read /tmp/manga-standardize-run/tier2.json. Split into chunks of ${t2ChunkSize} items.
-Write each chunk to /tmp/manga-standardize-run/t2_chunk_NN.json (00, 01, 02, ...).
-Report how many chunks you created.`,
-    { label: 'chunk-t2', phase: 'Classify', model: 'haiku' }
-  )
-
-  // Count chunks
-  const chunkCountMatch = t2Agent.match(/(\d+)\s*chunk/)
-  const t2ChunkCount = chunkCountMatch ? parseInt(chunkCountMatch[1]) : 1
-
-  if (t2ChunkCount > 0) {
-    const t2Thunks = []
-    for (let i = 0; i < t2ChunkCount; i++) {
-      const idx = String(i).padStart(2, '0')
-      t2Thunks.push(() =>
-        agent(
-          `Read /tmp/manga-standardize-run/t2_chunk_${idx}.json.
-These are Tier 2 items — the scraper already proposed series_key/edition_key/volume.
-Validate each proposal. ${tier2Prompt('(see the file contents)')}
-
-Read the file, then:
-1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t2_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume.
-2. Then return structured output with the same results for ALL items in the file.`,
-          {
-            label: `validate-t2-${idx}`,
-            phase: 'Classify',
-            schema: TIER2_BATCH_SCHEMA,
-            // Tier 2 = validación liviana de propuestas ya derivadas (la meta
-            // siempre dijo haiku; el código usaba sonnet y gastaba de más).
-            model: 'haiku',
-          }
-        )
-      )
-    }
-    const t2BatchResults = await parallel(t2Thunks)
-    for (const r of t2BatchResults) {
-      if (r && r.items) tier2Results.push(...r.items)
-    }
-    log(`Tier 2 validated: ${tier2Results.length} items via haiku`)
-  }
-  // Checkpoint: T1+T2 completos, T3 aún pendiente
-  await agent(
-    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
-${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: true, has_tier3: false, tier2_results: tier2Results, tier3_results: null }, null, 2)}`,
-    { label: 'checkpoint-t2', phase: 'Classify', model: 'haiku' }
-  )
-} else {
-  log('No Tier 2 items.')
-}
+await runTierChunks({ tier: 2, tierCount: tier2Count, chunkSize: 20, model: 'haiku', phaseName: 'Classify' })
 
 // Step 4: Process Tier 3 with sonnet (full derivation)
 phase('Derive')
-
-const tier3Results = savedTier3Results ? [...savedTier3Results] : []
-if (savedTier3Results !== null) {
-  log(`Tier 3: saltando — ${savedTier3Results.length} resultados cargados del progreso guardado`)
-} else if (tier3Count > 0) {
-  const t3ChunkSize = 15  // smaller for complex items
-
-  const t3Agent = await agent(
-    `Read /tmp/manga-standardize-run/tier3.json. Split into chunks of ${t3ChunkSize} items.
-Write each chunk to /tmp/manga-standardize-run/t3_chunk_NN.json (00, 01, 02, ...).
-Report how many chunks you created.`,
-    { label: 'chunk-t3', phase: 'Derive', model: 'haiku' }
-  )
-
-  const t3ChunkCountMatch = t3Agent.match(/(\d+)\s*chunk/)
-  const t3ChunkCount = t3ChunkCountMatch ? parseInt(t3ChunkCountMatch[1]) : 1
-
-  if (t3ChunkCount > 0) {
-    const t3Thunks = []
-    for (let i = 0; i < t3ChunkCount; i++) {
-      const idx = String(i).padStart(2, '0')
-      t3Thunks.push(() =>
-        agent(
-          `Read /tmp/manga-standardize-run/t3_chunk_${idx}.json.
-These are Tier 3 items — derive everything from scratch.
-${tier3Prompt('(see the file contents)')}
-
-Read the file, then:
-1. Use the Write tool to write your results to /tmp/manga-standardize-run/result_t3_${idx}.jsonl — ONE compact JSON object per line (JSONL), one line per input item, SAME ORDER. Each line must have exactly these fields: url, is_manga, non_manga_reason, series_key, series_display, edition_key, edition_display, volume.
-2. Then return structured output for ALL items.`,
-          {
-            label: `derive-t3-${idx}`,
-            phase: 'Derive',
-            schema: TIER3_BATCH_SCHEMA,
-            model: 'sonnet',
-          }
-        )
-      )
-    }
-    const t3BatchResults = await parallel(t3Thunks)
-    for (const r of t3BatchResults) {
-      if (r && r.items) tier3Results.push(...r.items)
-    }
-    log(`Tier 3 derived: ${tier3Results.length} items via sonnet`)
-  }
-  // Checkpoint: T1+T2+T3 completos — solo queda el merge
-  await agent(
-    `Write this JSON to ${PROGRESS_FILE} (create or overwrite):
-${JSON.stringify({ limit: limit||0, force_all: forceAll, tier1_done: true, has_tier2: true, has_tier3: true, tier2_results: tier2Results, tier3_results: tier3Results }, null, 2)}`,
-    { label: 'checkpoint-t3', phase: 'Derive', model: 'haiku' }
-  )
-} else {
-  log('No Tier 3 items.')
-}
+await runTierChunks({ tier: 3, tierCount: tier3Count, chunkSize: 15, model: 'sonnet', phaseName: 'Derive' })
 
 // Step 5: Merge everything back
 phase('Merge')
 
-// Write LLM results to files for the merge script
-const allLlmResults = []
-
-// Process Tier 2 results. The agent always emits the FINAL values in the
-// output fields (schema-required). We pass them straight through; the merge
-// script falls back to the heuristic proposal (tier2.json) for any item that
-// still comes back with empty keys, and leaves un-keyable items PENDING rather
-// than marking them standardized with empty keys (the orphan bug).
-for (const r of tier2Results) {
-  allLlmResults.push({
-    url: r.url,
-    is_manga: r.is_manga,
-    non_manga_reason: r.non_manga_reason || '',
-    series_key: r.series_key || '',
-    series_display: r.series_display || '',
-    edition_key: r.edition_key || '',
-    edition_display: r.edition_display || '',
-    volume: r.volume || '',
-  })
-}
-
-// Process Tier 3 results
-for (const r of tier3Results) {
-  allLlmResults.push({
-    url: r.url,
-    is_manga: r.is_manga,
-    non_manga_reason: r.non_manga_reason || '',
-    series_key: r.series_key || '',
-    series_display: r.series_display || '',
-    edition_key: r.edition_key || '',
-    edition_display: r.edition_display || '',
-    volume: r.volume || '',
-  })
-}
-
-log(`Total LLM results to merge: ${allLlmResults.length}`)
-
-// Write results for the merge script
 const mergeAgent = await agent(
   `Merge standardization results into items.jsonl.
 
 The per-chunk LLM result files already exist on disk at
-/tmp/manga-standardize-run/result_t2_*.jsonl and result_t3_*.jsonl (each subagent
-wrote its own JSONL). DO NOT transcribe any data yourself — the merge logic lives
-in scripts/standardize_apply.py (single source of truth, shared with the SKILL.md):
-it reads those files via glob, preserves existing edition_keys (the LLM is not the
-grouping authority), falls back to heuristic proposals for empty keys (items with
-no usable keys stay PENDING, never orphans), blacklists non-manga, fixes series
-outliers per /coleccion, recomputes cluster_key and consolidates:
+${RUN_DIR}/result_t2_*.jsonl and result_t3_*.jsonl (each subagent wrote its
+own JSONL). DO NOT transcribe any data yourself — the merge logic lives in
+scripts/standardize_apply.py (single source of truth, shared with the
+SKILL.md): it reads those files via glob, preserves existing edition_keys
+(the LLM is not the grouping authority), falls back to heuristic proposals
+for empty keys (items with no usable keys stay PENDING, never orphans),
+blacklists non-manga, fixes series outliers per /coleccion, recomputes
+cluster_key and consolidates:
 
 \`\`\`bash
-.venv/bin/python scripts/standardize_apply.py merge${forceAll ? ' --force-all' : ''}
+.venv/bin/python scripts/standardize_apply.py merge --base ${RUN_DIR}${forceAll ? ' --force-all' : ''}
 \`\`\`
 
 Then ENFORCE the grouping rules (Step 6b of the skill — MANDATORY, the LLM is NOT the
@@ -522,16 +348,16 @@ Report all results, including the validator output.`,
 
 log(`Merge complete: ${mergeAgent}`)
 
-// Cleanup: borrar temporales Y el archivo de progreso (corrida exitosa)
+// Cleanup: borrar el run dir Y el archivo de progreso (corrida exitosa)
 await agent(
-  `Run: rm -rf /tmp/manga-standardize-run && rm -f ${PROGRESS_FILE} && echo "Cleanup OK"`,
+  `Run: rm -rf ${RUN_DIR} && rm -f ${PROGRESS_FILE} && echo "Cleanup OK"`,
   { label: 'cleanup', phase: 'Merge', model: 'haiku' }
 )
 
 return {
   status: 'completed',
   tier1_auto: tier1Count,
-  tier2_validated: tier2Results.length,
-  tier3_derived: tier3Results.length,
-  total_processed: tier1Count + tier2Results.length + tier3Results.length,
+  tier2_validated: tier2Count,
+  tier3_derived: tier3Count,
+  total_processed: tier1Count + tier2Count + tier3Count,
 }

@@ -137,7 +137,7 @@ etiquetar es opcional y nunca bloquea el flujo de aprobar/rechazar.
 
 ## Step 0 — Verificar que Chrome está disponible
 
-Llamar `mcp__Claude_in_Chrome__list_connected_browsers`. Si no hay browsers conectados,
+Llamar `mcp__claude-in-chrome__list_connected_browsers`. Si no hay browsers conectados,
 abortar con:
 
 ```
@@ -149,7 +149,7 @@ Para usar este skill:
 3. Vuelve a invocar /watch-search-covers
 ```
 
-Después, obtené un tab ID con `mcp__Claude_in_Chrome__tabs_context_mcp` (`createIfEmpty: true`).
+Después, obtené un tab ID con `mcp__claude-in-chrome__tabs_context_mcp` (`createIfEmpty: true`).
 
 ---
 
@@ -534,7 +534,7 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
 
    > **Nota MCP**: dentro de `browser_batch`, los items van con el nombre CORTO de la
    > tool (`"name": "navigate"`, `"name": "javascript_tool"`), NUNCA el nombre MCP
-   > completo (`mcp__Claude_in_Chrome__...` → "unknown tool"). Y el item de
+   > completo (`mcp__claude-in-chrome__...` → "unknown tool"). Y el item de
    > `javascript_tool` DEBE llevar `"input": {"action": "javascript_exec", "tabId": ...,
    > "text": ...}` — sin el campo `action` el MCP rechaza con "javascript_exec is the
    > only supported action".

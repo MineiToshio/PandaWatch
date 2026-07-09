@@ -78,8 +78,23 @@ heurística cruda (o sin asignación) del pipeline.
 **Cómo funciona** — el audit y el merge son scripts **COMPARTIDOS** con el
 workflow (`scripts/standardize_audit.py` / `scripts/standardize_apply.py`,
 fuente única anti-drift, 2026-06-11): el skill los invoca, nunca embebe
-copias de la lógica.
-1. **Audit** (`standardize_audit.py`, flags `--limit`/`--force-all`): filtra
+copias de la lógica. Las reglas de negocio del prompt LLM (edition_key,
+publisher/país/tipo de edición, 画集付き, coleccion=edición, allowlists) son
+OTRA fuente única — `.claude/skills/watch-standardize-catalog/prompt-rules.md`
+— que este SKILL.md y el workflow leen, ninguno la copia (auditoría
+2026-07-08, hallazgo F7: antes la regla 画集付き vivía SOLO en este SKILL.md
+y 0 veces en el workflow, drift confirmado).
+
+> **Run dir persistente (2026-07-08, hallazgo F3)**: `data/standardize-run/`
+> (gitignored) — antes `/tmp/manga-standardize-run`, volátil ante reboot.
+> `standardize_audit.py` escribe ahí `tier{1,2,3}.json` + `summary.json` (el
+> contrato de conteos `{total,pending,tier1,tier2,tier3,exhausted}` —
+> hallazgo F6, reemplaza el parseo por regex del reporte de un subagente).
+> El checkpoint `data/standardize-progress.json` quedó MÍNIMO: solo
+> `tier1_done` — nunca los resultados LLM completos. Tier 2/3 se resumen
+> solos detectando qué `result_t{2,3}_NN.jsonl` ya existen en el run dir.
+
+1. **Audit** (`standardize_audit.py`, flags `--limit`/`--force-all`/`--base`): filtra
    items sin `standardized_at` **y sin `approved_at`** (los golden records
    aprobados por el owner nunca se re-procesan; se pueden leer como
    referencia pero jamás se sobreescriben), asigna `confidence_tier` y
@@ -91,8 +106,10 @@ copias de la lógica.
    determinística (0 tokens LLM) y marca `standardized_at`.
 3. **Tier 2/3**: subagentes paralelos en chunks chicos validan (T2) o
    derivan desde cero (T3) series_key/edition_key/volume
-   via LLM (nunca títulos); cada chunk escribe su propio `result_*.jsonl`. **Modelos del
-   workflow**: los agentes mecánicos (audit, tier1, chunkers, checkpoints,
+   via LLM (nunca títulos); cada chunk escribe su propio `result_*.jsonl` y
+   devuelve solo un resumen chico (`{count, urls_ok, urls_failed}` — el merge
+   siempre lee del JSONL en disco, nunca del structured output). **Modelos del
+   workflow**: los agentes mecánicos (audit, tier1, chunkers, checkpoint,
    merge, cleanup) y la validación Tier 2 usan `haiku`; SOLO la derivación
    Tier 3 usa `sonnet`. Costo fijo ~200k tokens/corrida → conviene lotes
    de ≥100 items.
@@ -265,7 +282,7 @@ por edición) con cap de 40 por corrida (`--limit N`).
 
 **Propósito**: buscar portadas en alta resolución para items con imagen de baja
 calidad (la portada `images[0]` < `min-pixels` px) o sin imagen. Usa **Chrome exclusivamente**
-(`mcp__Claude_in_Chrome__*`) para navegar **Google Imágenes** (vista `udm=2`), con **fallback
+(`mcp__claude-in-chrome__*`) para navegar **Google Imágenes** (vista `udm=2`), con **fallback
 a Bing** si Google muestra un consent wall. Escribe candidatas a `data/cover_preview.json` para
 aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
 
@@ -276,7 +293,7 @@ aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
 > Google (preferencia del owner) y Bing queda de fallback.
 
 **Cómo funciona**:
-1. Verifica que Chrome esté disponible (`mcp__Claude_in_Chrome__list_connected_browsers`).
+1. Verifica que Chrome esté disponible (`mcp__claude-in-chrome__list_connected_browsers`).
 2. Filtra `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin imagen con `--include-no-image`), saltando los `(slug, action, target)` que ya tienen una candidata **del skill** (campo `match_dist`) en **cualquier** estado — pending, approved o rejected. (Antes saltaba solo los `pending`, así que un item ya adjudicado re-entraba al plan y se re-buscaba en vano contra el mismo índice externo hasta aplicar la portada.) Las candidatas del script python `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual sobre esos items.
 3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<images[0].url>` — la portada actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
 4. Valida cada URL con Python: píxeles ≥ 1.5× actual, y **`fetch_better_covers._same_cover()`** — aspect ratio ±25% + aHash Hamming ≤ `MAX_HASH_DIST` (10 base; `_same_cover` relaja +4 para portadas actuales < 30k px). Solo pasa si es **la MISMA portada en mejor resolución** (otro volumen / edición / arte = hash distinto = descartada). Items sin imagen actual (`--include-no-image`) no se pueden verificar → quedan `verified: false`. Esto es lo que elimina las candidatas no relacionadas que antes se colaban (el filtro viejo de "Hamming > 3" hacía justo lo contrario: descartaba la misma portada y dejaba pasar las distintas).

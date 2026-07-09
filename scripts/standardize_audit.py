@@ -22,8 +22,13 @@ keys inusables) se EXCLUYE de las proyecciones y se manda a curación manual
 appendeando a data/unmapped_series.jsonl (reason "standardize_exhausted", dedup
 cross-run). Así un título irromanizable no gasta Tier 3 para siempre.
 
-Markers de salida (los parsea el workflow): TOTAL / PENDING / TIER1/2/3 /
-EXHAUSTED.
+Markers de salida (compatibilidad, texto en stdout): TOTAL / PENDING / TIER1/2/3 /
+EXHAUSTED. CONTRATO PREFERIDO (auditoría 2026-07-08, hallazgo F6): además de los
+markers de texto, este script escribe `summary.json` en el run dir con
+`{pending, tier1, tier2, tier3, exhausted}` — el workflow/skill deben leer ESE
+archivo (o pedirle a un agente que lo lea con schema) en vez de parsear el
+reporte libre de un subagente por regex (frágil: un reformateo del texto hace
+fallar el parseo silenciosamente).
 
 Uso:
   .venv/bin/python scripts/standardize_audit.py [--limit N] [--force-all]
@@ -48,7 +53,18 @@ from standardize_apply import (  # noqa: E402
 )
 
 ITEMS = ROOT / "data" / "items.jsonl"
-DEFAULT_BASE = Path("/tmp/manga-standardize-run")
+# Run dir persistente (auditoría 2026-07-08, hallazgo F3): antes vivía en
+# /tmp/manga-standardize-run — volátil ante reboot, lo que forzaba a duplicar
+# los resultados LLM completos dentro de data/standardize-progress.json "por
+# si acaso" (bomba de tokens en los checkpoints). Al persistir el run dir acá,
+# el checkpoint solo necesita flags + conteos + qué chunks ya tienen
+# result_*.jsonl en disco — nunca los payloads. Gitignored (ver .gitignore).
+# NOTA: scripts/standardize_apply.py declara su PROPIO DEFAULT_BASE idéntico
+# (no se importa de acá porque standardize_apply.py es de otra ola de la
+# auditoría) — todo invocador (workflow, SKILL.md) DEBE pasar `--base
+# data/standardize-run` explícito a AMBOS scripts para que coincidan; no
+# confiar en que los dos defaults es lo mismo si algún día divergen.
+DEFAULT_BASE = ROOT / "data" / "standardize-run"
 
 # Máximo de keys conocidas adjuntadas por item (las más pobladas primero).
 _KNOWN_KEYS_CAP = 8
@@ -69,6 +85,27 @@ def _known_keys_index(items: list[dict]) -> dict[str, Counter]:
         if sk and ek:
             index[aggressive_series_norm(sk)][ek] += 1
     return index
+
+
+def _write_summary(base: Path, *, total: int, pending: int, tier1: int,
+                    tier2: int, tier3: int, exhausted: int) -> None:
+    """Escribe `summary.json` en el run dir — CONTRATO documentado (hallazgo
+    F6): el workflow/skill deben leer este archivo (directo, o vía un agente
+    con schema) en vez de parsear el reporte de texto libre de un subagente
+    con regex. Los markers TOTAL/PENDING/TIER{1,2,3}/EXHAUSTED en stdout se
+    mantienen por compatibilidad/legibilidad humana, pero dejan de ser la
+    fuente de verdad para código automatizado.
+    """
+    summary = {
+        "total": total,
+        "pending": pending,
+        "tier1": tier1,
+        "tier2": tier2,
+        "tier3": tier3,
+        "exhausted": exhausted,
+    }
+    with (base / "summary.json").open("w", encoding="utf-8") as fh:
+        json.dump(summary, fh, ensure_ascii=False)
 
 
 def main() -> int:
@@ -92,6 +129,9 @@ def main() -> int:
     print(f"PENDING:{len(pending)}")
     if not pending:
         print("DONE:nothing_to_standardize")
+        args.base.mkdir(parents=True, exist_ok=True)
+        _write_summary(args.base, total=len(items), pending=0,
+                        tier1=0, tier2=0, tier3=0, exhausted=0)
         return 0
 
     known = _known_keys_index(items)
@@ -164,6 +204,10 @@ def main() -> int:
     print(f"TIER3:{len(tiers[3])}")
     print(f"EXHAUSTED:{exhausted_logged}")
     print(f"Proyecciones escritas en {args.base}/tier{{1,2,3}}.json")
+
+    _write_summary(args.base, total=len(items), pending=len(pending),
+                    tier1=len(tiers[1]), tier2=len(tiers[2]), tier3=len(tiers[3]),
+                    exhausted=exhausted_logged)
     return 0
 
 

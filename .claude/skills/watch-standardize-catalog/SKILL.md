@@ -21,12 +21,9 @@ if not os.path.exists('data/standardize-progress.json'):
     print('NO_PROGRESS')
 else:
     d = json.load(open('data/standardize-progress.json'))
-    t2 = d.get('tier2_results') or []
-    t3 = d.get('tier3_results') or []
     print('PROGRESS_FOUND')
     print(f\"  Tier 1: {'✅ completado' if d.get('tier1_done') else '⏳ pendiente'}\")
-    print(f\"  Tier 2: {'✅ ' + str(len(t2)) + ' items guardados' if d.get('has_tier2') else '⏳ pendiente'}\")
-    print(f\"  Tier 3: {'✅ ' + str(len(t3)) + ' items guardados' if d.get('has_tier3') else '⏳ pendiente'}\")
+    print('  Tier 2/3: se resumen solos detectando result_t{2,3}_*.jsonl en data/standardize-run/')
 "
 ```
 
@@ -36,6 +33,13 @@ else:
   - **"¿Empezar de cero?"** → `rm data/standardize-progress.json` y correr sin ese arg
 
 **Regla**: solo debe existir UN `data/standardize-progress.json` en todo el proyecto. Si el usuario pide empezar de cero, borrar el existente antes de invocar el workflow.
+
+> **Checkpoint mínimo (2026-07-08, hallazgo F3)**: `data/standardize-progress.json`
+> guarda SOLO flags (`tier1_done`) — nunca los resultados LLM completos. El run dir
+> `data/standardize-run/` es persistente (ya no vive en `/tmp`), así que Tier 2/3 se
+> resumen SOLOS: en modo `resume_progress`, el workflow lista qué `result_t{2,3}_NN.jsonl`
+> ya existen en disco y solo relanza los chunks que faltan — nunca reprocesa un chunk ya
+> resuelto ni duplica sus resultados en el checkpoint.
 
 ### Invocar el workflow
 
@@ -52,9 +56,11 @@ Workflow({ name: 'watch-standardize-catalog', args: { limit: 100 } })
 Workflow({ name: 'watch-standardize-catalog', args: { limit: 100, force_all: true } })
 ```
 
-El workflow guarda checkpoints automáticamente en `data/standardize-progress.json` después de
-cada fase LLM (Tier 1, Tier 2, Tier 3). Al finalizar exitosamente, elimina el archivo.
-Si el workflow se interrumpe a mitad, el progreso queda guardado para retomar.
+El workflow guarda un checkpoint chico en `data/standardize-progress.json` después de
+Tier 1 (solo el flag `tier1_done`). Al finalizar exitosamente, borra ese archivo Y
+`data/standardize-run/`. Si se interrumpe a mitad, ambos quedan — Tier 1 se saltea si
+ya corrió, y Tier 2/3 retoman leyendo qué chunks ya tienen `result_*.jsonl` en
+`data/standardize-run/` (nunca reprocesan ni duplican payloads en el checkpoint).
 
 The workflow automates the entire pipeline: audit → Tier 1 auto-standardize → Tier 2
 validation → Tier 3 derivation → merge + dedup + slugs + translation. Schema-validated
@@ -81,10 +87,17 @@ Each standardized item carries a `standardized_at` ISO timestamp. The skill **on
 
 La lógica de auditoría/tiering vive en `scripts/standardize_audit.py` (fuente
 única — NO embebas una copia acá). Escribe las proyecciones por tier a
-`/tmp/manga-standardize-run/tier{1,2,3}.json`. Cada proyección Tier 2/3 trae
-`proposed_*`, `existing_edition_key` (si el item ya tiene edición asignada) y
+`data/standardize-run/tier{1,2,3}.json` — run dir **persistente** (antes vivía
+en `/tmp/manga-standardize-run`, volátil ante reboot; 2026-07-08 se movió a
+`data/`, gitignored). Cada proyección Tier 2/3 trae `proposed_*`,
+`existing_edition_key` (si el item ya tiene edición asignada) y
 `known_edition_keys` (keys YA existentes en el corpus para esa serie — para
 REUSAR, no acuñar variantes).
+
+Además escribe `data/standardize-run/summary.json` — el **contrato de
+conteos** (`{total, pending, tier1, tier2, tier3, exhausted}`). Es la fuente
+de verdad de PENDING/TIER1/TIER2/TIER3: leelo (o pedile a un subagente que lo
+lea con schema) en vez de parsear el stdout con regex.
 
 ```bash
 .venv/bin/python scripts/standardize_audit.py            # [--limit N] [--force-all]
@@ -92,7 +105,7 @@ REUSAR, no acuñar variantes).
 
 Los items con `approved_at` (golden records) NUNCA entran al pending set.
 
-If `PENDING = 0` → report "nothing to standardize" and stop.
+If `PENDING = 0` (ver `summary.json`) → report "nothing to standardize" and stop.
 
 If `Pendientes < 15` → process ALL tiers inline (no subagents needed).
 
@@ -101,10 +114,14 @@ If `Pendientes >= 15` → use the tiered workflow below.
 ## Step 2 — Auto-standardize Tier 1 (deterministic, no LLM)
 
 Tier 1 items have high-confidence heuristic assignments. Apply them directly
-(la lógica vive en `scripts/standardize_apply.py` — NO embebas una copia):
+(la lógica vive en `scripts/standardize_apply.py` — NO embebas una copia).
+**`standardize_apply.py` declara su PROPIO `DEFAULT_BASE` (todavía
+`/tmp/manga-standardize-run` — no se tocó en el movimiento a `data/`), así que
+hay que pasarle `--base` explícito para que apunte al mismo run dir que usó
+el audit:**
 
 ```bash
-.venv/bin/python scripts/standardize_apply.py tier1     # [--force-all]
+.venv/bin/python scripts/standardize_apply.py tier1 --base data/standardize-run     # [--force-all]
 ```
 
 ## Step 3 — Partition Tier 2 + 3 into chunks
@@ -121,7 +138,7 @@ import json, re
 from pathlib import Path
 from collections import defaultdict
 
-BASE = Path('/tmp/manga-standardize-run')
+BASE = Path('data/standardize-run')
 CHUNK_SIZE = 25
 
 # Las proyecciones YA vienen completas del audit (proposed_*, tier,
@@ -171,163 +188,31 @@ For each chunk, spawn a `general-purpose` subagent **in the background**.
 Wave size: 7 subagents max. Chunks are smaller (20-30) so more waves but
 each agent finishes faster and never hits session limits.
 
-Each subagent gets this prompt template:
+Each subagent gets this prompt template. **Las reglas de negocio (edition_key,
+publisher/país/tipo de edición, 画集付き, coleccion=edición, allowlists…) NO
+van acá — viven en `.claude/skills/watch-standardize-catalog/prompt-rules.md`
+(fuente única, auditoría 2026-07-08 hallazgo F7: esa regla existía SOLO acá y
+0 veces en el workflow — drift confirmado). El subagente lee ese archivo con
+su tool Read antes de procesar; no le pegues las reglas al prompt.**
 
 ```
-Standardize manga catalog entries. Read `/tmp/manga-standardize-run/chunk_<NN>.jsonl` and write `/tmp/manga-standardize-run/result_<NN>.jsonl` with one JSON per input item, SAME ORDER.
+Antes de procesar, leé COMPLETO .claude/skills/watch-standardize-catalog/prompt-rules.md
+— son las reglas OBLIGATORIAS de negocio (edition_key, publisher/país/tipo de
+edición, 画集付き, coleccion=edición, allowlists…). Aplicalas literalmente, no
+las reinterpretes ni las resumas de memoria.
+
+Standardize manga catalog entries. Read `data/standardize-run/chunk_<NN>.jsonl` and write `data/standardize-run/result_<NN>.jsonl` with one JSON per input item, SAME ORDER.
 
 ## OUTPUT FIELDS:
 ```json
 {"url":"","is_manga":true,"non_manga_reason":"","series_key":"","series_display":"","edition_key":"","edition_display":"","volume":""}
 ```
 
-**POLÍTICA DE TÍTULOS (dura, 2026-06-12): el `title` NO se toca.** Es el nombre
-OFICIAL con que la fuente/editorial publica el producto. NO lo traduzcas, NO lo
-renombres a la serie canónica, NO le agregues tipo de edición (Kanzenban/Deluxe/…).
-El nombre reconocible vive en `series_display` (canónico) y la búsqueda resuelve
-aliases multilingües. NO emitas ningún campo de título.
-
 ## TIER-SPECIFIC INSTRUCTIONS
 
-Each input item has a `tier` field (2 or 3).
-
-**Tier 2 items** come with `proposed_*` fields (heuristic assignment). The heuristic
-already resolved the series via aliases.yml and assigned a publisher slug. Your job is
-to VALIDATE and optionally CORRECT:
-- Check if proposed_series_key looks right for this title.
-- Check if the edition_slug is the best match (the heuristic might have assigned
-  "special" when "collector" or "limited" is more specific).
-- If the proposed values look correct, USE THEM (don't re-derive from scratch).
-- If something is wrong, fix it using the same rules as Tier 3.
-
-**Tier 3 items** have NO reliable heuristic — derive everything from scratch.
-
-## RULES
-
-### is_manga
-- ALL `Global - Mangavariant` items → ALWAYS true. NEVER false.
-- Slipcases/box sets/coffrets/cofanetti/steelbox/variant covers/artbooks/fanbooks/magazines → valid.
-- Marvel/DC/IDW/Image comics → false unless "manga" in title or known adaptation.
-- Figures/statues/plushies/t-shirts/mugs/trading cards/news posts → false.
-- Light novels (roman/light-novel/LN URLs) → false (non_manga_reason="light_novel").
-- **When in doubt → true.**
-
-### series_key
-Lowercase, kebab-case, no diacritics. Cap ~35 chars. Use globally-recognized name.
-Pure ASCII (`[a-z0-9-]`) — no raw CJK and no Cyrillic/Greek homoglyphs copied from
-sources (gotcha #81); transliterate to romaji. The pipeline re-sanitizes with
-`sanitize_key_ascii()`, so non-ASCII keys never reach the corpus anyway.
-
-### edition_key — `{series}-{publisher_slug}-{edition_slug}-{country_slug}`
-
-**NO RE-DERIVES la edición si el item YA tiene `edition_key` asignado** (viene como
-`existing_edition_key` en el input). El scraper ya aplicó las reglas duras de agrupación
-(coleccion=edición, país, nombre oficial) — está bien. Para esos items tu trabajo es
-SOLO: serie canónica + detectar non-manga. El apply del
-skill conserva el `edition_key`/`edition_display` existentes (y el `title` SIEMPRE). Sólo derivá la edición
-desde cero para items SIN `edition_key` (ej. algunas fuentes que no son listadomanga).
-Las reglas de abajo aplican a esos casos.
-
-**REUSO DE KEYS EXISTENTES (gotcha #69)**: si el item trae `known_edition_keys`
-(edition_keys YA existentes en el corpus para esa serie), y una matchea el
-publisher+tipo+país de este item, USA ESA KEY EXACTA. NUNCA acuñes una key nueva que
-difiera de una existente solo en el slug de tipo (special/limited/collector/deluxe) —
-eso parte la misma edición en dos páginas.
-
-**TABLA DE TÉRMINOS DE TIPO (DURA, gotcha #69)** — el término del título manda y se
-mapea SIEMPRE igual (un post-paso determinístico, `canonicalize_edition_slugs.py`,
-re-aplica esta tabla; no la contradigas):
-- 限定版 → `limited` · 特装版 / 同梱版 → `special` · 愛蔵版 → `deluxe` · 完全版 → `kanzenban`
-- "edición limitada" / "edizione limitata" / "édition limitée" / "limited edition" → `limited`
-- "coleccionista" / "collector" → `collector` · "edición de lujo" / "deluxe" → `deluxe`
-- Ediciones NOMBRADAS (Maximum, Perfect, Ultimate, Master, Grimorio…) ganan sobre el
-  término de tipo: "One Piece Maximum 限定版" → `maximum`.
-- **GUARD de nombre de serie**: si la palabra "de edición" es parte del NOMBRE de la
-  serie ("Trigun Maximum", "Ultimate Muscle"), NO es tipo de edición — usá la evidencia
-  real de edición (o `regular`) para el SLUG. El título no se toca.
-
-**REGLA DE NEGOCIO DURA (gotcha #46): país distinto = edición distinta, SIEMPRE.**
-El `edition_key` TERMINA con el código de país de la EDICIÓN (derivado de
-editorial/idioma del item, NO de la tienda). Dos mercados NUNCA comparten
-edition_key aunque coincidan series+publisher+edición (Panini IT vs Panini ES/MX/BR,
-Kazé FR vs DE, etc.). country_slug (allowlist):
-"jp", "it", "es", "fr", "de", "us", "vn", "mx", "br", "th", "ar", "tw", "gb", "pt",
-"pe", "cl", "kr", "eslatam". Si no sabés el país → "xx".
-Ejemplo: Hunter x Hunter variante de Panini España = `hunter-x-hunter-panini-variant-es`;
-la de Panini Italia = `hunter-x-hunter-panini-variant-it` (NUNCA el mismo).
-NOTA: como el país ya va en el sufijo, NO uses slugs de publisher con país embebido
-(usá "panini", NO "panini-es"; "ivrea", NO "ivrea-ar" salvo que sean editoriales
-legalmente distintas). El país lo aporta el sufijo.
-
-publisher_slug (allowlist — use literal slug from this list):
-"darkhorse", "glenat", "viz", "panini", "norma", "planeta", "ivrea", "ivrea-ar",
-"kana", "pika", "kaze", "kioon", "star", "kodansha", "kodansha-us", "shueisha",
-"squareenix", "kadokawa", "meian", "ecc", "arechi", "delcourt", "tokyopop", "jbc",
-"devir", "newpop", "kamite", "mangaline", "mangadreams", "funside", "milkyway",
-"dokidoki", "nobinobi", "tomodomo", "fandogamia", "kurokawa", "akita", "hakusensha",
-"ichijinsha", "futabasha", "takeshobo", "tokuma", "asciimw", "frontier", "yenpress",
-"carlsen", "noeve", "distrito", "001edizioni", "goen", "gpmanga", "jpop", "dynit",
-"edizionibd", "magicpress", "coconino", "tora", "dokusho", "tokyomangasha", "kbooks",
-"luckpim", "ipm", "isan", "nxb", "mpeg", "sevenseas", "titan", "inklore", "vertical",
-"udon", "shogakukan", "gentosha", "maggarden", "egmont", "dokico", "papertoons",
-"crosscult", "mangacult", "loewe", "reprodukt", "altraverse", "universe",
-"pipoca-nanquim", "kim-dong", "panini-mx", "panini-es", "panini-ar", "panini-br",
-"crunchyroll", "rakuten".
-
-edition_slug (pick ONE — NEVER compound two together):
-"deluxe", "kanzenban", "perfect", "coffret", "boxset", "cofanetto", "variant",
-"limited", "collector", "anniversary", "celebration", "color", "maximum", "ultimate",
-"master", "library", "integral", "artbook", "fanbook", "guidebook", "magazine",
-"steelbox", "slipcase", "prestige", "grimorio", "grimoire", "special", "regular".
-
-**ANTI-COMPOUND RULE**: Choose ONE slug. Never "deluxe-box", "ultimate-variant", etc.
-When format-slug (boxset/hardcover/coffret) conflicts with edition-name
-(collector/ultimate/limited), choose the edition-name.
-
-**ARTBOOK vs SPECIAL**: If the item has a volume number → `special`/`limited`
-(never `artbook`). Only standalone illustration books WITHOUT a volume → `artbook`.
-EXCEPCIÓN: si la COLECCIÓN ENTERA es un libro de ilustraciones (su título dice
-"Libro de Ilustraciones" / "Illustrations" / "Art Works" / "The Art of" / 画集),
-entonces TODOS sus tomos son `artbook` aunque estén numerados (es una serie de
-artbooks, no tomos especiales). Ej. FMA cole=524 "Libro de Ilustraciones 1/2".
-
-**listadomanga — REGLA DURA: cada `/coleccion?id=N` es UNA edición = UNA página.**
-La MISMA obra en `/coleccion` distintos = ediciones DISTINTAS → NUNCA el mismo
-edition_key. Y al revés (gotcha #48): TODOS los tomos de una MISMA `/coleccion`
-(regulares, especiales, cofres, variantes) comparten el MISMO edition_key — el de
-la edición BASE de la coleccion (la `regular` si existe; si no, la predominante,
-ej. Berserk Maximum). NO separes el tomo 34 "Edición Especial" en
-`…-special` aparte de los regulares de su coleccion: va en la misma página, con el
-mismo edition_key. Lo que distingue al especial-34 del regular-34 es el `cluster_key`
-(tier-0 `lmc:{coleccion}:{kind}:{vol}`), NO el edition_key. Un post-paso determinístico
-(`unify_coleccion_edition.py`) lo fuerza, pero generá ya el edition_key base. Los
-tomos REGULARES con cofre/extras de 1ª edición (description con "regalos / brindes"
-o tag `from_extras`) son edición `regular`, el cofre es un bonus.
-
-**`edition_display` = NOMBRE OFICIAL de la edición, SIN traducir (gotcha #49).** NO un
-slug genérico traducido ("Special (Norma Editorial)", "Regular"). Nada se traduce:
-ni el nombre de la EDICIÓN ni el `title` del tomo — ambos van tal cual. Para items de
-listadomanga, el item YA trae el `edition_display` correcto (= título de la coleccion,
-ej. "Ataque a los Titanes", "Guardianes de la Noche (Kimetsu no Yaiba)", "Berserk
-(Maximum) (Castellano)"): **CONSÉRVALO, no lo regeneres ni lo traduzcas.** Para otras
-fuentes, usá el nombre oficial de la edición (no inventes un slug traducido).
-
-CRITICAL — "画集付き" / "イラスト集付き" = artbook INCLUDED AS BONUS, not the product.
-A Japanese title like "宇宙兄弟(39) 画集付き特装版" / "暁のヨナ イラスト集付き特装版 47"
-is a regular VOLUME (note the number) that ships WITH a mini art booklet. It is NOT an
-artbook. Rule:
-- 画集/イラスト集/アートワーク immediately followed by 付き/付/つき/同梱 (= "with/included")
-  → the artbook is a BONUS → edition = `special` (特装版/同梱版) or `limited` (限定版),
-  product_type = `manga`.
-  e.g. "宇宙兄弟(39) 画集付き特装版" → edition_key `space-brothers-kodansha-special`
-  (el title queda tal cual, en japonés).
-- 画集/イラスト集 as the standalone product, NO 付き (e.g. "笠井あゆみ画集 麗人") → real
-  `artbook`. Same logic for "ファンブック付き" (fanbook bonus) vs a standalone "Visual Fanbook".
-(detect_signals/derive_product_type now demote this automatically, but assign the
-edition_key/title correctly here too — those are curated fields.)
-
-### volume
-String. Digits only. "1", "100", "1-3" for sets, "" if absent.
+Each input item has a `tier` field (2 or 3). Ver "Reglas específicas por
+tier" en `prompt-rules.md` para el detalle de qué hacer en cada caso
+(Tier 2 = validar `proposed_*`; Tier 3 = derivar desde cero).
 
 ## EXECUTION
 1. Read input. 2. Process EVERY item. 3. Output line count MUST equal input. 4. Report totals.
@@ -340,7 +225,7 @@ CRITICAL: Same series/publisher → same keys consistently.
 .venv/bin/python << 'PY'
 import json
 from pathlib import Path
-base = Path('/tmp/manga-standardize-run')
+base = Path('data/standardize-run')
 missing_items = []
 for cf in sorted(base.glob('chunk_*.jsonl')):
     n = cf.stem.replace('chunk_', '')
@@ -425,7 +310,7 @@ heurística como fallback de keys vacías, corrige outliers de serie por
   única).
 
 ```bash
-.venv/bin/python scripts/standardize_apply.py merge     # [--force-all]
+.venv/bin/python scripts/standardize_apply.py merge --base data/standardize-run     # [--force-all]
 ```
 
 El viejo enforcement embebido `[LMC-EDITIONS]` ya NO va acá: lo cubre el
@@ -477,7 +362,7 @@ y el Step 8 de slugs — ambos quedan cubiertos acá). Idempotente.
 ## Step 10 — Cleanup + report
 
 ```bash
-rm -rf /tmp/manga-standardize-run
+rm -rf data/standardize-run
 ```
 
 Report to the user:
@@ -503,7 +388,7 @@ Report to the user:
 - **Don't use chunks larger than 30** — session limits cause data loss with big chunks.
 - **Don't skip the `canonical_series_key` step in merge.**
 - **Don't skip Step 9 (translation)** for small runs.
-- **Don't truncate `/tmp/manga-standardize-run/` until merge is confirmed.**
+- **Don't truncate `data/standardize-run/` until merge is confirmed.**
 
 ## Force-rerun the whole catalog
 
