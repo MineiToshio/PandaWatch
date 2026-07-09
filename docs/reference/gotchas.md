@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 140 known gotchas
+## The 141 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1640,3 +1640,50 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     de estabilizar (confirmado con prueba de idempotencia: pasada 2→3 da md5 IDÉNTICO). No es
     un bug de escritura — es orden de pipeline documentado; ahora VISIBLE gracias al fix de
     `rescore` de este mismo paquete (B13) en vez de quedar silenciosamente ignorado.
+
+141. **Paquete G-performance/lock de la auditoría Fable (2026-07-08) — hot path del scraper
+    + lock inter-proceso.** Ver `tests/test_perf_lock_20260708.py`.
+    **(A10) `append_jsonl` era O(corpus) por flush.** El flush por-fuente lo invocaba
+    ~60 veces/run, y cada llamada relee+parsea+consolida+reescribe las ~13 k filas / 33 MB
+    COMPLETAS (~4 GB de I/O, en el MAIN thread bloqueando a los workers). Fix: el flush
+    (`flush_source_candidates`, `spool=True` default) escribe sólo sus filas a un SPOOL
+    append-only (`data/items.jsonl.spool`, O(filas) + fsync); la consolidación O(corpus)
+    corre UNA vez en el `append_jsonl` final del run, que absorbe el spool (chaining idéntico
+    al upsert per-fuente histórico) y lo borra. Medido: 60 flushes 22.85 s → 0.43 s (53×);
+    byte-idéntico al append per-flush. Durabilidad preservada (un crash deja el corpus
+    intacto+válido y lo flusheado en el spool, que el próximo `append_jsonl` absorbe —
+    recuperación automática). **(A11)** `detect_signals` re-normalizaba (casefold+NFKD+regex)
+    las 269 frases ESTÁTICAS de `KEYWORD_RULES` por candidato (~48 % de su CPU). Fix:
+    `_COMPILED_RULES` a nivel módulo (phrase, pattern, score, type, tokens+patrones fuzzy) —
+    743 → 345 µs/call (2.15×). Mismo tratamiento a `derive_product_type` con
+    `_PRODUCT_TYPE_COMPILED` (106 → 76 µs/call). **(A12/S10) faltaba lock inter-proceso sobre
+    items.jsonl.** El rename atómico no impide el last-writer-wins CROSS-proceso (una curación
+    del dashboard entre el leer y el renombrar de un flush del scraper se pisaba). Fix:
+    `items_write_lock` (fcntl.flock sobre `data/items.jsonl.lock`) tomado por
+    `append_jsonl`/`write_items_atomic`/`write_lines_atomic` (reentrante mismo-hilo vía RLock
+    + un fd mientras profundidad>0 → `append_jsonl`→`write_items_atomic` no se auto-bloquea) y
+    por `serve._serialized` con su propio helper sobre el MISMO archivo (flock es sobre el
+    archivo, interopera). Orden de locks SIEMPRE: in-proceso → flock; timeout 30 s. Verificado
+    con 2 procesos reales (sin lock hay lost update, con lock no). **(B18) Playwright:** (a) el
+    timeout del caller ahora escala por el backlog de la cola (`qsize()` × presupuesto por-job)
+    — con ≥4 fuentes `js` un timeout fijo daba `queue.Empty` espurio aunque el job aún no
+    corriera; (b) si `chromium.launch()` falla, el driver `sync_playwright().start()` se
+    DETIENE antes de re-levantar (antes quedaba huérfano y cada job siguiente iniciaba otro);
+    (c) `final_url` se lee MIENTRAS la page está abierta (antes se leía tras el `finally` que
+    la cierra → `is_closed()` True → siempre caía a la URL original, nunca reflejaba el
+    redirect). **(Punto 5, mecanismo no síntoma) el efecto de `log_unmapped_series` se
+    separó de la derivación**: `candidate_to_json` lo llamaba incondicionalmente, así que
+    rescore/backfill_metadata/dry-runs contaminaban `data/unmapped_series.jsonl` aunque no
+    fueran a escribir. Ahora el logging está apagado por default y sólo lo encienden los
+    entrypoints de ingestión real (`set_unmapped_logging`); verificado con un `rescore
+    --dry-run` real (md5 de `unmapped_series.jsonl` intacto). **(B19, micro-opts)**:
+    `is_comic_not_manga`/`is_pure_novel` guardan el match en vez de `.search()` dos veces;
+    `_LMC_KIND_CANON` a constante de módulo (antes se recreaba el dict por llamada en el hot
+    path de `derive_cluster_key`); `import math` y `urlparse` movidos fuera de los hot paths
+    (ya estaban a nivel módulo); `candidate_from_source` copia `list(source.tags)` (antes
+    aliaseaba la lista compartida de la fuente entre threads); `image_url`/`image_local`
+    removidos de `_SOURCE_FIELDS` (siempre "" desde que la portada vive en `images[0]`;
+    `SourceEntry` en `web-next/lib/types.ts` sincronizado); `host_to_group` se arma desde
+    `sources_all` (no la lista filtrada — el comentario ya lo decía);
+    `fetch_metadata_from_detail` captura sólo `requests.RequestException` (la tupla
+    `(RequestException, Exception)` era redundante y tragaba bugs de parsing).

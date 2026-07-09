@@ -391,6 +391,7 @@ def test_log_unmapped_series_isolated_by_env_var_does_not_touch_default(tmp_path
     data_dir = tmp_path / "isolated"
     data_dir.mkdir()
     monkeypatch.setenv("MANGA_WATCH_DATA_DIR", str(data_dir))
+    sa.set_unmapped_logging(True)  # punto 5: efecto apagado por default
     sa.reset_unmapped_run_state()
 
     sa.log_unmapped_series("brand-new-series-xyz", "Brand New Series", "Brand New Series 1",
@@ -411,6 +412,7 @@ def test_candidate_to_json_unmapped_write_goes_to_isolated_dir(tmp_path, monkeyp
     data_dir = tmp_path / "isolated2"
     data_dir.mkdir()
     monkeypatch.setenv("MANGA_WATCH_DATA_DIR", str(data_dir))
+    sa.set_unmapped_logging(True)  # punto 5: efecto apagado por default
     sa.reset_unmapped_run_state()
 
     c = mw.Candidate(

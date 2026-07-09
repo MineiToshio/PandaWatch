@@ -35,4 +35,14 @@ def _isolate_serve_data_dir(tmp_path, monkeypatch):
     data_dir = tmp_path / "_serve_data"
     data_dir.mkdir(exist_ok=True)
     monkeypatch.setenv("MANGA_WATCH_DATA_DIR", str(data_dir))
+    # Punto 5 (Fable 2026-07-08): el logging de unmapped está apagado por default
+    # y sólo lo encienden los entrypoints de ingestión. Garantizar estado limpio
+    # por test (un test que lo encienda no debe filtrar a otro; el aislamiento de
+    # DATA_DIR de arriba ya protege el archivo real de todas formas).
+    try:
+        import series_aliases as _sa
+        _sa.set_unmapped_logging(False)
+        _sa.reset_unmapped_run_state()
+    except Exception:
+        pass
     yield

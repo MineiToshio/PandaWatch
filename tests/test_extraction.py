@@ -1882,6 +1882,7 @@ def test_log_unmapped_series_appends_only_non_canonical(tmp_path, monkeypatch):
     data_dir.mkdir()
     monkeypatch.setenv('MANGA_WATCH_DATA_DIR', str(data_dir))
     fake_log = data_dir / 'unmapped_series.jsonl'
+    sa.set_unmapped_logging(True)  # punto 5: efecto apagado por default
     sa.reset_unmapped_run_state()
 
     # 1) Series canónica → NO se loguea
@@ -4549,16 +4550,39 @@ def _make_candidate(**kwargs):
 
 
 def test_flush_source_candidates_writes_new_items(tmp_path):
-    """flush_source_candidates escribe candidatos new/changed al JSONL
-    inmediatamente sin necesitar que el run completo termine."""
+    """flush_source_candidates persiste candidatos new/changed al SPOOL
+    inmediatamente (A10, Fable 2026-07-08) — durable ante crash sin necesitar
+    que el run complete — y el append_jsonl final los materializa a items.jsonl."""
     path = tmp_path / "items.jsonl"
     cand = _make_candidate()
     written = mw.flush_source_candidates([cand], {}, path, min_score=20)
     assert written == 1
+    # Fue al spool (durable), no todavía al items.jsonl consolidado.
+    spool = mw._items_spool_path(path)
+    assert spool.exists()
+    assert not path.exists()
+    spooled = [json.loads(l) for l in spool.open()]
+    assert spooled[0]["url"] == "https://darkhorse.com/berserk-deluxe-1"
+    assert spooled[0]["status"] == "new"
+    # El append final lo absorbe → items.jsonl + spool borrado.
+    mw.append_jsonl(path, [])
     items = [json.loads(l) for l in path.open()]
     assert len(items) == 1
     assert items[0]["url"] == "https://darkhorse.com/berserk-deluxe-1"
     assert items[0]["status"] == "new"
+    assert not spool.exists()
+
+
+def test_flush_source_candidates_spool_false_writes_immediately(tmp_path):
+    """spool=False conserva el append inmediato al items.jsonl (para callers
+    que no cierran con un append final)."""
+    path = tmp_path / "items.jsonl"
+    cand = _make_candidate()
+    written = mw.flush_source_candidates([cand], {}, path, min_score=20, spool=False)
+    assert written == 1
+    items = [json.loads(l) for l in path.open()]
+    assert len(items) == 1
+    assert items[0]["url"] == "https://darkhorse.com/berserk-deluxe-1"
 
 
 def test_flush_source_candidates_skips_seen_items(tmp_path):

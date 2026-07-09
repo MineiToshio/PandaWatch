@@ -109,6 +109,26 @@ en `_run_wiki_bootstrap()` + agregar a `choices=` del argparse + a scrape_delta/
   Antes del rename atómico hace `file.flush()` + `os.fsync(file.fileno())` (2026-07-07):
   sin eso, un corte de energía justo tras escribir el `.tmp` podía dejarlo en el page
   cache pero no en disco.
+- **Lock inter-proceso de items.jsonl (A12/S10, Fable 2026-07-08)**: TODO writer de
+  `items.jsonl` corre bajo `items_write_lock(path)` (fcntl.flock sobre
+  `<path>.lock`) para cubrir el read→modify→write completo contra otros PROCESOS
+  (scraper vs dashboard vs retrofit del Panel). `append_jsonl`/`write_items_atomic`/
+  `write_lines_atomic` lo toman solos (reentrante en el mismo hilo, así
+  `append_jsonl`→`write_items_atomic` no se auto-bloquea) → los retrofits lo heredan
+  gratis. `serve.py` lo toma en `_serialized` con su propio helper sobre el MISMO
+  archivo de lock (flock es sobre el archivo, interopera). **Orden de locks
+  SIEMPRE:** primero el lock in-proceso (RLock / `_ITEMS_LOCK`), después el flock
+  cross-proceso — mismo orden en todos lados o hay deadlock. Timeout 30 s →
+  `TimeoutError` (los writes son sub-segundo; no colgar esperando un proceso trabado).
+- **Flush por SPOOL, no append per-fuente (A10, Fable 2026-07-08)**: en el scraper,
+  `flush_source_candidates(..., spool=True)` (default) escribe a
+  `data/items.jsonl.spool` (append-only + fsync, O(filas)) en vez de un
+  `append_jsonl` O(corpus) por-fuente (~60/run). El `append_jsonl` FINAL del run
+  absorbe el spool (chaining idéntico al upsert per-fuente) y lo borra. Todo camino
+  que use `spool=True` DEBE cerrar con un `append_jsonl(items_path, ...)` que lo
+  absorba (`run()`, `_run_wiki_bootstrap`, `_run_sitemap_mining` ya lo hacen). Un
+  spool huérfano (crash) lo absorbe el próximo `append_jsonl`. `spool=False`
+  conserva el append inmediato para callers sin append final.
 - **Dump-completo de JSONL (no upsert)**: usá `write_items_atomic(path, rows)` (dicts) o
   `write_lines_atomic(path, lines)` (strings ya serializadas — para preservar texto crudo
   de una línea corrupta, patrón `_raw`, o cuando un writer mezcla dicts y raw lines) — las
@@ -246,6 +266,21 @@ skill de standardize) usá `append_unmapped_from_item(item, reason, note=...)` e
 `standardize_apply.py` (fuente única — no reimplementar el writer/dedup; ver
 `queue_regular_shielded.py` para un ejemplo de retrofit que la reusa). Schema completo en el
 File map.
+
+**El efecto de `log_unmapped_series` está GATEADO (Fable 2026-07-08 — separar
+derivación de efecto).** `candidate_to_json` (el builder de filas, "Paso D") llama
+`log_unmapped_series` al DERIVAR una fila, pero esa derivación la ejecutan también
+rescore/backfill_metadata/dry-runs, que NO ingieren series nuevas — sólo re-derivan
+filas del corpus. Antes appendeaban a la cola aunque no fueran a escribir (git
+dirty + ruido). Ahora el logging está **apagado por default**
+(`series_aliases._UNMAPPED_LOGGING_ENABLED = False`) y sólo lo encienden los
+entrypoints de INGESTIÓN real vía `set_unmapped_logging(not dry_run)`: el scraper
+`run()` (cubre bootstrap-wiki + sitemap) y los 3 retrofits de descubrimiento
+(`search_discovery`, `expand_index_pages`, `expand_whakoom_ediciones`). Regla
+general: **una función de derivación pura no debe tener efectos de escritura por
+default** — el CALLER que ingiere los habilita, no se apagan con un `if dry_run`
+esparcido por N scripts. Los tests que ejercitan el logging lo encienden explícito;
+`conftest.py` lo resetea a False por test (además del aislamiento de DATA_DIR).
 
 ### Script nuevo (o flag nuevo) en el Panel de Control
 

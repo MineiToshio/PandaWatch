@@ -322,7 +322,9 @@ de siempre intacto. El mismo guard aplica en el camino de items `standardized_at
 
 `items.jsonl` guarda **una línea por PRODUCTO físico** (cluster), no por URL. Cada
 fila lleva `sources[]` con todas las fuentes donde se encontró (cada entrada:
-name/url/country/stock_type/image_url… vía `source_entry()`). Cuando el
+name/url/country/stock_type/detected_at… vía `source_entry()`; `image_url`/
+`image_local` se REMOVIERON de la entrada 2026-07-08 — eran siempre "" desde que
+la portada vive en `images[0]`). Cuando el
 scraper re-encuentra un producto existente, suma la fuente a `sources[]` en vez de
 agregar fila. `append_jsonl()`: (1) upsert por URL normalizada; (2) `sources[]`
 sticky+merge (un re-scrape de una fuente no borra las hermanas); (3) consolidación
@@ -371,6 +373,50 @@ DESPUÉS de la estandarización. Idempotente.
 History NO se preserva (antes append-only, 2.5x bloat). Price history futura = event
 log separado. NO migramos a SQLite todavía (decisión del owner: JSONL mientras se
 itera filtros; SQLite con multi-user/deploy — triggers en ARCHITECTURE.md).
+
+**Flush incremental por SPOOL, consolidación única (Fable 2026-07-08, hallazgo
+A10).** `append_jsonl` es O(corpus): relee + parsea + consolida + reescribe las
+~13 k filas / 33 MB COMPLETAS. El flush por-fuente lo invocaba ~60 veces/run
+(~4 GB de I/O + ~1.7 M (de)serializaciones, todo en el MAIN thread bloqueando a
+los workers). Ahora el flush por-fuente (`flush_source_candidates`, `spool=True`
+por default) escribe sólo sus filas a un **spool append-only**
+(`data/items.jsonl.spool`, O(filas), fsync por append); la consolidación
+O(corpus) corre **una vez**, en el `append_jsonl` final del run, que absorbe el
+spool (sus filas se procesan con la MISMA lógica de upsert, chaining idéntico al
+flush per-fuente histórico) y lo borra. Medido: 60 flushes 22.85 s → 0.43 s (53×).
+Byte-idéntico al append per-flush cuando `detected_at` es único (verificado).
+  - **Durabilidad (a):** un crash a mitad de run NO pierde lo flusheado (vive en el
+    spool, fsync-eado) y el `items.jsonl` queda intacto → parseable y válido
+    (posiblemente sin las filas nuevas, que están en el spool). El próximo
+    `append_jsonl` (del run siguiente o de cualquier retrofit) absorbe un spool
+    huérfano ANTES de escribir — recuperación automática. `save_state` corre
+    DESPUÉS del append final (A3), así que un crash re-reporta las fuentes y el
+    upsert idempotente las reabsorbe.
+  - **Concurrencia (b):** el spool NO lo lee el dashboard; sólo el `append_jsonl`
+    final (que toma el lock, abajo) lo lee/borra. La relectura O(corpus) que antes
+    "absorbía" ediciones concurrentes de serve la reemplaza el lock — por eso el
+    lock DEBE existir antes de quitar la relectura.
+
+**Lock inter-proceso sobre `items.jsonl` (Fable 2026-07-08, hallazgos A12/S10).**
+El scraper (`append_jsonl`), el dashboard (`serve.py`) y los jobs del Panel hacen
+todos read-modify-write del archivo entero con rename atómico — pero el rename NO
+impide el last-writer-wins CROSS-proceso: una curación del dashboard entre el
+"leer" y el "renombrar" de un flush del scraper se pisaba en silencio. El
+`.scrape.lock` (mkdir en los `.sh`) sólo cubre scrape-vs-scrape; los `@_serialized`
+de serve sólo cubren request-vs-request in-proceso. Ahora un `fcntl.flock` sobre
+`data/items.jsonl.lock` cubre el intervalo COMPLETO read→modify→write de TODO
+writer: `manga_watch.items_write_lock` lo toma en `append_jsonl` /
+`write_items_atomic` / `write_lines_atomic` (reentrante en el mismo hilo vía RLock
++ un solo fd mientras la profundidad sea >0 — `append_jsonl`→`write_items_atomic`
+no se auto-bloquea); `serve.py` lo toma en `_serialized` con su propio helper sobre
+el MISMO archivo (interoperan: flock es sobre el archivo, no sobre el código). Los
+retrofits lo heredan por usar `write_items_atomic`. **Orden de locks (SIEMPRE):**
+primero el lock in-proceso (RLock / `_ITEMS_LOCK`), después el flock cross-proceso.
+Timeout de 30 s (los writes reales son sub-segundo; un timeout indica un proceso
+trabado → `TimeoutError`, mejor fallar que colgar). Verificado con 2 procesos
+reales: sin lock hay lost update, con lock no
+(`tests/test_perf_lock_20260708.py`). El 409 del Panel (`/api/run` rechaza lanzar
+un 2º job mutador) sigue siendo la protección coarse complementaria (S10).
 
 ### 2. `is_likely_manga()` is a 4-rule cascade, in order
 
