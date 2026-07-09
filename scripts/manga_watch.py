@@ -1319,11 +1319,15 @@ RELEASE_DATE_PATTERNS = [
         r"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
         re.IGNORECASE,
     ),
-    # Mes en español/francés/italiano: 15 de junio de 2026 / 15 juin 2026 / 15 giugno 2026
+    # Mes en español/francés/italiano/portugués/alemán:
+    # "15 de junio de 2026" / "15 juin 2026" / "15 giugno 2026" /
+    # "15 de junho de 2025" / "15. März 2026"
     re.compile(
-        r"\b(\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
+        r"\b(\d{1,2}\.?\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
         r"janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre|"
-        r"gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)"
+        r"gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre|"
+        r"janeiro|fevereiro|março|marco|maio|junho|julho|setembro|outubro|novembro|dezembro|"
+        r"januar|februar|märz|maerz|marz|juni|juli|oktober|dezember)"
         r"(?:\s+de)?\s+\d{4})\b",
         re.IGNORECASE,
     ),
@@ -1355,6 +1359,14 @@ _MONTH_NAMES: dict[str, int] = {
     # IT
     "gennaio": 1, "febbraio": 2, "aprile": 4, "maggio": 5, "giugno": 6,
     "luglio": 7, "settembre": 9, "ottobre": 10, "dicembre": 12,
+    # PT-BR (con y sin acento)
+    "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "maio": 5,
+    "junho": 6, "julho": 7, "setembro": 9, "outubro": 10, "novembro": 11,
+    "dezembro": 12,
+    # DE (con y sin acento)
+    "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "marz": 3,
+    "juni": 6, "juli": 7, "oktober": 10, "dezember": 12,
+    # "april"/"mai"/"august"/"september"/"november"/"abril" ya cubiertos arriba.
 }
 
 _DATE_ISO_FULL_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$")
@@ -1365,8 +1377,9 @@ _DATE_YMD_RE = re.compile(r"^(\d{4})[/.](\d{1,2})[/.](\d{1,2})(?:\s+\d{1,2}:\d{2
 _DATE_DMY_RE = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$")
 _DATE_JP_RE = re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*日)?")
 # "15 de junio de 2026" / "2 juillet 2025" / "1er ottobre 2026" / "02 Jul 2025"
+# El `\.?` tras el número cubre el formato alemán "15. März 2026".
 _DATE_TEXT_DMY_RE = re.compile(
-    r"\b(\d{1,2})(?:er|°|º)?\s+(?:de\s+)?([a-zA-Zà-ÿÀ-Ÿ]+)\.?\s+(?:de\s+)?(\d{4})\b"
+    r"\b(\d{1,2})(?:er|°|º)?\.?\s+(?:de\s+)?([a-zA-Zà-ÿÀ-Ÿ]+)\.?\s+(?:de\s+)?(\d{4})\b"
 )
 # "June 15, 2026" / "Jun 15 2026"
 _DATE_TEXT_MDY_RE = re.compile(r"\b([a-zA-Z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b")
@@ -1382,12 +1395,23 @@ def _safe_iso_date(year: int, month: int, day: int) -> str:
         return ""
 
 
-def normalize_release_date(raw: str) -> str:
+# Países cuyas fuentes escriben las fechas ambiguas D/M/YYYY como MM/DD/YYYY.
+# Cuando ambos componentes son <=12 el formato es AMBIGUO; para estas fuentes se
+# interpreta mes-primero (hallazgo B14 Fable 2026-07-08). El resto = día-primero
+# (default EU histórico, gotcha #80).
+_MDY_COUNTRIES = frozenset({"US", "CA"})
+
+
+def normalize_release_date(raw: str, country: str = "") -> str:
     """Normaliza una fecha de lanzamiento a ISO: YYYY-MM-DD, YYYY-MM o YYYY.
 
     La granularidad parcial es legítima y se respeta (nunca se inventa día ni
     mes). Si el formato no se reconoce o la fecha es inválida, devuelve el
     valor SIN tocar (nunca destruye información). Gotcha #80.
+
+    `country` (opcional): país de la FUENTE. Para D/M/YYYY AMBIGUO (ambos
+    componentes <=12) se usa MM/DD si el país es US/CA; en cualquier otro caso
+    day-first. Un segundo componente >12 ya es inequívoco y no depende del país.
     """
     value = (raw or "").strip()
     if not value:
@@ -1410,6 +1434,9 @@ def normalize_release_date(raw: str) -> str:
         day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if month > 12 and day <= 12:  # inequívocamente mes-primero (fuente US)
             day, month = month, day
+        elif day <= 12 and month <= 12 and (country or "").upper() in _MDY_COUNTRIES:
+            # Ambiguo + fuente US/CA → MM/DD (el primer componente es el mes).
+            day, month = month, day
         return _safe_iso_date(year, month, day) or value
     m = _DATE_JP_RE.search(value)
     if m:
@@ -1430,12 +1457,13 @@ def normalize_release_date(raw: str) -> str:
     return value
 
 
-def extract_release_date(text: str) -> str:
+def extract_release_date(text: str, country: str = "") -> str:
     """Best-effort extracción de fecha de lanzamiento, normalizada a ISO.
 
     Devuelve "" si no encuentra. El match crudo (DD/MM/YYYY, 年月日, mes
     textual…) pasa por normalize_release_date() para que al corpus solo
-    entren fechas ISO (gotcha #80).
+    entren fechas ISO (gotcha #80). `country` se propaga para desambiguar
+    D/M vs M/D en fuentes US/CA (B14).
     """
     if not text:
         return ""
@@ -1449,13 +1477,13 @@ def extract_release_date(text: str) -> str:
     for pattern in RELEASE_DATE_PATTERNS:
         match = pattern.search(haystack)
         if match:
-            return normalize_release_date(match.group(1).strip())
+            return normalize_release_date(match.group(1).strip(), country=country)
     # Si no encontramos cerca del hint, intentar buscar en todo el texto.
     if hint:
         for pattern in RELEASE_DATE_PATTERNS:
             match = pattern.search(text)
             if match:
-                return normalize_release_date(match.group(1).strip())
+                return normalize_release_date(match.group(1).strip(), country=country)
     return ""
 
 
@@ -1749,9 +1777,11 @@ def _validate_author_candidate(raw: str) -> str:
     if first_word.lower() in AUTHOR_FIRST_WORD_BLACKLIST:
         return ""
     first_char = first_word[0]
-    # Aceptar: mayúscula latina, o carácter CJK (Hiragana/Katakana/Han).
+    # Aceptar: mayúscula latina, o carácter CJK/Hangul (Hiragana/Katakana/Han/
+    # Hangul coreano). Reutiliza _CJK_RE (fuente única del rango, incluye Hangul)
+    # en vez del rango U+3040–U+9FFF que dejaba fuera a los autores KR.
     is_uppercase_latin = first_char.isupper() and first_char.isalpha()
-    is_cjk = "぀" <= first_char <= "鿿"
+    is_cjk = _has_cjk(first_char)
     if not (is_uppercase_latin or is_cjk):
         return ""
     return cleaned
@@ -1808,7 +1838,7 @@ def _extract_author_from_links(soup: BeautifulSoup) -> str:
         if any(skip in lower for skip in ("todos", "all authors", "voir tous", "see all")):
             continue
         first_char = text[0]
-        if first_char.isupper() or "぀" <= first_char <= "鿿":
+        if first_char.isupper() or _has_cjk(first_char):
             return text
     return ""
 
@@ -1913,7 +1943,7 @@ def normalize_isbn(raw: str, source: str = "") -> str:
         return ""
     if len(cleaned) not in (10, 13):
         print(f"[ISBN_ANOMALY] source={source or '?'} len={len(cleaned)} "
-              f"raw={raw!r} cleaned={cleaned!r}")
+              f"raw={raw!r} cleaned={cleaned!r}", file=sys.stderr)
     return cleaned
 
 
@@ -1939,13 +1969,151 @@ def _schema_iter_items(data: Any) -> list[dict]:
     return items
 
 
+# Tipos JSON-LD que NO son un producto individual aunque contengan la subcadena
+# "Book"/"Comic" — son la SERIE/tienda, cuyo `name` es la obra, no el tomo, y
+# poblarían name/publisher/fecha con datos equivocados (gotcha M5 Fable 2026-07-08).
+_SCHEMA_NON_PRODUCT_TYPES = frozenset({"bookseries", "comicseries", "bookstore"})
+_SCHEMA_PRODUCT_HINTS = ("product", "book", "comic", "manga", "graphicnovel")
+
+
 def _schema_item_is_product(item: dict) -> bool:
-    """¿El item JSON-LD es Product/Book/Comic?"""
+    """¿El item JSON-LD es un Product/Book/Comic individual?
+
+    Matchea por TOKEN del `@type` (no substring del string entero): así
+    `BookSeries`/`BookStore`/`ComicSeries` quedan excluidos aunque contengan
+    "Book"/"Comic". Un `@type` lista con al menos un token-producto sí cuenta.
+    """
     t = item.get("@type", "")
-    if isinstance(t, list):
-        t = " ".join(str(x) for x in t)
-    t = str(t)
-    return any(k in t for k in ("Product", "Book", "Comic", "Manga", "GraphicNovel"))
+    types = t if isinstance(t, list) else [t]
+    for one in types:
+        low = str(one).strip().lower()
+        if not low or low in _SCHEMA_NON_PRODUCT_TYPES:
+            continue
+        if any(h in low for h in _SCHEMA_PRODUCT_HINTS):
+            return True
+    return False
+
+
+def _blank_schema_result() -> dict[str, str]:
+    return {
+        "name": "",
+        "image_url": "",
+        "description": "",
+        "author": "",
+        "isbn": "",
+        "release_date": "",
+        "publisher": "",
+        "product_type": "",
+    }
+
+
+def _schema_product_result(items: list[dict], source_url: str) -> dict[str, str]:
+    """Rellena el dict de metadata desde una lista de items JSON-LD ya aplanados.
+
+    Fuente ÚNICA de la extracción de campos Schema.org: la usan tanto
+    `extract_schema_org_product` (que primero parsea los <script>) como el mapa
+    por-card del listing (`_build_card_schema_map`). No re-buscar scripts acá.
+    """
+    result = _blank_schema_result()
+    for item in items:
+        if not _schema_item_is_product(item):
+            continue
+
+        # name
+        if not result["name"] and item.get("name"):
+            result["name"] = clean_text(str(item["name"]))
+
+        # image
+        if not result["image_url"]:
+            img = item.get("image")
+            url = ""
+            if isinstance(img, str):
+                url = img.strip()
+            elif isinstance(img, dict):
+                url = (img.get("url") or img.get("@id") or "").strip()
+            elif isinstance(img, list) and img:
+                first = img[0]
+                if isinstance(first, str):
+                    url = first.strip()
+                elif isinstance(first, dict):
+                    url = (first.get("url") or first.get("@id") or "").strip()
+            if url:
+                canonical = canonicalize_url(source_url, url)
+                if canonical and _score_image(canonical, "") >= -10:
+                    result["image_url"] = canonical
+
+        # description
+        if not result["description"] and item.get("description"):
+            result["description"] = clean_description(clean_text(str(item["description"])))[:2000]
+
+        # author / creator
+        if not result["author"]:
+            auth = item.get("author") or item.get("creator")
+            value = ""
+            if isinstance(auth, str):
+                value = auth.strip()
+            elif isinstance(auth, dict):
+                value = (auth.get("name") or "").strip()
+            elif isinstance(auth, list) and auth:
+                first = auth[0]
+                if isinstance(first, str):
+                    value = first.strip()
+                elif isinstance(first, dict):
+                    value = (first.get("name") or "").strip()
+            if value:
+                result["author"] = clean_text(value)
+
+        # publisher / brand
+        if not result["publisher"]:
+            pub = item.get("publisher") or item.get("brand")
+            value = ""
+            if isinstance(pub, str):
+                value = pub.strip()
+            elif isinstance(pub, dict):
+                value = (pub.get("name") or "").strip()
+            if value:
+                result["publisher"] = clean_text(value)
+
+        # isbn (con validación de checksum)
+        if not result["isbn"]:
+            for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
+                val = item.get(key)
+                if isinstance(val, str):
+                    cleaned = re.sub(r"[^0-9Xx]", "", val)
+                    if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
+                        result["isbn"] = cleaned
+                        break
+                    if len(cleaned) == 10:
+                        result["isbn"] = cleaned
+                        break
+
+        # release_date / datePublished
+        if not result["release_date"]:
+            # dateModified NO entra: es la fecha de último registro/edición
+            # de la ficha, no el 発売日 del libro (podía desviar años). M5.
+            date_val = (
+                item.get("datePublished")
+                or item.get("releaseDate")
+                or item.get("dateCreated")
+            )
+            if date_val:
+                result["release_date"] = str(date_val).strip()[:30]
+
+        # product_type desde @type o bookFormat
+        if not result["product_type"]:
+            t = item.get("@type", "")
+            if isinstance(t, list):
+                t = " ".join(str(x) for x in t)
+            t = str(t).lower()
+            book_format = str(item.get("bookFormat", "")).lower()
+            if "graphicnovel" in t or "comic" in t or "manga" in t:
+                result["product_type"] = "manga"
+            elif "audiobook" in book_format:
+                result["product_type"] = "audiobook"
+            elif "hardcover" in book_format:
+                result["product_type"] = "manga"  # tapa dura, sigue siendo manga
+
+    return result
 
 
 def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, str]:
@@ -1958,24 +2126,13 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
     Devuelve dict con: name, image_url, description, author, isbn,
     release_date, publisher, product_type (manga/artbook/boxset/...).
     """
-    result = {
-        "name": "",
-        "image_url": "",
-        "description": "",
-        "author": "",
-        "isbn": "",
-        "release_date": "",
-        "publisher": "",
-        "product_type": "",
-    }
     if soup_or_card is None:
-        return result
-
+        return _blank_schema_result()
     try:
         scripts = soup_or_card.find_all("script", attrs={"type": "application/ld+json"})
     except Exception:
-        return result
-
+        return _blank_schema_result()
+    items: list[dict] = []
     for script in scripts:
         raw = script.string or script.get_text() or ""
         if not raw.strip():
@@ -1984,105 +2141,58 @@ def extract_schema_org_product(soup_or_card: Any, source_url: str) -> dict[str, 
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             continue
+        items.extend(_schema_iter_items(data))
+    return _schema_product_result(items, source_url)
 
-        for item in _schema_iter_items(data):
-            if not _schema_item_is_product(item):
-                continue
 
-            # name
-            if not result["name"] and item.get("name"):
-                result["name"] = clean_text(str(item["name"]))
+def _build_card_schema_map(soup: Any, source_url: str) -> list[tuple[Any, dict[str, str]]]:
+    """Mapa (nodo_contenedor → schema) de los Product JSON-LD por card.
 
-            # image
-            if not result["image_url"]:
-                img = item.get("image")
-                url = ""
-                if isinstance(img, str):
-                    url = img.strip()
-                elif isinstance(img, dict):
-                    url = (img.get("url") or img.get("@id") or "").strip()
-                elif isinstance(img, list) and img:
-                    first = img[0]
-                    if isinstance(first, str):
-                        url = first.strip()
-                    elif isinstance(first, dict):
-                        url = (first.get("url") or first.get("@id") or "").strip()
-                if url:
-                    canonical = canonicalize_url(source_url, url)
-                    if canonical and _score_image(canonical, "") >= -10:
-                        result["image_url"] = canonical
+    A1 (Fable 2026-07-08): `extract_generic_html` decompone los <script> ANTES
+    de que los extractores card-level llamen a `extract_schema_org_product`, así
+    que el JSON-LD por card quedaba MUERTO en el listing. Este mapa se construye
+    ANTES del decompose, guardando el PADRE del <script> (que sobrevive al
+    decompose del <script>), para poder atribuir el schema a la card que lo
+    contiene sin dejar el JSON crudo contaminando el texto de las cards.
+    """
+    mapping: list[tuple[Any, dict[str, str]]] = []
+    try:
+        scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+    except Exception:
+        return mapping
+    for script in scripts:
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        items = _schema_iter_items(data)
+        if not any(_schema_item_is_product(it) for it in items):
+            continue
+        anchor = script.parent
+        if anchor is None:
+            continue
+        mapping.append((anchor, _schema_product_result(items, source_url)))
+    return mapping
 
-            # description
-            if not result["description"] and item.get("description"):
-                result["description"] = clean_description(clean_text(str(item["description"])))[:2000]
 
-            # author / creator
-            if not result["author"]:
-                auth = item.get("author") or item.get("creator")
-                value = ""
-                if isinstance(auth, str):
-                    value = auth.strip()
-                elif isinstance(auth, dict):
-                    value = (auth.get("name") or "").strip()
-                elif isinstance(auth, list) and auth:
-                    first = auth[0]
-                    if isinstance(first, str):
-                        value = first.strip()
-                    elif isinstance(first, dict):
-                        value = (first.get("name") or "").strip()
-                if value:
-                    result["author"] = clean_text(value)
+def _schema_for_card(card: Any, schema_map: list[tuple[Any, dict[str, str]]]) -> dict[str, str]:
+    """Devuelve el schema pre-parseado cuyo <script> vivía DENTRO de esta card.
 
-            # publisher / brand
-            if not result["publisher"]:
-                pub = item.get("publisher") or item.get("brand")
-                value = ""
-                if isinstance(pub, str):
-                    value = pub.strip()
-                elif isinstance(pub, dict):
-                    value = (pub.get("name") or "").strip()
-                if value:
-                    result["publisher"] = clean_text(value)
-
-            # isbn (con validación de checksum)
-            if not result["isbn"]:
-                for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
-                    val = item.get(key)
-                    if isinstance(val, str):
-                        cleaned = re.sub(r"[^0-9Xx]", "", val)
-                        if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
-                            result["isbn"] = cleaned
-                            break
-                        if len(cleaned) == 10:
-                            result["isbn"] = cleaned
-                            break
-
-            # release_date / datePublished
-            if not result["release_date"]:
-                date_val = (
-                    item.get("datePublished")
-                    or item.get("releaseDate")
-                    or item.get("dateCreated")
-                    or item.get("dateModified")
-                )
-                if date_val:
-                    result["release_date"] = str(date_val).strip()[:30]
-
-            # product_type desde @type o bookFormat
-            if not result["product_type"]:
-                t = item.get("@type", "")
-                if isinstance(t, list):
-                    t = " ".join(str(x) for x in t)
-                t = str(t).lower()
-                book_format = str(item.get("bookFormat", "")).lower()
-                if "graphicnovel" in t or "comic" in t or "manga" in t:
-                    result["product_type"] = "manga"
-                elif "audiobook" in book_format:
-                    result["product_type"] = "audiobook"
-                elif "hardcover" in book_format:
-                    result["product_type"] = "manga"  # tapa dura, sigue siendo manga
-
-    return result
+    Camina desde el nodo-ancla (padre del script) hacia arriba buscando la card;
+    si ninguno matchea (JSON-LD a nivel página, o ancla ya desprendida por
+    strip_chrome) devuelve el dict vacío (fallback benigno)."""
+    if not schema_map:
+        return _blank_schema_result()
+    for anchor, result in schema_map:
+        node = anchor
+        while node is not None:
+            if node is card:
+                return result
+            node = getattr(node, "parent", None)
+    return _blank_schema_result()
 
 
 def _is_placeholder_image(url: str) -> bool:
@@ -2517,13 +2627,36 @@ def _extract_images_from_detail_soup(
 
         cover_parent = _parent_dir(out[0]["url"])
         segments = [s for s in cover_parent.split("/") if s]
-        # Heurística: usar parent path solo si tiene >=2 segmentos
-        # (evita falsos positivos en sites con paths shallow tipo /img/).
-        if len(segments) >= 2:
-            filtered = [out[0]]
-            for im in out[1:]:
-                if _parent_dir(im["url"]) == cover_parent:
-                    filtered.append(im)
+        gallery = out[1:]
+        gallery_dirs = [_parent_dir(im["url"]) for im in gallery]
+        shares_cover = any(d == cover_parent for d in gallery_dirs)
+
+        anchor_dir: str | None = None
+        if len(segments) >= 2 and shares_cover:
+            # Caso clásico (gotcha #31): la cover y su galería comparten dir;
+            # anclamos a ese dir para descartar carruseles de otros productos.
+            anchor_dir = cover_parent
+        elif not shares_cover and gallery:
+            # M6 (Fable 2026-07-08): la cover vive en OTRO dir que la galería
+            # (Shopify moderno: cover en /s/products/, galería en /s/files/).
+            # Si NINGUNA gallery comparte dir con la cover pero hay un dir
+            # MAYORITARIO entre las gallery (>=2 imgs y >=2/3), usar ESE como
+            # ancla en vez de descartar toda la galería legítima (false-positive
+            # inverso al #31).
+            from collections import Counter
+
+            counts = Counter(
+                d for d in gallery_dirs if len([s for s in d.split("/") if s]) >= 2
+            )
+            if counts:
+                top_dir, top_n = counts.most_common(1)[0]
+                if top_n >= 2 and top_n * 3 >= len(gallery) * 2:
+                    anchor_dir = top_dir
+
+        if anchor_dir is not None:
+            filtered = [out[0]] + [
+                im for im in gallery if _parent_dir(im["url"]) == anchor_dir
+            ]
             # Solo aplicamos el filtro si descartamos >=2 imágenes (señal
             # de que había contaminación real). Si descartamos <=1, era
             # un site con paths heterogéneos legítimos — no tocamos.
@@ -2642,6 +2775,7 @@ def fetch_metadata_from_detail(
     url: str,
     session: requests.Session,
     timeout: tuple[int, int],
+    country: str = "",
 ) -> dict[str, Any]:
     """Fetch HTTP a la URL del producto y extrae todos los metadatos posibles.
 
@@ -2704,7 +2838,7 @@ def fetch_metadata_from_detail(
     # Al corpus solo entran fechas ISO (gotcha #80). Va DESPUÉS de la
     # excepción de arriba, que necesita ver el componente horario crudo.
     if result.get("release_date"):
-        result["release_date"] = normalize_release_date(result["release_date"])
+        result["release_date"] = normalize_release_date(result["release_date"], country=country)
 
     # === Author (si Schema.org no lo trajo) ===
     if not result["author"]:
@@ -3596,8 +3730,15 @@ def _load_comics_blacklist() -> dict[str, Any]:
     global _COMICS_FRANCHISE_PATTERN, _COMICS_TITLE_EXCEPTION_PATTERN, _COMICS_FORMAT_PATTERN
     if _COMICS_BLACKLIST is not None:
         return _COMICS_BLACKLIST
-    path = Path("data/comics_blacklist.yml")
+    # Anclar a la raíz del repo (parent de scripts/) — NO al CWD: si el proceso
+    # corre desde otro directorio, un path relativo dejaba de filtrar Marvel/DC
+    # en SILENCIO (hallazgo B4 Fable 2026-07-08). Fallback al CWD por compat.
+    path = Path(__file__).resolve().parent.parent / "data" / "comics_blacklist.yml"
     if not path.exists():
+        path = Path("data/comics_blacklist.yml")
+    if not path.exists():
+        print(f"[WARN] comics_blacklist.yml no encontrado ({path}); "
+              "is_comic_not_manga NO filtrará Marvel/DC/etc.", file=sys.stderr)
         _COMICS_BLACKLIST = {
             "publishers": [], "franchise_keywords": [],
             "title_exceptions": [], "format_keywords": [],
@@ -3606,7 +3747,9 @@ def _load_comics_blacklist() -> dict[str, Any]:
     try:
         with path.open(encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-    except Exception:
+    except Exception as exc:
+        print(f"[WARN] comics_blacklist.yml no parseó ({path}): {exc}; "
+              "is_comic_not_manga degradado a blacklist vacía.", file=sys.stderr)
         data = {}
     _COMICS_BLACKLIST = {
         "publishers": data.get("publishers") or [],
@@ -3898,7 +4041,10 @@ def derive_product_type(title: str, description: str, signal_types: list[str]) -
     # Magazine de serie (One Piece Magazine, Captain Tsubasa Magazine…).
     # Las revistas-paraguas (Shōnen Jump, Young Jump, etc.) las descarta luego
     # is_collectible_edition() vía _UMBRELLA_JP_MAGAZINE_PATTERN.
-    if re.search(r"\bMagazine\b", title or ""):
+    # "magazine" case-insensitive (títulos reales como "ONE PIECE magazine",
+    # gotcha #96), pero ignorando lo que va entre paréntesis para no disparar
+    # con marketing tipo "Berserk 41 (sale magazine)".
+    if re.search(r"\bmagazine\b", _BRACKETED_RE.sub(" ", title or ""), re.IGNORECASE):
         return "magazine"
     # "画集付き特装版" = el artbook es un cuadernillo INCLUIDO como bonus, no el
     # producto → NO clasificar como artbook (el producto es el tomo). Mismo
@@ -4171,8 +4317,10 @@ _VOLUME_EXTRACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"#\s*(\d{1,4})\b"),
     re.compile(r"(\d{1,4})\s*巻"),  # JP "巻"
     # Volumen entre paréntesis (común en JP: "タイトル（15）", "Title (10)")
-    # Acepta paréntesis half-width y full-width.
-    re.compile(r"[（(]\s*(\d{1,4})\s*[）)]"),
+    # Acepta paréntesis half-width y full-width. El negative-lookahead descarta
+    # AÑOS 19xx/20xx entre paréntesis ("Berserk Official Guidebook (2016)"), que
+    # se colaban como volumen fantasma (hallazgo M2 Fable 2026-07-08).
+    re.compile(r"[（(]\s*(?!(?:19|20)\d{2}[）)])(\d{1,4})\s*[）)]"),
     # Número seguido de calificador de edición (gotcha #60): "Title 13 Edición Especial",
     # "Berserk 21 Variant", "Title 1 Edición Limitada". El calificador hace inequívoco
     # que el número es un volumen, no parte del título. Más específico que el trailing.
@@ -4202,9 +4350,14 @@ _SERIES_STRIP_TOKENS: tuple[str, ...] = (
     "coffret integrale", "coffret intégrale", "coffret",
     "kanzenban", "perfect edition", "ultimate edition",
     "first print", "premiere edition", "première edition",
-    # Markers de volumen / pieza
+    # Markers de volumen / pieza. OJO: NO incluir "no"/"no." — la palabra "no"
+    # es parte real de nombres de serie ("No Longer Human", "Kaiju No. 8", "No
+    # Guns Life", "Make wa Tada no Mahou"): stripearla mutilaba el series_key y
+    # rompía la resolución de aliases (gotcha #43, hallazgo A2 Fable 2026-07-08).
+    # El marcador real es nº/n° (con º/°), que sigue cubierto por _SERIES_STRIP_RE
+    # y la pasada extra de abajo.
     "tomo", "tome", "volume", "vol.", "vol",
-    "n.", "n°", "nº", "no.", "no",
+    "n.", "n°", "nº",
     # Markers stripables varios
     "manga", "edición", "edicion", "edition",
 )
@@ -4231,9 +4384,13 @@ def _extract_volume(title: str) -> str:
     # volumen devuelto debe ser ASCII puro (gotcha #82).
     title = title.translate(FULLWIDTH_DIGITS_TABLE)
     for pat in _VOLUME_EXTRACT_PATTERNS:
-        m = pat.search(title)
-        if m:
-            return m.group(1)
+        # Preferir el ÚLTIMO match del patrón: el volumen va DESPUÉS del nombre,
+        # así un número embebido en el nombre de la serie ("Kaiju Nº8 nº16") no
+        # le gana al tomo real (hallazgo M1 Fable 2026-07-08; el fix del parser
+        # de colecciones —gotcha #74— se generaliza acá al helper).
+        matches = pat.findall(title)
+        if matches:
+            return matches[-1]
     return ""
 
 
@@ -5928,7 +6085,12 @@ def _first_non_badge_title(card: Any, title_selector: str) -> str:
     return fallback
 
 
-def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) -> list[Candidate]:
+def extract_with_selectors(
+    source: Source,
+    soup: BeautifulSoup,
+    max_items: int,
+    schema_map: list[tuple[Any, dict[str, str]]] | None = None,
+) -> list[Candidate]:
     selectors = source.selectors or {}
     item_selector = selectors.get("item_selector")
     if not item_selector:
@@ -5981,13 +6143,21 @@ def extract_with_selectors(source: Source, soup: BeautifulSoup, max_items: int) 
 
         if title or description:
             candidate = candidate_from_source(source, title, link or source.url, description)
-            schema = extract_schema_org_product(card, source.url)
+            # A1: en el listing los <script> ya fueron decompuestos → usar el
+            # mapa pre-parseado por card. Fuera de ese path (soup fresco, tests
+            # directos) cae al extractor clásico sobre la card.
+            schema = (
+                _schema_for_card(card, schema_map) if schema_map is not None
+                else extract_schema_org_product(card, source.url)
+            )
             if schema.get("name") and len(schema["name"]) >= 3:
                 candidate.title = clean_title(schema["name"])[:260]
             if schema.get("description") and len(schema["description"]) > len(candidate.description):
                 candidate.description = schema["description"][:2500]
             candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
-            candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
+            candidate.release_date = normalize_release_date(
+                schema.get("release_date") or "", country=source.country
+            ) or extract_release_date(candidate.description, country=source.country)
             candidate.author = schema.get("author") or extract_author(candidate.description, card)
             candidate.isbn = normalize_isbn(
                 schema.get("isbn") or extract_isbn(f"{candidate.description}\n{candidate.url}", card),
@@ -6252,7 +6422,11 @@ def _derive_title(card: Any, anchor: Any) -> str:
     return title
 
 
-def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
+def _candidate_from_card(
+    source: Source,
+    card: Any,
+    schema_map: list[tuple[Any, dict[str, str]]] | None = None,
+) -> Candidate | None:
     anchor = card.find("a", href=True)
     if not anchor:
         return None
@@ -6270,8 +6444,12 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
     candidate = candidate_from_source(source, title[:260], url, description)
 
     # Estrategia 0: si la card tiene JSON-LD inline (Shopify, Magento moderno…),
-    # usar esos datos como override (mayor calidad que las heurísticas).
-    schema = extract_schema_org_product(card, source.url)
+    # usar esos datos como override (mayor calidad que las heurísticas). En el
+    # listing los <script> ya fueron decompuestos → mapa pre-parseado (A1).
+    schema = (
+        _schema_for_card(card, schema_map) if schema_map is not None
+        else extract_schema_org_product(card, source.url)
+    )
 
     # Title: si Schema.org tiene un name más específico, lo usamos.
     if schema.get("name") and len(schema["name"]) >= 3:
@@ -6282,7 +6460,9 @@ def _candidate_from_card(source: Source, card: Any) -> Candidate | None:
         candidate.description = schema["description"][:2500]
 
     candidate.image_url = schema.get("image_url") or extract_image_url(card, source.url)
-    candidate.release_date = normalize_release_date(schema.get("release_date") or "") or extract_release_date(candidate.description)
+    candidate.release_date = normalize_release_date(
+        schema.get("release_date") or "", country=source.country
+    ) or extract_release_date(candidate.description, country=source.country)
     candidate.author = schema.get("author") or extract_author(candidate.description, card)
     candidate.isbn = normalize_isbn(
         schema.get("isbn") or extract_isbn(f"{candidate.description}\n{url}", card),
@@ -6452,11 +6632,16 @@ def extract_generic_html(
             break  # dedicado falló → cae al flujo genérico (mejor que nada)
 
     soup = BeautifulSoup(html_text, "html.parser")
+    # A1: mapa card→schema construido ANTES del decompose (los <script> ld+json
+    # se destruyen abajo, pero sus datos ya quedaron atribuidos a la card).
+    schema_map = _build_card_schema_map(soup, source.url)
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
 
     # 1) Selectores manuales del YAML tienen prioridad.
-    selector_candidates = extract_with_selectors(source, soup, max_items=max_items)
+    selector_candidates = extract_with_selectors(
+        source, soup, max_items=max_items, schema_map=schema_map
+    )
     if selector_candidates:
         if info is not None:
             info["extraction_method"] = "yaml-selectors"
@@ -6486,7 +6671,7 @@ def extract_generic_html(
     candidates: list[Candidate] = []
     seen_urls: set[str] = set()
     for card in cards[:max_items]:
-        candidate = _candidate_from_card(source, card)
+        candidate = _candidate_from_card(source, card, schema_map=schema_map)
         if candidate is None:
             if info is not None:
                 # Inspeccionamos por qué fue None para diagnóstico.
@@ -7552,7 +7737,11 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
             series_key = truncated[:last_dash]
         else:
             series_key = truncated
-    series_display = raw_series.title() if raw_series else series_key
+    # capitalize por-palabra (NO str.title(): rompe apóstrofes — "hell's" →
+    # "Hell'S"). capitalize() sólo toca el primer carácter de cada palabra.
+    series_display = (
+        " ".join(w.capitalize() for w in raw_series.split()) if raw_series else series_key
+    )
 
     # 3) Publisher slug
     pub_slug = _publisher_slug(candidate.publisher or "")
@@ -8707,6 +8896,7 @@ def _run_sitemap_mining(
             md = fetch_metadata_from_detail(
                 prod_url, session,
                 timeout=(args.connect_timeout, args.read_timeout),
+                country=source.country,
             )
             title = md.get("name") or _slugify(urlparse(prod_url).path).replace("-", " ")[:200]
             description = md.get("description") or title
@@ -9264,7 +9454,8 @@ def run(args: argparse.Namespace) -> int:
             """Worker thread-safe: solo hace HTTP + parsing, no muta nada."""
             with throttle.acquire(c.url):
                 metadata = fetch_metadata_from_detail(
-                    c.url, session, timeout=(args.connect_timeout, args.read_timeout)
+                    c.url, session, timeout=(args.connect_timeout, args.read_timeout),
+                    country=c.country,
                 )
             return c, metadata
 

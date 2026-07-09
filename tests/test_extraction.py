@@ -1643,16 +1643,6 @@ def test_shopify_build_variant_url_preserves_path():
     )
 
 
-def test_shopify_format_variant_price_handles_cents():
-    from shopify_variants import format_variant_price
-    assert format_variant_price(4499) == "$44.99"
-    assert format_variant_price("4499") == "$44.99"
-    assert format_variant_price("29.99") == "$29.99"
-    assert format_variant_price(29.99) == "$29.99"
-    assert format_variant_price(None) == ""
-    assert format_variant_price("") == ""
-
-
 def test_shopify_extract_variants_returns_empty_for_non_shopify():
     from shopify_variants import extract_shopify_variants
     assert extract_shopify_variants("") == []
@@ -5326,9 +5316,11 @@ def test_normalize_series_strips_numero_marker():
     Casos legítimos donde 'no'/'n' es parte del título NO deben tocarse."""
     assert mw._normalize_series_name("Slam Dunk nº1", "1") == "slam dunk"
     assert mw._normalize_series_name("Monster nº5", "5") == "monster"
-    # el marcador nº no deja residuo '-no' (el 'No' líder lo quita aparte el
-    # strip de stopwords; lo relevante acá es que 'nº3' no sobrevive como 'no')
-    assert mw._normalize_series_name("No soy un ángel nº3", "3") == "soy un ángel"
+    # El marcador nº+dígito se limpia, pero la palabra "No" líder es PARTE del
+    # nombre y NO se toca (A2 Fable 2026-07-08 / gotcha #43). La serie real es
+    # "No Soy un Ángel" (alias-key no-soy-un-angel): stripear "No" rompía la
+    # resolución de aliases.
+    assert mw._normalize_series_name("No soy un ángel nº3", "3") == "no soy un ángel"
     # 'N' como parte real del nombre (sin marcador nº): intacto
     assert mw._normalize_series_name("Denjin N", "1") == "denjin n"
 

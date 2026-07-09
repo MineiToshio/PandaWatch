@@ -435,9 +435,10 @@ def test_normalize_isbn_empty_and_only_junk():
 
 def test_normalize_isbn_anomaly_returns_cleaned(capsys):
     # Longitud != 10/13: NO se descarta (puede ser parcial útil), se devuelve
-    # limpio y se loguea ISBN_ANOMALY.
+    # limpio y se loguea ISBN_ANOMALY a stderr (B5: no contaminar stdout, que
+    # es salida parseable — función de librería llamada por ítem).
     assert mw.normalize_isbn("： 12345") == "12345"
-    assert "ISBN_ANOMALY" in capsys.readouterr().out
+    assert "ISBN_ANOMALY" in capsys.readouterr().err
 
 
 def test_candidate_to_json_normalizes_isbn():
