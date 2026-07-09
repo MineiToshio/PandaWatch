@@ -32,14 +32,9 @@ import argparse
 import http.server
 import json
 import os
-import shlex
 import socketserver
-import subprocess
 import sys
-import threading
 import time
-import uuid
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +44,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+from job_manager import Job, JobManager
 from script_registry import (  # type: ignore
     SCRIPTS,
     build_command,
@@ -79,169 +75,17 @@ ADMIN_DIR = ROOT / "admin"
 # ---------------------------------------------------------------------------
 # Job manager: corre subprocesos y reparte sus logs via SSE.
 # ---------------------------------------------------------------------------
+# Job/JobManager viven en scripts/job_manager.py (Fable audit B17, 2026-07-08)
+# — antes estaban duplicadas byte-a-byte acá y en serve.py. log_prefix=
+# "admin_serve" reproduce el prefijo que ya tenían los mensajes de este server
+# ("[admin_serve] PID ...").
 
-class Job:
-    """Un proceso en ejecución (o terminado) con sus logs y suscriptores SSE."""
-
-    __slots__ = (
-        "id", "script_id", "label", "command", "status", "started_at",
-        "ended_at", "exit_code", "process", "lines", "lock", "cv", "version",
-    )
-
-    def __init__(self, script_id: str, label: str, command: list[str]) -> None:
-        self.id: str = uuid.uuid4().hex[:12]
-        self.script_id: str = script_id
-        self.label: str = label
-        self.command: list[str] = command
-        self.status: str = "running"   # running | exited | killed | error
-        self.started_at: str = datetime.now(timezone.utc).isoformat()
-        self.ended_at: str | None = None
-        self.exit_code: int | None = None
-        self.process: subprocess.Popen[bytes] | None = None
-        self.lines: deque[str] = deque(maxlen=MAX_BUFFERED_LINES)
-        self.lock: threading.Lock = threading.Lock()
-        self.cv: threading.Condition = threading.Condition(self.lock)
-        self.version: int = 0
-
-    def append(self, line: str) -> None:
-        with self.cv:
-            self.lines.append(line)
-            self.version += 1
-            self.cv.notify_all()
-
-    def mark_done(self, status: str, exit_code: int | None) -> None:
-        with self.cv:
-            self.status = status
-            self.exit_code = exit_code
-            self.ended_at = datetime.now(timezone.utc).isoformat()
-            self.version += 1
-            self.cv.notify_all()
-
-    def to_dict(self, include_lines: bool = False) -> dict[str, Any]:
-        out = {
-            "id": self.id,
-            "script_id": self.script_id,
-            "label": self.label,
-            "command": self.command,
-            "status": self.status,
-            "started_at": self.started_at,
-            "ended_at": self.ended_at,
-            "exit_code": self.exit_code,
-            "lines_count": len(self.lines),
-        }
-        if include_lines:
-            out["lines"] = list(self.lines)
-        return out
-
-
-class JobManager:
-    def __init__(self) -> None:
-        self.jobs: dict[str, Job] = {}
-        self.order: deque[str] = deque()
-        self.lock = threading.Lock()
-
-    def start(self, script_id: str, command: list[str], label: str,
-              cwd: Path, env: dict[str, str] | None = None,
-              *, block_if_mutator: bool = False) -> tuple[Job | None, Job | None]:
-        """Ídem serve.py JobManager.start — devuelve (job, None) o (None,
-        blocker). El check+registro es atómico bajo el mismo lock (S10)."""
-        with self.lock:
-            if block_if_mutator:
-                for jid in self.order:
-                    j = self.jobs.get(jid)
-                    if j and j.status == "running" and mutates_items(j.script_id):
-                        return None, j
-            job = Job(script_id, label, command)
-            self.jobs[job.id] = job
-            self.order.append(job.id)
-            self._trim()
-
-        def reader(proc: subprocess.Popen[bytes]) -> None:
-            try:
-                assert proc.stdout is not None
-                for raw in iter(proc.stdout.readline, b""):
-                    try:
-                        text = raw.decode("utf-8", errors="replace").rstrip("\n")
-                    except Exception:
-                        text = repr(raw)
-                    job.append(text)
-                proc.stdout.close()
-                rc = proc.wait()
-                job.mark_done("exited" if rc == 0 else "error", rc)
-            except Exception as e:
-                job.append(f"[admin_serve][ERROR reader] {e}")
-                job.mark_done("error", -1)
-
-        try:
-            full_env = os.environ.copy()
-            full_env["PYTHONUNBUFFERED"] = "1"
-            if env:
-                full_env.update(env)
-            proc = subprocess.Popen(
-                command,
-                cwd=str(cwd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=full_env,
-                bufsize=1,
-            )
-            job.process = proc
-            job.append(f"[admin_serve] PID {proc.pid} — {shlex.join(command)}")
-            threading.Thread(target=reader, args=(proc,), daemon=True).start()
-        except Exception as e:
-            job.append(f"[admin_serve][ERROR spawn] {e}")
-            job.mark_done("error", -1)
-        return job, None
-
-    def stop(self, job_id: str) -> bool:
-        job = self.jobs.get(job_id)
-        if not job or not job.process:
-            return False
-        if job.status != "running":
-            return False
-        try:
-            job.process.terminate()
-            def _killer(p: subprocess.Popen[bytes]) -> None:
-                try:
-                    p.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-            threading.Thread(target=_killer, args=(job.process,), daemon=True).start()
-            job.append("[admin_serve] SIGTERM enviado por el usuario")
-            return True
-        except Exception as e:
-            job.append(f"[admin_serve][ERROR stop] {e}")
-            return False
-
-    def get(self, job_id: str) -> Job | None:
-        return self.jobs.get(job_id)
-
-    def list(self) -> list[Job]:
-        return [self.jobs[jid] for jid in self.order if jid in self.jobs]
-
-    def running_mutator(self) -> Job | None:
-        """Sólo para INSPECCIÓN — ver el aviso en serve.py.JobManager.running_mutator.
-        El bloqueo real de /api/run usa start(block_if_mutator=True) (atómico)."""
-        with self.lock:
-            jobs = [self.jobs[jid] for jid in self.order if jid in self.jobs]
-        for job in jobs:
-            if job.status == "running" and mutates_items(job.script_id):
-                return job
-        return None
-
-    def _trim(self) -> None:
-        finished_ids = [jid for jid in self.order
-                        if jid in self.jobs and self.jobs[jid].status != "running"]
-        while len(finished_ids) > MAX_FINISHED_JOBS:
-            old = finished_ids.pop(0)
-            self.jobs.pop(old, None)
-            try:
-                self.order.remove(old)
-            except ValueError:
-                pass
-
-
-JOBS = JobManager()
+JOBS = JobManager(
+    log_prefix="admin_serve",
+    max_buffered_lines=MAX_BUFFERED_LINES,
+    max_finished_jobs=MAX_FINISHED_JOBS,
+    mutates_items=mutates_items,
+)
 
 # build_command vive en script_registry.py (4.1, 2026-07-08) — fuente única,
 # importado arriba junto con resolve_preset_env/mutates_items. Ya no se
