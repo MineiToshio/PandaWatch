@@ -411,21 +411,22 @@ def test_candidate_to_json_omits_empty_original_title():
 
 def test_normalize_isbn_strips_fullwidth_colon():
     # "： " (U+FF1A + espacio) es el prefijo basura típico de fuentes JP.
-    assert mw.normalize_isbn("： 9784088831234") == "9784088831234"
+    # (ISBN-13 real y válido; el normalizador real exige checksum, 2026-07-08.)
+    assert mw.normalize_isbn("： 9781506711980") == "9781506711980"
 
 
 def test_normalize_isbn_strips_hyphens_and_spaces():
-    assert mw.normalize_isbn("978-4-08-883123-4") == "9784088831234"
-    assert mw.normalize_isbn("  9784088831234  ") == "9784088831234"
+    assert mw.normalize_isbn("978-1-5067-1198-0") == "9781506711980"
+    assert mw.normalize_isbn("  9781506711980  ") == "9781506711980"
 
 
-def test_normalize_isbn_uppercases_x():
-    # X solo válida como dígito de control de ISBN-10; x→X.
-    assert mw.normalize_isbn("4-08-874099-x") == "408874099X"
+def test_normalize_isbn_uppercases_x_and_converts_10():
+    # X solo válida como dígito de control de ISBN-10; x→X y 10→13.
+    assert mw.normalize_isbn("0-8044-2957-x") == "9780804429573"
 
 
 def test_normalize_isbn_idempotent():
-    assert mw.normalize_isbn("9784088831234") == "9784088831234"
+    assert mw.normalize_isbn("9781506711980") == "9781506711980"
 
 
 def test_normalize_isbn_empty_and_only_junk():

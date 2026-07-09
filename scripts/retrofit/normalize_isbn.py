@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""normalize_isbn.py — normaliza el campo `isbn` de items.jsonl.
+"""normalize_isbn.py — normaliza y VALIDA el campo `isbn` de items.jsonl.
 
-Aplica manga_watch.normalize_isbn() (fuente única) a cada item: conserva solo
-dígitos y X (x→X) y descarta prefijos basura — el más común es el "： " (dos
-puntos fullwidth U+FF1A) que las fuentes JP dejan pegado cuando el ISBN viene
-de una ficha técnica `ISBN：978…`. Ese prefijo degrada el dedup por ISBN (dos
-filas del mismo libro con y sin el "： " caen en claves distintas).
+Aplica manga_watch.normalize_isbn() (fuente única) a cada item. Desde el
+2026-07-08 (Fable) el normalizador es REAL: tokeniza el crudo (descartando
+prefijos "： " fullwidth y sufijos como "Deluxe"), valida checksum ISBN-13
+(prefijo GS1 978/979) e ISBN-10 (mod-11), y CONVIERTE los ISBN-10 válidos a
+ISBN-13 (una sola forma canónica). Si ningún token valida, conserva el más
+ISBN-like y loguea ISBN_ANOMALY (fail-safe, gotcha #108). Por eso el dry-run
+ahora reporta también las conversiones 10→13, no sólo el strip de basura.
 
 El scraper ya normaliza en cada ingreso nuevo (candidate_to_json +
 fetch_metadata_from_detail); este retrofit limpia el corpus histórico.

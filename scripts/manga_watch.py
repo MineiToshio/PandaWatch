@@ -55,6 +55,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urljoin, urlparse, urldefrag, quote_plus
 from urllib.robotparser import RobotFileParser
@@ -1725,6 +1726,19 @@ PRODUCT_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
 ]
 
 
+# Enum canónico de `product_type` — FUENTE ÚNICA (Fable 2026-07-08, hallazgo #10).
+# Los valores posibles del campo product_type de un item: los ptypes de
+# PRODUCT_TYPE_KEYWORDS (artbook/fanbook/guidebook/boxset/novel) + 'manga'
+# (default de derive_product_type), 'magazine' (match directo en el título) y
+# 'audiobook' (bookFormat de JSON-LD en _schema_product_result). El string vacío
+# "" (sin clasificar) NO forma parte del enum. `validate_corpus.py` y
+# `standardize_apply.py` deben IMPORTAR esta constante en vez de copiarla a mano
+# (hoy tienen copias; el paquete E de la próxima ola las consume).
+PRODUCT_TYPE_ENUM: frozenset[str] = frozenset(
+    {p for p, _kw in PRODUCT_TYPE_KEYWORDS} | {"manga", "magazine", "audiobook"}
+)
+
+
 AUTHOR_PREFIX_PATTERN = re.compile(
     r"(?:autor[ae]?s?|author|auteur|autore|著者|作者|原作|作画)"
     r"\s*[:：]\s*"
@@ -1861,6 +1875,32 @@ def _isbn13_check(digits: str) -> bool:
     return (10 - total % 10) % 10 == int(digits[12])
 
 
+def _isbn10_check(body: str) -> bool:
+    """Valida ISBN-10 (mod-11, con 'X'=10 SÓLO en la última posición)."""
+    if len(body) != 10:
+        return False
+    total = 0
+    for i, ch in enumerate(body):
+        if ch == "X":
+            if i != 9:          # X sólo válida como dígito de control final
+                return False
+            val = 10
+        elif ch.isdigit():
+            val = int(ch)
+        else:
+            return False
+        total += val * (10 - i)
+    return total % 11 == 0
+
+
+def _isbn10_to_13(body: str) -> str:
+    """Convierte un ISBN-10 (ya validado) a ISBN-13 con prefijo GS1 978."""
+    core = "978" + body[:9]  # se descarta el dígito de control del 10
+    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(core))
+    check = (10 - total % 10) % 10
+    return core + str(check)
+
+
 def extract_isbn(text: str, soup: Any = None) -> str:
     """Extrae ISBN-13 (preferido) o ISBN-10 del texto y/o del HTML."""
     # 1. Selectores HTML estructurados.
@@ -1880,10 +1920,13 @@ def extract_isbn(text: str, soup: Any = None) -> str:
                 # productID puede venir "isbn:9781234567897"
                 if ":" in cleaned:
                     cleaned = cleaned.split(":")[-1]
+                cleaned = cleaned.upper()
                 if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
                     return cleaned
-                if len(cleaned) == 10:
-                    return cleaned
+                # B7: ISBN-10 estructurado exige checksum (un SKU de 10 dígitos
+                # no puede colarse como ISBN); si valida se convierte a ISBN-13.
+                if len(cleaned) == 10 and _isbn10_check(cleaned):
+                    return _isbn10_to_13(cleaned)
 
         # JSON-LD: buscar isbn / productID
         try:
@@ -1905,11 +1948,11 @@ def extract_isbn(text: str, soup: Any = None) -> str:
                 for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
                     val = item.get(key)
                     if isinstance(val, str):
-                        cleaned = re.sub(r"[^0-9Xx]", "", val)
+                        cleaned = re.sub(r"[^0-9Xx]", "", val).upper()
                         if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
                             return cleaned
-                        if len(cleaned) == 10:
-                            return cleaned
+                        if len(cleaned) == 10 and _isbn10_check(cleaned):
+                            return _isbn10_to_13(cleaned)
 
     # 2. Regex en texto plano + URL.
     if text:
@@ -1921,30 +1964,57 @@ def extract_isbn(text: str, soup: Any = None) -> str:
     return ""
 
 
+# Un ISBN crudo puede traer separadores internos (guiones, espacios) DENTRO del
+# número y basura ALREDEDOR (prefijos "ISBN：", sufijos "Deluxe"). Tokenizamos en
+# runs de [0-9Xx] separados por no-alfanuméricos-de-ISBN, así "9784…980 Deluxe"
+# NO concatena la 'x' de "Deluxe" al número (el bug podrido del reporte).
+_ISBN_TOKEN_RE = re.compile(r"[0-9Xx](?:[0-9Xx \-]*[0-9Xx])?")
+
+
 def normalize_isbn(raw: str, source: str = "") -> str:
-    """Limpia un ISBN crudo para almacenarlo/deduplicarlo.
+    """Normaliza y VALIDA un ISBN crudo para almacenarlo/deduplicarlo.
 
-    Conserva SOLO dígitos y X (x→X mayúscula) y descarta prefijos/sufijos
-    basura — el más común: el "： " (dos puntos fullwidth U+FF1A) que las
-    fuentes JP dejan pegado cuando el valor viene de una ficha técnica
-    `ISBN：978…` (el split por label no strippea el colon fullwidth). Ese
-    prefijo degrada el dedup por ISBN (dos filas del mismo libro con y sin el
-    "： " caen en claves distintas).
+    Normalizador real (Fable 2026-07-08, hallazgo cover-sync #6 + B7), ya no un
+    simple strip. El pipeline:
 
-    Si tras limpiar la longitud no es 10 ni 13 NO se descarta el valor (puede
-    ser un identificador parcial útil) pero se loguea `ISBN_ANOMALY` para
-    diagnóstico. Devuelve "" si queda vacío. Idempotente: un ISBN ya limpio
-    (10/13 dígitos) se devuelve intacto y sin log.
+      1. Tokeniza el crudo en runs de dígitos/X (separadores internos guion/
+         espacio permitidos), descartando basura alrededor. El "： " (dos puntos
+         fullwidth U+FF1A, gotcha #108) y sufijos como "Deluxe" caen fuera del
+         token del número — así "…980 Deluxe" NUNCA se guarda como "…980X" (la
+         'x' de "Deluxe" es su propio token, no parte del ISBN).
+      2. Por cada token, valida:
+         - ISBN-13: 13 dígitos, prefijo GS1 978/979, checksum mod-10 correcto.
+         - ISBN-10: mod-11 con 'X'=10 sólo como dígito final → se CONVIERTE a
+           ISBN-13 (prefijo 978, checksum recomputado) para tener una sola forma.
+      3. Devuelve el PRIMER token que valida (multi-ISBN en un campo → el primero).
+
+    Fail-safe (gotcha #108): si NINGÚN token valida, conserva el token más
+    ISBN-like limpio (preferencia por longitud 13/10, si no el más largo) y
+    loguea `ISBN_ANOMALY` a stderr — el valor puede ser un identificador parcial
+    útil y descartarlo perdería señal. Devuelve "" si no hay ningún dígito.
+
+    Idempotente: un ISBN-13 válido ya limpio se devuelve intacto y sin log; un
+    ISBN-10 válido converge a su ISBN-13 en la 1ª pasada y queda estable.
     """
     if not raw:
         return ""
-    cleaned = re.sub(r"[^0-9Xx]", "", raw).upper()
-    if not cleaned:
+    tokens = [re.sub(r"[ \-]", "", t).upper() for t in _ISBN_TOKEN_RE.findall(raw)]
+    tokens = [t for t in tokens if t]
+    if not tokens:
         return ""
-    if len(cleaned) not in (10, 13):
-        print(f"[ISBN_ANOMALY] source={source or '?'} len={len(cleaned)} "
-              f"raw={raw!r} cleaned={cleaned!r}", file=sys.stderr)
-    return cleaned
+    for cand in tokens:
+        if len(cand) == 13 and cand.isdigit() and cand[:3] in ("978", "979") \
+                and _isbn13_check(cand):
+            return cand
+        if len(cand) == 10 and _isbn10_check(cand):
+            return _isbn10_to_13(cand)
+    # Fail-safe: ningún token es un ISBN válido. Conservar el más ISBN-like.
+    def _tok_rank(t: str) -> tuple[int, int]:
+        return (1 if len(t) in (10, 13) else 0, len(t))
+    best = max(tokens, key=_tok_rank)
+    print(f"[ISBN_ANOMALY] source={source or '?'} raw={raw!r} kept={best!r}",
+          file=sys.stderr)
+    return best
 
 
 SCHEMA_ORG_CURRENCY_SYMBOLS = {
@@ -2079,12 +2149,13 @@ def _schema_product_result(items: list[dict], source_url: str) -> dict[str, str]
             for key in ("isbn", "ISBN", "productID", "gtin13", "gtin"):
                 val = item.get(key)
                 if isinstance(val, str):
-                    cleaned = re.sub(r"[^0-9Xx]", "", val)
+                    cleaned = re.sub(r"[^0-9Xx]", "", val).upper()
                     if len(cleaned) == 13 and cleaned.isdigit() and _isbn13_check(cleaned):
                         result["isbn"] = cleaned
                         break
-                    if len(cleaned) == 10:
-                        result["isbn"] = cleaned
+                    # B7: ISBN-10 exige checksum (mod-11) y se convierte a 13.
+                    if len(cleaned) == 10 and _isbn10_check(cleaned):
+                        result["isbn"] = _isbn10_to_13(cleaned)
                         break
 
         # release_date / datePublished
@@ -5053,6 +5124,65 @@ def _cluster_completeness(it: dict[str, Any]) -> int:
     )
 
 
+def _union_merge_images(images: Iterable[dict[str, Any] | None]) -> list[dict[str, Any]]:
+    """Union-merge de images[] — FUENTE ÚNICA (Fable 2026-07-08, hallazgo A9).
+
+    La usan `append_jsonl` (upsert old+new) y `merge_cluster` (consolidación por
+    cluster). Antes divergían: `merge_cluster._push_img` dedupeaba SÓLO por
+    `_img_stem`, sin rellenar `local`/`description` y aliaseando el dict del
+    miembro; `append_jsonl` dedupeaba por `(kind, stem)`, rellenaba y copiaba. Esa
+    divergencia dejaba viva la gotcha #87 en el camino de cluster (que corre en
+    CADA append_jsonl vía consolidate_by_cluster).
+
+    Contrato único:
+      - Dedup por `(kind, _img_stem(url))`, preservando el ORDEN de 1ª aparición.
+      - El entry conservado RELLENA sus campos vacíos (`local`, `description`)
+        desde los duplicados posteriores — sticky en ambas direcciones (#87).
+      - Cada entry es una COPIA (`dict(im)`): nunca aliasa el dict del miembro
+        (mina para consolidate_sources).
+      - Ignora imágenes sin `url`.
+    """
+    kept_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    out: list[dict[str, Any]] = []
+    for im in images:
+        if not im or not im.get("url"):
+            continue
+        k = (im.get("kind", ""), _img_stem(im.get("url", "")))
+        kept = kept_by_key.get(k)
+        if kept is not None:
+            for f in ("local", "description"):
+                if not kept.get(f) and im.get(f):
+                    kept[f] = im[f]
+            continue
+        entry = dict(im)
+        kept_by_key[k] = entry
+        out.append(entry)
+    return out
+
+
+# Confiabilidad relativa de una fuente para rellenar metadata (publisher/fecha/
+# ISBN) faltante en la canónica de un cluster (Fable 2026-07-08, hallazgo B15).
+# Antes el fill tomaba el PRIMER miembro no-vacío por orden FÍSICO del archivo, así
+# que "qué publisher gana" era arbitrario y una tienda ruidosa podía pisar a la
+# editorial. Criterio determinista: official (sitio de la editorial) > bases
+# comunitarias curadas > medios de confianza > catálogos curados > retailer
+# (comercio, publisher a menudo ruidoso) > social > desconocido. Empate → orden
+# físico (comportamiento previo). NO es autoridad sobre la agrupación (eso lo hace
+# cluster_key); sólo desempata el relleno de campos escalares.
+_SOURCE_CLASS_RANK: dict[str, int] = {
+    "official": 6,
+    "trusted_catalog": 5,
+    "trusted_media": 4,
+    "curated": 3,
+    "retailer": 2,
+    "social": 1,
+}
+
+
+def _member_reliability(it: dict[str, Any]) -> int:
+    return _SOURCE_CLASS_RANK.get(it.get("source_class", ""), 0)
+
+
 def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
     """Fusiona N filas del MISMO producto en una sola, con `sources[]`.
 
@@ -5072,37 +5202,32 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
 
     canonical = max(group, key=_cluster_completeness)
     merged = dict(canonical)
+    # B15: rellenar campos escalares faltantes desde el miembro MÁS CONFIABLE
+    # (source_class), no por orden físico. Sort ESTABLE por -reliability → los
+    # empates conservan el orden físico (comportamiento previo).
+    by_reliability = sorted(group, key=lambda it: -_member_reliability(it))
     for f in ("author", "release_date",
               "description", "isbn", "publisher"):
         if not merged.get(f):
-            for it in group:
+            for it in by_reliability:
                 if it.get(f):
                     merged[f] = it[f]
                     break
     for f in _CLUSTER_CURATED:
         if merged.get(f) in (None, ""):
-            for it in group:
+            for it in by_reliability:
                 if it.get(f) not in (None, ""):
                     merged[f] = it[f]
                     break
 
-    # images union — portada canónica primero
-    seen_i: set[str] = set()
-    imgs: list[dict] = []
-
-    def _push_img(im: dict | None) -> None:
-        if not im or not im.get("url"):
-            return
-        k = _img_stem(im["url"])
-        if k in seen_i:
-            return
-        seen_i.add(k)
-        imgs.append(im)
-
-    _push_img(_row_cover(canonical))
+    # images union (FUENTE ÚNICA con append_jsonl, A9): portada canónica primero,
+    # luego todas las de los miembros. Dedup por (kind, stem) + fill de local/
+    # description + copia — todo dentro de _union_merge_images.
+    cover = _row_cover(canonical)
+    image_seq: list[dict[str, Any] | None] = [cover] if cover else []
     for it in group:
-        for im in (it.get("images") or []):
-            _push_img(im)
+        image_seq.extend(it.get("images") or [])
+    imgs = _union_merge_images(image_seq)
     if imgs:
         merged["images"] = imgs
 
@@ -5175,7 +5300,14 @@ def _translation_is_stale(old: dict[str, Any], new_description: str) -> bool:
     contra el hash de la description entrante. Backward-compatible: si el row
     viejo NO tiene el hash (traducciones previas a WO-B) → False (nunca stale,
     comportamiento sticky de siempre intacto).
+
+    A4 (Fable 2026-07-08): una `new_description` VACÍA NO marca stale. Un
+    re-scrape que no recapturó la descripción (drift de selector, layout roto,
+    challenge parcial) llega con description="" — tratarla como "sin cambios"
+    y PRESERVAR la traducción pagada, en vez de descartarla y re-traducir.
     """
+    if not new_description:
+        return False
     old_hash = old.get("description_es_src_hash")
     if not old_hash:
         return False
@@ -5257,7 +5389,12 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     )
     # Campos volátiles de mercado: SÍ se refrescan aunque el item esté aprobado
     # (un golden record congela la metadata descriptiva, no el stock).
-    _VOLATILE_FIELDS = ("stock_type", "sources", "detected_at")
+    # M13 (Fable 2026-07-08): `detected_at` NO es volátil — es la PRIMERA
+    # detección (ya curado en _CURATED_FIELDS para estandarizados). Antes, un
+    # aprobado re-scrapeado lo pisaba con hoy y saltaba al final del archivo
+    # (orden por detected_at), pareciendo "recién detectado". Fuera de acá, el
+    # upsert preserva el viejo para TODOS (approved parte de dict(old)).
+    _VOLATILE_FIELDS = ("stock_type", "sources")
     for row in rows:
         url = row.get("url", "")
         if not url:
@@ -5289,11 +5426,21 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # Sin esto un re-scrape deja slug=None → violación SLUG (gotcha #65).
         if old and old.get("slug") and not row.get("slug"):
             row["slug"] = old["slug"]
-        # rarity es sticky: un re-scrape no debe pisar el valor asignado por
-        # web-search (set_rarity.py / validate-rarity skill) con el 'rare'
-        # default del scraper. En particular 'common' solo se asigna tras
-        # verificar stock en tiempo real — sería incorrecto revertirlo.
-        if old and old.get("rarity") and old["rarity"] != row.get("rarity"):
+        # rarity es sticky SÓLO cuando la vieja tiene respaldo curado: verificada
+        # por web (rarity_verified_at, set_rarity.py / validate-rarity skill),
+        # estandarizada o aprobada. En esos casos un re-scrape no debe pisar el
+        # valor (p.ej. 'common' asignado tras verificar stock en tiempo real).
+        # M11 (Fable 2026-07-08): raw-sobre-raw NO es sticky — ambas rarezas
+        # salen de la MISMA derivación determinista (candidate_to_json), así que
+        # evidencia estructural nueva de un re-scrape (tirada numerada, "esaurito")
+        # DEBE poder actualizar una rareza aún no verificada. Antes el sticky era
+        # incondicional y congelaba la rareza en el valor del primer ingest.
+        _rarity_curated = bool(
+            old and (old.get("rarity_verified_at")
+                     or old.get("standardized_at")
+                     or old.get("approved_at"))
+        )
+        if _rarity_curated and old.get("rarity") and old["rarity"] != row.get("rarity"):
             row["rarity"] = old["rarity"]
         # rarity_verified_at es sticky: preservar el timestamp de verificación
         # web (skill /watch-validate-rarity). Un re-scrape no debe borrar la marca
@@ -5309,35 +5456,15 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         # images[] es UNION-MERGE entre old y new (Fase 2 listadomanga-collections):
         # un re-scrape que sólo trae la cover no debe borrar los extras que
         # se agregaron en una pasada previa con merge extra→tomo, y viceversa
-        # — un re-scrape de extras no debe borrar la cover. Deduplicamos por
-        # (kind, url_normalizada) para que la misma imagen en thumb vs full-res
-        # de CDN (Shopify, WP, Amazon) no produzca entradas duplicadas.
-        # Preservamos el orden (primero los del old, después los nuevos).
-        # Si ambos están vacíos, no escribir.
+        # — un re-scrape de extras no debe borrar la cover. El union-merge
+        # (dedup por (kind, stem), fill de local/description, copia) vive en
+        # _union_merge_images — MISMA primitiva que usa merge_cluster (A9), para
+        # que el pipeline sea punto fijo entre ambos sitios (gotcha #87).
+        # Orden: primero los del old, después los nuevos.
         old_images = list((old or {}).get("images") or [])
         new_images = list(row.get("images") or [])
         if old_images or new_images:
-            # Dedup por (kind, url) preservando el ORDEN del viejo, pero
-            # RELLENANDO campos vacíos del entry conservado con los del
-            # duplicado (en ambas direcciones). Sin esto, el flush
-            # incremental de un wiki escribía la fila SIN `local` y el
-            # upsert final post-mirror (CON `local`) se descartaba como
-            # duplicado → ~1700 items con la imagen en disco pero la fila
-            # sin referencia (bug 2026-06-12, gotcha #87).
-            kept_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-            merged_images: list[dict[str, Any]] = []
-            for im in old_images + new_images:
-                k = (im.get("kind", ""), _img_stem(im.get("url", "")))
-                kept = kept_by_key.get(k)
-                if kept is not None:
-                    for f in ("local", "description"):
-                        if not kept.get(f) and im.get(f):
-                            kept[f] = im[f]
-                    continue
-                entry = dict(im)
-                kept_by_key[k] = entry
-                merged_images.append(entry)
-            row["images"] = merged_images
+            row["images"] = _union_merge_images(old_images + new_images)
         # extras[]: misma lógica de union-merge dedup por (description, release_date).
         old_extras = list((old or {}).get("extras") or [])
         new_extras = list(row.get("extras") or [])
@@ -5390,6 +5517,13 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             # en el próximo re-scrape); descartarlo cuando quedó stale.
             if not stale_tr and old.get("description_es_src_hash"):
                 merged["description_es_src_hash"] = old["description_es_src_hash"]
+            # A4: `description` tampoco está en _CURATED_FIELDS. Si el re-scrape
+            # no la recapturó (llega vacía), preservar la vieja — no borrar el
+            # sinopsis sobre el que además cuelga la traducción. Si el re-scrape
+            # trae una description nueva, gana la nueva (y stale_tr ya descartó la
+            # traducción arriba).
+            if not merged.get("description") and old.get("description"):
+                merged["description"] = old["description"]
             # Gotcha #65: la fila cruda trae cluster_key de tier fuzzy/url:.
             # Con edition_key/volume curados ya restaurados, re-derivar acá
             # devuelve el tier edition: y mantiene la invariante CLKEY
@@ -5398,13 +5532,16 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             existing[key] = merged
         else:
             # Item RAW (no aprobado, no estandarizado): el upsert reemplaza la
-            # fila entera. Fill-if-empty para isbn/author/release_date: si el
-            # re-scrape NO recapturó uno de esos 3 campos (llega vacío/None) pero
-            # el viejo lo tenía backfilleado (backfill_metadata.py), conservamos
-            # el viejo. Si el nuevo trae valor, SIEMPRE gana el nuevo. No toca la
-            # lógica sticky de arriba (standardized/approved van por otra rama).
+            # fila entera. Fill-if-empty para isbn/author/release_date/description:
+            # si el re-scrape NO recapturó uno de esos campos (llega vacío/None)
+            # pero el viejo lo tenía (backfill_metadata.py, o un scrape previo con
+            # mejor cobertura), conservamos el viejo. Si el nuevo trae valor,
+            # SIEMPRE gana el nuevo. `description` se agregó (A4, Fable
+            # 2026-07-08): un scrape con drift de selector no debe borrar el
+            # sinopsis. No toca la lógica sticky de arriba (standardized/approved
+            # van por otra rama).
             if old:
-                for _f in ("isbn", "author", "release_date"):
+                for _f in ("isbn", "author", "release_date", "description"):
                     if not row.get(_f) and old.get(_f):
                         row[_f] = old[_f]
             existing[key] = row
@@ -7086,28 +7223,16 @@ def process_state(
         if current is None or candidate.score > current.score:
             deduped[key] = candidate
 
-    # Segundo pase: colapsar por ISBN (mismo producto físico, distintos retailers).
-    # Solo si el ISBN no está vacío. Conservamos el candidato de mayor score; los
-    # otros se descartan y NO entran al state ni al reportable.
-    by_isbn: dict[str, str] = {}
-    isbn_collapsed = 0
-    for key, cand in list(deduped.items()):
-        if not cand.isbn:
-            continue
-        existing_key = by_isbn.get(cand.isbn)
-        if existing_key is None:
-            by_isbn[cand.isbn] = key
-            continue
-        # Hay otro candidato con el mismo ISBN → comparar scores.
-        existing = deduped[existing_key]
-        if cand.score > existing.score:
-            del deduped[existing_key]
-            by_isbn[cand.isbn] = key
-        else:
-            del deduped[key]
-        isbn_collapsed += 1
-    if isbn_collapsed:
-        print(f"[DEDUP] {isbn_collapsed} duplicados colapsados por ISBN coincidente")
+    # A5 (Fable 2026-07-08): ELIMINADO el 2º pase que colapsaba por ISBN pelado.
+    # "un ISBN = un producto" es FALSO en manga (el mismo ISBN se reparte entre
+    # ediciones/series distintas — p.ej. 9788419177629 en Devilman #3 y Mao Dante
+    # #1), por eso la decisión #4 ya quitó el tier `isbn:` de derive_cluster_key.
+    # El colapso descartaba al perdedor (fusión destructiva incoherente con #4) y,
+    # peor, como el flush ya lo había escrito a items.jsonl pero nunca entraba al
+    # state, cada run lo re-veía "new" y lo re-flusheaba — churn eterno de la fila.
+    # El merge legítimo (mismo producto en varios retailers) lo hace la
+    # consolidación por `cluster_key` (fuente única, respeta país/edición) al
+    # escribir. Acá sólo dedup por URL normalizada (1er pase, arriba).
 
     reportable: list[Candidate] = []
     for key, candidate in deduped.items():
@@ -8768,26 +8893,17 @@ def _run_wiki_bootstrap(
         _flush_items_path = items_path  # closure capture
 
         def _wiki_flush_fn(batch: list) -> None:
-            to_write = []
-            for c in batch:
-                if c.score < args.min_score:
-                    continue
-                if not is_curated_collectible_source(c):
-                    is_coll, _ = is_collectible_edition(
-                        c.title,
-                        c.description,
-                        c.signal_types,
-                        c.product_type,
-                        tags=c.tags,
-                        isbn=c.isbn,
-                        url=c.url,
-                    )
-                    if not is_coll:
-                        continue
-                to_write.append(candidate_to_json(c))
-            if to_write:
-                append_jsonl(_flush_items_path, to_write)
-                print(f"[FLUSH-WIKI] {len(to_write)} items escritos incrementalmente")
+            # M9 (Fable 2026-07-08): delegar en flush_source_candidates (FUENTE
+            # ÚNICA del flush) en vez de reimplementar el gate SIN el check de
+            # state. Así un re-bootstrap de wiki NO reescribe los items ya "seen"
+            # (mismo content_hash) — antes reescribía TODO el batch (multiplicando
+            # los rewrites de 33 MB) y dejaba los raw con status/detected_at
+            # frescos. `state` viene por closure de esta misma función.
+            written = flush_source_candidates(
+                batch, state, _flush_items_path, args.min_score
+            )
+            if written:
+                print(f"[FLUSH-WIKI] {written} items escritos incrementalmente")
 
         extra_kwargs["flush_fn"] = _wiki_flush_fn
 

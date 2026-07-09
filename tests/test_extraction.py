@@ -4471,7 +4471,10 @@ def test_append_jsonl_freezes_approved_metadata_refreshes_market(tmp_path):
     assert it["approved_at"] == "2026-06-01T10:00:00+00:00"
     # Info de mercado REFRESCADA:
     assert it["stock_type"] == "limited"
-    assert it["detected_at"] == "2026-07-01"
+    # M13 (Fable 2026-07-08): detected_at YA NO es volátil — es la PRIMERA
+    # detección. Un aprobado re-scrapeado conserva su detected_at original (antes
+    # saltaba a hoy y aparecía "recién detectado" al final del archivo).
+    assert it["detected_at"] == "2026-06-01"
 
 
 def test_append_jsonl_no_freeze_when_not_approved(tmp_path):
