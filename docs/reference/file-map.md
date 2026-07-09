@@ -74,11 +74,28 @@ scripts/
                                (fallback file://). --clear sólo vacía el embed.
   serve.py                   — SERVIDOR ÚNICO (threaded). Sirve web/ + data/ + todos
                                los /api/*. Bind 127.0.0.1:8000. Ver gotcha #34 (@_serialized).
+                               /api/run: build_command/resolve_preset_env/mutates_items
+                               importados de script_registry.py (4.1, 2026-07-08 — antes
+                               duplicado con admin_serve.py). 409 si ya hay un job
+                               "running" que muta items.jsonl (S10) — check + registro
+                               atómicos en JobManager.start(block_if_mutator=True). Origin/
+                               Host validados en /api/run (S7, defensa CSRF/DNS-rebinding).
   gen_html_favicon.py        — genera web/favicon.ico + web/apple-touch-icon.png desde
                                web-next/app/icon.png (panda sobre fondo rosa de acento).
-  admin_serve.py             — DEPRECATED (absorbido por serve.py).
-  script_registry.py         — fuente única del Panel de Control. Agregás un script
-                               acá, aparece en la UI.
+  admin_serve.py             — DEPRECATED (absorbido por serve.py); se mantiene sincronizado
+                               (importa build_command/resolve_preset_env/mutates_items de
+                               script_registry.py, mismo 409/Origin que serve.py). Sin CORS
+                               abierto (`Access-Control-Allow-Origin: *` quitado, S7 —
+                               era CSRF hacia /api/run).
+  script_registry.py         — fuente única del Panel de Control (scripts, flags, presets)
+                               Y de build_command/resolve_preset_env/mutates_items (4.1,
+                               2026-07-08 — antes duplicados en serve.py/admin_serve.py).
+                               Agregás un script acá, aparece en la UI. Valida su propio
+                               schema al importar (asserts, 4.2) — ids únicos, presets con
+                               values/id/desc, tipos de flag conocidos (bool/int/float/str/
+                               choice/csv/csv_multi), paths de script existentes. Sincronía
+                               con los argparse reales la prueba
+                               tests/test_script_registry.py (AST, 4.3).
   run_local.sh / serve.sh    — lanzan serve.py en :8000, ambos vía `.venv/bin/python`
                                (serve.sh usaba `python3` del sistema hasta 2026-07-08 —
                                S6: si el sistema no tiene bs4/requests, serve.py degrada
@@ -180,14 +197,25 @@ scripts/
     queue_regular_shielded.py  encola a unmapped_series.jsonl (reason regular_shielded_review) tomos
                                regulares estandarizados sin señal de bonus. Reusa
                                standardize_apply.append_unmapped_from_item. Default = lista; --apply escribe.
-    normalize_isbn.py          limpia el campo isbn del corpus histórico vía mw.normalize_isbn()
-                               (conserva solo dígitos/X; descarta prefijos basura como "： "
-                               fullwidth JP). Compute-only, salta approved salvo --include-approved.
-                               Registrado en script_registry.py. Gotcha #108.
+    normalize_isbn.py          normaliza+VALIDA el campo isbn del corpus histórico vía
+                               mw.normalize_isbn() (checksum 10/13, GS1 978/979, convierte 10→13,
+                               fail-safe con ISBN_ANOMALY). Compute-only, salta approved salvo
+                               --include-approved. Registrado en script_registry.py. Gotcha #108.
+    prune_state.py             housekeeping OPT-IN de data/state.json: poda entradas con
+                               last_seen_at > N meses (default 12). --dry-run por defecto, backup
+                               antes de escribir (--apply). NUNCA en el pipeline canónico (last_seen
+                               viejo también es señal de mercado). No toca items.jsonl. Gotcha #138.
     filter_non_manga.py        re-filtra (is_likely_manga / is_comic_not_manga / is_pure_novel).
     filter_collectible.py      2º gate: descarta tomos regulares.
     backfill_metadata.py       re-fetch cover/author/ISBN (--only X). --only images = carrusel.
     backfill_cluster_key.py    backfill cluster_key tras cambiar derive_cluster_key.
+    backfill_series_aliases.py remapea series_key/display por series_aliases.yml (fuente única
+                               canonical_series_key), re-deriva cluster_key + consolida vía
+                               consolidate_by_cluster. --only-keys REQUERIDO (scope acotado;
+                               --all exige --yes-i-know-collateral). Reemplaza el snippet
+                               embebido del skill /watch-enrich-series-aliases (Step 4).
+                               Registrado en script_registry.py (--all/--yes-i-know-collateral
+                               NO expuestos en el panel — footgun deliberadamente solo-CLI).
     consolidate_sources.py     colapsa filas del mismo cluster en 1 con sources[] (paso [4g]).
     search_discovery.py        discovery multi-engine (Gemini + Tavily + DDG). Escritura vía
                                backup_and_rotate + append_jsonl con flush cada --flush-every

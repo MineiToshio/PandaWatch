@@ -96,6 +96,16 @@ remove}`, `/api/item/update`, `/api/approve`, `/api/approve-edition`, `/api/batc
 {approve,move}`, `/api/dup-merge`, `/api/save-cover-preview` (cuando aplica sync),
 `/api/image-manager/save`.
 
+**Caso hermano — dos mutadores del Panel de Control pisándose entre sí (S10,
+2026-07-08)**: el 423 de arriba cubre dashboard-vs-scrape (proceso externo);
+los retrofits lanzados desde `web/panel.html` (`POST /api/run`) NO tienen ese
+lock de archivo entre sí, así que lanzar dos a la vez (ej. `filter_non_manga`
++ `clean_titles`) también pisaba el último write. Fix paralelo: cada entrada
+de `scripts/script_registry.py` declara `mutates_items: bool`; `/api/run`
+responde **409** si ya hay un job `"running"` con `mutates_items: true` —
+check + registro del job nuevo son atómicos (mismo lock que
+`JobManager.start()`). Detalle completo en `docs/admin/README.md`.
+
 ## Cover-preview — endpoint puntual por slug
 
 `GET /api/item?slug=<slug>` devuelve la fila de `items.jsonl` con ese slug (404 si no existe).

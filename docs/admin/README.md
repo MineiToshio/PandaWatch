@@ -103,9 +103,19 @@ las descripciones para humanos, los presets) vive en
 `scripts/script_registry.py`. Es un módulo Python puro que exporta
 `SCRIPTS`, una lista de dicts.
 
-`admin_serve.py` lo importa y lo expone tal cual vía `GET /api/scripts`.
+`serve.py` (el servidor unificado, ver "Arquitectura unificada" arriba)
+lo importa y lo expone tal cual vía `GET /api/scripts`; el legacy
+`admin_serve.py` hace lo mismo si lo corrés standalone (ver más abajo).
 La UI lo renderiza. Si querés agregar un script o cambiar un help text,
 **solo tocás este archivo** — no hay HTML que actualizar.
+
+**`script_registry.py` también es la fuente única de `build_command()` /
+`resolve_preset_env()` / `mutates_items()`** (2026-07-08) — antes estaban
+duplicadas byte-a-byte en `serve.py` y `admin_serve.py` (ya habían divergido:
+sólo una copia sabía validar `choice`). Ambos servers las importan de acá.
+`tests/test_script_registry.py` compara cada flag del registry, por AST,
+contra el argparse REAL del script — corré ese test tras tocar el registry
+o un argparse.
 
 ### Estructura de cada entrada
 
@@ -119,12 +129,20 @@ La UI lo renderiza. Si querés agregar un script o cambiar un help text,
     "what": "Párrafo explicando qué hace, para alguien que no programa.",
     "when": "Párrafo explicando cuándo conviene correrlo.",
     "command": [PYTHON, "scripts/manga_watch.py"],
+    "mutates_items": True,          # ¿puede escribir data/items.jsonl? (409 de S10)
     "presets": [
         {
             "id": "normal",
             "label": "🟢 Normal (recomendado)",
             "desc": "Una línea explicando la receta.",
             "values": {"--fetch-details": True, "--workers": 8},
+        },
+        {
+            "id": "with_whakoom",
+            "label": "🟡 + Whakoom spider",
+            "desc": "Agrega spider profundo de Whakoom.",
+            "env": {"INCLUDE_WHAKOOM_SPIDER": "1"},  # sólo INCLUDE_*/SKIP_*
+            "values": {},
         },
     ],
     "flags": [
@@ -135,31 +153,52 @@ La UI lo renderiza. Si querés agregar un script o cambiar un help text,
 }
 ```
 
+Todas las claves de un preset son **obligatorias**: `id`, `label`, `desc`,
+`values` (dict) — el schema viejo con `flags` en vez de `values` es el bug
+1.1 de la auditoría 2026-07-08 (el panel lo ignoraba en silencio: presets
+"Dry-run" corrían sin `--dry-run`). `script_registry.py` valida esto con
+`assert`s al importar; `tests/test_script_registry.py` lo prueba explícito.
+
+`mutates_items` es obligatorio (bool) en toda entrada — lo usa el 409 de
+`/api/run` (ver abajo) para no dejar correr dos mutadores de `items.jsonl`
+al mismo tiempo desde el Panel (no tienen lock de archivo entre sí, a
+diferencia de scrape-vs-scrape que sí usa `.scrape.lock`).
+
 ### Tipos de flag soportados
 
 | `type` | UI render | CLI emit | Notas |
 |---|---|---|---|
 | `bool` | toggle switch | agrega `--flag` si True; si False no aparece | Para `action="store_true"` |
-| `int` | input numérico | `--flag N` si no está vacío | |
+| `int` | input numérico | `--flag N` si no está vacío | soporta `choices=[...]` (ints) |
 | `float` | input numérico con step 0.1 | `--flag X` si no está vacío | |
 | `str` | input texto | `--flag VAL` si no está vacío | |
-| `csv` | input texto con placeholder de coma | igual que `str`, semántica de "lista CSV" | Solo cambia el placeholder |
+| `csv` | input texto con placeholder de coma | `--flag "a,b,c"` (UNA toma) | el script splitea comas internamente |
+| `csv_multi` | igual que `csv` en la UI | `--flag a --flag b --flag c` (una toma por valor) | para `action="append"` sin split interno |
 | `choice` | select desplegable | `--flag opt` si no es vacío | requiere `choices=[...]` |
 
 ### Cómo agregar un script nuevo
 
 1. Asegurate que tu script tenga un argparse decente.
-2. Editá `scripts/script_registry.py` y agregá una entrada a `SCRIPTS`.
-3. Reiniciá el admin server (`Ctrl+C` y `./scripts/run_local.sh`).
-4. Refrescá `http://localhost:8000/web/panel.html` — aparece solo.
+2. Editá `scripts/script_registry.py` y agregá una entrada a `SCRIPTS`
+   (con `mutates_items`).
+3. Corré `.venv/bin/python -m pytest tests/test_script_registry.py -q` —
+   el test AST te dice si algún flag/default/choices no matchea el argparse real.
+4. Reiniciá el server (`Ctrl+C` y `./scripts/run_local.sh`).
+5. Refrescá `http://localhost:8000/web/panel.html` — aparece solo.
 
 ---
 
 ## API HTTP
 
-La API vive bajo `http://localhost:8001/api/*` (puerto 8001, solo localhost).
-`web/panel.html` la llama con `ADMIN_API = "http://localhost:8001"` prefijado
-en todas las llamadas fetch/EventSource. CORS abierto para dev.
+**Arquitectura actual (2026-07-08): un solo server.** `web/panel.html` usa
+`ADMIN_API = ""` (mismo origen) y pega contra `serve.py` en `:8000` — el
+mismo proceso que sirve el catálogo (ver "Arquitectura unificada" arriba).
+El legacy `admin_serve.py` (puerto 8001, standalone) sigue funcionando si
+lo corrés a mano, con los mismos endpoints/validaciones, pero **no es el
+flujo normal** — `run_local.sh` sólo lanza `serve.py`. Sin CORS abierto en
+ninguno de los dos (el header `Access-Control-Allow-Origin: *` de
+`admin_serve.py` se quitó — S7, 2026-07-08: permitía que cualquier página
+de otro origen ejecutara scripts vía `/api/run`).
 
 ### `GET /api/health`
 
@@ -185,14 +224,27 @@ Lanza un script.
 ```json
 {
   "script_id": "source_health",
-  "flags": { "--last-n": 3, "--output": "md" }
+  "flags": { "--last-n": 3, "--output": "md" },
+  "preset_id": "with_whakoom"
 }
 ```
 
-**Validación:** solo `script_id` en el registry + flags listados por script.
-Tipos se castean. `400 {"error": "…"}` si algo no encaja.
+`preset_id` es **opcional** y sólo hace falta cuando el preset aplicado
+tiene `"env"` (ej. "🟡 + Whakoom spider" de scrape_delta/full) — el cliente
+**nunca manda env directo**, sería inyección de proceso arbitraria. El
+servidor resuelve el `env` server-side desde `script_registry.resolve_preset_env()`,
+que busca el preset por id en el registry y filtra sus claves contra la
+allowlist `INCLUDE_*`/`SKIP_*` antes de pasarlo al `Popen` (1.2/S5, 2026-07-08).
+`web/panel.html` sólo manda `preset_id` cuando el preset recién aplicado
+tenía `env` — si el usuario toca un flag a mano después, se resetea a `null`.
 
-**Respuesta:**
+**Validación:** solo `script_id` en el registry + flags listados por script.
+Tipos se castean. `400 {"error": "…"}` si algo no encaja. También rechaza
+con `403` si el header `Origin` no matchea el `Host` local (S7, defensa
+CSRF/DNS-rebinding — sólo aplica a requests cross-origin; clientes sin
+`Origin`, como curl o el propio panel same-origin, pasan siempre).
+
+**Respuesta 200:**
 ```json
 {
   "job_id": "89bbfe6b616e",
@@ -201,10 +253,25 @@ Tipos se castean. `400 {"error": "…"}` si algo no encaja.
 }
 ```
 
+**Respuesta 409** (S10, 2026-07-08) — el `script_id` pedido tiene
+`mutates_items: true` en el registry y YA hay un job `"running"` que
+también muta `items.jsonl` (dos retrofits pisándose en un
+read-modify-write, sin lock de archivo entre sí):
+```json
+{
+  "error": "ya hay un job mutador corriendo (clean_titles, job f437ca54884d) — esperá a que termine antes de lanzar otro que escribe items.jsonl",
+  "job_id": "f437ca54884d",
+  "script_id": "clean_titles"
+}
+```
+El chequeo y el registro del job nuevo son **atómicos** (mismo lock en
+`JobManager.start(block_if_mutator=True)`) — dos `POST /api/run`
+simultáneos para scripts mutadores no pueden colarse los dos.
+
 ### `GET /api/jobs` / `GET /api/jobs/<id>` / `GET /api/jobs/<id>/stream` / `POST /api/jobs/<id>/stop`
 
-Ver descripción completa de cada endpoint en el README anterior o directamente
-en el código de `scripts/admin_serve.py`.
+Ver descripción completa de cada endpoint en el código de `scripts/serve.py`
+(flujo normal) o `scripts/admin_serve.py` (legacy standalone, mismos endpoints).
 
 ---
 
@@ -216,8 +283,11 @@ en el código de `scripts/admin_serve.py`.
 | Otro equipo en la misma LAN | Idem. |
 | `script_id` arbitrario | Allowlist. Solo IDs que existen en `script_registry.py`. |
 | Flags inyectados arbitrarios | Allowlist por script + cast de tipos. |
+| `env` arbitrario inyectado por el cliente | Nunca se acepta env del body — sólo `preset_id`, resuelto server-side contra la allowlist `INCLUDE_*`/`SKIP_*` (1.2/S5). |
 | Shell injection | No hay shell. `subprocess.Popen` usa `list[str]`, no `shell=True`. |
-| Panel UI accesible desde internet | La UI es solo HTML — no puede ejecutar procesos. La API está en otro puerto, solo localhost. |
+| CSRF / DNS-rebinding hacia `/api/run` desde otra pestaña | `Origin` (si está presente) debe matchear `Host` → `403` si no (S7). `admin_serve.py` ya no manda `Access-Control-Allow-Origin: *`. |
+| Dos mutadores de `items.jsonl` pisándose desde el Panel | `409` si ya hay un job `"running"` con `mutates_items: true`; check+registro atómicos (S10). |
+| Panel UI accesible desde internet | La UI es solo HTML — no puede ejecutar procesos sin la API. |
 
 ---
 
@@ -228,8 +298,15 @@ en el código de `scripts/admin_serve.py`.
 - `data/items.jsonl`
 - `scripts/serve.py`
 
-**Admin API (local) — DEJAR FUERA:**
-- `scripts/admin_serve.py`
+⚠️ `serve.py` es el mismo proceso que expone `/api/run` — si desplegás
+`serve.py` "tal cual" a un host público, `/api/run` queda accesible ahí
+también (mitigado por el bind a loopback y el `Origin` check, pero pensado
+para uso LOCAL). Para un deploy público real, la vía es servir sólo los
+estáticos + el subconjunto de endpoints de catálogo, sin `/api/run` — fuera
+del alcance de este documento (ver `docs/reference/architecture.md`).
+
+**Admin (`script_registry.py`/panel) — pensado para uso LOCAL, no deploy:**
+- `scripts/admin_serve.py` (legacy standalone, DEPRECATED — ver file-map.md)
 - `scripts/script_registry.py`
 - `scripts/run_local.sh`
 - `admin/` (solo contiene el redirect HTML, irrelevante en prod)
@@ -239,18 +316,26 @@ en el código de `scripts/admin_serve.py`.
 ## Troubleshooting
 
 **"No se pudo cargar la lista de scripts"** en la UI
-→ El admin server no está corriendo. Lanzá `./scripts/run_local.sh`
-(o solo `python scripts/admin_serve.py`). La UI en `web/panel.html`
-llama a `http://localhost:8001/api/scripts` — si port 8001 no responde,
-muestra ese error.
+→ El server no está corriendo. Lanzá `./scripts/run_local.sh` (levanta
+`serve.py` en `:8000`, catálogo + panel unificados). La UI en
+`web/panel.html` usa `ADMIN_API = ""` (mismo origen) — si el server no
+responde, muestra ese error. (El legacy `admin_serve.py` standalone en
+`:8001` también sirve `/api/scripts` si lo corrés a mano.)
 
 **"flag desconocido para <script>: --foo"** al ejecutar
 → El registry tiene un flag que el `argparse` real del script no tiene
-(o viceversa). Sincronizá `scripts/script_registry.py` con el argparse.
+(o viceversa). Sincronizá `scripts/script_registry.py` con el argparse y
+corré `.venv/bin/python -m pytest tests/test_script_registry.py -q` para
+confirmar — el test AST atrapa exactamente este tipo de deriva.
+
+**"ya hay un job mutador corriendo" (409) al ejecutar**
+→ Esperado (S10): otro script que también escribe `items.jsonl` sigue
+`"running"`. Esperá a que termine (mirá la consola/`GET /api/jobs`) y
+reintentá. Si el job quedó colgado, `POST /api/jobs/<id>/stop`.
 
 **La consola se queda en blanco aunque el script imprime**
-→ `admin_serve.py` exporta `PYTHONUNBUFFERED=1` al subprocess. Si el
-script tiene su propio buffering, usá `python -u` o flush manual.
+→ El server exporta `PYTHONUNBUFFERED=1` al subprocess. Si el script tiene
+su propio buffering, usá `python -u` o flush manual.
 
 **Las líneas aparecen duplicadas**
 → La UI no debe precargar líneas del GET antes del SSE. Revisá

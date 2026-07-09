@@ -317,6 +317,29 @@ TODOS los items.
 `sources[]` (dedup por URL), une `images[]` con **portada canónica primera**
 (carrusel[0] == card) y une `extras[]`.
 
+**Union de `images[]` = una sola primitiva `_union_merge_images()` (Fable
+2026-07-08, hallazgo A9).** Antes `merge_cluster` y `append_jsonl` tenían su
+propia versión y DIVERGÍAN: `merge_cluster` dedupeaba sólo por `_img_stem`, no
+rellenaba `local`/`description` desde el duplicado y aliaseaba el dict del
+miembro; `append_jsonl` dedupeaba por `(kind, stem)`, rellenaba y copiaba. Como
+`consolidate_by_cluster` corre en CADA `append_jsonl`, la gotcha #87 (perder el
+espejo `local`) seguía viva en el camino de cluster. Ahora ambos delegan en
+`_union_merge_images`: dedup por `(kind, _img_stem(url))`, orden de 1ª aparición,
+fill de `local`/`description` en ambas direcciones, copia (`dict(im)`) sin
+aliasing. Punto fijo entre ambos sitios (idempotencia del enforcer verificada 2×
+byte-idéntica).
+
+**Relleno de campos escalares faltantes por CONFIABILIDAD, no por orden físico
+(Fable 2026-07-08, hallazgo B15).** Cuando la canónica carece de `publisher`/
+`release_date`/`isbn` (y de los `_CLUSTER_CURATED`), el valor se toma del miembro
+de mayor `source_class` (`_SOURCE_CLASS_RANK`: official > trusted_catalog >
+trusted_media > curated > retailer > social > desconocido) en vez del primero por
+orden de archivo — así una tienda ruidosa no pisa a la editorial. Sort ESTABLE:
+empate de confiabilidad → orden físico (comportamiento previo). Es sólo desempate
+de relleno; NO es autoridad sobre la agrupación (eso lo hace `cluster_key`). Dry-run
+sobre el corpus actual: 0 productos cambian (la condición sólo dispara con
+canónica-sin-campo + miembros en conflicto con distinta confiabilidad).
+
 `cluster_key` no es estable hasta estandarizar (el heurístico a veces deja
 `edition_key` vacío → `cluster_key=url:`; `/watch-standardize-catalog` le asigna el real).
 Por eso `consolidate_sources.py` corre como paso final del pipeline (`[4g]`),
@@ -408,6 +431,22 @@ Consecuencia aguas abajo: `generate_slugs.py` Regla 1 (`cluster_key.startswith("
 → `isbn-{X}`) es código LEGACY que ya no dispara para clusters nuevos (nunca se genera
 un `cluster_key` `isbn:` desde 2026-07-07); sigue en el código para no romper filas
 históricas que aún lo lleven sin re-derivar. Detalle: [FRD-006-slug-generation.md](../web-next/FRD-006-slug-generation.md).
+
+**`normalize_isbn()` es un normalizador REAL, no un strip (Fable 2026-07-08).** El
+ISBN se conserva como metadata (búsqueda/enrichment/Regla 4 de slugs por campo
+`isbn`), y el normalizador —fuente única aplicada en todo punto de asignación
+(`candidate_to_json`, `fetch_metadata_from_detail`, extractores)— ahora: tokeniza
+el crudo (descarta el `： ` fullwidth de fuentes JP y sufijos como "Deluxe" —el
+podrido `…046 Deluxe`→`…046X` ya NO ocurre porque la `x` de "Deluxe" es su propio
+token), valida checksum ISBN-13 (con prefijo GS1 978/979) e ISBN-10 (mod-11, `X`
+sólo final), y CONVIERTE los ISBN-10 válidos a ISBN-13 (una sola forma canónica).
+Multi-ISBN en un campo → el primero válido. Si NADA valida: conserva el token más
+ISBN-like + `ISBN_ANOMALY` a stderr (fail-safe, gotcha #108). **PROHIBIDO
+re-agregar el tier `isbn:`** — el normalizador SÓLO limpia/valida el campo.
+Dry-run del retrofit sobre el corpus: 3135 ISBN-10 se convertirían a 13 (0
+anomalías); NO aplicado (decisión del owner: la conversión cambia el slug Regla-4
+de esos items). Los extractores estructurados exigen `_isbn10_check` antes de
+aceptar un valor de 10 dígitos (B7: un SKU de 10 dígitos ya no se cuela como ISBN).
 
 **Variant tier**: distintas fuentes detectan signal_types ligeramente distintos para
 el mismo producto, así que el set completo no serviría como discriminante.

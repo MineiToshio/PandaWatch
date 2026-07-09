@@ -568,6 +568,15 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     description) con los del duplicado — sticky en ambas direcciones. Reparación del
     corpus: `mirror_images.py --no-gc` (religa por nombre determinístico sha256(url)[:16]).
     Test: `test_append_jsonl_images_merge_backfills_local`.
+    **ACTUALIZADO (Fable 2026-07-08, hallazgo A9):** el arreglo original vivía SÓLO en
+    `append_jsonl`; `merge_cluster` tenía su propia union de `images[]` que dedupeaba por
+    `_img_stem` (sin kind), NO rellenaba `local`/`description` y aliaseaba el dict del
+    miembro — y como `consolidate_by_cluster` corre en CADA `append_jsonl`, el bug seguía
+    vivo en el camino de cluster. Ahora AMBOS sitios delegan en la primitiva única
+    `_union_merge_images()` (dedup por `(kind, _img_stem(url))`, fill bidireccional de
+    `local`/`description`, `dict(im)` sin aliasing). Regla: NUNCA reimplementar la union
+    de imágenes; usar `_union_merge_images`. Tests:
+    `tests/test_merge_fixes_20260708.py::test_a9_*`.
 
 88. **Placeholders de lazy-load como ARCHIVO real (no data-URI) → el loader entraba como portada (2026-06-12).**
     `_img_to_url` prueba `src` primero y solo salteaba `data:` URIs. Mangarden sirve
@@ -982,8 +991,25 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     `_candidate_from_card`, `extract_rss`, y de nuevo como guardia universal en
     `candidate_to_json` (antes de que `derive_cluster_key` use el tier `isbn:`) — ningún
     camino de ingesta (listadomanga, wikis, retailers) puede dejar un ISBN sucio.
-    Retrofit `scripts/retrofit/normalize_isbn.py` limpia el corpus histórico (dry-run:
-    109 filas cambiarían; salta `approved_at` salvo `--include-approved`; idempotente).
+    Retrofit `scripts/retrofit/normalize_isbn.py` limpia el corpus histórico (salta
+    `approved_at` salvo `--include-approved`; idempotente).
+    **ACTUALIZADO (Fable 2026-07-08, hallazgo cover-sync #6 + B7): `normalize_isbn` ya
+    NO es un simple strip — es un normalizador REAL.** Antes conservaba dígitos+X sin
+    validar, así que `…046 Deluxe` se guardaba corrupto como `…046X` (la `x` de "Deluxe")
+    y un SKU de 10 dígitos entraba como ISBN. Ahora: (1) TOKENIZA el crudo en runs de
+    dígitos/X (separadores internos guion/espacio ok) — el `： ` fullwidth y sufijos como
+    "Deluxe" caen FUERA del token del número; (2) valida checksum ISBN-13 (con prefijo
+    GS1 978/979) e ISBN-10 (mod-11, `X`=10 sólo como último dígito); (3) CONVIERTE los
+    ISBN-10 válidos a ISBN-13 (`_isbn10_to_13`, prefijo 978, checksum recomputado); (4)
+    multi-ISBN en un campo → el primero válido. Fail-safe (esta gotcha sigue vigente): si
+    NINGÚN token valida, conserva el más ISBN-like + `ISBN_ANOMALY` a stderr — el valor
+    puede ser un identificador parcial útil. Los extractores estructurados que aceptaban
+    `len==10` a ciegas ahora exigen `_isbn10_check` (B7). **PROHIBIDO re-agregar el tier
+    `isbn:`** a `derive_cluster_key` (decisión #4): el normalizador SÓLO limpia/valida el
+    campo. Dry-run sobre el corpus: 3135 ISBN-10 se convertirían a ISBN-13 (0 anomalías);
+    NO aplicado (la conversión cambia el slug Regla-4 de esos items — decisión del owner).
+    Tests: `tests/test_merge_fixes_20260708.py` (13 válido/inválido, 10→13, X mal puesta,
+    multi-ISBN, GS1 979, Deluxe-no-corrupto).
 
 109. **`derive_cluster_key` tier fuzzy usaba LANGUAGE, no COUNTRY — violaba "país=edición"
     incluso pre-estandarización (2026-07-07).** El tier 3 (`fuzzy:<X>|<series>|<vol>|
@@ -1514,3 +1540,27 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     que "vaciar la query", y confundir ambas cosas es el patrón exacto de este bug.
     Tests: `tests/test_images_pkg.py::TestNormalizeImageUrlIdentityParams`,
     `::TestExistingLocalImageLegacyCompat`.
+
+138. **Paquete MERGE de la auditoría Fable (2026-07-08) — pérdida silenciosa en el
+    corazón del merge/estado.** Cinco bugs del upsert/consolidación (`manga_watch.py`),
+    todos con test de regresión en `tests/test_merge_fixes_20260708.py`:
+    **(A4)** una `description` entrante VACÍA (re-scrape con drift de selector) borraba
+    `description` Y descartaba la traducción pagada `description_es` — `_translation_is_stale`
+    daba True para `sha1("")` y `description` no estaba en el fill-if-empty ni en
+    `_CURATED_FIELDS`. Fix: description vacía = "no recapturada" → NO stale + fill-if-empty
+    en las ramas raw y estandarizada. **(A5)** `process_state` tenía un 2º pase que
+    colapsaba por ISBN pelado y DESCARTABA al perdedor — incoherente con la decisión #4
+    (mismo ISBN entre productos distintos, ej. `9788419177629`) y, como el flush ya lo
+    había escrito pero nunca entraba al state, lo re-flusheaba como "new" en cada run
+    (churn eterno). Fix: ELIMINADO el 2º pase (la consolidación por `cluster_key` hace el
+    merge legítimo). **(M11)** el sticky de `rarity` era incondicional → la rareza quedaba
+    congelada en el primer ingest; evidencia estructural nueva (tirada numerada,
+    "esaurito") nunca actualizaba una rareza no verificada. Fix: sticky SÓLO si la vieja
+    tiene `rarity_verified_at`/`standardized_at`/`approved_at`; raw-sobre-raw deja ganar la
+    derivación nueva. **(M13)** `detected_at` estaba en `_VOLATILE_FIELDS` → un aprobado
+    re-scrapeado saltaba al final del archivo (orden por `detected_at`) como "recién
+    detectado". Fix: quitado de volátiles (es la PRIMERA detección; `_CURATED_FIELDS` ya lo
+    cubría para estandarizados). **(M9)** `_wiki_flush_fn` reimplementaba el flush SIN el
+    check de state → un re-bootstrap reescribía TODO el batch aunque estuviera "seen". Fix:
+    delega en `flush_source_candidates` (fuente única). Idempotencia del enforcer verificada
+    2× byte-idéntica tras todos los cambios.
