@@ -6,7 +6,16 @@ argument-hint: "[--limit N]"
 
 # Enrich series aliases
 
+> **Model tier (F10):** the per-candidate decision (Steps 1–3 — Anilist lookup +
+> A/B/C classification) is bounded reasoning, not heavy synthesis. **Run this skill
+> in `sonnet`** (or fix `model: 'sonnet'` on the decision phase if this is ever
+> compiled to a workflow). Steps 1, 4, 5 are mechanical (scripts). Never opus.
+
 You are processing the queue of manga series that the scraper discovered but couldn't map to a canonical entry in `data/series_aliases.yml`. Your job: review each candidate, decide whether it's an alias of an existing canonical or a new series, update the YAML, and apply the backfill so `items.jsonl` reflects the new mappings.
+
+**Keep a list of every `series_key` you touch in Steps 2–3** (each candidate's
+current, non-canonical `series_key`). You pass that exact list to the backfill in
+Step 4 via `--only-keys` — the backfill is deliberately scoped to just those keys.
 
 ## Step 1 — Audit the queue
 
@@ -102,69 +111,36 @@ witch-hat-atelier:
 
 ## Step 4 — Apply the backfill
 
-After saving the YAML, run this Python snippet to apply the new mappings to `data/items.jsonl`:
+After saving the YAML, run the backfill retrofit **scoped to the exact `series_key`s
+you processed** in Steps 2–3 (comma-separated, no spaces):
 
 ```bash
-.venv/bin/python -c "
-import json, sys
-sys.path.insert(0, 'scripts')
-import series_aliases, importlib
-importlib.reload(series_aliases)
-from series_aliases import canonical_series_key, _build_lookup
-_build_lookup.cache_clear()
-from pathlib import Path
+# Dry-run first to preview what changes (no write):
+.venv/bin/python scripts/retrofit/backfill_series_aliases.py \
+  --dry-run --only-keys key1,key2,key3
 
-ITEMS = Path('data/items.jsonl')
-items = [json.loads(l) for l in open(ITEMS)]
-remapped = 0
-for it in items:
-    # Golden records: items aprobados desde el dashboard NO se remapean.
-    if it.get('approved_at'):
-        continue
-    old_sk = it.get('series_key','')
-    old_sd = it.get('series_display','')
-    new_sk, new_sd = canonical_series_key(it.get('title',''), old_sk, old_sd)
-    if new_sk != old_sk:
-        it['series_key'] = new_sk
-        it['series_display'] = new_sd
-        old_ek = it.get('edition_key','')
-        if old_ek.startswith(old_sk + '-'):
-            it['edition_key'] = new_sk + old_ek[len(old_sk):]
-        remapped += 1
-    elif new_sd != old_sd:
-        it['series_display'] = new_sd
-
-# Dedup por (series_key, edition_key, volume)
-def comp(it):
-    # La portada es images[0] (única fuente de verdad); ya no hay image_url top-level.
-    return (100 if it.get('isbn') else 0) + (10 if it.get('images') else 0)
-seen = {}
-for it in items:
-    sk = it.get('series_key',''); ek = it.get('edition_key',''); v = it.get('volume','')
-    if not (sk and ek): continue
-    k = (sk, ek, v)
-    if k not in seen or comp(it) > comp(seen[k]):
-        seen[k] = it
-final = []
-seen_keys = set()
-for it in items:
-    sk = it.get('series_key',''); ek = it.get('edition_key',''); v = it.get('volume','')
-    if not (sk and ek):
-        final.append(it); continue
-    k = (sk, ek, v)
-    if k in seen_keys: continue
-    seen_keys.add(k)
-    final.append(seen[k])
-
-tmp = ITEMS.with_suffix(ITEMS.suffix + '.tmp')
-with tmp.open('w', encoding='utf-8') as fh:
-    for it in final:
-        fh.write(json.dumps(it, ensure_ascii=False) + '\n')
-tmp.replace(ITEMS)
-print(f'Items remapped: {remapped} / {len(items)}')
-print(f'After dedup: {len(final)} items')
-"
+# Then apply:
+.venv/bin/python scripts/retrofit/backfill_series_aliases.py \
+  --only-keys key1,key2,key3
 ```
+
+The script (FUENTE ÚNICA — no embedded logic here anymore):
+- Remaps `series_key`/`series_display` of the in-scope items via
+  `series_aliases.canonical_series_key` (the single alias resolver), re-aligns the
+  `edition_key` prefix, and re-derives `cluster_key` with
+  `manga_watch.derive_cluster_key`.
+- **Delegates consolidation** to `manga_watch.consolidate_by_cluster` (the single
+  merge primitive that ingest uses) — it never re-implements dedup.
+- **Backs up `data/items.jsonl`** via `backup_and_rotate` before writing (this is the
+  file actually at risk — see Step 5).
+- Skips `approved_at` golden records (guard homogéneo). Idempotent.
+
+**⚠️ `--only-keys` is REQUIRED.** Do NOT run this over the whole corpus. Passing every
+key you touched is the whole point: a new alias applied blanket-style can collapse
+unrelated series across the entire base (regla dura, auditoría post-scrape
+2026-07-07: *"backfill de aliases NUNCA sobre todo el corpus"*). The script aborts
+without `--only-keys`; `--all --yes-i-know-collateral` exists only for the rare
+deliberate full pass.
 
 ## Step 5 — Truncate the unmapped queue
 
@@ -177,6 +153,12 @@ Once you've processed the queue, clear it so the next run starts fresh:
 ```
 
 (The pipeline will repopulate it on the next scrape if any series remains unmapped.)
+
+> **Note on backups:** the queue (`unmapped_series.jsonl`) is cheap and regenerable —
+> the next scrape rebuilds it. The file actually at risk is `data/items.jsonl`, which
+> Step 4's retrofit already backs up (`backup_and_rotate` label `series-aliases`)
+> before its destructive rewrite. So the critical restore point lives with items.jsonl,
+> not the queue; this queue backup is just a convenience.
 
 ## Step 6 — Run tests + report
 

@@ -167,8 +167,10 @@ actualizado con traducciones multilingües.
      aliases ambiguos genéricos.
    - **Skip** si confidence baja + item count bajo (esperar más data).
 3. Edita `data/series_aliases.yml` in-place.
-4. Corre backfill snippet para consolidar `items.jsonl` (**salta items con
-   `approved_at`** — no remapea golden records).
+4. Corre `scripts/retrofit/backfill_series_aliases.py --only-keys <keys tocadas>`
+   (fuente única — ya NO snippet embebido) para remapear + consolidar `items.jsonl`
+   (**salta items con `approved_at`** — no remapea golden records; backupea items.jsonl;
+   `--only-keys` REQUERIDO — scope acotado a las keys de la corrida, regla anti-colapso).
 5. Trunca la queue (`data/unmapped_series.jsonl`).
 
 **Cuándo invocarlo**:
