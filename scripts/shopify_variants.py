@@ -12,14 +12,20 @@ Este módulo provee:
 - `is_volume_variants(variants)` → heurística que decide si los variants
   representan tomos de una serie (vs. talles, colores u otros opciones
   no relacionadas con volumen).
-- `expand_shopify_variant_page(url, html, parent_source)` → produce N
-  Candidates (uno por variant) con URL deep-linkeada vía `?variant=<id>`.
+- `build_variant_url(parent_url, variant_id)` → URL deep-linkeada
+  (`?variant=<id>`) para un variant dado. La expansión completa
+  (producto-padre → N Candidates) vive en
+  `scripts/retrofit/expand_index_pages.py::expand_shopify_variants_item`
+  (hallazgo #7, 2026-07-08: este módulo antes documentaba una función
+  `expand_shopify_variant_page` que nunca existió acá — quedó como
+  aspiracional de una refactor que no se completó).
 
 Diseño:
 - Shopify embebe los variants en JSON dentro del HTML, normalmente en
   un script tipo `var meta = {"product": {"variants": [...]}}` o en
   `window.ShopifyAnalytics.meta.product.variants`. Hay variaciones por
-  theme, así que el parser busca múltiples patrones.
+  theme, así que el parser busca múltiples patrones, en orden de
+  anclaje (hallazgo #11, 2026-07-08 — ver `extract_shopify_variants`).
 - Fallback al `<select>` del formulario de "Add to Cart" cuando no
   encontramos JSON.
 - Detección de "variants de tomo" requiere palabras clave en el
@@ -32,15 +38,35 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
-from typing import Iterable
 
 from bs4 import BeautifulSoup
 
 
-# Variants JSON suele estar embebido en uno de estos patrones. Cada uno
-# devuelve directamente un array JSON `[{...}, ...]`.
+# Variants JSON suele estar embebido en uno de estos patrones, en orden de
+# anclaje AL PRODUCTO ACTUAL (hallazgo #11, 2026-07-08 — antes se tomaba el
+# PRIMER `"variants":` del documento sin más criterio, riesgo teórico si un
+# theme serializa un widget de "productos relacionados"/recomendaciones ANTES
+# que el bloque del producto principal en el HTML):
+#
+#   1. `"product":{...,"variants":[...]}` — el patrón real verificado (Dark
+#      Horse Direct: `var meta = {"product": {"variants": [...]}, "page": {...}}`,
+#      equivalente a `window.ShopifyAnalytics.meta.product.variants`).
+#      `_PRODUCT_SCOPED_VARIANTS_PATTERN` exige que "variants" esté DENTRO
+#      del mismo objeto "product" — sin otro `{`/`}` de por medio — así que
+#      no puede "saltar" al variants de un objeto ajeno más adelante/atrás.
+#   2. `"variants":[...]` suelto — fallback SIN anclaje garantizado. No se ha
+#      visto un caso real en el corpus donde esto matchee lo incorrecto (los
+#      themes Shopify auditados siempre traen el bloque del producto primero
+#      o exclusivamente), pero queda documentado como el hueco conocido: un
+#      theme que serialice un widget ajeno con su propio "variants" ANTES del
+#      producto principal le ganaría a este patrón.
+#   3. `variants = [...]` (asignación JS) — patrón legacy de themes viejos.
+_PRODUCT_SCOPED_VARIANTS_PATTERN = re.compile(
+    r'"product"\s*:\s*\{(?:(?![{}]).)*?"variants"\s*:\s*(\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])',
+    re.DOTALL,
+)
 _VARIANTS_JSON_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _PRODUCT_SCOPED_VARIANTS_PATTERN,
     re.compile(r'"variants"\s*:\s*(\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])'),
     re.compile(r'variants\s*=\s*(\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])\s*;'),
 )
@@ -70,6 +96,26 @@ _VOLUME_VARIANT_WORDS = re.compile(
 )
 
 
+def _normalize_raw_variants(raw: list) -> list[dict]:
+    """Filtra entries vacías/sin id y normaliza al schema de salida."""
+    variants = []
+    for v in raw:
+        if not isinstance(v, dict):
+            continue
+        vid = v.get("id")
+        if vid is None:
+            continue
+        variants.append({
+            "id": str(vid),
+            "title": (v.get("public_title") or v.get("title") or "").strip(),
+            "name": (v.get("name") or "").strip(),
+            "sku": (v.get("sku") or "").strip(),
+            "price": v.get("price"),     # cents (int) o string
+            "available": v.get("available"),
+        })
+    return variants
+
+
 def extract_shopify_variants(html_text: str) -> list[dict]:
     """Extrae variants de un HTML Shopify.
 
@@ -82,7 +128,8 @@ def extract_shopify_variants(html_text: str) -> list[dict]:
     if not html_text:
         return []
 
-    # Estrategia 1: JSON embebido (cubre la mayoría de themes).
+    # Estrategia 1: JSON embebido, probando los patrones en orden de anclaje
+    # (ver comentario de _VARIANTS_JSON_PATTERNS arriba, hallazgo #11).
     for pat in _VARIANTS_JSON_PATTERNS:
         m = pat.search(html_text)
         if not m:
@@ -93,22 +140,7 @@ def extract_shopify_variants(html_text: str) -> list[dict]:
             continue
         if not isinstance(raw, list) or not raw:
             continue
-        # Filtra entries vacías y normaliza.
-        variants = []
-        for v in raw:
-            if not isinstance(v, dict):
-                continue
-            vid = v.get("id")
-            if vid is None:
-                continue
-            variants.append({
-                "id": str(vid),
-                "title": (v.get("public_title") or v.get("title") or "").strip(),
-                "name": (v.get("name") or "").strip(),
-                "sku": (v.get("sku") or "").strip(),
-                "price": v.get("price"),     # cents (int) o string
-                "available": v.get("available"),
-            })
+        variants = _normalize_raw_variants(raw)
         if variants:
             return variants
 
@@ -178,22 +210,3 @@ def build_variant_url(parent_url: str, variant_id: str) -> str:
         qs.pop(trash, None)
     new_query = urlencode(qs)
     return urlunparse((p.scheme, p.netloc, p.path, p.params, new_query, ""))
-
-
-def format_variant_price(price) -> str:
-    """Shopify variants exponen `price` en cents (int) o "29.99" (string).
-
-    Devuelve la representación humana en USD ej. "$44.99". Para precios
-    no-USD ajustar después con el currency del source.
-    """
-    if price is None or price == "":
-        return ""
-    try:
-        n = float(price)
-    except (TypeError, ValueError):
-        return str(price)
-    # Heurística: si es >= 1000 asumimos cents (Shopify estándar).
-    # 100 cents → $1.00; 4499 cents → $44.99.
-    if n >= 1000 and n == int(n):
-        return f"${n/100:.2f}"
-    return f"${n:.2f}"

@@ -23,10 +23,12 @@ API pública:
 from __future__ import annotations
 
 import gzip
-import io
+import html
 import re
+import sys
+import time
 from typing import Any
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 import requests
 
@@ -44,22 +46,57 @@ SITEMAP_CANDIDATE_PATHS = (
 )
 
 
+# 429 → UN reintento con backoff (Retry-After si el server lo manda, si no un
+# default fijo) — mismo espíritu que la política 403 del scraper principal
+# (docs/reference/conventions.md § anti-bot): un reintento, NUNCA un loop.
+_MAX_429_RETRIES = 1
+_DEFAULT_429_WAIT_SECONDS = 2.0
+
+
+def _retry_after_seconds(response: requests.Response, default: float = _DEFAULT_429_WAIT_SECONDS) -> float:
+    header = response.headers.get("Retry-After")
+    if header:
+        try:
+            return max(0.0, float(header))
+        except ValueError:
+            pass
+    return default
+
+
 def _fetch_text(url: str, session: requests.Session, timeout: tuple[int, int] = (10, 30)) -> str:
-    """Fetch URL devolviendo texto (descomprime .gz si hace falta). Vacío si falla."""
-    try:
-        response = session.get(url, timeout=timeout)
-        response.raise_for_status()
+    """Fetch URL devolviendo texto (descomprime .gz si hace falta). Vacío si falla.
+
+    Hallazgos #10/#13 (2026-07-08): 429 se reintenta UNA vez con backoff (antes
+    no se manejaba — un sitio rate-limiteado devolvía "" igual que cualquier
+    otro fallo, indistinguible en el log); y las excepciones ya no se tragan en
+    silencio — se loguean a stderr antes de degradar a "" (el caller trata ""
+    como "no hay sitemap acá", comportamiento sin cambios).
+    """
+    for attempt in range(_MAX_429_RETRIES + 1):
+        try:
+            response = session.get(url, timeout=timeout)
+        except requests.RequestException as exc:
+            print(f"[sitemap_miner] WARN fetch failed {url}: {exc}", file=sys.stderr)
+            return ""
+        if response.status_code == 429 and attempt < _MAX_429_RETRIES:
+            time.sleep(_retry_after_seconds(response))
+            continue
+        try:
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"[sitemap_miner] WARN {url}: {exc}", file=sys.stderr)
+            return ""
         # Algunos sitemaps vienen gzipped pero el servidor responde con .xml.gz
         if url.endswith(".gz") or response.headers.get("Content-Encoding") == "gzip" or response.content[:2] == b"\x1f\x8b":
             try:
                 return gzip.decompress(response.content).decode("utf-8", errors="replace")
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                print(f"[sitemap_miner] WARN gzip decode failed {url}: {exc}", file=sys.stderr)
+                return ""
         if not response.encoding:
             response.encoding = response.apparent_encoding or "utf-8"
         return response.text
-    except (requests.RequestException, Exception):
-        return ""
+    return ""
 
 
 def _read_robots_sitemaps(base_url: str, session: requests.Session) -> list[str]:
@@ -71,7 +108,8 @@ def _read_robots_sitemaps(base_url: str, session: requests.Session) -> list[str]
         if response.status_code != 200:
             return []
         text = response.text
-    except (requests.RequestException, Exception):
+    except requests.RequestException as exc:
+        print(f"[sitemap_miner] WARN robots.txt fetch failed {robots_url}: {exc}", file=sys.stderr)
         return []
     urls: list[str] = []
     for line in text.splitlines():
@@ -110,8 +148,25 @@ def discover_sitemap_urls(base_url: str, session: requests.Session) -> list[str]
 
 
 # Regex para extraer <loc>...</loc> sin necesidad de namespace XML parsing.
-LOC_PATTERN = re.compile(r"<loc>\s*([^<>\s]+)\s*</loc>", re.IGNORECASE)
+# Hallazgo #9 (2026-07-08): soporta tanto texto plano como `<![CDATA[...]]>`
+# (algunos generadores de sitemap envuelven la URL en CDATA — el patrón viejo
+# solo matcheaba texto plano y esas URLs se perdían sin ningún aviso).
+LOC_PATTERN = re.compile(
+    r"<loc>\s*(?:<!\[CDATA\[(?P<cdata>.*?)\]\]>|(?P<plain>[^<>\s]+))\s*</loc>",
+    re.IGNORECASE | re.DOTALL,
+)
 SITEMAPINDEX_PATTERN = re.compile(r"<sitemapindex\b", re.IGNORECASE)
+
+
+def _extract_loc(m: re.Match) -> str:
+    """Valor de un match de LOC_PATTERN, des-escapado de entidades XML.
+
+    Hallazgo #9: `&amp;amp;` en el XML crudo (una URL con `&` re-escapada por
+    el generador del sitemap) rompía la URL si no se hacía `html.unescape()`
+    ANTES de usarla — quedaba con `&amp;` literal en vez de `&`.
+    """
+    raw = m.group("cdata") if m.group("cdata") is not None else m.group("plain")
+    return html.unescape((raw or "").strip())
 
 
 def parse_sitemap_xml(xml_text: str) -> tuple[list[str], list[str]]:
@@ -122,7 +177,8 @@ def parse_sitemap_xml(xml_text: str) -> tuple[list[str], list[str]]:
     """
     if not xml_text or len(xml_text) < 50:
         return [], []
-    locs = [m.group(1).strip() for m in LOC_PATTERN.finditer(xml_text)]
+    locs = [_extract_loc(m) for m in LOC_PATTERN.finditer(xml_text)]
+    locs = [loc for loc in locs if loc]
     is_index = bool(SITEMAPINDEX_PATTERN.search(xml_text))
     if is_index:
         return [], locs
@@ -135,15 +191,22 @@ def fetch_all_sitemap_urls(
     max_depth: int = 3,
     max_urls: int = 50_000,
     timeout: tuple[int, int] = (10, 30),
+    _preloaded: dict[str, str] | None = None,
 ) -> list[str]:
     """Descarga sitemap recursivamente y devuelve todas las URLs finales.
 
     Cap a max_urls para evitar runaway en sitios grandes.
+
+    `_preloaded` (uso interno, hallazgo #10, 2026-07-08): mapa `{url: texto}`
+    con sitemaps que el CALLER ya descargó (típicamente `discover_and_filter`,
+    que fetchea el candidato una vez para validarlo antes de llamar acá) — evita
+    una 2ª request idéntica al mismo servidor.
     """
     seen: set[str] = set()
     all_urls: list[str] = []
     queue: list[tuple[str, int]] = [(sitemap_url, 0)]
     visited_sitemaps: set[str] = set()
+    preloaded = _preloaded or {}
 
     while queue and len(all_urls) < max_urls:
         url, depth = queue.pop(0)
@@ -151,7 +214,7 @@ def fetch_all_sitemap_urls(
             continue
         visited_sitemaps.add(url)
 
-        text = _fetch_text(url, session, timeout=timeout)
+        text = preloaded.get(url) if url in preloaded else _fetch_text(url, session, timeout=timeout)
         if not text:
             continue
         urls, nested = parse_sitemap_xml(text)
@@ -231,7 +294,14 @@ def discover_and_filter(
         text = _fetch_text(candidate, session, timeout=timeout)
         if not text or len(text) < 50:
             continue
-        urls = fetch_all_sitemap_urls(candidate, session, max_urls=max_urls, timeout=timeout)
+        # Hallazgo #10 (2026-07-08): el candidato ya se bajó arriba para
+        # validarlo — se lo pasamos precargado a fetch_all_sitemap_urls en vez
+        # de dejar que lo re-descargue (misma URL, mismo servidor, 2ª request
+        # innecesaria en CADA candidato probado).
+        urls = fetch_all_sitemap_urls(
+            candidate, session, max_urls=max_urls, timeout=timeout,
+            _preloaded={candidate: text},
+        )
         if urls:
             chosen_url = candidate
             chosen_urls = urls

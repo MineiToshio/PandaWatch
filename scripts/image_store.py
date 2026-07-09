@@ -40,7 +40,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import requests
 
@@ -102,11 +102,23 @@ def normalize_image_url(url: str) -> str:
     parsed = urlparse(url)
     path = parsed.path
 
-    # 1. Magento-style query params
+    # 1. Magento-style query params — SOLO se filtran los params de resize; el
+    # resto de la query (params de IDENTIDAD como `id=`/`s=`/`v=`) se preserva.
+    # Hallazgo #2 (2026-07-08, ALTA): antes se borraba la query COMPLETA — dos
+    # imágenes DISTINTAS con `?id=123&width=300` / `?id=456&width=300` colapsaban
+    # al mismo stem (`/img.php`) → cross-cover silencioso (la 2ª pisaba el `local`
+    # de la 1ª). Filtrar solo `_CDN_RESIZE_PARAMS` mantiene la idempotencia (una
+    # 2ª pasada ya no tiene esos keys en la query → el `if` de abajo da False) y
+    # elimina la colisión. Compat hacia atrás: `existing_local_image` prueba el
+    # stem legacy (query completa borrada) si el nuevo no tiene archivo — ver
+    # `_legacy_image_stem` — así los ~67 archivos ya espejados bajo el stem viejo
+    # (corpus real, análisis de impacto 2026-07-08) no quedan huérfanos.
     if parsed.query:
-        qs_keys = {k.lower() for k, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        qs_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        qs_keys = {k.lower() for k, _ in qs_pairs}
         if qs_keys & {"width", "height", "w", "h"} and qs_keys & _CDN_RESIZE_PARAMS:
-            return parsed._replace(query="").geturl()
+            kept = [(k, v) for k, v in qs_pairs if k.lower() not in _CDN_RESIZE_PARAMS]
+            return parsed._replace(query=urlencode(kept)).geturl()
 
     # 2. WordPress -NxM suffix
     filename = path.rsplit("/", 1)[-1]
@@ -146,6 +158,21 @@ _MAX_IMAGE_BYTES = 12 * 1024 * 1024
 # Tamaño de chunk al hacer streaming de la respuesta.
 _CHUNK_BYTES = 64 * 1024
 
+# Cota de decompression-bomb para PIL (hallazgo #16, 2026-07-08). `None`
+# desactiva por completo el chequeo de `Image.MAX_IMAGE_PIXELS` — un PNG/JPEG
+# adversarial de pocos KB puede decodificar a gigapíxeles y agotar RAM. 80 MP
+# cubre con margen cualquier escaneo/portada legítima del corpus (una doble
+# página a 600dpi A4 apaisado son ~34 MP) sin reabrir la superficie de ataque.
+MAX_IMAGE_PIXELS_CAP = 80_000_000
+
+# Umbral de aspect ratio para el par thumbnail↔full (2026-07-08, hallazgo #12
+# de la auditoría de imágenes). Fuente ÚNICA — antes duplicado (y con drift:
+# 0.12 vs 0.06) entre `dedup_carousel_images.py` y `promote_hires_cover.py`.
+# Un thumbnail (ej. ~100×150 de listadomanga, gotcha #39) degrada tanto el
+# aHash que supera el umbral estricto de `_same_cover`; el par thumb↔full usa
+# este umbral relajado de aspect ratio en su lugar (± 6%).
+THUMB_ASPECT_TOL = 0.06
+
 
 def image_stem(image_url: str) -> str:
     """Stem determinístico (16 hex) derivado del URL de la imagen.
@@ -155,6 +182,24 @@ def image_stem(image_url: str) -> str:
     """
     canonical = normalize_image_url(image_url.strip())
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+def _legacy_image_stem(image_url: str) -> str:
+    """Stem que habría producido el `normalize_image_url` PRE-fix (2026-07-08,
+    hallazgo #2): el patrón 1 (Magento-style resize params) borraba la query
+    COMPLETA en vez de preservar los params de identidad. Compat hacia atrás
+    SOLO para `existing_local_image` — nunca usar para escribir un archivo
+    NUEVO (eso siempre va por el stem correcto de `image_stem`)."""
+    url = image_url.strip()
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.query:
+        qs_keys = {k.lower() for k, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        if qs_keys & {"width", "height", "w", "h"} and qs_keys & _CDN_RESIZE_PARAMS:
+            url = parsed._replace(query="").geturl()
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
     return digest[:16]
 
 
@@ -186,6 +231,12 @@ def existing_local_image(images_dir: Path, image_url: str) -> str:
 
     Hace glob por `<stem>.*` para no depender de la extensión (que sólo
     se conoce tras descargar). Devuelve "" si no existe.
+
+    Compat hacia atrás (2026-07-08, hallazgo #2): si el stem CORRECTO no tiene
+    archivo, prueba el stem LEGACY (pre-fix de `normalize_image_url`, que
+    borraba la query completa en vez de preservar params de identidad) — el
+    corpus real tiene ~67 archivos ya espejados bajo ese stem viejo; sin este
+    fallback quedarían huérfanos y se re-descargarían con el stem nuevo.
     """
     images_dir = Path(images_dir)
     if not images_dir.exists():
@@ -194,6 +245,11 @@ def existing_local_image(images_dir: Path, image_url: str) -> str:
     for path in sorted(images_dir.glob(stem + ".*")):
         if path.is_file() and not path.name.endswith(".tmp"):
             return path.name
+    legacy = _legacy_image_stem(image_url)
+    if legacy and legacy != stem:
+        for path in sorted(images_dir.glob(legacy + ".*")):
+            if path.is_file() and not path.name.endswith(".tmp"):
+                return path.name
     return ""
 
 
@@ -417,7 +473,7 @@ def placeholder_reason(source, *, signatures: dict | None = None) -> str:
             return f"signature:{sigs[digest] or digest[:8]}"
     try:
         from PIL import Image, ImageStat
-        Image.MAX_IMAGE_PIXELS = None
+        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS_CAP
         with Image.open(io.BytesIO(body)) as im:
             w, h = im.size
             if w <= _PLACEHOLDER_MIN_SIDE or h <= _PLACEHOLDER_MIN_SIDE:
@@ -537,7 +593,7 @@ def _normalize_pillow(body: bytes, max_long_side: int, quality: int) -> bytes:
 
     from PIL import Image, ImageOps
 
-    Image.MAX_IMAGE_PIXELS = None
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS_CAP
     with Image.open(io.BytesIO(body)) as im:
         im = ImageOps.exif_transpose(im)
         has_alpha = im.mode in ("RGBA", "LA", "PA") or (
@@ -578,7 +634,7 @@ def normalize_image(
 
             from PIL import Image
 
-            Image.MAX_IMAGE_PIXELS = None
+            Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS_CAP
             with Image.open(io.BytesIO(body)) as im:
                 if max(im.size) <= max_long_side:
                     return body, ".avif"

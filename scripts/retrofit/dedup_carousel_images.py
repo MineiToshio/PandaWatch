@@ -15,7 +15,8 @@ Uso:
   .venv/bin/python scripts/retrofit/dedup_carousel_images.py [--all]
 """
 from __future__ import annotations
-import json, sys, argparse, shutil
+import json, sys, argparse
+from collections import OrderedDict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,13 +24,15 @@ sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import fetch_better_covers as fbc  # noqa: E402  (reusa _ahash/_hamming/_get_dims_from_bytes)
 import requests  # noqa: E402
+import image_store  # noqa: E402  (fuente única de THUMB_ASPECT_TOL, hallazgo #12)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import is_approved  # noqa: E402
+    from manga_watch import backup_and_rotate, is_approved, make_session  # noqa: E402
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import is_approved  # noqa: E402
+    from scripts.manga_watch import backup_and_rotate, is_approved, make_session  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
+DEFAULT_USER_AGENT = "manga-watch-personal/0.2 (+personal-use)"
 MAX_HAMMING = 6        # ≤6/64 bits = misma foto (diff resolución sube ~3-5 bits)
 ASPECT_TOL = 0.12      # ratios deben coincidir ±12%
 # Caso thumbnail: una versión DIMINUTA (ej. el thumb ~96×150 de listadomanga,
@@ -40,10 +43,37 @@ ASPECT_TOL = 0.12      # ratios deben coincidir ±12%
 THUMB_MAX_SIDE = 170   # lado menor que delata un thumbnail
 THUMB_HAMMING = 14     # umbral relajado SOLO para el par thumbnail↔full (un thumb
                        # ~100px degrada el aHash hasta ~14 bits vs su full)
-THUMB_ASPECT_TOL = 0.06
+# Fuente ÚNICA (2026-07-08, hallazgo #12): antes duplicado acá y en
+# promote_hires_cover.py, con drift (0.12 vs 0.06) — ahora ambos importan de
+# image_store.
+THUMB_ASPECT_TOL = image_store.THUMB_ASPECT_TOL
 
-_S = requests.Session(); _S.headers.update({"User-Agent": "Mozilla/5.0 (dedup)"})
-_bytes_cache: dict[str, bytes] = {}
+# Sesión HTTP con retry + UA del pipeline (hallazgo #5c, 2026-07-08): antes un
+# UA propio ("Mozilla/5.0 (dedup)") distinto al del resto del scraper — fuentes
+# como Manga-Sanctuary sirven 404 a UAs desconocidos → dedup omitido en
+# silencio para esas fotos. make_session() es la fuente única (retry + headers
+# consistentes con el resto del pipeline).
+_S = make_session(DEFAULT_USER_AGENT)
+
+# Cache de bytes de imágenes bajadas por URL (fallback cuando no hay `local`
+# en disco) con cota LRU (hallazgo #5d): sin tope, una corrida sobre TODO el
+# corpus (--all) podía acumular gigabytes de imágenes en memoria.
+_BYTES_CACHE_MAX = 200
+_bytes_cache: "OrderedDict[str, bytes]" = OrderedDict()
+
+
+def _cache_get(url: str) -> bytes | None:
+    if url not in _bytes_cache:
+        return None
+    _bytes_cache.move_to_end(url)
+    return _bytes_cache[url]
+
+
+def _cache_put(url: str, data: bytes) -> None:
+    _bytes_cache[url] = data
+    _bytes_cache.move_to_end(url)
+    if len(_bytes_cache) > _BYTES_CACHE_MAX:
+        _bytes_cache.popitem(last=False)
 
 
 def _img_bytes(im: dict) -> bytes:
@@ -55,13 +85,14 @@ def _img_bytes(im: dict) -> bytes:
     url = im.get("url") or ""
     if not url:
         return b""
-    if url in _bytes_cache:
-        return _bytes_cache[url]
+    cached = _cache_get(url)
+    if cached is not None:
+        return cached
     try:
         data = _S.get(url, timeout=(10, 30)).content
     except requests.RequestException:
         data = b""
-    _bytes_cache[url] = data
+    _cache_put(url, data)
     return data
 
 
@@ -77,6 +108,16 @@ def _fingerprint(im: dict):
     return (h, w * ht, w, ht)
 
 
+def _write_items(dst: Path, items: list[dict]) -> None:
+    """Escritura atómica (tmp + replace) con `sort_keys=True` (idempotencia
+    byte-idéntica entre corridas, hallazgo #5e, 2026-07-08)."""
+    tmp = dst.with_suffix(".jsonl.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for it in items:
+            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
+    tmp.replace(dst)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -87,12 +128,20 @@ def main() -> int:
                          "saltean: dedup puede REORDENAR images[0] (la portada) de un item "
                          "aprobado si la portada actual cae como duplicado de menor resolución.")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open() if l.strip()]
+    items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
+
+    backup = None
+    if not args.dry_run:
+        # Backup ANTES del loop (convención dura): el loop baja imágenes de red
+        # y puede tardar — el backup es el punto de retorno de TODA la corrida,
+        # no solo del write final.
+        backup = backup_and_rotate(ITEMS, "dedup-carousel")
 
     removed_total = 0
     items_changed = 0
     skipped_approved = 0
     examples = []
+    _FLUSH_EVERY = 50  # flush items.jsonl cada N items con cambios (convención)
     for it in items:
         if is_approved(it) and not args.include_approved:
             skipped_approved += 1
@@ -148,9 +197,22 @@ def main() -> int:
         if not new_imgs:
             continue  # nunca dejar sin imágenes
         dropped = [im for k, im in zip(keep, imgs) if not k]
-        # La portada es images[0]: si la portada (imgs[0]) cayó como duplicado de
-        # menor resolución, new_imgs[0] (el hi-res que quedó) pasa a ser la portada
-        # automáticamente al reescribir images[]. No hace falta repuntar nada aparte.
+        # La portada es images[0]. Si cayó como duplicado de menor resolución,
+        # el primer sobreviviente en orden original NO es necesariamente el
+        # hi-res que ganó la comparación — puede ser un `extra` (bonus que
+        # viene CON el producto: postal, shikishi) ubicado entre medio, que
+        # ascendería a portada por accidente de posición (hallazgo #12,
+        # 2026-07-08 — mismo error de clase que sync_cover_images
+        # promoviendo un extra, ver docs/reference/images.md). Un `extra`
+        # nunca es dedupable (ver `_dedupable`), así que si imgs[0] cayó
+        # hubo SIEMPRE otro `gallery` que le ganó la comparación — lo
+        # buscamos entre los sobrevivientes y lo movemos a la posición 0.
+        if not keep[0]:
+            for gi, im in enumerate(new_imgs):
+                if im.get("kind", "gallery") == "gallery":
+                    if gi != 0:
+                        new_imgs.insert(0, new_imgs.pop(gi))
+                    break
         if not args.dry_run:
             it["images"] = new_imgs
         removed_total += len(dropped)
@@ -158,6 +220,12 @@ def main() -> int:
         if len(examples) < 25:
             examples.append((it.get("title", "")[:34],
                              [(d.get("kind"), (d.get("url", "") or "").split("/")[-1][:18]) for d in dropped]))
+        # Flush incremental (hallazgo #5b, 2026-07-08): el loop baja imágenes
+        # de red por cada par a comparar — un write único al final perdía TODO
+        # si el proceso moría a mitad de una corrida sobre --all.
+        if not args.dry_run and items_changed % _FLUSH_EVERY == 0:
+            _write_items(ITEMS, items)
+            print(f"  → flush parcial ({items_changed} items)", flush=True)
 
     print(f"[dedup] items con duplicados de portada: {items_changed} | imágenes quitadas: {removed_total}")
     if skipped_approved:
@@ -167,13 +235,8 @@ def main() -> int:
     if args.dry_run:
         print("[DRY-RUN] no se escribió nada.")
         return 0
-    shutil.copy(ITEMS, ITEMS.with_suffix(".jsonl.pre-dedup-bak"))
-    tmp = ITEMS.with_suffix(".jsonl.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
-    tmp.replace(ITEMS)
-    print(f"[dedup] escrito {ITEMS}. Backup: {ITEMS.with_suffix('.jsonl.pre-dedup-bak')}")
+    _write_items(ITEMS, items)
+    print(f"[dedup] escrito {ITEMS}. Backup: {backup}")
     return 0
 
 

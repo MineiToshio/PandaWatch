@@ -206,6 +206,61 @@ def _pixels(path: Path) -> int | None:
     return _pixels_from_bytes(data)
 
 
+# ── Protección de refs adicionales antes de borrar el original (hallazgo #3) ──
+# `_collect_targets` agrupa refs SOLO vía `images[].local` (portada + galería) —
+# `--delete-original` (default ON) borraba el archivo VIEJO en cuanto reemplazaba
+# esas refs, sin chequear que ninguna OTRA estructura siguiera apuntando al mismo
+# filename: `sources[i].image_local` (ref legacy per-fuente, este script no la
+# actualiza) y `data/cover_preview.json` (old_image / candidates[].new_image /
+# current_images[].local — la cola de revisión de portadas referencia archivos
+# por nombre). Mismo set que protege el GC de `mirror_images.py`.
+
+def _sources_image_locals(items: list[dict]) -> set[str]:
+    """`sources[].image_local` de TODOS los items — ref per-fuente que este
+    script no actualiza cuando reemplaza `images[].local`."""
+    out: set[str] = set()
+    for it in items:
+        if "_raw" in it:
+            continue
+        for s in (it.get("sources") or []):
+            if isinstance(s, dict) and s.get("image_local"):
+                out.add(s["image_local"])
+    return out
+
+
+def _cover_preview_locals(preview_path: Path) -> set[str]:
+    """Filenames referenciados por `data/cover_preview.json`: `old_image`,
+    `candidates[].new_image`, `current_images[].local` — el panel de revisión
+    de portadas (`cover-preview.html`) queda con fotos rotas si se los borra."""
+    refs: set[str] = set()
+    if not preview_path.exists():
+        return refs
+    try:
+        data = json.loads(preview_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return refs
+    entries = data if isinstance(data, list) else data.get("items", data.get("entries", []))
+    for e in entries or []:
+        v = e.get("old_image")
+        if v and v != "[dry-run]":
+            refs.add(v)
+        for c in (e.get("candidates") or []):
+            v = c.get("new_image")
+            if v and v != "[dry-run]":
+                refs.add(v)
+        for ci in (e.get("current_images") or []):
+            v = ci.get("local") if isinstance(ci, dict) else None
+            if v:
+                refs.add(v)
+    return refs
+
+
+def _protected_locals(items: list[dict], preview_path: Path) -> set[str]:
+    """Unión de refs adicionales (fuera de `images[].local`) que
+    `--delete-original` debe respetar antes de borrar el archivo viejo."""
+    return _sources_image_locals(items) | _cover_preview_locals(preview_path)
+
+
 # ── IO ────────────────────────────────────────────────────────────────────────
 
 def _load_items(src: Path) -> list[dict]:
@@ -305,6 +360,7 @@ def run(
     dry_run: bool,
     delete_original: bool,
     include_approved: bool = False,
+    preview_path: Path | None = None,
 ) -> None:
     upscaler = _find_upscaler()
     if upscaler is None:
@@ -353,6 +409,13 @@ def run(
     counter: Counter = Counter()
     counter["already_done"] = skipped_already_upscaled
     items_changed = False
+
+    # Hallazgo #3 (2026-07-08): refs adicionales que `--delete-original` debe
+    # respetar antes de borrar el archivo viejo (ver docstring arriba). Se
+    # computa UNA vez sobre el estado inicial — ninguna de las dos fuentes
+    # (sources[].image_local, cover_preview.json) la muta este script.
+    preview_path = preview_path or (items_path.parent / "cover_preview.json")
+    protected_locals = _protected_locals(items, preview_path) if delete_original else set()
 
     for i, (local, src_path, refs) in enumerate(targets, 1):
         print(f"  [{i}/{total}] {local} ({_pixels(src_path) or 0:,} px) → ×{scale}…", end=" ", flush=True)
@@ -405,9 +468,16 @@ def run(
                     img["upscaled"] = True
         items_changed = True
 
-        # Eliminar original si se pidió
+        # Eliminar original si se pidió — SOLO si ninguna ref adicional (fuera
+        # de images[].local, ya actualizada arriba) sigue apuntando al archivo
+        # viejo (hallazgo #3): sources[].image_local o cover_preview.json.
         if delete_original and src_path != dst_path:
-            src_path.unlink(missing_ok=True)
+            if local in protected_locals:
+                counter["kept_protected"] += 1
+                print(f"    (original conservado: referenciado por sources[]/"
+                      f"cover_preview.json)")
+            else:
+                src_path.unlink(missing_ok=True)
 
         # Flush inmediato tras cada upscale exitoso: no pérdida si se cancela
         if not dry_run:
@@ -424,6 +494,9 @@ def run(
         f"\n  Ya procesadas:  {counter['already_done']:>4}"
         f"\n  Errores:        {counter['errors']:>4}"
     )
+    if counter["kept_protected"]:
+        print(f"  Originales conservados (sources[]/cover_preview.json aún los "
+              f"referencian): {counter['kept_protected']:>4}")
     if counter["upscaled"] > 0 and items_changed:
         print("\nitems.jsonl actualizado con los nuevos `image_local`.")
 

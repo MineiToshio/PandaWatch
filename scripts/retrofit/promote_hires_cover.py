@@ -16,18 +16,14 @@ caso documentado gotcha #39):
 
   - Si la portada actual es un thumbnail (lado menor ≤ THUMB_MAX_SIDE) y la candidata
     es ≥ 2× más grande en su lado menor → par thumbnail↔full → aHash ≤ THUMB_HAMMING
-    (14/64 bits) + aspect ratio ≤ THUMB_ASPECT_TOL (6% — hallazgo #3, 2026-07-08: este
-    script decía "12%, igual que dedup" pero dedup_carousel_images.py en realidad usa
-    6% (`THUMB_ASPECT_TOL = 0.06`); el 12% era más laxo y este es el ÚNICO script que
-    muta la portada SIN cola de revisión → más superficie de falso-positivo que
-    dedup, que sólo decide qué queda en la galería. Corregido a 6% para matchear de
-    verdad. TODO centralización real: idealmente los 3 umbrales (THUMB_MAX_SIDE/
-    THUMB_HAMMING/THUMB_ASPECT_TOL) viven en UNA constante compartida importada por
-    ambos scripts — hoy están duplicados acá y en dedup_carousel_images.py porque
-    ninguno de los dos es el lugar canónico. No se centralizó en este cambio: ese
-    archivo lo toca otro agente en paralelo y `fetch_better_covers.py` [candidato
-    natural, ya es la fuente única de LOW_QUALITY_PX/SOFT_GUARD_PX/DETAIL_RATIO_MIN/
-    DEFAULT_MAX_HASH_DIST] no está en el alcance de este paquete).
+    (14/64 bits) + aspect ratio ≤ THUMB_ASPECT_TOL (6%). Centralizado en
+    `image_store.THUMB_ASPECT_TOL` (2026-07-08, hallazgo #12): antes duplicado acá y
+    en dedup_carousel_images.py con drift real (0.12 vs 0.06, corregido en el
+    hallazgo #3 previo) — ahora ambos scripts importan la MISMA constante, así que
+    un futuro ajuste del umbral no puede volver a driftear entre los dos. THUMB_MAX_SIDE
+    y THUMB_HAMMING siguen duplicados (no forman parte de este paquete de fixes) pero
+    son menos sensibles al drift: no mutan la portada por sí solos, solo definen qué
+    par se considera "thumbnail↔full" antes de aplicar el umbral ya centralizado.
   - Si no es un par thumbnail↔full → usamos _same_cover (AND-gate estricto).
 
   El thumbnail NO se elimina: queda en la galería; dedup_carousel_images.py
@@ -54,6 +50,7 @@ if str(_RETROFIT) not in sys.path:
     sys.path.insert(0, str(_RETROFIT))
 
 import fetch_better_covers as fbc  # noqa: E402
+import image_store  # noqa: E402  (fuente única de THUMB_ASPECT_TOL, hallazgo #12)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
     from manga_watch import backup_and_rotate, is_approved  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
@@ -71,12 +68,12 @@ LOW_PX_THRESHOLD = fbc.LOW_QUALITY_PX
 # estricto de _same_cover. Usamos un umbral relajado para este par específico.
 THUMB_MAX_SIDE = 170    # lado menor que delata un thumbnail
 THUMB_HAMMING = 14      # umbral relajado para par thumbnail↔full
-# Hallazgo #3 (2026-07-08): estaba en 0.12 con el comentario "mismo que dedup",
-# pero dedup_carousel_images.py usa 0.06 — drift real, no cosmético: este es el
-# ÚNICO script que muta images[0] SIN cola de revisión, así que un aspect ratio
-# más laxo que el de dedup es más superficie de falso-positivo, no menos. Ver
-# nota de centralización en el docstring del módulo.
-THUMB_ASPECT_TOL = 0.06  # aspect ratio ±6% (alineado a dedup_carousel_images.py)
+# Centralizado en image_store.THUMB_ASPECT_TOL (2026-07-08, hallazgo #12):
+# antes duplicado acá y en dedup_carousel_images.py, con drift real (0.12 vs
+# 0.06) — este es el ÚNICO script que muta images[0] SIN cola de revisión, así
+# que un aspect ratio más laxo que el de dedup es más superficie de
+# falso-positivo, no menos (ya corregido a 0.06 en el hallazgo #3 previo).
+THUMB_ASPECT_TOL = image_store.THUMB_ASPECT_TOL
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

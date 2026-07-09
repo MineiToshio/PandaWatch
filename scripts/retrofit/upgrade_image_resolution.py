@@ -65,13 +65,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import struct
 import sys
-import zlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qsl, urlparse
 
 _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
 if str(_SCRIPTS) not in sys.path:
@@ -148,8 +146,6 @@ _WHAKOOM_SIZE_RE = re.compile(r"/(small|thumb|medium)/", re.IGNORECASE)
 # ⚠️  ~20% de CDNs Magento sirven imagen distinta sin el cache path.
 # Requiere validación same_cover antes de aceptar.
 _MAGENTO_CACHE_RE = re.compile(r"/media/catalog/product/cache/[^/]+/")
-# Marcador para que _try_upgrade sepa que este patrón requiere same_cover
-NEEDS_SAME_COVER_VALIDATION = "__needs_same_cover__"
 
 
 def derive_original_url(url: str) -> str | None:
@@ -254,77 +250,33 @@ def needs_same_cover_validation(url: str) -> bool:
 # Comparación de dimensiones de imagen
 # ─────────────────────────────────────────────────────────
 
-def _image_dimensions_from_bytes(data: bytes) -> tuple[int, int] | None:
-    """Extrae (width, height) de los primeros bytes de una imagen.
-
-    Soporta JPEG, PNG, GIF, WebP, AVIF.  Devuelve None si no puede leer.
-    No requiere dependencias externas — usa struct puro.
-    """
-    if len(data) < 24:
-        return None
-
-    # PNG: magic b'\x89PNG', ancho/alto en bytes 16-24 (big-endian uint32)
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        try:
-            w, h = struct.unpack(">II", data[16:24])
-            return w, h
-        except struct.error:
-            return None
-
-    # GIF: magic GIF87a/GIF89a, ancho/alto en bytes 6-10 (little-endian uint16)
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        try:
-            w, h = struct.unpack("<HH", data[6:10])
-            return w, h
-        except struct.error:
-            return None
-
-    # WebP: bytes 0-3 RIFF, 8-12 WEBP, ancho/alto en el chunk VP8/VP8L
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        # VP8 lossy: ancho/alto en bytes 26-30
-        if data[12:16] == b"VP8 " and len(data) >= 30:
-            try:
-                w = (struct.unpack_from("<H", data, 26)[0] & 0x3FFF) + 1
-                h = (struct.unpack_from("<H", data, 28)[0] & 0x3FFF) + 1
-                return w, h
-            except struct.error:
-                pass
-        # VP8L lossless: bits comprimidos, skip
-        return None
-
-    # JPEG: busca el marcador SOF (Start of Frame) — 0xFF 0xC0..0xC3
-    if data[:3] == b"\xff\xd8\xff":
-        i = 2
-        while i + 4 < len(data):
-            if data[i] != 0xFF:
-                break
-            marker = data[i + 1]
-            if marker in (0xC0, 0xC1, 0xC2, 0xC3):
-                if i + 9 < len(data):
-                    h, w = struct.unpack(">HH", data[i + 5 : i + 9])
-                    return w, h
-                break
-            # Saltamos al siguiente marcador
-            if i + 4 > len(data):
-                break
-            length = struct.unpack(">H", data[i + 2 : i + 4])[0]
-            i += 2 + length
-        return None
-
-    return None
-
-
 def _pixels(path: Path) -> int | None:
-    """Devuelve el total de píxeles de la imagen en `path`, o None si falla."""
+    """Devuelve el total de píxeles de la imagen en `path`, o None si falla.
+
+    Delega en `fetch_better_covers._get_pixels_from_bytes` (hallazgo #1,
+    2026-07-08, ALTA) en vez de reimplementar un 3er parser binario: éste era
+    el ÚNICO de los tres (junto a `upscale_images.py`/`fetch_better_covers.py`)
+    que no tenía rama AVIF ni fallback PIL. Como el espejo local está ~100%
+    AVIF, el gate `--min-gain` terminaba comparando tamaño de ARCHIVO en vez
+    de píxeles reales (mismo bug que gotchas #124/#132, ya cerrado en los
+    otros dos scripts). Fallback final a `len(data)` (proxy de tamaño) si no
+    se puede determinar — mismo comportamiento degradado que antes cuando
+    ningún parser reconoce el formato.
+    """
     try:
         data = path.read_bytes()
-        dims = _image_dimensions_from_bytes(data)
-        if dims:
-            return dims[0] * dims[1]
-        # Fallback: size en bytes como proxy
-        return len(data)
     except OSError:
         return None
+    try:
+        # Import tardío (mismo patrón que _try_upgrade abajo): fetch_better_covers
+        # es un módulo de retrofit con dependencias opcionales (PIL/bs4).
+        import fetch_better_covers as _fbc  # type: ignore  # noqa: PLC0415
+        px = _fbc._get_pixels_from_bytes(data)
+        if px:
+            return px
+    except ImportError:
+        pass
+    return len(data)
 
 
 # ─────────────────────────────────────────────────────────
@@ -409,21 +361,28 @@ def _try_upgrade(
 
         # ── Validación same_cover para Magento cache path ──
         # ~20% de los CDNs Magento devuelven una imagen distinta al quitar el
-        # cache path (ej. bdfugue sirve la imagen de otro producto). Solo
-        # rechazamos si hay old_path local para comparar.
+        # cache path (ej. bdfugue sirve la imagen de otro producto). Con
+        # referencia local disponible, la identidad DEBE poder validarse —
+        # cualquier capa incomputable es un rechazo, no un pase (hallazgo #4,
+        # 2026-07-08: fail-closed, gotcha #131 — antes el `except (ImportError,
+        # Exception): pass` era fail-open y contradecía esa convención).
         if needs_same_cover_validation(old_url):
             try:
-                # Importación tardía: fetch_better_covers es un módulo de retrofit
-                # que tiene PIL como dependencia opcional. Si no está disponible,
-                # permitimos la imagen igualmente (la ganancia de píxeles ya es
-                # un indicador razonable; el GC + dedup_carousel limpiarán errores).
                 import fetch_better_covers as _fbc  # type: ignore  # noqa: PLC0415
-                old_bytes = old_path.read_bytes() if old_path.exists() else b""
+                old_bytes = old_path.read_bytes()
                 new_bytes = new_path.read_bytes()
-                if old_bytes and not _fbc._same_cover(old_bytes, new_bytes):
+                if not old_bytes or not _fbc._same_cover(old_bytes, new_bytes):
                     return None
-            except (ImportError, Exception):
-                pass  # Sin PIL o error: permitir; la comparación de píxeles es suficiente
+            except ImportError:
+                # Sin fetch_better_covers/PIL no hay CÓMO validar identidad para
+                # un patrón que la EXIGE — rechazar, no asumir que está bien.
+                return None
+    elif needs_same_cover_validation(old_url):
+        # Sin espejo local de referencia no hay contra qué validar identidad
+        # para un patrón que la requiere (hallazgo #4, 2026-07-08): antes se
+        # aceptaba a ciegas (`old_path` vacío saltaba todo este bloque). Ahora
+        # fail-closed, igual que con referencia mala/incomputable arriba.
+        return None
 
     return new_url, new_local
 
@@ -522,8 +481,6 @@ def run(
 
     # Dedup: si el mismo URL aparece en varios items, procesamos 1 vez y
     # aplicamos el resultado a todos.
-    url_to_result: dict[str, tuple[str, str] | None] = {}
-
     # Construimos una lista de (item, campo, old_url, old_local) con dedup por URL.
     # item_url se guarda para pasarlo como Referer en la descarga.
     unique_by_url: dict[str, list[tuple[dict, str, str]]] = {}
@@ -553,7 +510,6 @@ def run(
                 print(f"  {completed}/{len(unique_targets)} procesadas...", flush=True)
             try:
                 result = future.result()
-                url_to_result[old_url] = result
                 if result is not None:
                     # Aplica y guarda inmediatamente los items con esta URL
                     new_url, new_local = result
@@ -567,7 +523,9 @@ def run(
                 else:
                     counter["no_gain"] += 1
             except Exception as exc:
-                url_to_result[old_url] = None
+                # Hallazgo #13 (2026-07-08): antes se tragaba sin log — una corrida
+                # con muchos errores terminaba en "Errores: 40" sin ninguna pista.
+                print(f"  ⚠ WARN [{old_url[:70]}]: {type(exc).__name__}: {exc}", flush=True)
                 counter["no_gain"] += 1
                 counter["errors"] += 1
 

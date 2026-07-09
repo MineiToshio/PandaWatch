@@ -182,7 +182,11 @@ def _run_backfill(
     failed_urls = 0
     done = 0
     total = len(by_url)
-    _FLUSH_EVERY = 200  # flush items.jsonl cada N URLs procesadas (no pérdida si se cancela)
+    # Convención dura (docs/reference/conventions.md § "Flush incremental"):
+    # default 50, no 200 (hallazgo #15, 2026-07-08) — un write único más
+    # espaciado deja más trabajo sin persistir si el proceso muere a mitad
+    # de una corrida larga sobre miles de URLs.
+    _FLUSH_EVERY = 50  # flush items.jsonl cada N URLs procesadas (no pérdida si se cancela)
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="mirror") as pool:
         for fut in as_completed(pool.submit(_one, e) for e in by_url.items()):
             consumers, filename = fut.result()

@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -41,9 +40,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import image_store  # noqa: E402  (fuente única de placeholder_reason + placeholders conocidos)
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import is_approved  # noqa: E402
+    from manga_watch import backup_and_rotate, is_approved  # noqa: E402
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import is_approved  # noqa: E402
+    from scripts.manga_watch import backup_and_rotate, is_approved  # noqa: E402
 
 ITEMS = ROOT / "data" / "items.jsonl"
 IMAGES = ROOT / "data" / "images"
@@ -308,13 +307,14 @@ def main() -> int:
         print("[DRY-RUN] no se escribió nada.")
         return 0
 
-    # backup + escritura atómica
-    backup = ITEMS.with_suffix(".jsonl.pre-purge-placeholder-bak")
-    shutil.copy(ITEMS, backup)
+    # backup (convención dura, hallazgo #6, 2026-07-08: backup_and_rotate en vez
+    # de un slot fijo propio) + escritura atómica con sort_keys (idempotencia
+    # byte-idéntica entre corridas).
+    backup = backup_and_rotate(ITEMS, "purge-placeholder")
     tmp = ITEMS.with_suffix(".jsonl.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
         for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
     tmp.replace(ITEMS)
     print(f"[purge] escrito {ITEMS}. Backup: {backup}")
 
