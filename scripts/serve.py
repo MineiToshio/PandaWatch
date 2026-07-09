@@ -124,12 +124,23 @@ if _RETRO_DIR not in sys.path:
     sys.path.insert(0, _RETRO_DIR)
 try:
     from sync_cover_preview import sync_preview as _sync_preview  # type: ignore
+    # Hallazgo #1 (ALTA, 2026-07-08): el GET persiste — necesita el MISMO guard
+    # que el CLI (catalog_is_sane) y el loader que cuenta líneas corruptas
+    # (_load_items_by_slug), no `_load_items()` (no cuenta malformed_lines).
+    from sync_cover_preview import catalog_is_sane as _catalog_is_sane  # type: ignore
+    from sync_cover_preview import _load_items_by_slug as _cp_load_items_by_slug  # type: ignore
     _SYNC_OK = True
 except ImportError:
     _SYNC_OK = False
 
     def _sync_preview(preview, items_by_slug, images_dir):  # type: ignore[misc]
         return preview, {}
+
+    def _catalog_is_sane(preview, items_by_slug, malformed_lines):  # type: ignore[misc]
+        return True, ""
+
+    def _cp_load_items_by_slug(items_path):  # type: ignore[misc]
+        return {}, 0
 
 
 # ---------------------------------------------------------------------------
@@ -1975,6 +1986,15 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         como STRING (token opaco): st_mtime_ns excede 2^53 y un Number de JS lo
         redondearía (409 espurio). El frontend lo devuelve tal cual como
         expected_mtime del guard anti-race.
+
+        Hallazgo #1 (ALTA, 2026-07-08): este endpoint PERSISTE lo que sync_preview()
+        devuelve, así que si items.jsonl no cargó bien (ausente/truncado/con líneas
+        corruptas), `sync_preview()` vería cada slug de la cola como "item borrado"
+        y un solo GET purgaría la cola entera. Antes de sincronizar corremos el
+        mismo guard que el CLI (`catalog_is_sane`); si el catálogo no parece sano,
+        DEGRADAMOS a solo-lectura: servimos la cola TAL CUAL está en disco (sin
+        sincronizar ni podar nada) y logueamos WARN — nunca persistimos sobre un
+        catálogo que no cargó.
         """
         dst = ROOT / "data" / "cover_preview.json"
         if not dst.exists():
@@ -1987,16 +2007,33 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             self._json(500, {"error": f"No se pudo leer cover_preview.json: {e}"})
             return
 
-        # Cargar items indexados por slug (igual que _load_items pero indexado).
-        items = _load_items()
-        items_by_slug: dict[str, dict] = {
-            it["slug"]: it for it in items if it.get("slug")
-        }
+        # Cargar items indexados por slug — vía sync_cover_preview._load_items_by_slug
+        # (no _load_items(): ese loader NO cuenta líneas que no parsean como JSON,
+        # y el guard de abajo necesita ese conteo).
+        items_by_slug, malformed_lines = _cp_load_items_by_slug(ITEMS_PATH)
+
+        ok, reason = _catalog_is_sane(preview, items_by_slug, malformed_lines)
+        if not ok:
+            sys.stderr.write(
+                f"[serve][WARN] GET /api/cover-preview: catálogo no parece sano, "
+                f"degradando a solo-lectura (no se sincroniza ni persiste): {reason}\n"
+            )
+            self._json(200, {
+                "entries": preview,
+                "mtime": _mtime_token(dst),
+                "synced": {"degraded": True, "reason": reason},
+                "approved_unapplied": _count_approved_unapplied(preview),
+            })
+            return
 
         synced, stats = _sync_preview(preview, items_by_slug, IMAGES_DIR)
 
-        # Si hubo cambios, persistir atómicamente.
-        changed = len(synced) != len(preview) or any(v > 0 for v in stats.values())
+        # Si hubo cambios, persistir atómicamente. Hallazgo #4: comparación
+        # profunda en vez de counters — un stats dict de puros ceros (o de claves
+        # que la versión mockeada de _sync_preview no puebla) puede convivir con
+        # un refresh real de Regla 2 (old_url/old_pixels/current_images/publisher/
+        # country) que antes se perdía silenciosamente.
+        changed = synced != preview
         if changed:
             tmp = dst.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")

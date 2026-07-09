@@ -104,9 +104,12 @@ def _surviving_candidate_keys(
 def _pixels_on_disk(local: str | None, images_dir: Path) -> int:
     """Píxeles del archivo local vía PIL (0 si no existe / ilegible / sin PIL).
 
-    Se reusa `_get_local_pixels` de sync (fuente única, PIL): el parser de bytes
-    del motor (`_get_pixels_from_bytes`) NO cubre AVIF y las imágenes del espejo
-    están normalizadas a AVIF Q60 → devolvería 0 para todas."""
+    Se reusa `_get_local_pixels` de sync (fuente única, PIL). Nota (hallazgo #11,
+    2026-07-08): el comentario anterior decía que `fbc._get_pixels_from_bytes`
+    NO cubre AVIF — eso ya no es cierto, el gate #132 le agregó fallback PIL vía
+    `_get_dims_from_bytes` y SÍ mide AVIF correctamente. Igual delegamos acá en
+    `_get_local_pixels` porque partimos de un Path (no de bytes ya leídos) y así
+    evitamos una lectura+decode redundante del archivo."""
     return _get_local_pixels(local, images_dir)
 
 
@@ -281,8 +284,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     preview: list[dict] = json.loads(PREVIEW_PATH.read_text(encoding="utf-8"))
-    items_by_slug = _load_items_by_slug(ITEMS_PATH)
-    print(f"Entries: {len(preview)} | items en catálogo: {len(items_by_slug)}")
+    items_by_slug, malformed = _load_items_by_slug(ITEMS_PATH)
+    print(f"Entries: {len(preview)} | items en catálogo: {len(items_by_slug)}"
+          + (f" ({malformed} línea(s) corrupta(s) ignoradas)" if malformed else ""))
 
     new_preview, stats = revalidate_preview(preview, items_by_slug, IMAGES_DIR)
     _print_report(stats)

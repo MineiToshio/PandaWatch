@@ -29,9 +29,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
-    from manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+    from manga_watch import (  # noqa: E402
+        IMAGE_URL_BAD_PATTERNS,
+        _img_stem,
+        backup_and_rotate,
+        is_approved,
+    )
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import IMAGE_URL_BAD_PATTERNS, backup_and_rotate  # noqa: E402
+    from scripts.manga_watch import (  # noqa: E402
+        IMAGE_URL_BAD_PATTERNS,
+        _img_stem,
+        backup_and_rotate,
+        is_approved,
+    )
 try:
     import image_store  # noqa: E402
     from image_store import normalize_image_url  # noqa: E402
@@ -49,10 +59,18 @@ def _basename(url: str) -> str:
 
 
 def _norm(url: str) -> str:
-    # Normaliza para dedup: sin query, sin esquema (http/https son la misma
-    # imagen) y en minúsculas.
-    n = normalize_image_url((url or "").split("?")[0]).lower()
-    return n.split("://", 1)[-1]
+    """Clave de dedup para "misma imagen". Hallazgo #10 (2026-07-08): antes esto
+    era un cuarto criterio propio (split query + normalize_image_url + lower),
+    divergente de `manga_watch._img_stem` — la clave canónica que usa
+    `merge_cluster` y que images.md documenta con "paridad de 3 lugares". Ahora
+    compone AMBOS normalizadores: `image_store.normalize_image_url` (sufijo
+    WordPress -NxM + query params de resize Magento — casos que _img_stem no
+    cubre) seguido de `_img_stem` (sufijo CDN estilo Shopify _NxN/_grande/_small,
+    query v/version/t/etc, esquema, minúsculas — la clave canónica del carrusel).
+    """
+    if not url:
+        return ""
+    return _img_stem(normalize_image_url(url))
 
 
 def _is_junk(url: str) -> bool:
@@ -97,8 +115,17 @@ def _compute_junk_local(items: list[dict], images_dir: Path) -> set[str]:
                 f2works[f].add(w)
     junk = set()
     for f, works in f2works.items():
-        sz = sizes.get(f, 0)
-        if sz == 0:                                   # 0 bytes / no existe
+        # Hallazgo #2 (ALTA, 2026-07-08): "no existe en el espejo" y "existe con
+        # 0 bytes" NO son lo mismo. Antes `sizes.get(f, 0)` los igualaba: si
+        # `images_dir` no existe (o el archivo simplemente no se mirroreó
+        # todavía), CADA local caía acá con sz==0 → se clasificaba TODO como
+        # basura y `_fix_bad_cover` arrasaba portadas en masa. "No existe" es
+        # un skip legítimo (borrado/nunca descargado); sólo "existe pero pesa
+        # 0 bytes" es basura real (descarga corrupta/truncada).
+        if f not in sizes:
+            continue                                   # no existe en el espejo — NO es basura
+        sz = sizes[f]
+        if sz == 0:                                    # existe pero 0 bytes → corrupto
             junk.add(f)
         elif sz < _TINY_BYTES:                        # píxeles / íconos / garabatos
             junk.add(f)
@@ -163,10 +190,14 @@ def _fix_bad_cover(item: dict) -> bool:
     if not _img_is_junk(iu, il):
         return False
     imgs = item.get("images") or []
-    # Busca la primera imagen REAL del resto de la galería y la promueve a portada
-    # (images[0]), descartando la portada basura. Si no hay ninguna real, limpia.
+    # Busca la primera imagen REAL de GALERÍA del resto y la promueve a portada
+    # (images[0]), descartando la portada basura. Hallazgo #8 (2026-07-08): sólo
+    # `kind: "gallery"` es elegible — un "extra" (postal/shikishi) NUNCA debe
+    # terminar de portada, es un bonus que viene CON el producto, no la ficha.
     for i, im in enumerate(imgs):
         if i == 0 or not isinstance(im, dict):
+            continue
+        if im.get("kind", "gallery") != "gallery":
             continue
         u = im.get("url") or ""
         loc = im.get("local") or ""
@@ -174,7 +205,12 @@ def _fix_bad_cover(item: dict) -> bool:
             # La buena pasa a portada (pos 0); el resto de la galería se conserva.
             item["images"] = [im] + [g for j, g in enumerate(imgs) if j not in (0, i)]
             return True
-    item["images"] = []
+    # Sin reemplazo de galería válido: quitamos SOLO la portada basura (pos 0) y
+    # conservamos el resto TAL CUAL (extras legítimas incluidas) — `_rebuild()`
+    # se encarga de la limpieza de basura/dups en las posiciones restantes.
+    # Hallazgo #8: antes esto hacía `item["images"] = []`, perdiendo postales/
+    # shikishis que no eran basura junto con la portada mala.
+    item["images"] = imgs[1:]
     return True
 
 
@@ -246,17 +282,27 @@ def _rebuild(item: dict) -> bool:
 
 
 def run(items_path: Path, *, dry_run: bool, include_approved: bool) -> None:
+    images_dir = items_path.parent / "images"
+    # Hallazgo #2 (ALTA, 2026-07-08): si el espejo no existe, `_compute_junk_local`
+    # no tiene forma de distinguir "archivo borrado/nunca mirroreado" de "archivo
+    # corrupto de 0 bytes" — TODO local caería en la rama junk y `_fix_bad_cover`
+    # arrasaría portadas en masa. Abortamos ANTES de tocar nada.
+    if not images_dir.exists():
+        print(f"[sync-cover-images] ABORT: {images_dir} no existe — nada que limpiar "
+              f"(evita clasificar TODO el espejo local como basura).")
+        return
+
     items = [json.loads(l) for l in items_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     # Detectar archivos locales basura (0 bytes / <6KB píxeles-íconos / placeholder
     # compartido por >=4 series) para removerlos como portada y de la galería.
     global _JUNK_LOCAL
-    _JUNK_LOCAL = _compute_junk_local(items, items_path.parent / "images")
+    _JUNK_LOCAL = _compute_junk_local(items, images_dir)
     if _JUNK_LOCAL:
         print(f"Archivos locales basura detectados (placeholder/píxel/ad): {len(_JUNK_LOCAL)}")
     changed = skipped_approved = bad_covers = 0
     examples = []
     for it in items:
-        if it.get("approved_at") and not include_approved:
+        if is_approved(it) and not include_approved:
             skipped_approved += 1
             continue
         before = len(it.get("images") or [])
@@ -292,7 +338,10 @@ def run(items_path: Path, *, dry_run: bool, include_approved: bool) -> None:
     backup_and_rotate(items_path, "sync-cover-images")
     with items_path.open("w", encoding="utf-8") as fh:
         for it in items:
-            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+            # Hallazgo #12: sort_keys=True — el resto de los escritores de
+            # items.jsonl lo usa; sin esto, este era el único escritor cuya
+            # serialización dependía del orden de inserción de cada dict.
+            fh.write(json.dumps(it, ensure_ascii=False, sort_keys=True) + "\n")
     print(f"\n✓ Escrito {items_path} ({changed} items modificados).")
 
 

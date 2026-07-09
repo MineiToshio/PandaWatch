@@ -16,7 +16,18 @@ caso documentado gotcha #39):
 
   - Si la portada actual es un thumbnail (lado menor ≤ THUMB_MAX_SIDE) y la candidata
     es ≥ 2× más grande en su lado menor → par thumbnail↔full → aHash ≤ THUMB_HAMMING
-    (14/64 bits) + aspect ratio ≤ THUMB_ASPECT_TOL (12%).
+    (14/64 bits) + aspect ratio ≤ THUMB_ASPECT_TOL (6% — hallazgo #3, 2026-07-08: este
+    script decía "12%, igual que dedup" pero dedup_carousel_images.py en realidad usa
+    6% (`THUMB_ASPECT_TOL = 0.06`); el 12% era más laxo y este es el ÚNICO script que
+    muta la portada SIN cola de revisión → más superficie de falso-positivo que
+    dedup, que sólo decide qué queda en la galería. Corregido a 6% para matchear de
+    verdad. TODO centralización real: idealmente los 3 umbrales (THUMB_MAX_SIDE/
+    THUMB_HAMMING/THUMB_ASPECT_TOL) viven en UNA constante compartida importada por
+    ambos scripts — hoy están duplicados acá y en dedup_carousel_images.py porque
+    ninguno de los dos es el lugar canónico. No se centralizó en este cambio: ese
+    archivo lo toca otro agente en paralelo y `fetch_better_covers.py` [candidato
+    natural, ya es la fuente única de LOW_QUALITY_PX/SOFT_GUARD_PX/DETAIL_RATIO_MIN/
+    DEFAULT_MAX_HASH_DIST] no está en el alcance de este paquete).
   - Si no es un par thumbnail↔full → usamos _same_cover (AND-gate estricto).
 
   El thumbnail NO se elimina: queda en la galería; dedup_carousel_images.py
@@ -60,7 +71,12 @@ LOW_PX_THRESHOLD = fbc.LOW_QUALITY_PX
 # estricto de _same_cover. Usamos un umbral relajado para este par específico.
 THUMB_MAX_SIDE = 170    # lado menor que delata un thumbnail
 THUMB_HAMMING = 14      # umbral relajado para par thumbnail↔full
-THUMB_ASPECT_TOL = 0.12  # aspect ratio ±12% (mismo que dedup, normal tolerance)
+# Hallazgo #3 (2026-07-08): estaba en 0.12 con el comentario "mismo que dedup",
+# pero dedup_carousel_images.py usa 0.06 — drift real, no cosmético: este es el
+# ÚNICO script que muta images[0] SIN cola de revisión, así que un aspect ratio
+# más laxo que el de dedup es más superficie de falso-positivo, no menos. Ver
+# nota de centralización en el docstring del módulo.
+THUMB_ASPECT_TOL = 0.06  # aspect ratio ±6% (alineado a dedup_carousel_images.py)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -88,31 +104,22 @@ def _write_items(dst: Path, items: list[dict]) -> None:
     tmp.replace(dst)
 
 
-def _px(local: str) -> int:
-    """Devuelve w*h de una imagen local, o 0 si no se puede leer."""
+def _read_and_px(local: str) -> tuple[bytes, int]:
+    """Lee el archivo UNA sola vez y devuelve (bytes, w*h). Hallazgo #13
+    (2026-07-08): antes `_px(local)` y `_read_local(local)` se llamaban por
+    separado para el MISMO archivo (portada y cada candidata) — 2 reads c/u.
+    (b"", 0) si no existe / no se puede leer."""
     if not local:
-        return 0
+        return b"", 0
     path = IMAGES / local
     if not path.exists():
-        return 0
+        return b"", 0
     try:
         data = path.read_bytes()
     except OSError:
-        return 0
+        return b"", 0
     w, h = fbc._get_dims_from_bytes(data)
-    return w * h
-
-
-def _read_local(local: str) -> bytes:
-    if not local:
-        return b""
-    path = IMAGES / local
-    if not path.exists():
-        return b""
-    try:
-        return path.read_bytes()
-    except OSError:
-        return b""
+    return data, w * h
 
 
 # ── core ──────────────────────────────────────────────────────────────────────
@@ -158,11 +165,19 @@ def _is_same_cover(bytes0: bytes, bytes_k: bytes) -> bool:
         return fbc._same_cover(bytes0, bytes_k)
 
 
-def _best_hires_idx(item: dict) -> tuple[int, int] | None:
+def _best_hires_idx(
+    item: dict,
+    cover_bytes: bytes | None = None,
+    cover_px: int | None = None,
+) -> tuple[int, int] | None:
     """
     Busca el índice k≥1 con local existente, px≥LOW_PX_THRESHOLD,
     y que sea la misma portada que images[0]. Devuelve (k, px_del_k)
     del mejor candidato (mayor px), o None si no hay.
+
+    `cover_bytes`/`cover_px` opcionales — si el caller ya los leyó (`run()` los
+    necesita para decidir si examina el item), se reusan en vez de releer el
+    archivo (hallazgo #13).
     """
     imgs = item.get("images") or []
     if len(imgs) < 2:
@@ -170,11 +185,10 @@ def _best_hires_idx(item: dict) -> tuple[int, int] | None:
 
     cover = imgs[0]
     cover_local = cover.get("local") or ""
-    cover_px = _px(cover_local)
+    if cover_bytes is None or cover_px is None:
+        cover_bytes, cover_px = _read_and_px(cover_local)
     if cover_px <= 0 or cover_px >= LOW_PX_THRESHOLD:
         return None  # portada ya aceptable (o sin local)
-
-    cover_bytes = _read_local(cover_local)
     if not cover_bytes:
         return None
 
@@ -185,15 +199,14 @@ def _best_hires_idx(item: dict) -> tuple[int, int] | None:
         local_k = im.get("local") or ""
         if not local_k:
             continue
-        px_k = _px(local_k)
+        bytes_k, px_k = _read_and_px(local_k)
         if px_k < LOW_PX_THRESHOLD:
             continue
         if px_k <= best_px:
             continue  # ya hay una mejor
-        # Verificar identidad
-        bytes_k = _read_local(local_k)
         if not bytes_k:
             continue
+        # Verificar identidad
         if not _is_same_cover(cover_bytes, bytes_k):
             continue
         best_k = k
@@ -220,12 +233,12 @@ def run(items_path: Path, dry_run: bool, *, include_approved: bool = False) -> N
         if len(imgs) < 2:
             continue
         cover_local = (imgs[0].get("local") or "")
-        cover_px = _px(cover_local)
+        cover_bytes, cover_px = _read_and_px(cover_local)
         if cover_px <= 0 or cover_px >= LOW_PX_THRESHOLD:
             continue  # portada ya grande o sin local → omitir
         examined += 1
 
-        result = _best_hires_idx(it)
+        result = _best_hires_idx(it, cover_bytes=cover_bytes, cover_px=cover_px)
         if result is None:
             continue
 

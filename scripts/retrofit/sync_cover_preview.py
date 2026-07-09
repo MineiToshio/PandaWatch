@@ -34,30 +34,60 @@ IMAGES_DIR = ROOT / "data" / "images"
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
 import fetch_better_covers as fbc  # noqa: E402  (fuente única del umbral)
 
+_SCRIPTS_DIR = ROOT / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
+    from manga_watch import backup_and_rotate  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate  # noqa: E402
+
 # F16 — umbral ÚNICO de baja calidad: se IMPORTA del motor, no se redefine.
 # La banda 90k-100k generaba churn (el motor buscaba candidatas que sync podaba
 # al instante); por eso los tres consumidores comparten el mismo valor.
 LOW_QUALITY_PX = fbc.LOW_QUALITY_PX  # mismo umbral del skill / panel de calidad
+
+# Hallazgo #1 (auditoría 2026-07-08): si items.jsonl no cargó (ausente/vacío/
+# truncado) o cargó con líneas corruptas, cada slug de la cola se ve como "item
+# borrado" y sync_preview() la purga entera (Regla 1). Guard duro: abortar si
+# el catálogo no parece sano ANTES de sincronizar/persistir.
+MISSING_SLUG_RATIO_MAX = 0.20  # >20% de slugs sin match en el catálogo → abortar
 
 
 # ---------------------------------------------------------------------------
 # PIL (solo para recalcular píxeles del archivo local)
 # ---------------------------------------------------------------------------
 
+# Hallazgo #13 (perf): el panel llama sync_preview() en CADA GET /api/cover-preview
+# (serve.py mantiene el proceso vivo entre requests), y sync_preview() abre con PIL
+# CADA imagen de CADA galería del catálogo para recalcular píxeles. Cache en memoria
+# por (ruta, mtime_ns) — se invalida sola si el archivo cambia (re-mirror/upgrade),
+# y evita reabrir con PIL algo que no cambió desde el último request.
+_PIXELS_CACHE: dict[str, tuple[int, int]] = {}
+
+
 def _get_local_pixels(local: str | None, images_dir: Path) -> int:
     """Devuelve píxeles de la imagen local, 0 si no existe o no hay PIL."""
     if not local or local == "[dry-run]":
         return 0
     path = images_dir / local
-    if not path.exists():
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
         return 0
+    key = str(path)
+    cached = _PIXELS_CACHE.get(key)
+    if cached is not None and cached[0] == mtime_ns:
+        return cached[1]
     try:
         from PIL import Image  # type: ignore
         with Image.open(path) as img:
             w, h = img.size
-            return w * h
+            px = w * h
     except Exception:
-        return 0
+        px = 0
+    _PIXELS_CACHE[key] = (mtime_ns, px)
+    return px
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +122,44 @@ def _ledger_record_from_candidate(entry: dict, cand: dict, images_dir: Path) -> 
     }
 
 
+def catalog_is_sane(
+    preview: list[dict],
+    items_by_slug: dict[str, dict],
+    malformed_lines: int,
+) -> tuple[bool, str]:
+    """Hallazgo #1 (ALTA, auditoría 2026-07-08): guard duro ANTES de sincronizar.
+
+    `sync_preview()` trata cualquier slug ausente de `items_by_slug` como "item
+    borrado" (Regla 1: elimina la entry, sus approved-sin-aplicar se pierden, las
+    rejected van al ledger). Si `items.jsonl` no cargó bien (falta, está vacío,
+    quedó truncado a mitad de escritura, o el loader tragó líneas con
+    `JSONDecodeError`), TODOS los slugs de la cola matchean como "borrados" y un
+    solo request purga la cola entera. Este guard corre un pre-scan barato (sin
+    tocar disco de nuevo) y aborta si el catálogo no parece sano.
+
+    Devuelve (ok, motivo). `ok=False` ⇒ el caller NO debe llamar sync_preview()
+    ni persistir nada (CLI: abortar; GET: degradar a solo-lectura).
+    """
+    if malformed_lines > 0:
+        return False, (
+            f"{malformed_lines} línea(s) de items.jsonl no parsearon como JSON "
+            "(archivo truncado/corrupto)"
+        )
+    if not items_by_slug:
+        if not preview:
+            return True, ""  # nada que sincronizar, catálogo vacío es inofensivo
+        return False, "items_by_slug vacío pero la cola tiene entries — catálogo no cargó"
+    if preview:
+        missing = sum(1 for e in preview if (e.get("slug", "")) not in items_by_slug)
+        ratio = missing / len(preview)
+        if ratio > MISSING_SLUG_RATIO_MAX:
+            return False, (
+                f"{missing}/{len(preview)} slugs de la cola ({ratio:.0%}) no matchean "
+                f"ningún item del catálogo — supera el {MISSING_SLUG_RATIO_MAX:.0%}"
+            )
+    return True, ""
+
+
 def sync_preview(
     preview: list[dict],
     items_by_slug: dict[str, dict],
@@ -118,6 +186,15 @@ def sync_preview(
       - pruned_target_ok:      candidatas pending de replace_image podadas porque
                                la foto target ya es ≥ LOW_QUALITY_PX.
       - pruned_already_current: candidatas cuya new_url ya es la portada actual.
+      - gc_orphans_removed:    archivos de candidatas podadas/dropeadas borrados del
+                               espejo porque quedaron huérfanos (hallazgo #14) — sólo
+                               si `write_ledger=True` (mismo flag que gatea el ledger;
+                               ver nota en el parámetro).
+
+    `write_ledger` controla TODOS los efectos secundarios reales (ledger append +
+    GC de huérfanos), no sólo el ledger — así `revalidate_cover_preview.py` puede
+    llamar esta función como probe puro (`write_ledger=False`) sobre una copia sin
+    tocar disco.
     """
     stats: dict[str, int] = {
         "dropped_missing_item": 0,
@@ -127,6 +204,7 @@ def sync_preview(
         "pruned_target_ok": 0,
         "pruned_already_current": 0,
         "pixels_recomputed": 0,
+        "gc_orphans_removed": 0,
     }
 
     _REPLACE_COVER_ACTIONS = frozenset({
@@ -136,6 +214,10 @@ def sync_preview(
     })
 
     result: list[dict] = []
+    # Hallazgo #14: filenames de candidatas que dejaron de estar referenciadas por
+    # la cola tras podar/dropear — se GC-ean al final SI no las usa nada más
+    # (ni el catálogo real, ni otra entry/candidata que sobrevivió).
+    _gc_candidates: list[str] = []
 
     for entry in preview:
         slug = entry.get("slug", "")
@@ -151,6 +233,12 @@ def sync_preview(
                         fbc.ledger_append(
                             _ledger_record_from_candidate(entry, cand, images_dir)
                         )
+            # Toda la entry (y sus candidatas, decididas o no) se va — sus archivos
+            # descargados quedan huérfanos (hallazgo #14).
+            for cand in entry.get("candidates", []):
+                ni = cand.get("new_image")
+                if ni:
+                    _gc_candidates.append(ni)
             stats["dropped_missing_item"] += 1
             continue
 
@@ -202,12 +290,16 @@ def sync_preview(
             # Poda 3a: new_url ya es la portada actual (ya aplicada de facto)
             if new_url and new_url == current_cover_url:
                 stats["pruned_already_current"] += 1
+                if cand.get("new_image"):
+                    _gc_candidates.append(cand["new_image"])
                 continue
 
             if action in _REPLACE_COVER_ACTIONS:
                 # Poda 3b: portada actual ya en alta calidad → candidata innecesaria
                 if new_old_pixels >= LOW_QUALITY_PX:
                     stats["pruned_cover_ok"] += 1
+                    if cand.get("new_image"):
+                        _gc_candidates.append(cand["new_image"])
                     continue
 
             elif action == "replace_image":
@@ -216,11 +308,15 @@ def sync_preview(
                     # Poda 3c: foto target ya no está en la galería
                     if target_url not in gallery_urls:
                         stats["pruned_target_gone"] += 1
+                        if cand.get("new_image"):
+                            _gc_candidates.append(cand["new_image"])
                         continue
                     # Poda 3d: foto target ya en alta calidad
                     px = gallery_px_by_url.get(target_url, 0)
                     if px >= LOW_QUALITY_PX:
                         stats["pruned_target_ok"] += 1
+                        if cand.get("new_image"):
+                            _gc_candidates.append(cand["new_image"])
                         continue
 
             # Recompute new_pixels desde el archivo YA NORMALIZADO en disco (AVIF ≤1600px),
@@ -254,6 +350,74 @@ def sync_preview(
             updated["country"] = item.get("country", "")
         result.append(updated)
 
+    # Hallazgo #14: GC de archivos de candidatas huérfanas. SOLO corre si
+    # write_ledger (mismo flag que gatea todo efecto secundario real — ver
+    # docstring); nunca en un probe puro ni en dry-run. Antes de borrar,
+    # verificamos que el filename no esté en uso por NADA más: ni el catálogo
+    # real (items_by_slug — los archivos del espejo comparten el mismo
+    # directorio `data/images/` que las descargas de candidatas, así que un
+    # borrado ciego podría arrancarle la portada a un item real), ni otra
+    # entry/candidata que sobrevivió la sincronización.
+    if write_ledger and _gc_candidates:
+        in_use: set[str] = set()
+        for it in items_by_slug.values():
+            for im in (it.get("images") or []):
+                if isinstance(im, dict):
+                    loc = im.get("local")
+                    if loc:
+                        in_use.add(loc)
+            # sources[].image_local: la ref per-fuente también apunta a archivos
+            # del MISMO espejo (~5.9k items del corpus la tienen poblada) — el GC
+            # de mirror_images la protege y este debe hacer lo mismo (revisión del
+            # orquestador 2026-07-08, misma clase de bug que el hallazgo #3 del
+            # reporte de imágenes: la ref legacy per-source olvidada por un GC).
+            for s in (it.get("sources") or []):
+                if isinstance(s, dict):
+                    sloc = s.get("image_local")
+                    if sloc:
+                        in_use.add(sloc)
+        for e in result:
+            old_img = e.get("old_image")
+            if old_img:
+                in_use.add(old_img)
+            for c in e.get("candidates", []):
+                ni = c.get("new_image")
+                if ni:
+                    in_use.add(ni)
+
+        images_dir_resolved = images_dir.resolve() if images_dir.exists() else None
+        removed: list[str] = []
+        seen_gc: set[str] = set()
+        for fn in _gc_candidates:
+            if not fn or fn == "[dry-run]" or fn in seen_gc:
+                continue
+            seen_gc.add(fn)
+            if fn in in_use:
+                continue
+            path = images_dir / fn
+            if not path.exists():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            # Guard de path-traversal: sólo borramos archivos DIRECTAMENTE bajo
+            # images_dir (el espejo es flat), nunca fuera de ese directorio.
+            if images_dir_resolved is None or resolved.parent != images_dir_resolved:
+                continue
+            try:
+                path.unlink()
+                removed.append(fn)
+            except OSError:
+                pass
+        stats["gc_orphans_removed"] = len(removed)
+        if removed:
+            # stderr (no stdout): esta función corre también dentro del proceso
+            # largo de serve.py en cada GET — un log de diagnóstico, no output de CLI.
+            print(f"[sync-cover-preview] GC candidatas huérfanas: {len(removed)} "
+                  f"archivo(s) borrados de {images_dir}: {', '.join(removed[:10])}"
+                  + (" ..." if len(removed) > 10 else ""), file=sys.stderr)
+
     return result, stats
 
 
@@ -261,10 +425,15 @@ def sync_preview(
 # CLI
 # ---------------------------------------------------------------------------
 
-def _load_items_by_slug(items_path: Path) -> dict[str, dict]:
+def _load_items_by_slug(items_path: Path) -> tuple[dict[str, dict], int]:
+    """Devuelve (items_by_slug, malformed_lines). `malformed_lines` cuenta líneas
+    no vacías que NO parsearon como JSON — el guard de catalog_is_sane() (#1)
+    aborta si es >0, así un items.jsonl truncado a mitad de escritura nunca se
+    lee silenciosamente como "catálogo válido pero más chico"."""
     items_by_slug: dict[str, dict] = {}
+    malformed = 0
     if not items_path.exists():
-        return items_by_slug
+        return items_by_slug, malformed
     with items_path.open("r", encoding="utf-8") as fh:
         for raw in fh:
             raw = raw.strip()
@@ -272,12 +441,13 @@ def _load_items_by_slug(items_path: Path) -> dict[str, dict]:
                 continue
             try:
                 item = json.loads(raw)
-                slug = item.get("slug", "")
-                if slug:
-                    items_by_slug[slug] = item
             except json.JSONDecodeError:
-                pass
-    return items_by_slug
+                malformed += 1
+                continue
+            slug = item.get("slug", "")
+            if slug:
+                items_by_slug[slug] = item
+    return items_by_slug, malformed
 
 
 def _write_atomic(path: Path, data: Any) -> None:
@@ -301,10 +471,18 @@ def main(argv: list[str] | None = None) -> int:
     preview: list[dict] = json.loads(PREVIEW_PATH.read_text(encoding="utf-8"))
     print(f"Entries cargadas: {len(preview)}")
 
-    items_by_slug = _load_items_by_slug(ITEMS_PATH)
-    print(f"Items en catálogo: {len(items_by_slug)} (con slug)")
+    items_by_slug, malformed = _load_items_by_slug(ITEMS_PATH)
+    print(f"Items en catálogo: {len(items_by_slug)} (con slug)"
+          + (f" — {malformed} línea(s) corrupta(s) ignoradas" if malformed else ""))
 
-    # En dry-run no se toca el ledger de rechazos (side-effect-free).
+    # Hallazgo #1 (ALTA): abortar ANTES de sincronizar si el catálogo no parece
+    # sano — evita que un items.jsonl ausente/truncado purgue la cola entera.
+    ok, reason = catalog_is_sane(preview, items_by_slug, malformed)
+    if not ok:
+        print(f"\n[ABORT] catálogo no parece sano — no se sincroniza nada: {reason}")
+        return 1
+
+    # En dry-run no se toca el ledger de rechazos ni se hace GC (side-effect-free).
     synced, stats = sync_preview(preview, items_by_slug, IMAGES_DIR,
                                  write_ledger=not args.dry_run)
 
@@ -324,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Candidatas podadas — target ok px:    {stats['pruned_target_ok']}")
     print(f"  Candidatas podadas — ya es portada:   {stats['pruned_already_current']}")
     print(f"  new_pixels recomputados (archivo real):{stats['pixels_recomputed']}")
+    print(f"  Candidatas huérfanas borradas del espejo: {stats['gc_orphans_removed']}")
     print(f"  Entries resultado: {len(synced)} (de {len(preview)})")
     print(f"  Cambios: {total_pruned + total_dropped + stats['pixels_recomputed']} operaciones")
 
@@ -331,11 +510,18 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[dry-run] No se escribió ningún archivo.")
         return 0
 
-    if (total_pruned + total_dropped + stats["pixels_recomputed"] == 0
-            and len(synced) == len(preview)):
+    # Hallazgo #4: la detección de "sin cambios" antes sólo miraba los counters
+    # de poda + pixels_recomputed, así que un refresh de Regla 2 (old_url/
+    # old_pixels/current_images/publisher/country stale, sin ninguna poda) NUNCA
+    # se persistía y el CLI mentía "sin cambios". Comparación profunda en vez de
+    # counters — igual que revalidate_cover_preview.py.
+    if synced == preview:
         print("\nCola ya sincronizada — sin cambios.")
         return 0
 
+    # Hallazgo #5: backup_and_rotate antes de mutar (antes este escritor no
+    # tenía backup — los otros 2 escritores de cover_preview.json sí).
+    backup_and_rotate(PREVIEW_PATH, "sync-cover-preview")
     _write_atomic(PREVIEW_PATH, synced)
     print(f"\n✓ cover_preview.json actualizado: {len(synced)} entries.")
     return 0
