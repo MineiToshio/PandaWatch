@@ -108,6 +108,10 @@ def _ledger_record_from_candidate(entry: dict, cand: dict, images_dir: Path) -> 
                 a_hash_hex = None
     return {
         "slug": entry.get("slug", ""),
+        # Identidad secundaria (hallazgo #7): url canónica del item, estable a
+        # re-slugs → el veto sobrevive un generate_slugs. Mismo campo que escribe
+        # apply_preview; is_rejected_candidate matchea por slug O por esta url.
+        "url": entry.get("url", ""),
         "action": cand.get("action", "replace_cover"),
         "target": cand.get("target", ""),
         "rejected_url": cand.get("new_url", ""),
@@ -120,6 +124,17 @@ def _ledger_record_from_candidate(entry: dict, cand: dict, images_dir: Path) -> 
         "reason": cand.get("reject_reason"),
         "rejected_at": fbc._now_iso(),
     }
+
+
+def _index_by_url(items_by_slug: dict[str, dict]) -> dict[str, dict]:
+    """Índice url_canónica→item (identidad secundaria estable a re-slugs, #7).
+    Sólo items con `url` no vacía; ante colisiones (poco probable) gana el último."""
+    by_url: dict[str, dict] = {}
+    for it in items_by_slug.values():
+        u = it.get("url", "")
+        if u:
+            by_url[u] = it
+    return by_url
 
 
 def catalog_is_sane(
@@ -150,12 +165,24 @@ def catalog_is_sane(
             return True, ""  # nada que sincronizar, catálogo vacío es inofensivo
         return False, "items_by_slug vacío pero la cola tiene entries — catálogo no cargó"
     if preview:
-        missing = sum(1 for e in preview if (e.get("slug", "")) not in items_by_slug)
+        # Una entry cuenta como "match" si su slug existe O si su url canónica
+        # (identidad secundaria, #7) rescata un item — así un re-slug masivo no
+        # dispara el guard del 20% mientras las urls sigan resolviendo.
+        items_by_url = _index_by_url(items_by_slug)
+        missing = 0
+        for e in preview:
+            if e.get("slug", "") in items_by_slug:
+                continue
+            eu = e.get("url", "")
+            if eu and eu in items_by_url:
+                continue
+            missing += 1
         ratio = missing / len(preview)
         if ratio > MISSING_SLUG_RATIO_MAX:
             return False, (
-                f"{missing}/{len(preview)} slugs de la cola ({ratio:.0%}) no matchean "
-                f"ningún item del catálogo — supera el {MISSING_SLUG_RATIO_MAX:.0%}"
+                f"{missing}/{len(preview)} entries de la cola ({ratio:.0%}) no matchean "
+                f"ningún item del catálogo (ni por slug ni por url) — supera el "
+                f"{MISSING_SLUG_RATIO_MAX:.0%}"
             )
     return True, ""
 
@@ -205,7 +232,13 @@ def sync_preview(
         "pruned_already_current": 0,
         "pixels_recomputed": 0,
         "gc_orphans_removed": 0,
+        # Hallazgo #7 — identidad secundaria (url canónica, estable a re-slugs):
+        "slug_migrated": 0,   # entry rescatada por url tras un re-slug (slug actualizado)
+        "url_backfilled": 0,  # entry legacy sin url; se pobló al matchear por slug
     }
+
+    # Índice url_canónica→item para rescatar entries cuyo slug cambió (#7).
+    items_by_url = _index_by_url(items_by_slug)
 
     _REPLACE_COVER_ACTIONS = frozenset({
         "replace_cover",
@@ -220,12 +253,42 @@ def sync_preview(
     _gc_candidates: list[str] = []
 
     for entry in preview:
+        # Copia local mutable: la migración de slug / backfill de url no debe
+        # tocar el `preview` de entrada (el caller compara synced vs preview).
+        entry = dict(entry)
         slug = entry.get("slug", "")
         item = items_by_slug.get(slug)
 
-        # Regla 1: slug no existe → eliminar. Antes de dropear la entry, si
-        # contiene candidatas rechazadas, apendearlas al ledger de rechazos para
-        # que no se re-propongan (ITEM 1).
+        # Identidad secundaria (#7): el matching intenta slug primero; si el slug
+        # ya no existe (típicamente tras un generate_slugs), busca por la url
+        # canónica de la entry y, si la encuentra, MIGRA el slug de la entry al
+        # nuevo en vez de podarla — así las decisiones del owner (approved/pending)
+        # y el veto del ledger sobreviven el re-slug.
+        if item is None:
+            entry_url = entry.get("url", "")
+            if entry_url:
+                by_url = items_by_url.get(entry_url)
+                if by_url is not None:
+                    new_slug = by_url.get("slug", "")
+                    if new_slug and new_slug != slug:
+                        print(f"[sync-cover-preview] re-slug detectado: entry migrada "
+                              f"{slug!r} → {new_slug!r} (url {entry_url[:60]})",
+                              file=sys.stderr)
+                        entry["slug"] = new_slug
+                        slug = new_slug
+                        stats["slug_migrated"] += 1
+                    item = by_url
+        elif not entry.get("url"):
+            # Entry legacy sin url: backfill al vuelo cuando el slug SÍ matchea,
+            # para que futuros re-slugs tengan la identidad secundaria disponible.
+            item_url = item.get("url", "")
+            if item_url:
+                entry["url"] = item_url
+                stats["url_backfilled"] += 1
+
+        # Regla 1: item no existe (ni por slug ni por url) → eliminar. Antes de
+        # dropear la entry, si contiene candidatas rechazadas, apendearlas al
+        # ledger de rechazos para que no se re-propongan (ITEM 1).
         if item is None:
             if write_ledger:
                 for cand in entry.get("candidates", []):
@@ -503,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Candidatas podadas — ya es portada:   {stats['pruned_already_current']}")
     print(f"  new_pixels recomputados (archivo real):{stats['pixels_recomputed']}")
     print(f"  Candidatas huérfanas borradas del espejo: {stats['gc_orphans_removed']}")
+    print(f"  Entries migradas por re-slug (url):    {stats['slug_migrated']}")
+    print(f"  Entries legacy con url backfilleada:   {stats['url_backfilled']}")
     print(f"  Entries resultado: {len(synced)} (de {len(preview)})")
     print(f"  Cambios: {total_pruned + total_dropped + stats['pixels_recomputed']} operaciones")
 

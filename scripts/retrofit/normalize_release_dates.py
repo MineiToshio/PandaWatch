@@ -40,7 +40,11 @@ except ImportError:
 
 _ISO_FULL = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ISO_PARTIAL = re.compile(r"^\d{4}(?:-\d{2})?$")
-_DMY_FAMILY = re.compile(r"^\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4}$")
+# El separador debe ser el MISMO en ambas posiciones (backreference \1): una
+# fecha con separadores mixtos ("12-05/2024") NO es DD/MM/YYYY legítimo — antes
+# la matcheaba y disparaba un falso "[WARN] rango inválido"; ahora cae al reporte
+# de "otros formatos" sin tocarse (nit auditoría Fable 2026-07-08).
+_DMY_FAMILY = re.compile(r"^\d{1,2}([/.\-])\d{1,2}\1\d{4}$")
 
 
 def _shape(value: str) -> str:

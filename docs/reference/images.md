@@ -654,9 +654,12 @@ lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` 
   rejected_url, a_hash (hex del archivo o null si ya no existe), match_dist, ref_pixels,
   new_pixels, page_title, query, reason, rejected_at}` ANTES de borrar el archivo. `sync_cover_preview`
   también lo apendea cuando dropea una entry entera con candidatas rechazadas por slug
-  desaparecido. `fetch_better_covers.is_rejected_candidate(slug, url, a_hash_hex, ledger)` es la
-  fuente única de la denylist, consultada por `_process_item` (URL antes de descargar, hash
-  después) y por `sc_validate` (delegando). **Política EXACTA del veto por hash** (decisión
+  desaparecido. Los records incluyen `url` (identidad secundaria canónica del item, estable a
+  re-slugs — ver "paquete R" abajo). `fetch_better_covers.is_rejected_candidate(slug, url,
+  a_hash_hex, ledger, item_url=…)` es la fuente única de la denylist, consultada por
+  `_process_item` (URL antes de descargar, hash después), por la búsqueda manual del gestor
+  (`serve._handle_image_search`) y por `sc_validate` (delegando); matchea una entrada por **slug O
+  url canónica** (`item_url`). **Política EXACTA del veto por hash** (decisión
   post-red-team): match por **URL exacta** (mismo slug + rejected_url) veta SIEMPRE; match por
   **hash** SÓLO si la entrada del ledger tiene un `reason` de **IDENTIDAD** (`otro_tomo`,
   `otra_edicion`, `no_es_la_obra`, `arte_sin_logo`, `auto_revalidation`) **y** aHash dist ≤ 2 —
@@ -751,8 +754,65 @@ Tests: `tests/test_fbc_footguns.py` (+ la suite existente de portadas, sin regre
   `_candidates_from_isbn*`, sin checksum) reemplaza el `bool(isbn)` en el contador de `--limit` y
   en el desglose `con ISBN / sin ISBN` del resumen.
 
+### Motor de portadas — paquete R (remediación, auditoría Fable 2026-07-08)
+
+Cinco hallazgos que el cross-check de cobertura confirmó FALTANTES. Tests:
+`tests/test_remediacion_20260708.py` (+ suites de portadas sin regresiones).
+
+- **Identidad secundaria de la cola y del ledger (url canónica, #7)** — la MÁS importante. Antes
+  la cola (`cover_preview.json`) matcheaba las entries contra el catálogo **sólo por `slug`**, y el
+  ledger de rechazos se keyeaba `(slug, rejected_url)`. Un **re-slug** (`generate_slugs` tras
+  cambios de serie/edición) rompía ambas cosas: (a) las decisiones pendientes/aprobadas del owner
+  se perdían como "item borrado" (Regla 1 de `sync_preview` las podaba), y (b) el veto del ledger
+  se neutralizaba (la URL rechazada se re-ofrecía bajo el slug nuevo). **Fix**: cada entry de la
+  cola guarda además `url` = **campo top-level `url` del item** (estable a re-slugs), seteado al
+  crearse (`run()`), preservado por `_normalize_preview_entry`, y **backfilleado al vuelo** por
+  `sync_preview` cuando el slug SÍ matchea (entries legacy). El matching de `sync_preview` intenta
+  slug primero; si el slug ya no existe, busca por `url` en el índice `items_by_url` y, si la
+  encuentra, **MIGRA el slug de la entry al nuevo** (logueado a stderr, `stats["slug_migrated"]`)
+  en vez de podarla. El **guard del 20%** (`catalog_is_sane`) cuenta como "match" también las
+  entries rescatadas por url. El **ledger**: los records nuevos (creados por `apply_preview` y por
+  `sync_cover_preview._ledger_record_from_candidate`) guardan `url` canónica; `is_rejected_candidate(
+  slug, url, a_hash_hex, ledger, item_url=…)` matchea una entrada cuando coincide el **slug O la
+  url canónica** — el veto sobrevive el re-slug. **Compat hacia atrás**: records/entries viejos sin
+  `url` siguen matcheando sólo por slug (comportamiento idéntico al previo). El ledger y la denylist
+  NUNCA se debilitan — este cambio los FORTALECE ante re-slugs.
+- **Lock cross-proceso del preview (TOCTOU, #14)** — `_write_preview(merge=True)` relee el disco,
+  funde y renombra; entre el read y el replace, un save del owner desde el panel podía perderse. El
+  `@_serialized` de serve sólo cubre request-vs-request dentro del proceso de serve, no el proceso
+  separado del motor. **Fix**: `fetch_better_covers.preview_write_lock(path)` — un `fcntl.flock`
+  EXCLUSIVO sobre `cover_preview.json.lock`, reentrante en el mismo hilo (RLock + un fd mientras la
+  profundidad > 0), timeout 10 s, mismo patrón que `items_write_lock` de manga_watch. Lo toma
+  `_write_preview` sobre TODO el intervalo read→merge→replace, y serve toma el MISMO archivo con su
+  helper (`_preview_write_lock`) alrededor de sus escrituras del preview: el save del panel
+  (`_handle_save_cover_preview`, guard de mtime incluido) y el persist del GET
+  (`_handle_cover_preview_get`). Así una decisión del owner cae ENTERA antes o después del merge del
+  motor, nunca en el medio. No-op cross-proceso si `fcntl` no existe (Windows) — el RLock igual
+  serializa in-proceso.
+- **`--include-upscaled` deja de ser no-op (#9)** — el flag marca como candidatos los PNG
+  upscaleados por waifu2x (px ≥ 200k, look pastel) para buscarles el original real, PERO
+  `_process_item` early-returnea con `curr_px >= min_pixels` ANTES de que la rama de relajación
+  (`is_upscaled_item and cand_px >= 50_000 → effective_gain = 0`) se ejecutara → la condición
+  `px≥200k Y px<90k` era imposible. **Fix**: `_process_item` recibe `include_upscaled` y el early
+  return pasa a `curr_px >= min_pixels and not (include_upscaled and is_upscaled_item)`. El flag
+  tiene caso de uso real (la maquinaria de `effective_gain=0` existe justo para esto), así que se
+  ARREGLÓ, no se eliminó.
+- **La búsqueda manual del gestor filtra contra el ledger (#19)** — `serve._handle_image_search`
+  re-ofrecía URLs ya rechazadas por el owner. **Fix**: el panel manda `slug` + `item_url` (url
+  canónica) del item que se está editando; el handler filtra los resultados con
+  `is_rejected_candidate` (misma fuente única, match por URL exacta; slug O item_url → sobrevive
+  re-slugs) y devuelve `hidden_by_ledger` (contador de ocultas, que el panel muestra en el toast
+  "N ocultas por rechazos previos"). Fail-open de UI: ante cualquier error del ledger no oculta nada.
+- **`normalize_release_dates._DMY_FAMILY` exige el mismo separador** — el patrón aceptaba
+  separadores mixtos (`"12-05/2024"`) y disparaba un falso `[WARN] rango inválido`. **Fix**:
+  backreference `^\d{1,2}([/.\-])\d{1,2}\1\d{4}$` — una fecha con separadores mixtos ya no es
+  DD/MM/YYYY legítimo y cae al reporte de "otros formatos" sin tocarse.
+
 **Invariantes**:
 - Candidatas: `confidence: "low"`, `status: "pending"` — sin excepción.
+- **Identidad de la cola/ledger**: `slug` (primaria) + `url` canónica top-level del item
+  (secundaria, estable a re-slugs). El matching y el veto usan AMBAS; un re-slug migra la entry y
+  preserva el veto, nunca los pierde.
 - Dos scripts son **permanentes** (nunca borrar ni reimplementar inline):
   - `scripts/retrofit/sc_validate.py` (tests: `tests/test_sc_validate.py`) — validación de
     identidad de imagen; la copia embebida que había drifteó de producción y causó falsos

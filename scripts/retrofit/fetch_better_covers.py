@@ -55,11 +55,18 @@ import math
 import os
 import re
 import struct
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, quote_plus, urljoin, urlparse, urlunparse
+
+try:
+    import fcntl  # POSIX file locking (macOS/Linux). Ausente en Windows.
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 import requests
 from bs4 import BeautifulSoup
@@ -1456,6 +1463,7 @@ def is_rejected_candidate(
     url: str,
     a_hash_hex: Optional[str] = None,
     ledger: Optional[list[dict]] = None,
+    item_url: str = "",
 ) -> bool:
     """True si la candidata (slug + url, opcionalmente su aHash) está vetada por el
     ledger de rechazos. Política EXACTA (decisión de arquitectura post-red-team):
@@ -1467,6 +1475,15 @@ def is_rejected_candidate(
         "otros"): toda candidata que pasó _same_cover comparte aHash con la
         referencia, así que ese veto tiraría la candidata correcta en mejor
         resolución.
+
+    IDENTIDAD SECUNDARIA (2026-07-08, hallazgo #7): el ledger se keyea por
+    (slug, rejected_url). Un re-slug (generate_slugs tras cambios de serie/
+    edición) cambiaba el slug del item y NEUTRALIZABA el veto (la URL rechazada
+    se re-ofrecía bajo el slug nuevo). Los records nuevos guardan también la URL
+    canónica del item (`url`, el top-level estable a re-slugs); si el caller la
+    pasa como `item_url`, una entrada del ledger matchea cuando coincide el slug
+    O la url canónica. Compat hacia atrás: los records viejos no tienen `url`, así
+    que sólo matchean por slug (comportamiento idéntico al previo).
     """
     if ledger is None:
         ledger = load_rejection_ledger()
@@ -1477,7 +1494,10 @@ def is_rejected_candidate(
         except (ValueError, TypeError):
             cand_hash = None
     for rec in ledger:
-        if rec.get("slug") != slug:
+        rec_matches_identity = (rec.get("slug") == slug) or (
+            bool(item_url) and rec.get("url") == item_url
+        )
+        if not rec_matches_identity:
             continue
         # URL exacta → veto incondicional.
         if url and rec.get("rejected_url") == url:
@@ -1711,6 +1731,7 @@ def _process_item(
     preview: bool = False,
     ledger: Optional[list[dict]] = None,
     attempt_engines: Optional[dict] = None,
+    include_upscaled: bool = False,
 ) -> Optional[dict]:
     """
     Busca una portada mejor para el item.
@@ -1723,6 +1744,7 @@ def _process_item(
     """
     signals = item.get("signal_types", [])
     slug = item.get("slug", "")
+    item_url = item.get("url", "")  # identidad secundaria estable a re-slugs (ledger)
 
     if _SKIP_SIGNALS & set(signals):
         return None
@@ -1739,7 +1761,15 @@ def _process_item(
     # buscar reemplazo para CUALQUIER imagen upscaleada por AI aunque ya fuera de
     # 2 MP — y terminaba aplicando portadas web equivocadas/de peor calidad sobre
     # portadas que estaban bien. El tamaño manda; una imagen ya grande no se toca.
-    if curr_px >= min_pixels:
+    #
+    # EXCEPCIÓN --include-upscaled (2026-07-08, hallazgo #9): un PNG upscaleado por
+    # waifu2x tiene MUCHOS píxeles (≥200k) pero look pastel — es peor que un JPG
+    # real más chico. Con el flag encendido, esos items SÍ pasan aunque superen
+    # `min_pixels`, para buscarles el original real (la rama `is_upscaled_item and
+    # cand_px >= 50_000 → effective_gain = 0` de abajo acepta candidatas reales
+    # aunque tengan menos px). Sin este bypass el flag era no-op: el item se
+    # contaba como candidato en run() pero acá retornaba None de inmediato.
+    if curr_px >= min_pixels and not (include_upscaled and is_upscaled_item):
         return None
 
     isbn = item.get("isbn", "")
@@ -1818,7 +1848,7 @@ def _process_item(
     for cand in all_candidates:
         url = cand["url"]
         # ITEM 1 — denylist: URL exacta vetada → saltar SIN descargar.
-        if is_rejected_candidate(slug, url, None, ledger):
+        if is_rejected_candidate(slug, url, None, ledger, item_url=item_url):
             if verbose:
                 print(f"    skip {url[:60]}: en ledger de rechazos (URL)", flush=True)
             continue
@@ -1829,7 +1859,7 @@ def _process_item(
         if not ext:
             continue
         # ITEM 1 — denylist por HASH (sólo motivos de identidad, dist ≤ 2).
-        if is_rejected_candidate(slug, url, _ahash_hex(data), ledger):
+        if is_rejected_candidate(slug, url, _ahash_hex(data), ledger, item_url=item_url):
             if verbose:
                 print(f"    skip {url[:60]}: en ledger de rechazos (hash identidad)", flush=True)
             continue
@@ -1960,6 +1990,73 @@ def _process_item(
 _PREVIEW_PATH = _HERE / "data" / "cover_preview.json"
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Lock cross-proceso del cover_preview.json (hallazgo #14 — TOCTOU)
+# ──────────────────────────────────────────────────────────────────────────────
+# `_write_preview(merge=True)` relee el disco, funde y renombra. Entre el read y
+# el replace, una decisión del owner desde el panel (serve `_handle_save_cover_
+# preview` / persist del GET) podía colarse y perderse (last-writer-wins). El
+# `@_serialized` de serve sólo cubre request-vs-request DENTRO del proceso de
+# serve; NO cubre el proceso separado del motor (fetch_better_covers CLI). Este
+# flock sobre `cover_preview.json.lock` cierra ese hueco: el motor toma el lock
+# sobre TODO el intervalo read→merge→replace, y serve toma el MISMO archivo con
+# su propio helper alrededor de sus escrituras del preview (flock es sobre el
+# archivo, interopera). Mismo patrón que `items_write_lock` de manga_watch:
+# reentrante en el mismo hilo (RLock + un fd mientras la profundidad > 0), orden
+# de locks SIEMPRE in-proceso → flock, timeout corto para no colgar (los writes
+# reales son sub-segundo; un timeout indica un proceso trabado → fallar > colgar).
+_PREVIEW_LOCK_RLOCK = threading.RLock()
+_PREVIEW_LOCK_DEPTH = 0
+_PREVIEW_LOCK_FD: Optional[int] = None
+_PREVIEW_LOCK_TIMEOUT = 10.0
+
+
+def _preview_lock_path(path: Path) -> Path:
+    return path.with_name(path.name + ".lock")
+
+
+@contextmanager
+def preview_write_lock(path: Optional[Path] = None, timeout: float = _PREVIEW_LOCK_TIMEOUT):
+    """Lock EXCLUSIVO cross-proceso sobre `<cover_preview.json>.lock` para el
+    intervalo read→modify→write del preview. Reentrante en el MISMO hilo. No-op
+    cross-proceso si `fcntl` no está disponible (Windows) — el RLock igual
+    serializa in-proceso. serve.py toma el MISMO archivo con su propio helper."""
+    global _PREVIEW_LOCK_DEPTH, _PREVIEW_LOCK_FD
+    if path is None:
+        path = _PREVIEW_PATH
+    _PREVIEW_LOCK_RLOCK.acquire()
+    try:
+        if fcntl is not None and _PREVIEW_LOCK_DEPTH == 0:
+            lock_path = _preview_lock_path(path)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        os.close(fd)
+                        raise TimeoutError(
+                            f"preview_write_lock: no se pudo adquirir {lock_path} "
+                            f"en {timeout}s (¿otro proceso trabado?)"
+                        )
+                    time.sleep(0.05)
+            _PREVIEW_LOCK_FD = fd
+        _PREVIEW_LOCK_DEPTH += 1
+        yield
+    finally:
+        _PREVIEW_LOCK_DEPTH -= 1
+        if _PREVIEW_LOCK_DEPTH == 0 and _PREVIEW_LOCK_FD is not None:
+            try:
+                fcntl.flock(_PREVIEW_LOCK_FD, fcntl.LOCK_UN)
+            finally:
+                os.close(_PREVIEW_LOCK_FD)
+                _PREVIEW_LOCK_FD = None
+        _PREVIEW_LOCK_RLOCK.release()
+
+
 def _merge_preview_entries(
     memory_entries: list[dict], disk_entries: list[dict]
 ) -> list[dict]:
@@ -2028,23 +2125,30 @@ def _write_preview(entries: list[dict], merge: bool = True) -> None:
     archivo de disco y funde las decisiones que la UI/skill guardaron durante la
     corrida (el mtime-guard de serve.py no aplica al motor). `merge=False` lo usa
     apply_preview(), que ya es autoritativo sobre el estado final del preview.
+
+    Hallazgo #14 (TOCTOU): el read→merge→replace corre bajo `preview_write_lock`
+    (flock cross-proceso). Sin él, un save del panel (serve) entre la relectura y
+    el replace del motor se perdía. serve toma el MISMO lock alrededor de sus
+    escrituras del preview, así que la decisión del owner cae ENTERA antes o
+    después del merge del motor, nunca en el medio.
     """
-    if merge and _PREVIEW_PATH.exists():
-        try:
-            disk_raw = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
-            if isinstance(disk_raw, list):
-                disk = [_normalize_preview_entry(e) for e in disk_raw]
-                entries = _merge_preview_entries(entries, disk)
-        except (ValueError, OSError):
-            pass
-    tmp = _PREVIEW_PATH.with_name(f"{_PREVIEW_PATH.name}.{uuid.uuid4().hex}.tmp")
-    # F12 — fsync antes del replace (mismo motivo que _atomic_write): sin esto
-    # un crash justo tras el write puede promover un tmp truncado.
-    with tmp.open("w", encoding="utf-8") as f:
-        f.write(json.dumps(entries, ensure_ascii=False, indent=2))
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.replace(_PREVIEW_PATH)
+    with preview_write_lock(_PREVIEW_PATH):
+        if merge and _PREVIEW_PATH.exists():
+            try:
+                disk_raw = json.loads(_PREVIEW_PATH.read_text(encoding="utf-8"))
+                if isinstance(disk_raw, list):
+                    disk = [_normalize_preview_entry(e) for e in disk_raw]
+                    entries = _merge_preview_entries(entries, disk)
+            except (ValueError, OSError):
+                pass
+        tmp = _PREVIEW_PATH.with_name(f"{_PREVIEW_PATH.name}.{uuid.uuid4().hex}.tmp")
+        # F12 — fsync antes del replace (mismo motivo que _atomic_write): sin esto
+        # un crash justo tras el write puede promover un tmp truncado.
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(json.dumps(entries, ensure_ascii=False, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(_PREVIEW_PATH)
 
 
 def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
@@ -2161,6 +2265,9 @@ def _normalize_preview_entry(entry: dict) -> dict:
             c.setdefault("ref_pixels", None)
         if not isinstance(entry.get("current_images"), list) or not entry["current_images"]:
             entry["current_images"] = _fallback_current(entry)
+        # Identidad secundaria (hallazgo #7): preservar la url canónica si ya está;
+        # las entries legacy sin ella la backfillea sync_cover_preview al matchear.
+        entry.setdefault("url", "")
         return entry
     candidate = {
         "new_image": entry.get("new_image", ""),
@@ -2183,6 +2290,7 @@ def _normalize_preview_entry(entry: dict) -> dict:
         current = _fallback_current(entry)
     return {
         "slug": entry.get("slug", ""),
+        "url": entry.get("url", ""),  # identidad secundaria estable a re-slugs (#7)
         "title": entry.get("title", ""),
         "title_original": entry.get("title_original", ""),
         "series_display": entry.get("series_display", ""),
@@ -2397,6 +2505,7 @@ def run(
                 no_search, serper_key, tavily_key,
                 dry_run=dry_run, verbose=verbose,
                 ledger=rejection_ledger, attempt_engines=attempt_engines,
+                include_upscaled=include_upscaled,
             )
             if result:
                 new_url = result["new_url"]
@@ -2473,6 +2582,10 @@ def run(
                     else:
                         entry = {
                             "slug": slug,
+                            # Identidad secundaria estable a re-slugs (hallazgo #7):
+                            # la URL canónica del item. sync_cover_preview migra la
+                            # entry por acá si el slug cambió; el ledger la reusa.
+                            "url": item.get("url", ""),
                             "title": item.get("title", ""),
                             "title_original": item.get("title_original", ""),
                             "series_display": item.get("series_display", ""),
@@ -2757,6 +2870,9 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                                 a_hash_hex = None
                     ledger_append({
                         "slug": slug,
+                        # Identidad secundaria (hallazgo #7): url canónica del item,
+                        # estable a re-slugs → el veto sobrevive un generate_slugs.
+                        "url": entry.get("url", ""),
                         "action": action,
                         "target": target,
                         "rejected_url": new_url,

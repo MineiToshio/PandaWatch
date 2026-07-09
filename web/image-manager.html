@@ -1169,15 +1169,19 @@
         try {
           const resp = await fetch('/api/image-search', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, isbn }),
+            // slug + url canónica → el server filtra las URLs ya rechazadas en el
+            // ledger para este item (#19); sobrevive re-slugs vía item_url (#7).
+            body: JSON.stringify({ query, isbn, slug: this.selected?.slug || '', item_url: this.selected?.url || '' }),
           });
           const data = await resp.json();
           if (!resp.ok) throw new Error(data.error || 'Search failed');
           this.searchTavily = !!data.tavily;
           this.searchResults = (data.results || []).map(url => ({ url, _selected: false, _broken: false }));
           this.searchSearched = true;
-          if (this.searchResults.length) this.showToast(this.searchResults.length + ' candidatas', 'success');
-          else this.showToast('Sin candidatas', 'error');
+          const hidden = data.hidden_by_ledger || 0;
+          const hiddenMsg = hidden ? ` (${hidden} oculta${hidden === 1 ? '' : 's'} por rechazos previos)` : '';
+          if (this.searchResults.length) this.showToast(this.searchResults.length + ' candidatas' + hiddenMsg, 'success');
+          else this.showToast('Sin candidatas' + hiddenMsg, 'error');
         } catch (e) {
           this.showToast('Error: ' + e.message, 'error'); this.searchSearched = true;
         } finally { this.searching = false; }

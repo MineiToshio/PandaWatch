@@ -151,6 +151,11 @@ try:
     # (_load_items_by_slug), no `_load_items()` (no cuenta malformed_lines).
     from sync_cover_preview import catalog_is_sane as _catalog_is_sane  # type: ignore
     from sync_cover_preview import _load_items_by_slug as _cp_load_items_by_slug  # type: ignore
+    # Hallazgo #14 (TOCTOU): el lock cross-proceso de cover_preview.json. serve
+    # (writers del preview: save + persist del GET) toma el MISMO flock que el
+    # motor (fetch_better_covers._write_preview) para que un save del panel entre
+    # el read y el replace del motor no se pierda.
+    from fetch_better_covers import preview_write_lock as _preview_write_lock  # type: ignore
     _SYNC_OK = True
 except ImportError:
     _SYNC_OK = False
@@ -163,6 +168,9 @@ except ImportError:
 
     def _cp_load_items_by_slug(items_path):  # type: ignore[misc]
         return {}, 0
+
+    def _preview_write_lock(path=None, timeout=10.0):  # type: ignore[misc]
+        return contextlib.nullcontext()
 
 
 # ---------------------------------------------------------------------------
@@ -2134,9 +2142,13 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
         # country) que antes se perdía silenciosamente.
         changed = synced != preview
         if changed:
-            tmp = dst.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(dst)
+            # Hallazgo #14 (TOCTOU): persistir bajo el MISMO lock cross-proceso que
+            # el motor, para no pisar un save del panel / write del motor que caiga
+            # entre nuestro read y este replace.
+            with _preview_write_lock(dst):
+                tmp = dst.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp.replace(dst)
 
         self._json(200, {
             "entries": synced,
@@ -2208,17 +2220,22 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
 
         dst = ROOT / "data" / "cover_preview.json"
 
-        # Guard de concurrencia optimista: rechaza saves con mtime stale.
-        if expected_mtime is not None:
-            current = _mtime_token(dst)
-            if not _mtime_matches(expected_mtime, current):
-                self._json(409, {"error": "stale", "mtime": current})
-                return
+        # Hallazgo #14 (TOCTOU): el guard de mtime + el write van bajo el MISMO
+        # flock cross-proceso que toma el motor (fetch_better_covers._write_preview).
+        # Sin esto, un merge del motor podía colarse entre el chequeo de mtime y el
+        # replace del panel (o viceversa) y perder la decisión del owner.
+        with _preview_write_lock(dst):
+            # Guard de concurrencia optimista: rechaza saves con mtime stale.
+            if expected_mtime is not None:
+                current = _mtime_token(dst)
+                if not _mtime_matches(expected_mtime, current):
+                    self._json(409, {"error": "stale", "mtime": current})
+                    return
 
-        tmp = dst.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(dst)
-        self._json(200, {"ok": True, "saved": len(entries), "mtime": _mtime_token(dst)})
+            tmp = dst.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(dst)
+            self._json(200, {"ok": True, "saved": len(entries), "mtime": _mtime_token(dst)})
 
     @_serialized
     def _handle_apply_cover_preview(self) -> None:
@@ -2316,6 +2333,11 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
             return
         query = (payload.get("query") or "").strip()
         isbn = (payload.get("isbn") or "").strip()
+        # Identidad para consultar el ledger de rechazos (#19): el panel manda el
+        # slug + la url canónica del item que está editando. Sin ellos no se filtra
+        # (fallback seguro: no oculta nada).
+        slug = (payload.get("slug") or "").strip()
+        item_url = (payload.get("item_url") or "").strip()
         if not query and not isbn:
             self._json(400, {"error": "Falta 'query' o 'isbn'"})
             return
@@ -2358,16 +2380,38 @@ class MangaWatchHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception:
                     pass
             seen: set[str] = set()
-            out: list[str] = []
+            deduped: list[str] = []
             for u in urls:
                 if u and u not in seen:
                     seen.add(u)
-                    out.append(u)
+                    deduped.append(u)
+
+            # #19 — filtrar contra el ledger de rechazos (fuente única: la denylist
+            # de fetch_better_covers). No re-ofrecer URLs que el owner ya rechazó
+            # para este item. Match por URL exacta (slug O url canónica → sobrevive
+            # re-slugs, #7); sin hash disponible acá, sólo veta la URL exacta.
+            out: list[str] = deduped
+            hidden_by_ledger = 0
+            if slug or item_url:
+                try:
+                    ledger = _fbc.load_rejection_ledger()
+                    kept: list[str] = []
+                    for u in deduped:
+                        if _fbc.is_rejected_candidate(slug, u, None, ledger, item_url=item_url):
+                            hidden_by_ledger += 1
+                        else:
+                            kept.append(u)
+                    out = kept
+                except Exception:
+                    out = deduped  # ante cualquier fallo, no ocultar (fail-open de UI)
+                    hidden_by_ledger = 0
+
             self._json(200, {
                 "results": out,
                 "serper": bool(serper_key),
                 "tavily": bool(tavily_key),
                 "isbn_used": bool(isbn),
+                "hidden_by_ledger": hidden_by_ledger,
             })
         except Exception as e:  # pragma: no cover
             self._json(500, {"error": f"búsqueda falló: {e}"})
