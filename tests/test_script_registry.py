@@ -359,3 +359,36 @@ def test_registry_flag_matches_real_argparse(script_id, path, flag, real_flags_b
             f"{script_id}.{arg}: default del registry={reg_default!r} != "
             f"default real={real_default!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: WIKI_BOOTSTRAP_IDS — fuente única sin copias a mano (J-higiene,
+# auditoría Fable 2026-07-08). manga_watch.py define la lista una vez;
+# source_health.py y script_registry.py la IMPORTAN. Este test es sobre todo
+# un guard anti-regresión: si alguien reintroduce una copia hardcodeada en
+# cualquiera de los dos lados, este test lo detecta apenas diverja.
+# ---------------------------------------------------------------------------
+
+class TestWikiBootstrapIdsSingleSource:
+    def test_source_health_matches_manga_watch(self):
+        from scripts import manga_watch as mw
+        from scripts.audit import source_health as sh
+
+        assert sh._WIKI_IDS == frozenset(mw.WIKI_BOOTSTRAP_IDS)
+
+    def test_script_registry_flag_matches_manga_watch(self):
+        from scripts import manga_watch as mw
+
+        spec = sr.get_script(_bootstrap_wiki_script_id())
+        flag = next(f for f in spec["flags"] if f["arg"] == "--bootstrap-wiki")
+        assert set(flag["choices"]) == set(mw.WIKI_BOOTSTRAP_IDS)
+
+
+def _bootstrap_wiki_script_id() -> str:
+    """Encuentra el id del primer script del registry que declara el flag
+    --bootstrap-wiki (evita hardcodear un id de script puntual acá)."""
+    for spec in sr.SCRIPTS:
+        for f in spec.get("flags", []):
+            if f["arg"] == "--bootstrap-wiki":
+                return spec["id"]
+    pytest.fail("Ningún script del registry declara --bootstrap-wiki")

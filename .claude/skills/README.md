@@ -116,9 +116,13 @@ y 0 veces en el workflow, drift confirmado).
 4. **Merge** (`standardize_apply.py merge`): PRESERVA el `edition_key`
    existente, fallback a la propuesta heurística si el LLM devolvió keys
    vacías (sin keys usables → el item queda PENDIENTE), aplica
-   `canonical_series_key()` de `series_aliases.yml`, mueve no-manga a
-   `data/non_manga_blacklist.jsonl`, detecta outliers de serie por
-   /coleccion, consolida duplicados y reporta INTEGRITY.
+   `canonical_series_key()` de `series_aliases.yml`. **El LLM NO expulsa**
+   (WO-C, gotcha #122, 2026-07-07): `is_manga=false` YA NO manda el item a
+   `data/non_manga_blacklist.jsonl` — queda PENDIENTE y se registra en
+   `data/unmapped_series.jsonl` (reason `llm_non_manga`); la expulsión real
+   la deciden los gates deterministas (`filter_non_manga`/
+   `filter_collectible`) en la próxima corrida del scrape. Además detecta
+   outliers de serie por /coleccion, consolida duplicados y reporta INTEGRITY.
 5. **Enforcer** (`scripts/retrofit/enforce_listadomanga_rules.py`, Step 6b):
    re-aplica determinísticamente las reglas duras de agrupación — el LLM NO
    es autoridad. Incluye los pasos 3c1/3c2/3c3/3c4/3c5 (slug de tipo de

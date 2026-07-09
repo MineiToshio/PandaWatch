@@ -7,7 +7,8 @@ no se beneficia automáticamente.
 > **Estos scripts NO contienen lógica propia.** Solo importan funciones de
 > `scripts/manga_watch.py` y las aplican a items ya guardados. Las mismas
 > funciones ya corren automáticamente durante cualquier scrape nuevo
-> (`bootstrap.sh`, `full_run.sh`).
+> (`scripts/scrape_delta.sh`, `scripts/scrape_full.sh` — los 2 runners
+> canónicos; `full_run.sh`/`bootstrap.sh` quedaron deprecated).
 
 ## Cuadro completo de retrofits
 

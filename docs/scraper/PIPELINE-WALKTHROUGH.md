@@ -156,7 +156,7 @@ flowchart TD
     DISC --> RAW
     RAW["📄 items.jsonl CRUDO<br/>(sin standardized_at/slug/rarity)"]
 
-    RAW --> E2["ETAPA 2 · 🧠 /watch-standardize-catalog<br/>series_key · edition_key · volume<br/>+ dedup + non_manga_blacklist"]
+    RAW --> E2["ETAPA 2 · 🧠 /watch-standardize-catalog<br/>series_key · edition_key · volume<br/>+ dedup (el LLM no expulsa — WO-C)"]
     E2 --> E3["ETAPA 3 · 🧠 /watch-enrich-series-aliases<br/>(si aparecen series_key nuevos)"]
     E2 -.incluye.-> E4["ETAPA 4 · generate_slugs.py → slug"]
     E2 -.incluye.-> E5["ETAPA 5 · translate_descriptions.py → description_es"]
@@ -265,7 +265,22 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
 - `_run_timed` (timeout portable) por fuente — una colgada no bloquea el resto.
 - Backup de `items.jsonl` antes de tocar (`backup_and_rotate`, 3 copias). **Desde
   2026-07-07** el primer backup ocurre AL INICIO del script (antes de Fase 1), no recién
-  en un retrofit puntual de Fase 3 — cubre también scrape+wikis.
+  en un retrofit puntual de Fase 3 — cubre también scrape+wikis. **Rotación por-label +
+  snapshots timestamped (paquete F, 2026-07-08)**: cada label rota SOLO su propio glob (ya
+  no evicta backups de otros pasos en cadenas largas como el enforcer); el backup pre-scrape
+  del shell y el snapshot inicial del enforcer usan `timestamped=True` — son los que el gate
+  de PHASE 4 restaura si el corpus queda inválido (ver recuadro abajo). Todos los retrofits
+  de la Fase 3 (15) y los writers de `serve.py` escriben con `write_items_atomic`/
+  `write_lines_atomic` (tmp+fsync+`os.replace`, `sort_keys=True` homogéneo) — un kill a
+  mitad de escritura ya no trunca el corpus.
+- **Lock inter-proceso + spool de flush (paquete G, 2026-07-08)**: todo writer de
+  `items.jsonl` (scraper, dashboard, retrofits del Panel) toma `items_write_lock` (flock
+  sobre `<path>.lock`) para el read→modify→write completo — evita que el scraper y una
+  corrida manual desde el Panel se pisen cross-proceso. En el scraper, el flush por-fuente
+  (~60/run) ya no hace un `append_jsonl` O(corpus) cada vez: escribe a un spool append-only
+  (`items.jsonl.spool`, con fsync) y el `append_jsonl` FINAL del run absorbe el spool en una
+  sola pasada (mismo resultado byte-idéntico, 53× más rápido). Un spool huérfano por crash
+  lo absorbe el próximo `append_jsonl`.
 - **`FAILED_STEPS` (2026-07-07, ampliado 2026-07-08)**: cada bootstrap/retrofit/build de
   la corrida se envuelve en `record_step <nombre> $?`; los que fallan (rc≠0) quedan
   listados en el FINAL SUMMARY. Con `set +e` un paso que crashea a mitad de la cadena era
@@ -409,7 +424,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 | 4e | `backfill_metadata.py --only image_url` | Rellena portadas faltantes (HTTP por item). |
 | 4e2 | `backfill_metadata.py --only images` | **[full]** galería multi-imagen (carrusel). |
 | 4e3 | `mirror_images.py --no-gc` | **[full]** descarga galería al espejo local. |
-| 4f | `wayback_recover.py` | **opt-in** — rescata items 404 vía archive.org. |
+| 4f | `wayback_recover.py` | **opt-in** — rescata items 404 vía archive.org. **Caché negativa** (`data/wayback_negative_cache.json`, TTL configurable): una URL sin snapshot disponible se recuerda y NO se re-consulta en corridas siguientes hasta que el TTL vence — evita re-golpear archive.org por URLs que ya se sabe que no tienen rescate. `--no-negative-cache` para ignorarla. |
 | 4f2 | `align_raw_to_std_coleccion.py` | Alinea items raw a la edición estandarizada de su MISMA coleccion (regla coleccion=edición). Evita el dup raw-vs-std al re-scrapear una colección ya conocida (ej. "Bastard!! nº1" vs "Bastard!! Deluxe 1"). Corre ANTES del enforcer para que el merge los fusione. |
 | 4f3 | `enforce_listadomanga_rules.py --fast` | **Cadena COMPLETA de agrupación (2026-06-12)** — reemplaza a los pasos sueltos fix_edition_country / unify_coleccion / backfill_cluster_key / generate_slugs / consolidate / merge_isbn que el pipeline corría antes: el re-scrape del calendario sobre colecciones YA estandarizadas deja duplicados raw-vs-std (DUPSYN/DUPVOL/TITLE) que solo la cadena completa repara (la corrida real del delta del 2026-06-12 dejaba **53 violaciones duras** con la cadena vieja; con el enforcer → 0). `--fast` salta el dedup de carrusel (corre aparte en 4h). Incluye: edition_display, país=edición, anomalías ek, unify/disambiguate/collapse/merge_crosssource, títulos lmc, canonicalize slugs, merge series/ISBN dups, publishers, cluster_key, dedup sintético, consolidate, slugs. Idempotente. **El paso `unify_coleccion_edition` además AUTO-CORTA (2026-07-08, WO-1) las variantes especiales de una coleccion (título "Edición Especial/Limitada/de Lujo") en su propia edición del tipo en vez de plegarlas al regular — sin tocar el cluster_key, respetando cofre-1ªed=regular y descartando el folleto promocional (#127). Namespacea `-c{cole}` sólo ante colisión cross-coleccion.** |
 | 4g2 | `upgrade_image_resolution.py` | **[full only]** Re-descarga portadas en resolución completa: quita segmentos/params CDN de resize (Buscalibre `fit-in/`, Cultura `cdn-cgi/image/`, Whakoom `small→large`, Magento cache path, WP -NxM, Shopify _Nx, Rakuten `?_ex=`). Pasa Referer del item para evitar 403 anti-hotlink. Compara píxeles (`--min-gain 0.10`). Corre DESPUÉS de `consolidate_sources` (la portada canónica final ya está en su lugar) y ANTES de `dedup_carousel` (que puede necesitar la versión hi-res). |
@@ -437,6 +452,15 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 > en `SKILL.md` y en el workflow (y había divergido) ahora es **fuente única** en dos
 > scripts compartidos que ambos invocan: `scripts/standardize_audit.py` y
 > `scripts/standardize_apply.py`.
+
+> **Run dir persistente (2026-07-08, hallazgo F3)**: los chunks/resultados de Tier 2/3
+> viven en `data/standardize-run/` (gitignored, `DEFAULT_BASE` de ambos scripts) — antes
+> en `/tmp/manga-standardize-run`, volátil ante reboot. El checkpoint
+> `data/standardize-progress.json` quedó MÍNIMO (solo `tier1_done`, nunca los resultados
+> LLM completos); Tier 2/3 se resumen solos detectando qué `result_t{2,3}_NN.jsonl` ya
+> existen en el run dir. `standardize_audit.py` también escribe ahí `summary.json`
+> (contrato de conteos `{total,pending,tier1,tier2,tier3,exhausted}`). Borrar
+> `data/standardize-run/` sólo DESPUÉS de confirmar el merge.
 
 **Flujo** (workflow con checkpoints en `data/standardize-progress.json`):
 1. **Audit** — `standardize_audit.py` (flags `--limit`/`--force-all`; markers TOTAL/PENDING/TIER1/2/3) re-deriva `confidence_tier` y escribe proyecciones `tier{1,2,3}.json` con `proposed_*` (la propuesta heurística), `existing_edition_key` (el LLM NO re-agrupa items con edición asignada) y `known_edition_keys` (las keys YA existentes en el corpus para esa serie — el LLM debe REUSAR en vez de acuñar variantes special/limited, gotcha #69):

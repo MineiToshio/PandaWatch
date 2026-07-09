@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 141 known gotchas
+## The 142 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1687,3 +1687,20 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     `sources_all` (no la lista filtrada — el comentario ya lo decía);
     `fetch_metadata_from_detail` captura sólo `requests.RequestException` (la tupla
     `(RequestException, Exception)` era redundante y tragaba bugs de parsing).
+142. **La cola de portadas y el ledger de rechazos tienen DOS identidades: slug (primaria) +
+    url canónica del item (secundaria, estable a re-slugs).** Un `generate_slugs` cambia el slug
+    de un item; si la cola (`cover_preview.json`) y el ledger (`cover_rejections.jsonl`) se
+    keyearan sólo por slug, un re-slug (a) perdería las decisiones del owner como "item borrado"
+    y (b) neutralizaría el veto (la URL rechazada se re-ofrece bajo el slug nuevo). Cada entry de
+    la cola y cada record del ledger guardan además `url` = campo top-level `url` del item.
+    `sync_cover_preview.sync_preview` matchea por slug y, si falla, por `url` (migra el slug de la
+    entry al nuevo en vez de podarla; backfillea `url` en entries legacy al matchear por slug);
+    `catalog_is_sane` cuenta las rescatadas por url dentro del guard del 20%.
+    `fetch_better_covers.is_rejected_candidate(slug, url, a_hash_hex, ledger, item_url=…)` matchea
+    por slug O url canónica. Compat: records/entries sin `url` (legacy) matchean sólo por slug.
+    NUNCA debilitar el ledger — la identidad secundaria lo FORTALECE. Ver `docs/reference/images.md`
+    § "paquete R". Tests: `tests/test_remediacion_20260708.py`. **Lock del preview**: todo escritor
+    de `cover_preview.json` (el motor `_write_preview`, y en serve el save + el persist del GET)
+    toma `fetch_better_covers.preview_write_lock` (fcntl.flock sobre `cover_preview.json.lock`,
+    reentrante mismo-hilo, timeout 10 s) sobre su intervalo read→modify→write — cierra el TOCTOU
+    motor-vs-panel que perdía decisiones del owner.

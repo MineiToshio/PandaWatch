@@ -1308,34 +1308,8 @@ def detect_signals(text: str) -> tuple[int, list[str], list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Extracción de metadata adicional (precio, imagen, fecha, tipo de producto)
+# Extracción de metadata adicional (imagen, fecha, tipo de producto)
 # ---------------------------------------------------------------------------
-
-PRICE_PATTERNS = [
-    # (regex, prefix/suffix template using $1 for amount)
-    (re.compile(r"(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€"), "€ {}"),
-    (re.compile(r"€\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "€ {}"),
-    (re.compile(r"USD\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "USD {}"),
-    (re.compile(r"\$\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "$ {}"),
-    (re.compile(r"¥\s*(\d{1,3}(?:,\d{3})*)"), "¥ {}"),
-    (re.compile(r"(\d{1,3}(?:,\d{3})*)\s*円"), "¥ {}"),
-    (re.compile(r"(\d{1,3}(?:,\d{3})*)\s*yen", re.IGNORECASE), "¥ {}"),
-    (re.compile(r"MXN\s*\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "MXN {}"),
-    (re.compile(r"GBP\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})", re.IGNORECASE), "£ {}"),
-    (re.compile(r"£\s*(\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2})"), "£ {}"),
-]
-
-
-def extract_price(text: str) -> str:
-    """Extrae primer precio detectado en el texto. Devuelve "" si no encuentra."""
-    if not text:
-        return ""
-    for pattern, fmt in PRICE_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            return fmt.format(match.group(1).strip())
-    return ""
-
 
 # Patrones de fecha de lanzamiento en varios idiomas.
 RELEASE_DATE_PATTERNS = [
@@ -1898,10 +1872,6 @@ def _extract_author_from_links(soup: BeautifulSoup) -> str:
 
 ISBN13_PATTERN = re.compile(
     r"(?:ISBN(?:-13)?[\s:\-]*)?(97[89])[\s\-]?(\d{1,5})[\s\-]?(\d{1,7})[\s\-]?(\d{1,7})[\s\-]?(\d)",
-    re.IGNORECASE,
-)
-ISBN10_PATTERN = re.compile(
-    r"(?:ISBN(?:-10)?[\s:\-]*)?(\d{1,5})[\s\-]?(\d{1,7})[\s\-]?(\d{1,7})[\s\-]?([\dXx])(?!\d)",
     re.IGNORECASE,
 )
 
@@ -10144,6 +10114,23 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+# Fuente única de los ids de --bootstrap-wiki (choices del argparse de abajo).
+# source_health.py (_WIKI_IDS) y script_registry.py (flag --bootstrap-wiki)
+# la importan en vez de mantener su propia copia — evita el drift que exigía
+# actualizar 3 lugares a mano cuando se agrega/quita un wiki (auditoría
+# Fable 2026-07-08, paquete J). Lista literal (no frozenset) a propósito:
+# el test AST de tests/test_script_registry.py resuelve constantes de módulo
+# vía ast.literal, que soporta list/tuple/set pero no `frozenset(...)`.
+WIKI_BOOTSTRAP_IDS = [
+    "listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary",
+    "otaku-calendar", "manga-mexico", "mangavariant", "socialanime",
+    "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections",
+    "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress",
+    "shueisha", "viz", "sevenseas", "kodansha-us", "jd-intl", "spp-tw",
+    "kimdong", "ipm", "yaakz",
+]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tracker personal de mangas físicos coleccionistas y artbooks.")
     parser.add_argument("--sources", default="sources.yml", help="Archivo YAML con fuentes. Default: sources.yml")
@@ -10266,7 +10253,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bootstrap-wiki",
-        choices=["listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary", "otaku-calendar", "manga-mexico", "mangavariant", "socialanime", "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections", "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress", "shueisha", "viz", "sevenseas", "kodansha-us", "jd-intl", "spp-tw", "kimdong", "ipm", "yaakz"],
+        choices=WIKI_BOOTSTRAP_IDS,
         help="En lugar de scrapear las fuentes del YAML, importa items de una wiki comunitaria. Soporta: listadomanga (calendario ES), listadomanga-blog (archivo histórico del blog ES — anuncios/exclusivas, complementa el feed RSS), whakoom (spider 3 niveles desde /newtitles → /comics/ → /ediciones/ con variantes), manga-sanctuary (Francia), otaku-calendar (EN/US, por mes), manga-mexico (catálogo MX por editorial), mangavariant (base global de variants/ediciones, 13 países — ignora --wiki-from/--wiki-to, importa todo el sitemap), socialanime (MangaStore italiano: variant/limited/special editions + cofanetti, ~840 items vía JSON feed), blogbbm (Biblioteca Brasileira de Mangás: dos posts curados — capas variantes + volúmenes con extras — actualizados continuamente), booksprivilege (agregador JP de 店舗特典/extras de tienda: por cada release lista los bonus de cada retailer japonés — Animate, Gamers, Toranoana, Melonbooks, COMIC ZIN, etc. — que no aparecen en el catálogo regular), sumikko (catálogo curado JP de 限定版/特装版 — ~3178 ediciones limitadas y especiales con ISBN, complementario a booksprivilege que es store-bonus; sumikko se enfoca en la edición en sí: acrylic stand付き, 小冊子付き, 缶バッジ付き, BOX, etc.), listadomanga-collections (parser por colección individual coleccion.php?id=N — ediciones especiales/portadas alternativas/packs/formato premium; usa --coleccion-from y --coleccion-to en vez del rango de fechas).",
     )
     parser.add_argument(

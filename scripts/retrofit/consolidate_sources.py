@@ -11,8 +11,9 @@ imágenes y había que unirlas al leer).
 Este retrofit agrupa por `cluster_key` y:
   - Cluster con varias filas → las fusiona en UNA (la más completa como base),
     con `sources[]` = union de las fuentes, imágenes union (portada canónica
-    primera) y extras union. Reusa `build_web._merged_canonical` para que el
-    resultado sea idéntico a lo que la presentación ya producía.
+    primera) y extras union. Delega en `manga_watch.consolidate_by_cluster`
+    (fuente única del merge — la misma que usa `append_jsonl` al ingestar),
+    para que el resultado sea idéntico al que produce el pipeline normal.
   - Cluster de 1 fila → se le agrega `sources[]` = [self] (uniformidad: TODA
     fila tiene su array de fuentes).
   - Clusters `url:` (standalone) → quedan como 1 fila cada uno (son 1 producto

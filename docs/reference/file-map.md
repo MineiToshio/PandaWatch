@@ -80,6 +80,10 @@ scripts/
                                "running" que muta items.jsonl (S10) — check + registro
                                atómicos en JobManager.start(block_if_mutator=True). Origin/
                                Host validados en /api/run (S7, defensa CSRF/DNS-rebinding).
+  job_manager.py             — Job/JobManager compartidos por serve.py y admin_serve.py
+                               (extraído del duplicado byte-a-byte, B17 auditoría Fable
+                               2026-07-08); log_prefix y mutates_items inyectables.
+                               Tests: tests/test_job_manager.py.
   gen_html_favicon.py        — genera web/favicon.ico + web/apple-touch-icon.png desde
                                web-next/app/icon.png (panda sobre fondo rosa de acento).
   admin_serve.py             — DEPRECATED (absorbido por serve.py); se mantiene sincronizado
@@ -141,10 +145,9 @@ scripts/
   standardize_apply.py       — APPLY de /watch-standardize-catalog (fuente única):
                                subcomandos tier1 y merge. El merge PRESERVA el
                                edition_key existente; sin keys usables → PENDIENTE.
-                               Su propio DEFAULT_BASE sigue en /tmp (no tocado en el
-                               movimiento de F3) — todo invocador pasa `--base
-                               data/standardize-run` explícito para que coincida con
-                               standardize_audit.py.
+                               Su DEFAULT_BASE se alineó a `data/standardize-run`
+                               (paquete I1, 2026-07-08) — ya no diverge de
+                               standardize_audit.py aunque no se pase `--base`.
   wikis/                     — parsers dedicados. País + scope; detalles en gotchas/docs:
     listadomanga.py            ES — calendario mensual (delta).
     listadomanga_collections.py ES — coleccion.php?id=N (full vía lista.php). URLs

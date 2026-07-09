@@ -307,30 +307,6 @@ def test_variant_alone_with_signal_passes_collectible_gate():
 
 
 # ---------------------------------------------------------------------------
-# Extracción de precio
-# ---------------------------------------------------------------------------
-
-
-def test_extract_price_euro():
-    assert mw.extract_price("Precio: 19,99 €") == "€ 19,99"
-    assert mw.extract_price("Solo €25.50 hoy") == "€ 25.50"
-
-
-def test_extract_price_dollar():
-    assert mw.extract_price("Total $19.99 USD") == "$ 19.99"
-
-
-def test_extract_price_yen():
-    assert mw.extract_price("価格: ¥1,980") == "¥ 1,980"
-    assert mw.extract_price("Solo 2,500円") == "¥ 2,500"
-
-
-def test_extract_price_empty_when_not_found():
-    assert mw.extract_price("Manga sin precio aquí") == ""
-    assert mw.extract_price("") == ""
-
-
-# ---------------------------------------------------------------------------
 # Extracción de fecha de lanzamiento
 # ---------------------------------------------------------------------------
 

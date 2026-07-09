@@ -115,6 +115,41 @@ def test_outliers_do_not_rewrite_approved_golden_record(tmp_path, monkeypatch):
     assert out["4"]["edition_key"] == "curated-series-pub-regular-es"
 
 
+# ── #1c: outlier con edition_key stale/truncado usa la cascada de ───────────
+# rebuild_edition_key_prefix (no el startswith plano, que lo deja stale) ─────
+
+def test_outliers_rewrite_uses_rebuild_cascade_for_stale_edition_key(tmp_path, monkeypatch):
+    cid = "300"
+    dom_ek = "dominant-series-panini-regular-es"
+    dominant = [
+        make_item(url=_cole_url(cid, "regular", v), series_key="dominant-series",
+                  series_display="Dominant Series", edition_key=dom_ek, volume=str(v),
+                  standardized_at="2026-07-01T00:00:00+00:00")
+        for v in (1, 2, 3)
+    ]
+    # El series_key del outlier NO calza con el prefijo realmente horneado en
+    # su edition_key (simula un series_key stale tras una re-canonicalización
+    # previa). El startswith plano (`old_ek.startswith(series_key + "-")`) NO
+    # lo detecta y dejaría el edition_key con un prefijo mezclado/stale;
+    # rebuild_edition_key_prefix parsea la cola `-panini-regular-es` desde la
+    # derecha y re-arma correctamente con la serie dominante.
+    outlier = make_item(
+        url=_cole_url(cid, "regular", 4), series_key="stale-key-mismatch",
+        series_display="Stale Key Mismatch",
+        edition_key="actual-baked-series-panini-regular-es",
+        volume="4", standardized_at="2026-07-01T00:00:00+00:00",
+    )
+    items_path = setup_items(tmp_path, monkeypatch, dominant + [outlier])
+    base = tmp_path / "run"
+    base.mkdir()
+
+    standardize_apply.cmd_merge(base, force_all=False)
+    out = {it["volume"]: it for it in read_jsonl(items_path)}
+    assert out["4"]["series_key"] == "dominant-series"
+    # Reconstruido vía rebuild_edition_key_prefix, no dejado stale/mezclado.
+    assert out["4"]["edition_key"] == "dominant-series-panini-regular-es"
+
+
 # ── #1b: serie dominante vacía NO crea huérfanos ────────────────────────────
 
 def test_outliers_empty_dominant_does_not_orphan_healthy_items(tmp_path, monkeypatch):

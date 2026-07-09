@@ -49,9 +49,9 @@ if str(_SCRIPTS) not in sys.path:
 # sys.path — p.ej. bajo pytest. En ese caso `load_sources` no existe ahí;
 # caemos al paquete real scripts.manga_watch. Ver gotcha de import dual.
 try:
-    from manga_watch import load_sources  # type: ignore
+    from manga_watch import WIKI_BOOTSTRAP_IDS, load_sources  # type: ignore
 except ImportError:
-    from scripts.manga_watch import load_sources  # type: ignore
+    from scripts.manga_watch import WIKI_BOOTSTRAP_IDS, load_sources  # type: ignore
 
 
 # Regex para parsear líneas de log del scraper.
@@ -118,20 +118,12 @@ _CHALLENGE_RE = re.compile(
     r"^\[CHALLENGE_DETECTED\]\s+source=(?P<name>.+?)\s+type=(?P<type>\S+)\s*$"
 )
 
-# (#4, 2026-07-08) Los wikis (26, fuera de sources.yml) van por
-# `_run_wiki_bootstrap` — un log distinto por wiki con un header + resumen
-# uniformes (ver arriba). IDs = choices= de `--bootstrap-wiki` en
-# manga_watch.py:9536; actualizar esta lista si se agrega/quita un wiki (no
-# hay constante exportada para importar sin tocar manga_watch.py, que está
-# fuera de scope de este script).
-_WIKI_IDS = frozenset({
-    "listadomanga", "listadomanga-blog", "whakoom", "manga-sanctuary",
-    "otaku-calendar", "manga-mexico", "mangavariant", "socialanime",
-    "blogbbm", "booksprivilege", "sumikko", "listadomanga-collections",
-    "mangapassion", "animeclick", "prhcomics", "kinokuniya", "yenpress",
-    "shueisha", "viz", "sevenseas", "kodansha-us", "jd-intl", "spp-tw",
-    "kimdong", "ipm", "yaakz",
-})
+# (#4, 2026-07-08; J-higiene 2026-07-08) Los wikis (26, fuera de sources.yml)
+# van por `_run_wiki_bootstrap` — un log distinto por wiki con un header +
+# resumen uniformes (ver arriba). IDs = manga_watch.WIKI_BOOTSTRAP_IDS, la
+# FUENTE ÚNICA (mismo objeto que arma `choices=` de `--bootstrap-wiki`) —
+# importada, no copiada a mano, así no puede divergir.
+_WIKI_IDS = frozenset(WIKI_BOOTSTRAP_IDS)
 _WIKI_HEADER_RE = re.compile(r"^\[BOOTSTRAP-WIKI\]\s+fuente:\s*(?P<name>\S+)\s*$")
 _WIKI_SUMMARY_RE = re.compile(r"^\s*candidates totales:\s*(?P<n>\d+)\s*$")
 

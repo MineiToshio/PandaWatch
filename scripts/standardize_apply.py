@@ -483,8 +483,17 @@ def cmd_merge(base: Path, force_all: bool) -> int:
                 continue
             if it.get("series_key", "") and it["series_key"] != dom_sk:
                 old_ek = it.get("edition_key", "")
-                if old_ek.startswith(it["series_key"] + "-"):
-                    it["edition_key"] = dom_sk + old_ek[len(it["series_key"]):]
+                old_sk_it = it["series_key"]
+                # Misma cascada que backfill_series_aliases.py: primero la
+                # FUENTE ÚNICA (parsea la cola `-{pub}-{slug}-{country}` desde
+                # la derecha, cubre prefijos STALE/truncados que el startswith
+                # no detecta), con fallback al startswith exacto si no es
+                # parseable (precisión > recall).
+                rebuilt = rebuild_edition_key_prefix(old_ek, dom_sk)
+                if rebuilt:
+                    it["edition_key"] = rebuilt
+                elif old_ek.startswith(old_sk_it + "-"):
+                    it["edition_key"] = dom_sk + old_ek[len(old_sk_it):]
                 it["series_key"] = dom_sk
                 if dom_sd:
                     it["series_display"] = dom_sd

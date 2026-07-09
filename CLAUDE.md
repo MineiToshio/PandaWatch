@@ -164,7 +164,10 @@ cambio estructural, leé esa doc.
 
 1. **Storage = JSONL, 1 fila por PRODUCTO con `sources[]`** (no por URL). El merge
    tiene una FUENTE ÚNICA: `merge_cluster()`/`consolidate_by_cluster()`/`source_entry()`
-   en manga_watch.py — nunca reimplementar en otro lado.
+   en manga_watch.py — nunca reimplementar en otro lado. Escritura vía
+   `append_jsonl`/`write_items_atomic` (tmp+fsync+`os.replace`); el scraper flushea
+   por-fuente a un spool append-only que el `append_jsonl` final absorbe en una sola
+   pasada (2026-07-08).
 2. **`is_likely_manga()` = cascada de 4 reglas en orden** (HARD → STRONG → extras →
    SOFT → default). El orden importa.
 3. **Source purity `manga_only` vs `mixed`**: en mixed, sólo pasa lo que tiene STRONG
@@ -176,7 +179,8 @@ cambio estructural, leé esa doc.
 5. **Live-fetch, no data embebida**: el dashboard hace `fetch()` de items.jsonl;
    correr siempre `serve.py` (no `file://`).
 6. **Concurrencia con ThreadPoolExecutor, NO asyncio** (`--workers` + `--per-host-limit`
-   + Playwright worker thread dedicado, gotcha #12).
+   + Playwright worker thread dedicado, gotcha #12) + lock inter-proceso (`flock`) sobre
+   `items.jsonl` entre scraper/dashboard/Panel (2026-07-08).
 7. **Pipeline canónico + observabilidad**: scrape_delta/full encadenan todo; no comandos
    ad-hoc. `source_health.py` clasifica fuentes desde los logs.
 
@@ -260,12 +264,13 @@ strictly to prevent autocompact thrashing.
 
 ---
 
-Last updated: 2026-07-07 (auditoría post-scrape exhaustiva full+delta — gist de la
-decisión #4 corregido: tiers reales `lmc:`>`edition:`>`fuzzy:`>`url:`, `isbn:`
-eliminado). CLAUDE.md se compactó de ~5700 a ~190 líneas: el changelog
-histórico narrativo se removió (vive en `git log -- CLAUDE.md`) y el detalle de
-referencia (file map, las 7 decisiones, las 125 gotchas, convenciones, dashboard,
-imágenes) se movió a `docs/reference/`, cargado bajo demanda vía el índice de arriba.
+Last updated: 2026-07-08 (implementación de la auditoría Fable 2026-07-08 —
+~180 hallazgos en 26 commits sobre `fable-audit-20260708`, gists #1 y #6
+ajustados: spool de flush + lock inter-proceso sobre items.jsonl). CLAUDE.md se
+compactó de ~5700 a ~190 líneas: el changelog histórico narrativo se removió
+(vive en `git log -- CLAUDE.md`) y el detalle de referencia (file map, las 7
+decisiones, las 142 gotchas, convenciones, dashboard, imágenes) se movió a
+`docs/reference/`, cargado bajo demanda vía el índice de arriba.
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,
 y bumpeá esta fecha. Nada de changelog narrativo acá.

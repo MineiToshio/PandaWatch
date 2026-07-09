@@ -40,8 +40,22 @@ correspondiente en el código primero.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+# Fuente única de los ids de --bootstrap-wiki (manga_watch.py); ver el comment
+# ahí + en source_health.py. Import defensivo: `manga_watch` puede resolver
+# al wrapper de la raíz del repo (manga_watch.py, que sólo reexporta
+# parse_args/run) si la raíz está en sys.path antes que scripts/.
+try:
+    from manga_watch import WIKI_BOOTSTRAP_IDS  # type: ignore
+except ImportError:
+    from scripts.manga_watch import WIKI_BOOTSTRAP_IDS  # type: ignore
 
 
 # Ejecutable Python a usar. Se resuelve en serve.py al path absoluto del venv.
@@ -748,20 +762,14 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
-            # Sincronizado con manga_watch.py:9727 (choices reales del argparse).
-            # Si agregás una wiki nueva, agregala en AMBOS lados o el test AST
-            # de tests/test_script_registry.py va a fallar (1.3, 2026-07-08).
+            # choices = WIKI_BOOTSTRAP_IDS, importado de manga_watch.py (fuente
+            # única) — ya no es una copia a mano, no puede divergir (J-higiene,
+            # auditoría Fable 2026-07-08). tests/test_script_registry.py sigue
+            # validando por AST que coincida con el argparse real.
             _flag("--bootstrap-wiki", "Wiki a importar",
                   "Elegí qué wiki recorrer. Cada una cubre un país/idioma.",
                   type="choice", default="listadomanga",
-                  choices=["listadomanga", "listadomanga-blog", "whakoom",
-                           "manga-sanctuary", "otaku-calendar", "manga-mexico",
-                           "mangavariant", "socialanime", "blogbbm",
-                           "booksprivilege", "sumikko",
-                           "listadomanga-collections", "mangapassion",
-                           "animeclick", "prhcomics", "kinokuniya", "yenpress",
-                           "shueisha", "viz", "sevenseas", "kodansha-us",
-                           "jd-intl", "spp-tw", "kimdong", "ipm", "yaakz"]),
+                  choices=WIKI_BOOTSTRAP_IDS),
             _flag("--wiki-from", "Mes inicial (YYYY-MM)",
                   "Desde qué mes traer items. Aplica a wikis basadas en "
                   "calendario (listadomanga, manga-sanctuary, otaku-calendar). "

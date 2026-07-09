@@ -1552,15 +1552,22 @@ each one returning per-item: `is_manga`, `series_key`,
 
 Workflow:
 1. Audit pending count (filter `items.jsonl` by missing `standardized_at`).
-2. Partition into chunks of 150, written to `/tmp/manga-standardize-run/`.
+2. Partition into chunks of 150, written to `data/standardize-run/`
+   (persistent run dir — moved off `/tmp` 2026-07-08 so Tier 2/3 chunk/
+   result files survive a reboot and the audit can resume mid-run).
 3. Spawn 7 subagents per wave (parallel). Each one reads its chunk and
    writes a result file.
-4. Merge results back into items.jsonl. Apply `canonical_series_key()`
-   from `data/series_aliases.yml`. Dedup by `(series_key, edition_key,
-   volume)`. Move `is_manga=false` items to
-   `data/non_manga_blacklist.jsonl`.
+4. Merge results back into items.jsonl via `standardize_apply.py merge`
+   (fuente única — ya no lógica embebida en SKILL.md). Apply
+   `canonical_series_key()` from `data/series_aliases.yml`. Dedup by
+   `(series_key, edition_key, volume)`. **El LLM NO expulsa (WO-C,
+   2026-07-07)**: `is_manga=false` NO borra la fila ni la manda a
+   `non_manga_blacklist.jsonl` — el item queda PENDIENTE y se registra en
+   `data/unmapped_series.jsonl` (reason `llm_non_manga`); la expulsión real
+   la hacen los gates deterministas (`filter_non_manga`/`filter_collectible`)
+   en la próxima corrida del scrape.
 5. Set `standardized_at` on each processed item.
-6. Cleanup `/tmp/manga-standardize-run/`.
+6. Cleanup `data/standardize-run/` (only after the merge is confirmed).
 
 Incremental by default. `--force-all` snippet (embedded in the skill)
 clears `standardized_at` from all items to force a full re-run when
