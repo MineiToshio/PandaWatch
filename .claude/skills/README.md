@@ -130,6 +130,23 @@ y 0 veces en el workflow, drift confirmado).
    serie del edition_key #71, palabra de edición duplicada/"Regular" en
    títulos #72) para TODAS las fuentes, y el paso 4b re-corre los fixers de
    título DESPUÉS de consolidate (converge en una sola pasada).
+6. **Gate bloqueante** (Step 7b): tras el merge/enforcer corre
+   `scripts/validate_corpus.py` sobre TODO el corpus. Si reporta violaciones
+   duras, la corrida NO se da por cerrada (el workflow lo propaga como
+   `status: completed_with_violations`) — hay que investigar antes de
+   anunciar éxito.
+7. **Verificación de integridad con reintento** (Step 5): antes del merge se
+   valida que cada `result_*.jsonl` tenga exactamente los mismos items que su
+   `chunk_*.jsonl` (parchea URLs truncadas por prefijo, reintenta lo faltante
+   inline o con un subagente extra).
+
+**Manual vs workflow guardado**: hay un único umbral de pendientes (una sola
+constante, ver el Step 1 del [`SKILL.md`](watch-standardize-catalog/SKILL.md) —
+no la dupliques acá) que decide si conviene procesar inline o invocar
+`.claude/workflows/watch-standardize-catalog.js` (ver sección "Workflows" más
+abajo). El chunker (manual o del workflow) agrupa siempre por `group_key`
+(mismo `/coleccion` o misma URL base) para que los hermanos de una edición
+nunca queden separados en distintos chunks.
 
 **Cuándo invocarlo**:
 - Después de cada `manga_watch.py` scrape (items nuevos vienen sin
@@ -159,23 +176,37 @@ de estandarización mayor).
 
 **Propósito**: procesar la queue de series sin canonical
 (`data/unmapped_series.jsonl`) y mantener `data/series_aliases.yml`
-actualizado con traducciones multilingües.
+actualizado con traducciones multilingües. `argument-hint` real:
+`[--max-suggestions N] [--min-count N]` — ver
+[`SKILL.md`](watch-enrich-series-aliases/SKILL.md) para el detalle completo.
 
-**Cómo funciona**:
+**Cómo funciona** (resumen — el detalle paso a paso vive en el `SKILL.md`):
 1. Audita la queue (`scripts/audit/unmapped_series.py`).
-2. Para cada `series_key` no canónico, decide:
-   - **Merge** como alias de un canonical existente (fuzzy match ≥0.8).
-   - **Create** nuevo canonical via Anilist API (`graphql.anilist.co`).
-     Saca `title.english/romaji/native + synonyms[]`, filtra
-     alfabetos no-target (cyrillic, arabic, hebrew, hangul, thai) +
-     aliases ambiguos genéricos.
-   - **Skip** si confidence baja + item count bajo (esperar más data).
-3. Edita `data/series_aliases.yml` in-place.
-4. Corre `scripts/retrofit/backfill_series_aliases.py --only-keys <keys tocadas>`
-   (fuente única — ya NO snippet embebido) para remapear + consolidar `items.jsonl`
-   (**salta items con `approved_at`** — no remapea golden records; backupea items.jsonl;
-   `--only-keys` REQUERIDO — scope acotado a las keys de la corrida, regla anti-colapso).
-5. Trunca la queue (`data/unmapped_series.jsonl`).
+2. Para cada `series_key` no canónico, decide: **Merge** como alias de un
+   canonical existente (un fuzzy match alto es un hint, NO un veredicto —
+   confianza media exige evidencia estructural explícita antes de mergear,
+   un falso merge es irreversible), **Create** nuevo canonical vía Anilist
+   API, o **Skip** (confianza/volumen bajos).
+3. Antes de la primera edición: backup timestamped del YAML
+   (`backup_and_rotate(..., timestamped=True)`) y una **snapshot baseline de
+   colisiones** (`scripts/audit/lint_series_aliases.py --snapshot`) — las
+   colisiones de normalización PRE-EXISTENTES en el YAML no bloquean; solo
+   las NUEVAS que esta corrida introduzca.
+4. Edita `data/series_aliases.yml` in-place; **lint anti-dup-keys contra ese
+   baseline** después de cada tanda de ediciones (`lint_series_aliases.py --baseline`) —
+   atrapa claves canónicas duplicadas (fatal siempre) y colisiones nuevas
+   (fatal solo si no estaban en el baseline).
+5. Corre `scripts/retrofit/backfill_series_aliases.py --only-keys <keys tocadas>`
+   (fuente única, backup timestamped propio) para remapear + consolidar
+   `items.jsonl` (**salta items con `approved_at`**; `--only-keys` REQUERIDO —
+   scope acotado a la corrida, regla anti-colapso).
+6. Trunca la queue (`data/unmapped_series.jsonl`) — solo si el backfill salió
+   exit 0.
+7. **Cierre (gates, todos bloqueantes)**: lint contra baseline + `validate_corpus.py`
+   + prueba de idempotencia (re-correr el backfill con los mismos `--only-keys`
+   debe dar 0 cambios) + tests. Al final exporta el índice de búsqueda en vivo
+   (`scripts/export_series_aliases.py`) para que web-next lo refleje sin build
+   completo.
 
 **Cuándo invocarlo**:
 - Después de `/watch-standardize-catalog` cuando aparecieron series_keys
@@ -192,32 +223,34 @@ incorporar fuentes que no aportan valor real al catálogo (lección: BooksPrivil
 **Input**: lista de URLs o nombres en cualquier formato — una por línea, con
 contexto adicional o sin él.
 
-**Cómo funciona**:
+**Cómo funciona** (resumen — detalle completo en el
+[`SKILL.md`](watch-evaluate-sources/SKILL.md)):
+0. Carga las fuentes `enabled` de `sources.yml` **en vivo**, agrupadas por
+   país (`load_active_sources_by_country()` de `scripts/audit/source_overlap.py`)
+   — ya NO hay una tabla hardcodeada acá ni en el skill; `sources.yml` cambia
+   seguido y una tabla fija driftea (hallazgo ES-2, auditoría Fable 2026-07-11).
 1. Parsea la lista de candidatas del mensaje del usuario.
 2. Lanza un subagente `general-purpose` con **`sonnet`** por fuente en
-   paralelo (investigación web con criterio pero acotada por fuente; Sonnet
-   rinde muy bien y sale mucho más barato que N Opus simultáneos en fan-out).
-   Cada subagente:
-   - Fetchea el listing principal, hace un triage chico (3-5 items) para
-     C1 (Content Fit); si pasa, amplía la muestra a **8-10 items** de detalle
-     (auditoría Fable 2026-07-08, hallazgo F13 — 5 items daba un intervalo de
-     confianza muy amplio para la regla de overlap 30/70%).
-   - Evalúa: Content Fit (% ediciones especiales reales), campos mínimos
-     (serie, tipo de edición, editorial, foto de portada), y — **crítico** —
-     si la fuente cubre extras/bonuses, verifica que haya foto del EXTRA en
-     sí (no solo la portada del manga).
-   - Estima escala y factibilidad técnica.
-   - Escribe su JSON de resultado a `data/diagnostics/source-eval-<id>.json`
-     (trazabilidad; el contrato es descriptivo, no un JSON Schema ejecutable —
-     skill interactivo, no workflow).
-3. Para fuentes que pasan el filtro básico: cruza muestra con `items.jsonl`
-   para calcular % de overlap con el corpus existente.
+   paralelo. Cada subagente hace un triage chico para Content Fit y, si pasa,
+   amplía la muestra para el resto de la rúbrica (C1-C5, ver `SKILL.md` para
+   los tamaños exactos); evalúa campos mínimos, foto del EXTRA si la fuente
+   cubre bonuses, `catalog_scope` (`manga_only`/`mixed` — alimenta la decisión
+   de `purity` al dar de alta la fuente), y factibilidad técnica (incluye
+   distinguir "sitio muerto" de "requiere `kind: js`" cuando WebFetch trae un
+   esqueleto vacío con señales de hidratación client-side). Escribe su JSON a
+   `data/diagnostics/source-eval-<id>.json`.
+3. **Overlap mecánico, no estimado por el LLM**: `scripts/audit/source_overlap.py`
+   cruza el `isbn`/`series_key_guess` de la muestra contra `data/items.jsonl`
+   con las MISMAS funciones de normalización del pipeline
+   (`normalize_isbn`, `_slugify_kebab`) y devuelve `nuevo`/`parcial`/`redundante`
+   (o `sin_datos` si la muestra no trajo ISBN — nunca un % inventado).
 4. Compila reporte: tabla resumen (✅/⚠️/❌) + detalle solo para viables.
 
 **Output** (no implementación):
-- Tabla de viabilidad con veredicto y razón por fuente.
-- Para viables: qué aporta, qué falta, acción recomendada
-  (`Agregar` / `Reemplaza [X]` / `Complementa [X]`).
+- Tabla de viabilidad con veredicto y razón por fuente. Veredictos incluyen
+  `Agregar`, `Viable — requiere kind: js` (JS-rendered, no muerto),
+  `Reemplaza [X]`, `Complementa [X]`, y varios `No — <razón>` (ver `SKILL.md`).
+- Para viables: qué aporta, qué falta, acción recomendada.
 
 **Cuándo invocarlo**:
 - Antes de implementar cualquier fuente nueva.
@@ -230,36 +263,50 @@ contexto adicional o sin él.
 dashboard (`data/feedback.jsonl`). Cada entrada ya contiene todos los campos
 del item más el motivo. Categoriza cada feedback (problema de filtro vs.
 problema de calidad de datos), propone fixes concretos, aplica los aprobados
-y trunca la queue.
+y cierra la queue. **Trigger 100% manual** — invocar SOLO cuando el usuario lo
+pide explícitamente; nunca correrlo de oficio solo porque el archivo tiene
+entradas.
 
-**Cómo funciona**:
-1. Carga la queue (`data/feedback.jsonl` — ya incluye campos completos del item, sin JOIN).
-2. Clasifica cada item con taxonomía de 14 categorías:
-   - **A–J** (filtros/catálogo): merchandising, trading cards, noticias, tomos
-     regulares, source ruidosa, western comics, light novels, preferencia personal,
-     falsa señal, selectores amplios.
-   - **K–N** (calidad de datos): portada equivocada, metadata incorrecta,
-     series_key/edition_key mal asignado, título con basura del scraper.
-3. Para problemas de filtro: escanea el corpus buscando más items afectados
+**Cómo funciona** (resumen — detalle completo en el
+[`SKILL.md`](watch-review-feedback/SKILL.md)):
+1. Carga la queue. `feedback.jsonl` es un **log MIXTO**: filas `action="feedback"`
+   (o sin `action`, legacy) son el feedback real a procesar; pero `serve.py`
+   también apenda ahí sus operaciones de curación ya aplicadas (`move`/`merge`/
+   `remove`/`batch-move`) — el skill filtra por `action` y solo procesa las
+   primeras; las de curación se cuentan aparte, informativo.
+2. Dedup por cluster: si el mismo item recibió 👎 más de una vez, **conserva
+   TODOS los reasons** (no solo el más reciente) para no perder contexto al
+   categorizar.
+3. Clasifica cada item con taxonomía de 14 categorías: **A–J** (filtros/catálogo:
+   merchandising, trading cards, noticias, tomos regulares, source ruidosa,
+   western comics, light novels, preferencia personal, falsa señal, selectores
+   amplios) y **K–N** (calidad de datos: portada equivocada, metadata incorrecta,
+   series_key/edition_key mal asignado, título con basura del scraper).
+4. Para problemas de filtro: escanea el corpus buscando más items afectados
    por el mismo patrón, presenta propuestas numeradas y **espera confirmación**.
-4. Aplica cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
-   `sources.yml` / `series_aliases.yml` / o correcciones puntuales de un item vía
-   `scripts/retrofit/fix_item_fields.py --url X --set campo=valor` (auditoría
-   Fable 2026-07-08, hallazgo F12 — allowlist de campos + `title` BLOQUEADO
-   salvo `--allow-title` explícito, política de títulos gotcha #92; guard
-   `approved_at` + `backup_and_rotate` + re-deriva `cluster_key` si aplica).
-   **Golden records guard**: si un fix de calidad de datos (K–N) tocaría un item
-   con `approved_at`, NO se auto-edita — se consulta al owner primero.
-5. Agrega tests y corre pytest (solo para cambios de filtros).
-6. Corre retrofits correspondientes (`filter_non_manga.py`, `filter_collectible.py`,
-   `rescore.py`, `backfill_metadata.py`, `clean_titles.py`, etc.).
-7. Trunca `data/feedback.jsonl`.
-8. Actualiza CLAUDE.md "Last updated".
+5. Aplica cambios aprobados: edita `manga_watch.py` / `comics_blacklist.yml` /
+   `sources.yml` / `series_aliases.yml` / o correcciones puntuales vía
+   `scripts/retrofit/fix_item_fields.py` (allowlist de campos + `title`
+   BLOQUEADO salvo `--allow-title` explícito, política de títulos gotcha #92).
+   **Golden records guard**: un fix K–N que tocaría un item con `approved_at`
+   NO se auto-edita — se consulta al owner primero.
+6. Agrega tests y corre pytest (solo para cambios de filtros). **Advertencia
+   gotcha #61**: sobre un item YA estandarizado, `rescore.py`/`filter_collectible.py`
+   son no-op para las categorías D/I — el corpus está ~98.9% estandarizado, así
+   que el fix real para ESE item puntual es `fix_item_fields.py` o
+   re-estandarizarlo, no confiar en que el retrofit masivo lo saque.
+7. **Cierre no-ciego**: el backup timestamped se toma primero (retiene el
+   rastro completo, feedback + curación), pero la reescritura de
+   `feedback.jsonl` ya NO es un truncado ciego (`: > archivo`) — conserva las
+   filas que esta corrida no vio (por `submitted_at`), así una fila nueva
+   escrita por `serve.py` o un 👎 del dashboard mientras el skill corría no se
+   pierde.
+8. Actualiza CLAUDE.md "Last updated" + el doc de referencia que corresponda.
 
 **Cuándo invocarlo**:
-- Cuando `data/feedback.jsonl` tiene entradas (el usuario ha clickeado 👎).
-- Al decir "revisar feedback", "mejorar los filtros", "corregir datos".
-- Periódicamente después de scrapes grandes.
+- Cuando el usuario pide explícitamente "revisar feedback", "mejorar los
+  filtros", "corregir datos" — nunca de forma automática.
+- Periódicamente después de scrapes grandes, a pedido del owner.
 
 ### `/watch-validate-rarity`
 
@@ -281,19 +328,27 @@ implementación, fijada por un test de coherencia por-rama contra
    (`rarity_uncertainty_reason()`), excluye aprobados y ya verificados, agrupa
    por `edition_key` y prioriza retailer_exclusive (posible promoción a
    super_rare) + mercados occidentales. Escribe
-   `data/diagnostics/rarity_validation_candidates.json`.
+   `data/diagnostics/rarity_validation_candidates.json` — el `group_id` de ahí
+   es el identificador que indexa los veredictos en el Step 2/3 y aparece en
+   el output humano priorizado.
 2. Verifica con escalera de métodos (interactivo, LLM + Chrome — la única
    parte no compilable): URL del item si es retailer → tienda del publisher
    (mejor ground truth; panini.it solo vía Chrome por queue-it) → Amazon vía
    Chrome con selectores JS (WebFetch da 500) → WebSearch solo para descubrir
    la ficha. Guarda los veredictos en
-   `data/diagnostics/rarity_validation_results.json`.
+   `data/diagnostics/rarity_validation_results.json` (keyed por `group_id`).
 3. Veredictos: `in_stock` → common (salvo evidencia estructural extra),
    `out_of_stock` → rare confirmado o **super_rare** si retailer_exclusive,
    `not_found` → rare confirmado, `inconclusive` → no toca nada (se reintenta).
-4. `scripts/retrofit/apply_rarity_verdicts.py` aplica: marca
-   `rarity_verified_at` (ground truth: `set_rarity --force` lo respeta) y
-   loguea a `data/diagnostics/rarity_validation_log.jsonl`.
+4. `scripts/retrofit/apply_rarity_verdicts.py` aplica: **valida la estructura
+   de `results.json`** (lista de objetos con `group_id` no vacío y `verdict`
+   válido; corta con error controlado ante JSON malformado o `group_id`
+   duplicado con veredictos distintos), marca `rarity_verified_at` (ground
+   truth: `set_rarity --force` lo respeta), loguea a
+   `data/diagnostics/rarity_validation_log.jsonl` e imprime **"Veredictos sin
+   match: N"** con los `group_id` huérfanos (que no matchearon ningún item
+   candidato — típico de un typo o un candidato que dejó de serlo) para que
+   se revisen antes de cerrar.
 
 **Cuándo invocarlo**:
 - Después de scrapes grandes con items nuevos de fuentes de referencia.
@@ -309,43 +364,59 @@ mecánicos (scripts, cero LLM), el Step 2 (verificación web) sí razona —
 ### `/watch-search-covers`
 
 **Propósito**: buscar portadas en alta resolución para items con imagen de baja
-calidad (la portada `images[0]` < `min-pixels` px) o sin imagen. Usa **Chrome exclusivamente**
-(`mcp__claude-in-chrome__*`) para navegar **Google Imágenes** (vista `udm=2`), con **fallback
-a Bing** si Google muestra un consent wall. Escribe candidatas a `data/cover_preview.json` para
-aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
+calidad (la portada `images[0]` o una foto de galería por debajo del umbral de
+píxeles) o sin imagen. Usa **Chrome exclusivamente** (`mcp__claude-in-chrome__*`)
+y combina, por cada imagen objetivo, **Yandex búsqueda-por-foto** (reverse
+image, usando la imagen actual como consulta) como fuente **primaria** — sin
+captcha, devuelve portadas del tomo/edición correctos — más **variantes de
+texto con contexto** en **Google Imágenes** (`udm=2`), con fallback a Bing si
+Google muestra consent wall. Escribe candidatas a `data/cover_preview.json`
+para aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
+Por defecto solo procesa portadas (`img_idx 0`).
 
-> **Google vs Bing (verificado 2026-06-06)**: versiones viejas usaban Bing porque el método
-> antiguo de Google (patrón `"ou":"..."`) da vacío. Pero en `udm=2` las URLs full-res SÍ están
-> en el HTML crudo y se extraen con regex (corta antes de `?` → sin query strings → sin bloqueo
-> del MCP). Solo Google **Lens** (reversa por foto) sigue bloqueado. Por eso ahora el default es
-> Google (preferencia del owner) y Bing queda de fallback.
+> **Corrección (auditoría Fable 2026-07-11, hallazgo SC-1)**: esta ficha decía
+> "Google Imágenes con fallback a Bing" sin mencionar Yandex como motor
+> primario, y traía 4 datos desactualizados (umbral de hash con un "relax" que
+> ya no existe, default de `--limit`, estado de `SERPER_API_KEY`, y le
+> faltaban 4 flags). Regla PR-7: de acá en más esta ficha no reproduce
+> constantes/umbrales/flags que puedan driftear del código — cita el símbolo y
+> remite al [`SKILL.md`](watch-search-covers/SKILL.md), fuente única.
 
-**Cómo funciona**:
-0. Verifica que Chrome esté disponible (`mcp__claude-in-chrome__list_connected_browsers`).
-1. **El plan de queries está compilado a `scripts/retrofit/sc_plan.py`** (auditoría
-   Fable 2026-07-08, hallazgo F9 — antes ~300 líneas de Python embebido). Filtra
-   `items.jsonl` para encontrar items cuya imagen sea menor a `min-pixels` (o sin
-   imagen con `--include-no-image`), saltando los `(slug, action, target)` que ya
-   tienen una candidata **del skill** (campo `match_dist`) en **cualquier** estado
-   — pending, approved o rejected. (Antes saltaba solo los `pending`, así que un
-   item ya adjudicado re-entraba al plan y se re-buscaba en vano contra el mismo
-   índice externo hasta aplicar la portada.) Las candidatas del script python
-   `fetch_better_covers` (sin `match_dist`) NO bloquean: el skill corre igual
-   sobre esos items.
-3. Para cada item arma fuentes y las **itera** hasta juntar 3 matches verificados o agotarlas. **Primera fuente: Yandex búsqueda-por-foto** (`yandex.com/images/search?rpt=imageview&url=<images[0].url>` — la portada actual como consulta; el mejor motor reverse gratis, sin captcha). **Luego: variantes de texto con contexto** (serie + volumen + tipo de edición + editorial + "portada" en el idioma, vía `fetch_better_covers._COVER_TERM`/`_EDITION_HINT`/`_simplify_publisher`) en Google `udm=2`. En ambas extrae las URLs full-res con regex sobre el `innerHTML` (el regex corta antes de `?` → sin query strings → sin bloqueo). Fallback a Bing (`a.iusc[m].murl`) si Google muestra consent wall; salta Yandex si pide captcha.
-4. Valida cada URL con Python: píxeles ≥ 1.5× actual, y **`fetch_better_covers._same_cover()`** — aspect ratio ±25% + aHash Hamming ≤ `MAX_HASH_DIST` (10 base; `_same_cover` relaja +4 para portadas actuales < 30k px). Solo pasa si es **la MISMA portada en mejor resolución** (otro volumen / edición / arte = hash distinto = descartada). Items sin imagen actual (`--include-no-image`) no se pueden verificar → quedan `verified: false`. Esto es lo que elimina las candidatas no relacionadas que antes se colaban (el filtro viejo de "Hamming > 3" hacía justo lo contrario: descartaba la misma portada y dejaba pasar las distintas).
-5. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json` con `confidence: "low"`, `status: "pending"`, más `match_dist`/`verified`. Flush **self-healing** después de cada item (acumulador propio + reescritura completa → resiste un save concurrente del dashboard).
+**Cómo funciona** (detalle completo en el propio `SKILL.md` — acá el resumen):
+0. Verifica que Chrome esté disponible.
+1. Plan de queries determinístico, compilado a `scripts/retrofit/sc_plan.py`
+   (0 tokens LLM). Salta targets ya adjudicados por el skill (campo
+   `match_dist` en cualquier estado — pending/approved/rejected) y los que
+   fallaron hace menos de 30 días (salvo `--retry-failed`).
+2. Por cada target, itera variantes (Yandex reverse primero, texto en Google
+   después) hasta juntar varias candidatas verificadas o agotarlas.
+3. Valida cada URL con `scripts/retrofit/sc_validate.py` (script permanente,
+   fuente única con producción): exige identidad — `fetch_better_covers._same_cover()`,
+   un AND-gate cuyo umbral real es la constante `fetch_better_covers.DEFAULT_MAX_HASH_DIST`
+   (sin relax, a diferencia de lo que decía una versión anterior de esta
+   ficha) — más ausencia de conflicto de metadata (otro volumen/ISBN) y
+   calidad de display (`_is_soft_image()`, gotcha #98: descarta escaneos
+   chicos y blandos). Solo pasa la MISMA portada en mejor resolución y buena
+   calidad.
+4. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json`
+   con `confidence: "low"`, `status: "pending"`. Flush self-healing
+   (`scripts/retrofit/sc_flush.py`) después de cada item.
+5. (Opcional, `--serper-fallback`) invoca el motor de producción
+   (`fetch_better_covers.py`, con `SERPER_API_KEY` **activa** en `.env` — no
+   comentada) para reverse-image vía Serper Lens en los targets que quedaron
+   en 0 matches. De pago; solo si el owner lo pide explícitamente.
 
-> **Motores reverse-image — comparativa probada 2026-06-06**: **Yandex** (`rpt=imageview`) es el mejor gratis: accesible, sin captcha, devuelve portadas del tomo/edición correctos → es la fuente primaria del skill. **Google Lens** es accesible (regex sobre `innerHTML`, NO leer `location.href` que dispara `[BLOCKED]`) pero **inefectivo** con thumbnails de 150×150: cae en matching a nivel franquicia (fan art, wikis, merch, Mercari) → 0 matches. **Bing Visual Search** redirige a búsqueda web de entidad y se bloquea. **Serper Lens** (`fetch_better_covers._search_serper_lens`, `SERPER_API_KEY` de pago, comentada en `.env`) es la reversa server-side de mejor calidad. **Limitación de fondo**: el catálogo son ediciones especiales; texto y reversa suelen traer la edición regular/hermana (arte distinto) → `_same_cover` la rechaza, así que varios items quedan sin candidata (el hi-res del scan especial exacto no está indexado). Esperado, no bug.
+**Umbral de calidad**: mismo valor que `scripts/audit/data_quality.py --px`
+(el panel de calidad) — constante compartida
+(`fetch_better_covers.LOW_QUALITY_PX`), no la dupliques acá.
 
-**Umbral de calidad**: 90 000 px — mismo valor que `data_quality.py --px` (el panel de
-calidad). Si el panel lo marca como "pixelada", este skill lo procesa.
-
-**Args opcionales**:
-- `--limit N` (default 20) — máximo de items por sesión
-- `--slug SLUG` — procesar solo un item específico
-- `--include-no-image` — incluir items sin ninguna imagen
-- `--query-extra "texto"` — añadir texto al final de cada query de búsqueda
+**Args**: 8 flags, ninguno obligatorio — ver el `argument-hint` del
+[`SKILL.md`](watch-search-covers/SKILL.md) para la lista completa
+(`--limit`, `--slug`, `--include-no-image`, `--gallery-only`,
+`--include-gallery`, `--retry-failed`, `--query-extra`, `--serper-fallback`).
+Ojo: **sin `--limit` se procesan TODAS** las imágenes pendientes de la
+corrida — no hay un default acotado (la ficha anterior decía "default 20",
+error corregido en SC-1).
 
 **Cuándo invocarlo**:
 - Cuando quieras mejorar la calidad visual del catálogo (imágenes pequeñas o ausentes).
@@ -379,6 +450,30 @@ build_web.py  (opcional)
 Todos los skills son **idempotentes** y **incrementales**. Re-ejecutarlos
 sin cambios en el corpus no rompe nada.
 
+## Workflows (`.claude/workflows/`)
+
+Un **workflow** NO es un skill: es un script JS que orquesta el mismo trabajo
+que un skill haría manualmente, pero corriendo el fan-out de subagentes,
+schemas de salida estructurada, checkpoints de progreso y gates de
+verificación como CÓDIGO en vez de instrucciones en markdown para el modelo
+principal. Se usa cuando el volumen justifica automatizar la orquestación
+(muchos subagentes en waves, necesidad de resumir tras una interrupción). El
+skill correspondiente sigue siendo la puerta de entrada — es el skill el que
+decide, según el volumen, si conviene invocar el workflow o procesar inline.
+
+Hay 2 workflows activos:
+
+| Workflow | Invoca desde | Args | Qué hace |
+|---|---|---|---|
+| `watch-standardize-catalog.js` | `/watch-standardize-catalog` (Steps 3-10 son su fallback manual) | `{ limit?, force_all?, resume_progress? }` | Audit → Tier 1 determinístico → Tier 2/3 vía subagentes en chunks (agrupados por `group_key`, nunca separa hermanos de una misma coleccion/página) → merge + enforcer + validate_corpus (bloqueante) + slugs + traducción. |
+| `listadomanga-audit.js` | `/listadomanga-audit` | `{ chrome_model?, resume?, apply? }` (`apply` default `false`) | Analiza parser/enforcer/validador, navega el sitio real con Chrome, sintetiza gaps priorizados. Sin `apply`, termina en `status: plan_ready` **sin tocar código** — el owner revisa el plan y relanza con `{apply:true, resume:true}` para que ejecute la Fase 5 (implementación), acotada a una allowlist dura de 3 archivos y protegida por una red de seguridad git (revert automático si algo falla). |
+
+**Cuándo usar el skill vs el workflow — regla del umbral (`watch-standardize-catalog`)**:
+el propio `SKILL.md` fija un único umbral de pendientes (ver su Step 1 — no lo
+dupliques acá, cítalo) que decide: por debajo, procesar inline sin subagentes;
+por encima, el workflow guardado es el camino preferido (el fallback manual con
+subagentes hace lo mismo a mano si el tool `Workflow` no está disponible).
+
 ## Cómo agregar un skill nuevo
 
 1. Crear el directorio `.claude/skills/<nombre>/` y dentro un archivo
@@ -402,8 +497,8 @@ sin cambios en el corpus no rompe nada.
 2. Cuerpo en markdown con instrucciones paso-a-paso. Incluye snippets
    de bash/python que el skill debe ejecutar literalmente.
 3. Listar el skill acá en este README + en CLAUDE.md (file map).
-4. Listar en `docs/ARCHITECTURE.md` sección "Curation skills" con
-   detalles arquitectónicos.
+4. Mencionar en `docs/scraper/ARCHITECTURE.md` sección "Curation skills"
+   (puntero corto — el detalle vive acá, no ahí).
 5. Si el skill puede automatizarse via cron: mencionar el patrón
    `/schedule` o `/loop` apropiado.
 

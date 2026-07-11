@@ -1728,3 +1728,25 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     en el pipeline vía `enforce_listadomanga_rules` (paso fix_edition_country). El gap UPSTREAM (el
     standardize LLM acuñando `-tw` para HK) queda como responsabilidad del enforcement determinista
     final — no del LLM. Tests: `tests/test_fix_edition_country_suffix.py`.
+
+144. **IPM Vietnam (perfil `ipm` de `storefront_json.py`): 3 volúmenes de "Chàng Băng Giá Và
+    Nàng Lạnh Lùng" (The Ice Guy and His Cool Female Colleague) quedaron con `series_key` de una
+    serie totalmente distinta (2026-07-11, hallado por `/watch-enrich-series-aliases`).** Volúmenes
+    3, 4 y 6 (`ipm.vn/products/chang-bang-gia-va-nang-lanh-lung-{3,4,6}...`) tienen `title`/
+    `title_original` = el mismo texto vietnamita que el resto de la serie, pero `series_key` =
+    `science-fell-in-love` y `series_display` = "Science Fell in Love, So I Tried to Prove It" —
+    una serie japonesa sin ninguna relación. Los otros volúmenes de la MISMA obra quedaron repartidos
+    en 2 keys más: `ice-guy-cool-colleague` (1 item, ya con el display correcto) y
+    `chang-bang-gia-va-nang-lanh-lung` (4 items, sin canonicalizar). Es decir: **una sola obra
+    partida en 3 series_key distintos**, probablemente por un standardize LLM que asignó
+    series_key/display por heurística de volumen en vez de por título real. **Curación aplicada
+    (skill, no fix de parser):** los 3 series_key se fusionaron bajo el canonical nuevo
+    `ice-guy-cool-colleague` en `data/series_aliases.yml` (incluye `science-fell-in-love` como alias
+    — ver riesgo abajo) y se corrió `backfill_series_aliases.py --only-keys
+    chang-bang-gia-va-nang-lanh-lung,science-fell-in-love`; los 8 items quedaron consolidados.
+    **Riesgo residual, pendiente de decisión del owner:** como `science-fell-in-love` quedó como
+    alias de Ice Guy, si algún día se scrapea la obra REAL "Science Fell in Love, So I Tried to
+    Prove It" (Anilist id 30655... — verificar) con ese mismo series_key, se fusionaría
+    incorrectamente con Ice Guy. La causa raíz (por qué el standardize asignó ese series_key a esos
+    3 volúmenes específicos) no se investigó — queda pendiente un fix de parser/standardize aparte
+    si el owner lo prioriza (fuera de alcance de este skill).

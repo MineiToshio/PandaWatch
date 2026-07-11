@@ -181,7 +181,7 @@ def test_dry_run_does_not_write(tmp_path):
     assert not log_path.exists()
 
 
-def test_group_id_not_in_results_left_untouched(tmp_path):
+def test_group_id_not_in_results_left_untouched(tmp_path, capsys):
     items = [_item(signal_types=["retailer_exclusive"])]
     results = [{"group_id": "some-other-edition", "verdict": "in_stock"}]
     rc, items_path, _ = _run(tmp_path, items, results)
@@ -189,12 +189,19 @@ def test_group_id_not_in_results_left_untouched(tmp_path):
     updated = _read_items(items_path)[0]
     assert updated["rarity"] == "rare"
     assert "rarity_verified_at" not in updated
+    # VR-1: el veredicto huérfano (group_id que no matcheó ningún item) se
+    # reporta explícitamente, no se descarta en silencio.
+    out = capsys.readouterr().out
+    assert "Veredictos sin match: 1" in out
+    assert "some-other-edition" in out
+    assert "in_stock" in out
 
 
-def test_item_no_longer_candidate_is_skipped(tmp_path):
+def test_item_no_longer_candidate_is_skipped(tmp_path, capsys):
     """Un item pudo dejar de ser candidato entre selección y aplicación (p.ej.
     ganó evidencia estructural). apply_rarity_verdicts re-evalúa con la misma
-    rarity_uncertainty_reason y lo salta."""
+    rarity_uncertainty_reason y lo salta — y como el veredicto no se aplicó a
+    ningún item, se reporta como huérfano (VR-1) para que se revise."""
     items = [_item(description="Tirada única, no se reimprimirá.")]  # evidencia estructural
     results = [{"group_id": "test-manga-x-special", "verdict": "in_stock"}]
     rc, items_path, _ = _run(tmp_path, items, results)
@@ -202,3 +209,83 @@ def test_item_no_longer_candidate_is_skipped(tmp_path):
     updated = _read_items(items_path)[0]
     assert updated["rarity"] == "rare"
     assert "rarity_verified_at" not in updated
+    out = capsys.readouterr().out
+    assert "Veredictos sin match: 1" in out
+    assert "test-manga-x-special" in out
+
+
+def test_skipped_approved_verdict_counts_as_matched_not_orphan(tmp_path, capsys):
+    """Un veredicto que matchea un item aprobado (golden record, saltado a
+    propósito) NO es un huérfano — el match existió, sólo se decidió no
+    tocarlo."""
+    items = [_item(signal_types=["retailer_exclusive"], approved_at="2026-01-01T00:00:00+00:00")]
+    results = [{"group_id": "test-manga-x-special", "verdict": "in_stock"}]
+    rc, items_path, _ = _run(tmp_path, items, results)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Veredictos sin match" not in out
+
+
+def test_malformed_results_not_a_list_errors(tmp_path):
+    items_path = tmp_path / "items.jsonl"
+    results_path = tmp_path / "results.json"
+    log_path = tmp_path / "log.jsonl"
+    _write_items(items_path, [_item()])
+    results_path.write_text(json.dumps({"group_id": "x", "verdict": "in_stock"}), encoding="utf-8")
+    rc = arv.main(["--items", str(items_path), "--results", str(results_path),
+                   "--log", str(log_path)])
+    assert rc == 1
+    assert _read_items(items_path)[0]["rarity"] == "rare"
+
+
+def test_malformed_results_entry_not_dict_errors(tmp_path):
+    items = [_item()]
+    results = ["not-a-dict"]
+    rc, items_path, _ = _run(tmp_path, items, results)
+    assert rc == 1
+    assert _read_items(items_path)[0]["rarity"] == "rare"
+
+
+def test_malformed_results_missing_group_id_errors(tmp_path):
+    items = [_item()]
+    results = [{"verdict": "in_stock"}]
+    rc, items_path, _ = _run(tmp_path, items, results)
+    assert rc == 1
+    assert _read_items(items_path)[0]["rarity"] == "rare"
+
+
+def test_malformed_results_empty_group_id_errors(tmp_path):
+    items = [_item()]
+    results = [{"group_id": "   ", "verdict": "in_stock"}]
+    rc, items_path, _ = _run(tmp_path, items, results)
+    assert rc == 1
+    assert _read_items(items_path)[0]["rarity"] == "rare"
+
+
+def test_duplicate_group_id_same_verdict_warns_and_applies_once(tmp_path, capsys):
+    items = [_item(signal_types=["retailer_exclusive"])]
+    results = [
+        {"group_id": "test-manga-x-special", "verdict": "in_stock", "rationale": "first"},
+        {"group_id": "test-manga-x-special", "verdict": "in_stock", "rationale": "second"},
+    ]
+    rc, items_path, log_path = _run(tmp_path, items, results)
+    assert rc == 0
+    updated = _read_items(items_path)[0]
+    assert updated["rarity"] == "common"
+    out = capsys.readouterr().out
+    assert "duplicado" in out
+    log_lines = [json.loads(l) for l in log_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(log_lines) == 1
+    # Semántica: last-wins entre entradas idénticas.
+    assert log_lines[0]["rationale"] == "second"
+
+
+def test_duplicate_group_id_conflicting_verdicts_errors_without_writing(tmp_path):
+    items = [_item(signal_types=["retailer_exclusive"])]
+    results = [
+        {"group_id": "test-manga-x-special", "verdict": "in_stock"},
+        {"group_id": "test-manga-x-special", "verdict": "out_of_stock"},
+    ]
+    rc, items_path, _ = _run(tmp_path, items, results)
+    assert rc == 1
+    assert _read_items(items_path)[0]["rarity"] == "rare"

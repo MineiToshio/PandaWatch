@@ -256,6 +256,46 @@ def test_idempotent_second_run_byte_identical(tmp_path, aliases_yaml):
     assert after_first == after_second
 
 
+# ── Backup timestamped (no slot fijo, se conserva entre corridas) ───────────
+
+def test_backup_is_timestamped_not_fixed_slot(tmp_path, aliases_yaml):
+    """El backup pre-escritura usa timestamped=True: nombre con timestamp, NO el
+    slot fijo `.pre-series-aliases-bak` que se pisaría en cada corrida."""
+    items_path = tmp_path / "items.jsonl"
+    _write(items_path, [
+        _item("atelier-des-sorciers", "atelier-des-sorciers-regular-fr", "urlA"),
+    ])
+
+    rc = bsa.main(["--input", str(items_path), "--only-keys", "atelier-des-sorciers"])
+    assert rc == 0
+
+    backups_dir = items_path.parent / "backups" / items_path.name
+    made = list(backups_dir.glob("items.jsonl.*.pre-series-aliases-bak"))
+    assert made, "debería existir al menos un backup timestamped"
+    # El slot FIJO (que se pisa entre corridas) NO debe usarse.
+    assert not (backups_dir / "items.jsonl.pre-series-aliases-bak").exists()
+
+
+# ── Summary line de convergencia ────────────────────────────────────────────
+
+def test_summary_line_reports_change_count(tmp_path, aliases_yaml, capsys):
+    """El backfill imprime `[SUMMARY] items cambiados: N` — insumo de la prueba
+    de idempotencia del skill (segunda corrida debe reportar 0)."""
+    items_path = tmp_path / "items.jsonl"
+    _write(items_path, [
+        _item("atelier-des-sorciers", "atelier-des-sorciers-regular-fr", "urlA"),
+    ])
+
+    assert bsa.main(["--input", str(items_path), "--only-keys", "atelier-des-sorciers"]) == 0
+    first = capsys.readouterr().out
+    assert "[SUMMARY] items cambiados: 1" in first
+
+    # Segunda corrida: ya canónica → 0 cambios (convergencia).
+    assert bsa.main(["--input", str(items_path), "--only-keys", "atelier-des-sorciers"]) == 0
+    second = capsys.readouterr().out
+    assert "[SUMMARY] items cambiados: 0" in second
+
+
 # ── MANGA_WATCH_DATA_DIR ────────────────────────────────────────────────────
 
 def test_respects_data_dir_env(tmp_path, aliases_yaml, monkeypatch):

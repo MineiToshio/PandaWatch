@@ -7707,6 +7707,49 @@ def test_lmc_layout_b_parses_extras_and_merges_into_existing_tomo():
     assert c.extras[0]["release_date"] == "2024-03-31"
 
 
+def test_lmc_layout_b_h2_wordings_singular_plural_strong_wrapped():
+    """Regresión (2026-07-09): 3 wordings reales de la sección Regalo(s)/Cofre
+    confirmados vía curl+BeautifulSoup sobre id=3760 ('Regalo con {título}',
+    singular), id=1514 ('Regalos de {título}', plural) e id=1597 ('Cofre de
+    regalo con la primera edición de {título}', singular distinto del único
+    plural que documentaba el comentario original 'Cofres de regalo con las
+    primeras ediciones de'). El H2 real viene envuelto en <strong> en las 3
+    páginas. `_is_layout_b_section` opera sobre `h2.get_text()` (ya ignora
+    tags internos) y los patterns ya cubren singular/plural + 'con'/'de' —
+    este test sólo fija el comportamiento correcto para evitar que una futura
+    edición de LAYOUT_B_SECTION_PATTERNS lo rompa silenciosamente."""
+    from wikis import listadomanga_collections as lmc
+
+    headers = [
+        "Regalo con Test Manga A",
+        "Regalos de Test Manga B",
+        "Cofre de regalo con la primera edición de Test Manga C",
+    ]
+    for header in headers:
+        strong_header = f"<strong>{header}</strong>"
+        assert lmc._is_layout_b_section(header), header
+        # El H2 real está envuelto en <strong>; get_text() ya lo ignora, pero
+        # confirmamos explícitamente que el texto extraído del HTML (no el
+        # string plano) también matchea.
+        h2_text = BeautifulSoup(f"<h2>{strong_header}</h2>", "html.parser").find("h2").get_text(" ", strip=True)
+        assert lmc._is_layout_b_section(h2_text), h2_text
+
+        html = _lmc_html_minimal(
+            _lmc_section(
+                "N&uacute;meros editados",
+                _lmc_item(1, header.split(" de ")[-1].split(" con ")[-1], price="10,00 €", image_id="cov1"),
+            ),
+            _lmc_layout_b_section(
+                strong_header,
+                _lmc_layout_b_cell(f"{header.split(' de ')[-1].split(' con ')[-1]} nº1",
+                                   "(1ª Edición)", ["Postal"], "Enero 2020", image_id="gift1"),
+            ),
+        )
+        cands = lmc.parse_collection_page(html, 9500)
+        assert len(cands) == 1, f"{header!r} -> expected 1 merged item, got {len(cands)}"
+        assert any(im["kind"] == "extra" for im in cands[0].images), header
+
+
 def test_lmc_en_preparacion_premium_tomo_emitted_upcoming_with_extra():
     """P0-B (2026-06-06, supersede la regresión 2026-05-24): un tomo en
     'Números en preparación' de una colección de formato premium ahora se

@@ -332,6 +332,7 @@ def cmd_merge(base: Path, force_all: bool) -> int:
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     pending_before = sum(1 for it in items if not it.get("standardized_at"))
     left_pending = 0
+    missing_result = 0
     llm_non_manga = 0
     mangavariant_ignored = 0
 
@@ -348,6 +349,16 @@ def cmd_merge(base: Path, force_all: bool) -> int:
             continue
         r = results.get(it.get("url", ""))
         if not r:
+            # Item proyectado a Tier 2/3 (está en `proposals`) pero el subagente
+            # NO emitió veredicto (result faltante — omisión, no dato) → cuenta
+            # como intento fallido para que el audit lo escale a
+            # standardize_exhausted tras MAX_STANDARDIZE_ATTEMPTS. Sin esto el
+            # item se re-proyecta cada corrida sin avanzar nunca (retry infinito,
+            # E4). Solo aplica a items que quedan PENDIENTES: uno ya estandarizado
+            # (force_all) conserva su marca y no debe contabilizar intentos.
+            if not it.get("standardized_at") and it.get("url", "") in proposals:
+                it["standardize_attempts"] = (it.get("standardize_attempts", 0) or 0) + 1
+                missing_result += 1
             final.append(it)
             continue
         if not r.get("is_manga", True):
@@ -407,7 +418,14 @@ def cmd_merge(base: Path, force_all: bool) -> int:
         it["series_display"] = ((r.get("series_display", "") or "").strip()
                                 or prop.get("proposed_series_display", ""))
         if has_edition:
-            it["volume"] = it.get("volume", "") or (r.get("volume", "") or "").strip()
+            # Fallback en cascada del volumen (E3, 2026-07-11): volumen existente
+            # → volumen del LLM → propuesta heurística. El tercer eslabón cubre el
+            # caso en que el LLM emite `volume` vacío (antes confiaba en el
+            # pseudo-campo `accept_proposal`, que NUNCA existió en el contrato de
+            # salida): sin este fallback, el `proposed_volume` del audit se
+            # descartaba y el tomo quedaba sin número.
+            it["volume"] = (it.get("volume", "") or (r.get("volume", "") or "").strip()
+                            or prop.get("proposed_volume", ""))
         else:
             it["edition_key"] = new_ek
             it["edition_display"] = ((r.get("edition_display", "") or "").strip()
@@ -520,6 +538,7 @@ def cmd_merge(base: Path, force_all: bool) -> int:
     print(f"Outliers de serie corregidos: {outliers}")
     print(f"INTEGRITY: pending_before={pending_before} "
           f"left_pending(sin keys usables)={left_pending} "
+          f"missing_result(sin veredicto del subagente)={missing_result} "
           f"still_pending_after={still_pending}")
     if orphans:
         print(f"WARNING: {orphans} items estandarizados con keys VACÍAS (huérfanos).")

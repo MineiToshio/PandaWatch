@@ -103,6 +103,27 @@ _ATTEMPTS_PATH = _HERE / "data" / "cover_search_attempts.jsonl"
 # que sync podaba al instante), por eso el valor quedó unificado en 90k.
 LOW_QUALITY_PX = 90_000
 DEFAULT_MIN_PIXELS = LOW_QUALITY_PX   # imágenes por debajo de este umbral son candidatas
+
+# ── Dos umbrales de REFERENCIA, distintos y ambos nombrados (SC-9) ──────────────
+# Son conceptos LEGÍTIMAMENTE distintos; antes vivían como literales pelados
+# duplicados (MIN_REF_PX en sc_plan, `10_000` inline en _process_item), con riesgo
+# de drift bajo --serper-fallback. Ahora ambos tienen nombre acá (fuente única) y
+# sc_plan importa el que le corresponde.
+#
+#   MIN_REF_PX (2 500) — piso de "referencia NO degenerada". Por DEBAJO, la imagen
+#   actual es un placeholder roto (típico: GIF 1×1 px de Amazon "imagen no
+#   disponible"): no sirve como referencia para NINGUNA búsqueda (ni reverse ni
+#   _same_cover). sc_plan la usa para SALTAR el target por completo (salvo
+#   --include-no-image, que lo trata como "sin imagen").
+#
+#   SAME_COVER_MIN_REF_PX (10 000) — piso de "referencia utilizable para el gate de
+#   identidad _same_cover". _same_cover es fiable hasta ~9.6k px; por debajo (pero
+#   por encima de MIN_REF_PX) la referencia EXISTE pero es demasiado chica para
+#   hashear con confianza → el motor la trata como "sin referencia" y cae al gate
+#   degradado. La banda 2 500–10 000 px es exactamente donde los dos umbrales
+#   difieren: usable como pista de búsqueda, insuficiente para _same_cover estricto.
+MIN_REF_PX = 2_500
+SAME_COVER_MIN_REF_PX = 10_000
 DEFAULT_MIN_GAIN = 1.5         # candidata debe tener >= 1.5× los píxeles actuales
 DEFAULT_MAX_HASH_DIST = 6      # aHash: distancia Hamming máxima (de 64 bits) para aceptar
 DHASH_MAX_DIST = 8             # dHash 8×8: cota fija (no configurable por CLI)
@@ -172,7 +193,7 @@ def _get_pixels_from_bytes(data: bytes) -> int:
     # Fallback a _get_dims_from_bytes (fuente única de las dimensiones): cubre
     # AVIF, GIF, WebP lossless/VP8L y PNGs raros vía PIL. Sin esto, una REFERENCIA
     # local AVIF (el espejo está normalizado a AVIF ≤1600px) medía 0 px → el motor
-    # la trataba como "sin referencia utilizable" (orig_px < 10_000) y mandaba
+    # la trataba como "sin referencia utilizable" (orig_px < SAME_COVER_MIN_REF_PX) y mandaba
     # TODAS las candidatas al gate degradado _passes_no_ref_gate, saltándose
     # _same_cover (el gate de identidad fuerte). Ver gotcha AVIF-px.
     w, h = _get_dims_from_bytes(data)
@@ -1887,9 +1908,10 @@ def _process_item(
         verified = False
 
         # ¿Hay referencia utilizable para verificar por _same_cover? Bytes
-        # descargables + px ≥ 10_000 (_same_cover es fiable hasta ~9.6k px; por
-        # debajo la referencia deja de servir → tratar como "sin referencia").
-        usable_ref = bool(orig_bytes) and orig_px >= 10_000
+        # descargables + px ≥ SAME_COVER_MIN_REF_PX (_same_cover es fiable hasta
+        # ~9.6k px; por debajo la referencia deja de servir → tratar como "sin
+        # referencia").
+        usable_ref = bool(orig_bytes) and orig_px >= SAME_COVER_MIN_REF_PX
 
         if via == "cdn":
             # CDN determinístico (Amazon/PRH/OpenLibrary/Google Books): hash confiable.
@@ -2059,8 +2081,8 @@ def _merge_preview_entries(
     que están en disco (que la UI/skill pudieron modificar durante la corrida).
 
       (a) para cada candidata en memoria que exista en disco (mismo slug+new_url)
-          con status ≠ pending en disco → conservar el status y reject_reason de
-          disco (NUNCA resucitarla como pending — clause (c)),
+          con status ≠ pending en disco → conservar el status, reject_reason y
+          reviewed_at de disco (NUNCA resucitarla como pending — clause (c)),
       (b) candidatas de disco que memoria no tiene (mismo slug) → conservarlas, y
           entries de disco de slugs que memoria no tiene → conservarlas tal cual
           (son trabajo del skill/UI durante la corrida),
@@ -2096,6 +2118,8 @@ def _merge_preview_entries(
                     c["status"] = dc.get("status")
                     if "reject_reason" in dc:
                         c["reject_reason"] = dc.get("reject_reason")
+                    if "reviewed_at" in dc:
+                        c["reviewed_at"] = dc.get("reviewed_at")
             # (b) intra-slug — candidatas de disco que memoria no tiene.
             for cu, dc in disk_cands.items():
                 if cu not in mem_urls:

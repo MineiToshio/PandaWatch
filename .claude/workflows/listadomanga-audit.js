@@ -18,7 +18,7 @@ const BASE = '/Users/Shared/Proyectos/manga-watch'
 // desde cero. Mismo patrón que data/standardize-progress.json.
 const CHECKPOINT_FILE = 'data/listadomanga-audit-progress.json'
 
-// args: { chrome_model?: string, resume?: boolean }
+// args: { chrome_model?: string, resume?: boolean, apply?: boolean }
 // chrome_model — override del modelo de los steps Chrome (default 'sonnet').
 //   Antes hardcodeado a 'fable' (modelo temporal) — auditoría 2026-07-08,
 //   hallazgo F1: la tarea es EXTRACCIÓN MECÁNICA (JS pre-escrito abajo +
@@ -27,12 +27,36 @@ const CHECKPOINT_FILE = 'data/listadomanga-audit-progress.json'
 //   dejar de existir. Parametrizable para experimentar con otro modelo.
 // resume — si true, carga el checkpoint de ${CHECKPOINT_FILE} y saltea las
 //   fases 1-3 (o los grupos Chrome) ya completados.
+// apply — GATE DE APROBACIÓN (default false). Sin apply el workflow corre las
+//   fases 1-4 y termina con {status:'plan_ready', ...} SIN tocar código: el
+//   owner revisa el plan de mejoras críticas y, si lo aprueba, relanza con
+//   {apply:true, resume:true} — el resume reusa el checkpoint (F1-F3 caras) y
+//   sólo entonces se ejecuta la Fase 5 (implementación), acotada a la
+//   allowlist de 3 archivos y protegida por una red de seguridad git.
 let ARGS = args
 if (typeof ARGS === 'string') {
   try { ARGS = JSON.parse(ARGS) } catch { ARGS = {} }
 }
 const CHROME_MODEL = (ARGS && ARGS.chrome_model) || 'sonnet'
 const doResume = !!(ARGS && ARGS.resume)
+const doApply = !!(ARGS && ARGS.apply)
+
+// Allowlist DURA de archivos que la Fase 5 puede tocar (A3). Cualquier mejora
+// que quiera editar algo fuera de esta lista se degrada a reporte (no se
+// aplica). Rutas relativas a BASE; el match es por sufijo de path.
+const ALLOWED_FILES = [
+  'scripts/wikis/listadomanga_collections.py',
+  'scripts/retrofit/enforce_listadomanga_rules.py',
+  'docs/scraper/sources/listadomanga.md',
+]
+// Un file `f` propuesto por una mejora es permitido si coincide por sufijo con
+// alguno de la allowlist (tolera ruta absoluta, relativa, o sólo basename).
+function fileAllowed(f) {
+  if (!f || typeof f !== 'string') return false
+  const norm = f.trim().replace(/^\.\//, '')
+  return ALLOWED_FILES.some(a => norm.endsWith(a) || a.endsWith(norm))
+}
+const FAILED_DIFF_FILE = 'data/diagnostics/listadomanga-audit-failed-diff.txt'
 
 // ─── SCHEMAS ────────────────────────────────────────────────────────────────
 
@@ -60,9 +84,10 @@ const S_SAMPLE = {
     con_cofres_extras: { type: 'array', items: { type: 'string' }, description: 'Edición con Layout B: cofres/extras de 1ª edición vinculados a tomos' },
     con_galeria:       { type: 'array', items: { type: 'string' }, description: 'Items con galería (images[] > 1 entrada): confirma Layout B funcionando' },
     recientes:         { type: 'array', items: { type: 'string' }, description: 'Colecciones con ID >= 6000 (recientes, para detectar cambios de HTML)' },
-    adulto:            { type: 'array', items: { type: 'string' }, description: 'Colecciones que potencialmente tienen modal de adult content (si las hay en el corpus)' },
+    all_kinds:         { type: 'object', description: 'Mapa kind -> cantidad de colecciones con ese kind (emitido por el snippet Python)', additionalProperties: { type: 'integer' } },
+    total_coles:       { type: 'integer', description: 'Total de colecciones lmc distintas en el corpus' },
   },
-  required: ['regular_normal', 'regular_premium', 'con_especiales', 'con_variantes', 'con_packs', 'con_cofres_extras', 'recientes'],
+  required: ['regular_normal', 'regular_premium', 'con_especiales', 'con_variantes', 'con_packs', 'con_limited', 'con_cofres_extras', 'con_galeria', 'recientes', 'all_kinds', 'total_coles'],
 }
 
 const S_CHROME = {
@@ -126,29 +151,31 @@ const S_IMPROVEMENTS = {
   required: ['critical', 'medium', 'low', 'skip'],
 }
 
-// Checkpoint de las fases 1-3 (hallazgo F11.1). Reusa S_CODE/S_SAMPLE/S_CHROME
-// para las sub-formas en vez de declarar objetos libres.
-const S_PROGRESS = {
+// Checkpoint de las fases 1-3 (hallazgo F11.1): ya NO se re-interpreta con un
+// schema (antes S_PROGRESS forzaba un round-trip LLM que podía degradar el
+// JSON). writeCheckpoint/readCheckpoint hacen I/O crudo por Bash y el JS
+// parsea con JSON.parse + try/catch (A6).
+
+// Red de seguridad git (A1): pre-check de árbol limpio ANTES de la Fase 5.
+const S_GIT_SAFETY = {
   type: 'object',
   properties: {
-    exists:          { type: 'boolean' },
-    has_analysis:    { type: 'boolean' },
-    has_sample:      { type: 'boolean' },
-    parser_analysis:   S_CODE,
-    enforcer_analysis: S_CODE,
-    audit_analysis:    S_CODE,
-    sample:            S_SAMPLE,
-    chrome_results: {
-      type: 'array',
-      description: 'Resultados Chrome ya completados en una corrida anterior, por label',
-      items: {
-        type: 'object',
-        properties: { label: { type: 'string' }, result: S_CHROME },
-        required: ['label', 'result'],
-      },
-    },
+    clean:       { type: 'boolean', description: 'true si git status --porcelain de los 3 archivos objetivo NO devolvió líneas' },
+    dirty_files: { type: 'array', items: { type: 'string' }, description: 'Archivos objetivo con cambios sin commitear (vacío si clean)' },
   },
-  required: ['exists'],
+  required: ['clean'],
+}
+
+// Resultado estructurado de cada mejora del pipeline de Fase 5 (A7): habilita
+// el circuit-breaker — el JS corta la cadena ante el primer FAIL (o null).
+const S_IMPL_RESULT = {
+  type: 'object',
+  properties: {
+    improvement_id: { type: 'string', description: 'El id exacto que el JS le pasó a esta mejora' },
+    status:         { type: 'string', enum: ['PASS', 'FAIL'] },
+    detail:         { type: 'string', description: 'Archivos tocados, líneas cambiadas, resultado de tests; o el motivo del FAIL' },
+  },
+  required: ['improvement_id', 'status', 'detail'],
 }
 
 // Gate final (hallazgo F11.3): SOLO reporta PASS/FAIL + evidencia — el
@@ -165,11 +192,48 @@ const S_FINAL_CHECK = {
   required: ['status', 'tests_output', 'validator_output'],
 }
 
+// Escritura atómica del checkpoint SIN round-trip LLM (A6): el JSON viaja en un
+// heredoc single-quoted (no interpolación de shell — protege $, backticks,
+// etc.) y el agente haiku sólo ejecuta el comando verbatim. tmp + mv = atómico.
+// exists:true garantizado para que un resume posterior lo reconozca (además
+// arregla un latente donde progress.exists nunca se seteaba antes de escribir).
 async function writeCheckpoint(progress, phaseName) {
+  const json = JSON.stringify({ ...progress, exists: true })
+  const cmd =
+    `cat > ${BASE}/${CHECKPOINT_FILE}.tmp <<'MW_CKPT_EOF'\n${json}\nMW_CKPT_EOF\n` +
+    `mv ${BASE}/${CHECKPOINT_FILE}.tmp ${BASE}/${CHECKPOINT_FILE}`
   await agent(
-    `Write this JSON to ${BASE}/${CHECKPOINT_FILE} (create or overwrite): ${JSON.stringify(progress)}`,
+    `Ejecuta EXACTAMENTE este comando Bash, verbatim, sin modificarlo ni reformatearlo:\n\n${cmd}\n\nLuego confirma que el archivo se escribió (ls -l del destino).`,
     { label: 'save-checkpoint', phase: phaseName || 'Análisis de código', model: 'haiku' }
   )
+}
+
+// Lectura del checkpoint SIN schema (A6): el agente haiku devuelve el contenido
+// CRUDO del archivo (cat) como su mensaje final; el JS hace JSON.parse con
+// try/catch. Checkpoint corrupto/ausente → se trata como inexistente (warning).
+async function readCheckpoint() {
+  const raw = await agent(
+    `Ejecuta: cat ${BASE}/${CHECKPOINT_FILE}\n` +
+    `Devuelve el CONTENIDO COMPLETO y CRUDO del archivo, tal cual, como tu mensaje final ` +
+    `(sin comentarios, sin fences de markdown, sin nada más). ` +
+    `Si el archivo NO existe, devuelve EXACTAMENTE el texto: NO_CHECKPOINT`,
+    { label: 'load-checkpoint', phase: 'Análisis de código', model: 'haiku' }
+  )
+  if (!raw || typeof raw !== 'string') return null
+  let text = raw.trim()
+  if (text === 'NO_CHECKPOINT' || text === '') return null
+  // Tolerancia: si el agente envolvió el JSON en fences o texto extra, recorta
+  // del primer { al último }.
+  try {
+    return JSON.parse(text)
+  } catch {
+    const a = text.indexOf('{'), b = text.lastIndexOf('}')
+    if (a >= 0 && b > a) {
+      try { return JSON.parse(text.slice(a, b + 1)) } catch { /* cae al warning */ }
+    }
+    log('⚠️ Checkpoint corrupto o ilegible — se ignora y se empieza de cero')
+    return null
+  }
 }
 
 // ─── Checkpoint: cargar progreso anterior (si args.resume) ──────────────────
@@ -179,12 +243,7 @@ let progress = {
   sample: null, chrome_results: [],
 }
 if (doResume) {
-  const checkpoint = await agent(
-    `Check if ${BASE}/${CHECKPOINT_FILE} exists using Bash (ls command).
-If it exists, read it with the Read tool and return its contents parsed as structured output.
-If it does not exist, return { "exists": false }.`,
-    { label: 'load-checkpoint', phase: 'Análisis de código', schema: S_PROGRESS, model: 'haiku' }
-  )
+  const checkpoint = await readCheckpoint()
   if (checkpoint && checkpoint.exists) {
     progress = {
       exists: true,
@@ -194,7 +253,8 @@ If it does not exist, return { "exists": false }.`,
       enforcer_analysis: checkpoint.enforcer_analysis || null,
       audit_analysis: checkpoint.audit_analysis || null,
       sample: checkpoint.sample || null,
-      chrome_results: checkpoint.chrome_results || [],
+      // Filtrar entradas con result null: un resume debe reintentarlas (A5b).
+      chrome_results: (checkpoint.chrome_results || []).filter(r => r && r.result),
     }
     log(`Checkpoint cargado — análisis:${progress.has_analysis ? '✅' : '⏳'} muestra:${progress.has_sample ? '✅' : '⏳'} chrome:${progress.chrome_results.length}/6`)
   } else {
@@ -287,7 +347,7 @@ if (progress.has_sample) {
 } else {
   // Extraer IDs de colecciones representativas del corpus local por tipo de caso
   // cluster_key de listadomanga tiene formato: lmc:{cole}:{kind}:{vol}
-  sample = await agent(`
+  const fetchSample = () => agent(`
 Ejecuta este script Python en ${BASE} para extraer IDs de colecciones representativas del corpus:
 
   cd ${BASE} && .venv/bin/python - << 'PYEOF'
@@ -322,15 +382,19 @@ with open('data/items.jsonl') as f:
 # Colecciones recientes: IDs numéricos >= 6000
 recientes = sorted([c for c in all_cole_ids if c.isdigit() and int(c) >= 6000], key=int, reverse=True)
 
+# NOTA: los buckets se ordenan con sorted() antes del slice — los sets de
+# Python iteran por hash, así que sin ordenar la muestra sería no-determinista
+# entre corridas. El kind especial usa la etiqueta 'special' (así lo emite el
+# corpus: 142 items), NO 'especial'.
 result = {
-    'regular_normal':    list(by_kind.get('regular', set()))[:5],
+    'regular_normal':    sorted(by_kind.get('regular', set()))[:5],
     'regular_premium':   [],  # se aproxima por alta densidad de regulares por cole
-    'con_especiales':    list(by_kind.get('especial', set()))[:3],
-    'con_variantes':     list(by_kind.get('variant', set()))[:3],
-    'con_packs':         list(by_kind.get('pack', set()))[:3],
-    'con_limited':       list(by_kind.get('limited', set()))[:3],
-    'con_cofres_extras': list(with_gallery - by_kind.get('especial', set()) - by_kind.get('variant', set()))[:3],
-    'con_galeria':       list(with_gallery)[:3],
+    'con_especiales':    sorted(by_kind.get('special', set()))[:3],
+    'con_variantes':     sorted(by_kind.get('variant', set()))[:3],
+    'con_packs':         sorted(by_kind.get('pack', set()))[:3],
+    'con_limited':       sorted(by_kind.get('limited', set()))[:3],
+    'con_cofres_extras': sorted(with_gallery - by_kind.get('special', set()) - by_kind.get('variant', set()))[:3],
+    'con_galeria':       sorted(with_gallery)[:3],
     'recientes':         recientes[:5],
     'all_kinds':         {k: len(v) for k, v in by_kind.items()},
     'total_coles':       len(all_cole_ids),
@@ -349,7 +413,7 @@ with open('data/items.jsonl') as f:
             parts = ck.split(':')
             if len(parts) >= 3 and parts[2] == 'regular':
                 dense[parts[1]] += 1
-premium_coles = [c for c, n in dense.items() if n > 5]
+premium_coles = sorted(c for c, n in dense.items() if n > 5)
 result['regular_premium'] = premium_coles[:3]
 
 print(json.dumps(result, indent=2))
@@ -359,6 +423,33 @@ Devuelve el resultado como objeto JSON estructurado.
 `.trim(),
     { label: 'seleccion-muestra', phase: 'Selección de muestra', schema: S_SAMPLE, model: 'haiku' }
   )
+
+  // Robustez de resume (A5a): si la muestra vino null/incompleta NO seteamos
+  // has_sample ni guardamos checkpoint (un checkpoint con muestra rota haría
+  // que el resume la saltee sin datos). Reintentar una vez; si vuelve a
+  // fallar, throw con mensaje claro.
+  const REQUIRED_SAMPLE_KEYS = [
+    'regular_normal', 'regular_premium', 'con_especiales', 'con_variantes',
+    'con_packs', 'con_limited', 'con_cofres_extras', 'con_galeria', 'recientes',
+  ]
+  const validSample = (s) =>
+    s && typeof s === 'object' &&
+    REQUIRED_SAMPLE_KEYS.every(k => Array.isArray(s[k])) &&
+    typeof s.total_coles === 'number'
+
+  sample = await fetchSample()
+  if (!validSample(sample)) {
+    log('⚠️ Muestra inválida o incompleta — reintentando una vez')
+    sample = await fetchSample()
+    if (!validSample(sample)) {
+      throw new Error(
+        'Fase 2 (Selección de muestra): la extracción del corpus devolvió una ' +
+        'muestra null o incompleta tras 2 intentos. Abortando — sin muestra ' +
+        'válida las inspecciones Chrome navegarían a fallbacks hardcodeados y ' +
+        'la auditoría no sería representativa. Revisá data/items.jsonl y el .venv.'
+      )
+    }
+  }
 
   progress.has_sample = true
   progress.sample = sample
@@ -614,7 +705,11 @@ ${KNOWN_H2.map(s => '  - ' + s).join('\n')}
   },
 ]
 
-const chromeResultsMap = new Map((progress.chrome_results || []).map(r => [r.label, r.result]))
+// Sólo entradas con result no-null entran al mapa: una tarea que falló (null)
+// NO se considera completada, así el resume la reintenta (A5b).
+const chromeResultsMap = new Map(
+  (progress.chrome_results || []).filter(r => r && r.result).map(r => [r.label, r.result])
+)
 const pendingChromeTasks = chromeTasks.filter(t => !chromeResultsMap.has(t.label))
 
 if (pendingChromeTasks.length === 0) {
@@ -629,7 +724,14 @@ if (pendingChromeTasks.length === 0) {
   for (let i = 0; i < pendingChromeTasks.length; i += 2) {
     const pair = pendingChromeTasks.slice(i, i + 2)
     const results = await parallel(pair.map(t => t.build))
-    pair.forEach((t, idx) => chromeResultsMap.set(t.label, results[idx]))
+    pair.forEach((t, idx) => {
+      if (results[idx]) {
+        chromeResultsMap.set(t.label, results[idx])
+      } else {
+        // No persistir null: un resume debe reintentar esta tarea (A5b).
+        log(`⚠️ Chrome: la tarea ${t.label} falló (devolvió null) — se reintentará en un resume`)
+      }
+    })
     progress.chrome_results = Array.from(chromeResultsMap, ([label, result]) => ({ label, result }))
     await writeCheckpoint(progress, 'Inspección Chrome')
   }
@@ -652,6 +754,8 @@ CONTEXTO DEL PROYECTO:
 - Enforcer determinista e idempotente: scripts/retrofit/enforce_listadomanga_rules.py
 - FULL: lista.php (~3432 colecciones) | DELTA: calendario.php (~500-600 ids recientes)
 - Reglas duras: 1 coleccion=1 edition_key, país ES en edition_key, cluster_key lmc tier-0
+- Regla dura: cofres/box de 1ª edición = edición REGULAR, NO special (no clasificarlos como especiales)
+- Regla dura: el title es el nombre OFICIAL del producto — NUNCA traducir/renombrar/inyectar tipo de edición
 - Validación: validate_corpus.py — invariantes SLUG/CLKEY/DUPCL/DUPSYN/LMCKIND/TITLE/ONECOLE/DUPVOL
 - Gotchas ya RESUELTAS (no re-proponer): #43-#60
 
@@ -686,29 +790,137 @@ NO re-proponer gotchas #43-#60 ya resueltas.
 
 log(`Críticas: ${synthesis.critical.length} | Medias: ${synthesis.medium.length} | Bajas: ${synthesis.low.length} | Skip: ${synthesis.skip.length}`)
 
-// Checkpoint de fases 1-3 ya no hace falta a partir de acá — la parte cara
-// (Chrome) está resuelta y la síntesis/implementación son baratas. Se
-// limpia al final (éxito o "no hay críticas").
+// El checkpoint de fases 1-3 SÓLO se borra en el camino feliz (gate final PASS)
+// o cuando no hay nada que aplicar. Ante abort por árbol sucio, circuit-breaker
+// o gate FAIL se CONSERVA — así el owner puede relanzar con {apply,resume} sin
+// repetir la parte cara (Chrome) (A1/A2).
 async function cleanupCheckpoint() {
   await agent(`Run: rm -f ${BASE}/${CHECKPOINT_FILE} && echo "Cleanup OK"`,
     { label: 'cleanup-checkpoint', phase: 'Síntesis', model: 'haiku' })
 }
 
+// Red de seguridad git (A1) — pre-check de árbol limpio en los 3 archivos.
+async function checkCleanTree() {
+  return await agent(`
+Ejecuta en ${BASE}:
+  git status --porcelain -- ${ALLOWED_FILES.join(' ')}
+
+Si la salida está COMPLETAMENTE VACÍA (ninguna línea), el árbol de esos 3
+archivos está limpio. Cualquier línea (con prefijo M/A/D/??/etc.) significa que
+hay cambios sin commitear.
+
+Devuelve structured output:
+- clean: true SOLO si la salida fue vacía; false si apareció alguna línea.
+- dirty_files: lista de rutas que aparecieron con cambios (vacía si clean).
+`.trim(),
+    { label: 'git-safety-precheck', phase: 'Implementación', schema: S_GIT_SAFETY, model: 'haiku' })
+}
+
+// Revert de A1 — guarda el diff fallido para diagnóstico ANTES de revertir, y
+// revierte SOLO los 3 archivos de la allowlist. NO borra el checkpoint.
+async function dumpDiffAndRevert() {
+  await agent(`
+Ejecuta EXACTAMENTE estos comandos Bash en ${BASE}, en orden, sin agregar ni
+quitar ninguno:
+  mkdir -p ${BASE}/data/diagnostics
+  git -C ${BASE} diff > ${BASE}/${FAILED_DIFF_FILE}
+  git -C ${BASE} checkout HEAD -- ${ALLOWED_FILES.join(' ')}
+  echo REVERT_DONE
+
+El primer comando persiste el diff fallido para que el owner lo inspeccione; el
+segundo revierte SOLO los 3 archivos de la allowlist a su estado pre-F5. NO
+borres el checkpoint (${CHECKPOINT_FILE}).
+`.trim(),
+    { label: 'revert-failed-f5', phase: 'Implementación', model: 'haiku' })
+}
+
 // ─── FASE 5: Implementación ───────────────────────────────────────────────────
+
+// (0) Sin mejoras críticas: nada que aplicar → limpiar checkpoint y salir.
 if (synthesis.critical.length === 0) {
   log('No hay mejoras críticas con evidencia suficiente — el proceso está bien calibrado.')
   await cleanupCheckpoint()
   return { status: 'no-critical-improvements', synthesis, chrome_pages: totalPagesInspected, final_check_status: 'not_applicable' }
 }
 
+// (A2) GATE DE APROBACIÓN: sin apply, terminamos con el plan y CONSERVAMOS el
+// checkpoint para que el resume no repita F1-F3.
+if (!doApply) {
+  log(`Plan listo — ${synthesis.critical.length} mejora(s) crítica(s) con evidencia. NO se aplicó ningún cambio (gate de aprobación).`)
+  log('Para APLICAR: revisá el plan y relanzá el workflow con args {apply:true, resume:true} — el resume reusa el checkpoint (F1-F3, la parte cara) y sólo entonces corre la Fase 5.')
+  return {
+    status: 'plan_ready',
+    critical: synthesis.critical,
+    critical_titles: synthesis.critical.map(i => i.title),
+    deferred: synthesis.medium.length + synthesis.low.length,
+    medium_titles: synthesis.medium.map(i => i.title),
+    synthesis,
+    chrome_pages_inspected: totalPagesInspected,
+    final_check_status: 'not_applicable',
+    next_step: 'relanzar con {apply:true, resume:true}',
+  }
+}
+
+// (A3) ALLOWLIST: cada mejora sólo puede tocar los 3 archivos permitidos.
+// Las que declaren archivos fuera (o no declaren ninguno) se DEGRADAN a reporte.
+const applicable = []
+const degraded = []
+for (const imp of synthesis.critical) {
+  const files = Array.isArray(imp.files) ? imp.files : []
+  const offending = files.filter(f => !fileAllowed(f))
+  if (files.length === 0 || offending.length > 0) {
+    degraded.push({ title: imp.title, offending_files: offending, reason: files.length === 0 ? 'no declara archivos' : 'toca archivos fuera de la allowlist' })
+    log(`⛔ Degradada a reporte (no se aplica): "${imp.title}" — ${files.length === 0 ? 'no declara archivos' : 'fuera de la allowlist: ' + offending.join(', ')}`)
+  } else {
+    applicable.push(imp)
+  }
+}
+
+if (applicable.length === 0) {
+  log('Ninguna mejora crítica es aplicable dentro de la allowlist de 3 archivos — todo quedó como reporte.')
+  await cleanupCheckpoint()
+  return {
+    status: 'no-applicable-improvements',
+    degraded,
+    critical_titles: synthesis.critical.map(i => i.title),
+    synthesis,
+    chrome_pages_inspected: totalPagesInspected,
+    final_check_status: 'not_applicable',
+  }
+}
+
 phase('Implementación')
 
-const implementations = await pipeline(
-  synthesis.critical,
-  async (improvement) => agent(`
+// (A1) RED DE SEGURIDAD: abortar si el árbol de los 3 archivos NO está limpio.
+// Aplica también al resume con apply (A5c): evita aplicar F5 sobre un árbol ya
+// modificado (por el owner o por una corrida anterior a medio revertir).
+const safety = await checkCleanTree()
+if (!safety || safety.clean !== true) {
+  const dirty = (safety && safety.dirty_files) || []
+  log(`🛑 F5 ABORTADA — hay cambios sin commitear en los archivos objetivo: ${dirty.join(', ') || '(no se pudo determinar)'}. No arriesgamos trabajo del owner sin commitear. Commiteá o descartá esos cambios y relanzá con {apply:true, resume:true}.`)
+  return {
+    status: 'aborted-dirty-tree',
+    dirty_files: dirty,
+    critical_titles: synthesis.critical.map(i => i.title),
+    degraded,
+    synthesis,
+    chrome_pages_inspected: totalPagesInspected,
+    final_check_status: 'not_applicable',
+  }
+}
+
+// (A7) PIPELINE con CIRCUIT-BREAKER: secuencial; ante el primer FAIL (o null)
+// se corta la cadena, NO se aplican las restantes y se dispara el revert (A1).
+const implementations = []
+let failedImprovement = null
+for (let idx = 0; idx < applicable.length; idx++) {
+  const improvement = applicable[idx]
+  const impId = `imp-${idx + 1}`
+  const res = await agent(`
 Implementa esta mejora en el proceso de ingestión de ListadoManga.
 
 MEJORA:
+  ID:       ${impId}
   Título:   ${improvement.title}
   Problema: ${improvement.problem}
   Solución: ${improvement.solution}
@@ -723,6 +935,14 @@ REGLAS DURAS (nunca romper):
 5. validate_corpus.py: 0 violaciones duras
 6. NO duplicar lógica de merge_cluster()/consolidate_by_cluster()
 7. Cambio MÍNIMO — sin refactoring extra
+8. NUNCA edites archivos bajo data/ (items.jsonl ni ningún JSONL de datos) ni
+   corras retrofits que reescriban datos; tu ÚNICO trabajo es editar los
+   archivos listados en "Archivos" (deben estar dentro de esta allowlist:
+   ${ALLOWED_FILES.join(', ')}). Si la mejora necesitara tocar algo fuera de
+   esos archivos, NO lo hagas: devolvé status FAIL explicando por qué.
+9. cofres/box de 1ª edición = edición REGULAR, NO special.
+10. El title es el nombre OFICIAL del producto: nunca traducir/renombrar/inyectar
+    tipo de edición.
 
 PROCESO:
 1. Lee cada archivo antes de editarlo
@@ -741,17 +961,45 @@ print(f'OK — {len(items)} items cole 1606')
    - §9 si es limitación nueva conocida
    - La sección que corresponda si es otro tipo de cambio
 
-Reporta: archivos tocados, qué líneas cambiaron, resultado de tests.
+Devuelve structured output:
+- improvement_id: EXACTAMENTE "${impId}"
+- status: "PASS" si implementaste el cambio Y los tests pasaron; "FAIL" si algo
+  falló, no pudiste aplicarlo, requeriría tocar archivos fuera de la allowlist,
+  o los tests se rompieron.
+- detail: archivos tocados, qué líneas cambiaron y el resultado de tests; o, si
+  FAIL, el motivo concreto.
 `.trim(),
-    { label: `impl-${improvement.title.slice(0, 25)}`, phase: 'Implementación', model: 'sonnet' }
+    { label: `impl-${improvement.title.slice(0, 25)}`, phase: 'Implementación', schema: S_IMPL_RESULT, model: 'sonnet' }
   )
-)
+  implementations.push({ id: impId, title: improvement.title, result: res })
+  if (!res || res.status === 'FAIL') {
+    failedImprovement = { id: impId, title: improvement.title, detail: res ? res.detail : '(el agente devolvió null)' }
+    log(`🛑 Circuit-breaker: la mejora "${improvement.title}" ${res ? 'reportó FAIL' : 'devolvió null'} — se corta la cadena; NO se aplican las ${applicable.length - idx - 1} restantes.`)
+    break
+  }
+  log(`✅ Mejora aplicada: "${improvement.title}"`)
+}
+
+// (A7) Circuit-breaker disparado → revert (A1) + conservar checkpoint.
+if (failedImprovement) {
+  log('Revirtiendo los 3 archivos a su estado pre-F5 y guardando el diff fallido para diagnóstico…')
+  await dumpDiffAndRevert()
+  return {
+    status: 'implementation-failed',
+    failed_improvement: failedImprovement,
+    applied_before_failure: implementations.filter(i => i.result && i.result.status === 'PASS').map(i => i.title),
+    degraded,
+    failed_diff_saved_to: FAILED_DIFF_FILE,
+    checkpoint_preserved: true,
+    chrome_pages_inspected: totalPagesInspected,
+    final_check_status: 'FAIL',
+  }
+}
 
 // Gate final: SOLO reporta PASS/FAIL + evidencia (hallazgo F11.3). El
 // verificador ya NO diagnostica ni corrige nada por su cuenta — si hay
 // violaciones duras o tests rotos, el workflow retorna FAIL con la
-// evidencia y la corrección es un paso explícito posterior (fuera de este
-// gate), no algo que el propio gate haga sin dejar rastro.
+// evidencia y (A1) se revierten los 3 archivos, conservando el checkpoint.
 const finalCheck = await agent(`
 Verifica el estado final del corpus tras todos los cambios implementados. NO
 corrijas nada — este paso es SOLO de verificación/reporte.
@@ -771,14 +1019,33 @@ Reporta:
   { label: 'verificacion-final', phase: 'Implementación', schema: S_FINAL_CHECK, model: 'sonnet' }
 )
 
-await cleanupCheckpoint()
+// Camino feliz: gate PASS → limpiar checkpoint y reportar.
+if (finalCheck && finalCheck.status === 'PASS') {
+  await cleanupCheckpoint()
+  return {
+    status: 'applied',
+    improvements_implemented: applicable.length,
+    applied_titles: applicable.map(i => i.title),
+    degraded,
+    deferred: synthesis.medium.length + synthesis.low.length,
+    medium_titles: synthesis.medium.map(i => i.title),
+    chrome_pages_inspected: totalPagesInspected,
+    final_check: finalCheck,
+    final_check_status: 'PASS',
+  }
+}
 
+// (A1) Gate FAIL → guardar diff, revertir los 3 archivos, CONSERVAR checkpoint.
+log('🛑 Gate final FAIL — guardando el diff fallido para diagnóstico y revirtiendo los 3 archivos a su estado pre-F5.')
+await dumpDiffAndRevert()
 return {
-  improvements_implemented: synthesis.critical.length,
-  deferred: synthesis.medium.length + synthesis.low.length,
-  critical_titles: synthesis.critical.map(i => i.title),
-  medium_titles: synthesis.medium.map(i => i.title),
+  status: 'final-check-failed',
+  violations: (finalCheck && finalCheck.violations) || [],
+  applied_titles: applicable.map(i => i.title),
+  degraded,
+  failed_diff_saved_to: FAILED_DIFF_FILE,
+  checkpoint_preserved: true,
   chrome_pages_inspected: totalPagesInspected,
   final_check: finalCheck,
-  final_check_status: finalCheck.status,
+  final_check_status: 'FAIL',
 }

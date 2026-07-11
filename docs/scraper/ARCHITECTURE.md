@@ -1510,76 +1510,43 @@ If a number above doubles after a change, something regressed.
 
 ## Curation skills (LLM-driven, manual)
 
-Two project-level skills under `.claude/skills/`. They live in the repo
-(versioned with git) and are invoked manually by the owner via
-`/<skill-name>` from Claude Code. Both are designed to be incremental
-and idempotent — safe to re-run.
+Los skills de curación viven en **`.claude/skills/`** (9 skills, no dos) más
+**2 workflows guardados** en `.claude/workflows/` (`watch-standardize-catalog.js`,
+`listadomanga-audit.js` — orquestación determinística cuando el volumen justifica
+subagentes en batch). Todos son manuales — se invocan a pedido explícito del
+owner via `/<nombre>`, viven versionados con git, y están diseñados para ser
+incrementales e idempotentes (seguro re-correrlos).
 
-### `/watch-standardize-catalog`
+**El detalle canónico y actualizado de CADA skill** (cómo funciona paso a paso,
+args, umbrales, gates) vive en **`.claude/skills/README.md`** — no acá. Este
+documento solo da la ubicación y corrige lo que había quedado desactualizado
+(auditoría Fable 2026-07-11): el conteo (eran "two", son 9 + 2 workflows), los
+batches de subagentes (NO son de 150-200 — los tamaños de chunk viven como
+constante en el propio skill/workflow, ver README), el campo `title_standardized`
+(RETIRADO del schema — política de títulos, gotcha #92: el `title` nunca se
+toca), los "embedded snippets" (ya no existen — son scripts permanentes y
+testeados: `standardize_audit.py`/`standardize_apply.py`,
+`backfill_series_aliases.py`, `sc_plan.py`/`sc_validate.py`/`sc_flush.py`, etc.,
+fuente única compartida entre skill y workflow), y la clave de dedup (NO es
+`(series_key, edition_key, volume)` — la agrupación multi-fuente real es
+`consolidate_by_cluster()` sobre `cluster_key`, decisión de diseño #4 de
+CLAUDE.md).
 
-**File**: `.claude/skills/watch-standardize-catalog/SKILL.md`
+Para el runbook end-to-end del ciclo de vida del dato (scrape → standardize →
+aliases → imágenes → rareza → aprobación → build), ver
+[PIPELINE-WALKTHROUGH.md](PIPELINE-WALKTHROUGH.md).
 
-**Purpose**: pass 2 of the schema standardization (see `items.jsonl`
-section above). Processes items WITHOUT `standardized_at`. Delegates
-to parallel subagents (`general-purpose`) in batches of ~150-200,
-each one returning per-item: `is_manga`, `series_key`,
-`series_display`, `edition_key`, `edition_display`, `volume`,
-`title_standardized`.
-
-Workflow:
-1. Audit pending count (filter `items.jsonl` by missing `standardized_at`).
-2. Partition into chunks of 150, written to `data/standardize-run/`
-   (persistent run dir — moved off `/tmp` 2026-07-08 so Tier 2/3 chunk/
-   result files survive a reboot and the audit can resume mid-run).
-3. Spawn 7 subagents per wave (parallel). Each one reads its chunk and
-   writes a result file.
-4. Merge results back into items.jsonl via `standardize_apply.py merge`
-   (fuente única — ya no lógica embebida en SKILL.md). Apply
-   `canonical_series_key()` from `data/series_aliases.yml`. Dedup by
-   `(series_key, edition_key, volume)`. **El LLM NO expulsa (WO-C,
-   2026-07-07)**: `is_manga=false` NO borra la fila ni la manda a
-   `non_manga_blacklist.jsonl` — el item queda PENDIENTE y se registra en
-   `data/unmapped_series.jsonl` (reason `llm_non_manga`); la expulsión real
-   la hacen los gates deterministas (`filter_non_manga`/`filter_collectible`)
-   en la próxima corrida del scrape.
-5. Set `standardized_at` on each processed item.
-6. Cleanup `data/standardize-run/` (only after the merge is confirmed).
-
-Incremental by default. `--force-all` snippet (embedded in the skill)
-clears `standardized_at` from all items to force a full re-run when
-standardization rules change substantively.
-
-### `/watch-enrich-series-aliases`
-
-**File**: `.claude/skills/watch-enrich-series-aliases/SKILL.md`
-
-**Purpose**: process the `data/unmapped_series.jsonl` queue, deciding
-for each new `series_key` whether it's an alias of an existing
-canonical (merge into existing entry) or a new series (create entry).
-Queries Anilist GraphQL API for international titles + synonyms when
-needed.
-
-Workflow:
-1. Run `scripts/audit/unmapped_series.py` to aggregate the queue +
-   fuzzy-match candidates against canonicals.
-2. For each unmapped series (sorted by item count desc):
-   - **Action A**: merge as alias of existing canonical (high
-     confidence fuzzy match, ≥0.8).
-   - **Action B**: query Anilist, create new canonical entry.
-   - **Action C**: skip (low confidence + low item count → wait for
-     more data).
-3. Edit `data/series_aliases.yml` in place.
-4. Run the embedded backfill snippet to consolidate items.jsonl.
-5. Truncate `data/unmapped_series.jsonl` (next scrape repopulates).
-
-### Recommended post-scrape workflow
+### Recommended post-scrape workflow (resumen)
 
 ```
 1. manga_watch.py runs (scrape) → new items with rough series_key, no standardized_at
-2. /watch-standardize-catalog          → subagents verify/correct/timestamp
+2. /watch-standardize-catalog          → tiering determinístico + LLM acotado, timestamp
 3. /watch-enrich-series-aliases        → consolidate any new multilingual series
-4. build_web.py                  → refresh dashboard
+4. /watch-validate-rarity              → (opcional) verificación web de rares por incertidumbre
+5. /watch-search-covers                → (opcional) portadas hi-res para imagen chica/ausente
+6. build_web.py                        → refresh dashboard
 ```
 
-Both skills can be triggered via `/loop`/`/schedule` in the future for
-fully-automated curation cadence.
+Ver el detalle de cada paso (incluidos `/watch-review-feedback` y
+`/watch-evaluate-sources`, que no son parte del flujo post-scrape sino
+reactivos/pre-alta) en `.claude/skills/README.md`.

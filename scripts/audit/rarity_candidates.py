@@ -230,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     for c in candidates:
         print(f"  [{c['reason']:18s}] {c['title'][:50]:50s} "
               f"({c['publisher'][:18]}, {c['country']}) — {c['n_volumes']} item(s)")
+        print(f"      group_id: {c['group_id']}")
         print(f"      url: {c['url'][:90]}  isbn: {c['isbn'] or '-'}")
     print(f"\n[OK] Escrito {out_path}")
     return 0

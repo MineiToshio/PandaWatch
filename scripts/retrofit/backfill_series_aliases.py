@@ -164,6 +164,13 @@ def run(
     if skipped_approved:
         print(f"[INFO] aprobados saltados (golden records): {skipped_approved}")
 
+    # Summary line machine-checkable para la prueba de convergencia/idempotencia
+    # del skill (Step 6): re-correr con los mismos --only-keys debe imprimir
+    # `items cambiados: 0`. Se imprime SIEMPRE (incl. dry-run y sin-cambios).
+    total_changed = remapped + display_only
+    print(f"[SUMMARY] items cambiados: {total_changed} "
+          f"(remap={remapped}, solo-display={display_only})")
+
     out = items
     if series_changed:
         # Consolidación DELEGADA en la fuente única — nunca lógica propia (decisión #1).
@@ -181,7 +188,13 @@ def run(
         print("[DRY-RUN] No se escribió nada.")
         return 0
 
-    backup = backup_and_rotate(items_path, "series-aliases")
+    # Backup TIMESTAMPED (no slot fijo): un falso merge de series es irreversible
+    # tras la siguiente corrida si el snapshot anterior se pisa. items.jsonl está
+    # en .gitignore y merge_cluster() pierde campos de las filas perdedoras, así
+    # que el único punto de restauración es este backup — debe CONSERVARSE entre
+    # corridas, no sobrescribirse. `timestamped=True` da un archivo por corrida y
+    # rota conservando los max_keep más recientes de este label.
+    backup = backup_and_rotate(items_path, "series-aliases", timestamped=True)
     print(f"[OK] Backup: {backup}")
     write_items_atomic(items_path, out)
     print(f"[OK] Escrito {items_path} ({len(out)} filas).")

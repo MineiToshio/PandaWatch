@@ -670,7 +670,7 @@ lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` 
 - **Cierre de bypasses del gate** (`_process_item`): antes, la rama `via=="lens"` corría sólo
   aspect ±0.30 + page-content, y la rama `via=="text"` con `orig_px < 30k` sólo aspect ±0.25 —
   ninguna corría `_same_cover` (falsos positivos 2/3/4/5). Ahora, con **referencia utilizable**
-  (bytes descargables + px ≥ 10 000, donde `_same_cover` es fiable): lens y text EXIGEN
+  (bytes descargables + px ≥ `SAME_COVER_MIN_REF_PX` = 10 000, donde `_same_cover` es fiable): lens y text EXIGEN
   `_same_cover` (lens verificada queda `verified=True` pero `confidence` sigue `low` — no
   auto-aplica). **Sin referencia utilizable**: `verified=False` y se exige TODO — aspect ±0.25
   (unificado) + `candidate_metadata_conflict` sin conflicto + `_validate_page_content` en modo
@@ -686,10 +686,27 @@ lógica de identidad/calidad vive en el motor (fuente única); `sc_validate.py` 
 - **Merge anti-carrera en `_write_preview` (F19)**: `run()` reescribe `cover_preview.json`
   completo tras cada item; el mtime-guard de `serve.py` no aplica al motor, así que pisaba
   decisiones que la UI guardó durante la corrida. Ahora `_write_preview(entries, merge=True)`
-  relee el disco y funde: (a) candidata en memoria decidida en disco → conserva status +
-  reject_reason de disco (nunca la resucita como pending); (b) candidatas/entries de disco que
-  el motor no tiene → se conservan. `apply_preview()` escribe con `merge=False` (ya es
-  autoritativo sobre el estado final). Misma semántica de preservación que `sc_flush.py`.
+  relee el disco y funde vía `_merge_preview_entries`: (a) candidata en memoria decidida en
+  disco → conserva status + reviewed_at + reject_reason de disco (nunca la resucita como
+  pending); (b) candidatas/entries de disco que el motor no tiene → se conservan.
+  `apply_preview()` escribe con `merge=False` (ya es autoritativo sobre el estado final).
+  **Paridad real con `sc_flush.py` (SC-7, 2026-07-11)**: el flush del skill NO tenía este
+  mecanismo — no tomaba lock cross-proceso ni relee el disco en cada flush, y sólo rescataba
+  las candidatas revisadas en el PRIMER flush de un slug, así que una aprobación del owner hecha
+  DESPUÉS de ese primer flush se pisaba (last-writer-wins) el resto de la corrida. Ahora
+  `sc_flush.py` IMPORTA y reutiliza `preview_write_lock` + `_merge_preview_entries` de
+  `fetch_better_covers` (fuente única, no copia): mismo lock sobre `cover_preview.json.lock` y
+  mismo merge que preserva status/reviewed_at/reject_reason de disco en CADA flush. La paridad
+  que este doc afirmaba ahora existe de verdad.
+- **Dos umbrales de referencia nombrados (SC-9, 2026-07-11)**: son conceptos DISTINTOS que antes
+  vivían como literales pelados duplicados (`MIN_REF_PX = 2 500` en `sc_plan`, un `10 000` inline
+  en `_process_item`), con riesgo de drift bajo `--serper-fallback`. Ahora ambos tienen nombre en
+  `fetch_better_covers` (fuente única) y `sc_plan` importa el suyo: **`MIN_REF_PX` (2 500)** = piso
+  de "referencia NO degenerada" (por debajo es un placeholder 1×1 roto → el plan saltea el target);
+  **`SAME_COVER_MIN_REF_PX` (10 000)** = piso de "referencia utilizable para `_same_cover`" (por
+  debajo, pero por encima de `MIN_REF_PX`, la referencia existe pero es muy chica para hashear con
+  confianza → el motor la trata como "sin referencia" y cae al gate degradado). La banda 2 500–10 000
+  px es justo donde difieren: usable como pista de búsqueda, insuficiente para `_same_cover` estricto.
 - **Cobertura de idiomas (F11)**: `_COVER_TERM`, `_EDITION_HINT`, `_LANG_TO_GL`, el nuevo
   `_LANG_TO_HL` (código de IDIOMA para el `hl` de Serper: `ja/ko/zh-CN/pt-BR…`, distinto del
   `gl` de país) y `_MARKET_PREFERRED_DOMAINS` cubren los 14 idiomas (KO/ZH/TH/VI/PL/TR/CS
@@ -820,7 +837,10 @@ Cinco hallazgos que el cross-check de cobertura confirmó FALTANTES. Tests:
   - `scripts/retrofit/sc_flush.py` (tests: `tests/test_sc_flush.py`) — flush self-healing al
     `cover_preview.json`; el código inline que lo reemplazó reconstruyó dicts a mano y perdió
     el campo `new_image` en 8 candidatas (2026-06-11). El script rechaza con exit 1 cualquier
-    candidata sin `new_image` o `new_url` — guarda estructural contra esa regresión.
+    candidata sin `new_image`/`new_url`, cuyo `new_image` no exista en el espejo local
+    (`--images-dir`), o a la que le falte un campo de proveniencia que `sc_validate` emite SIEMPRE
+    (`new_pixels`/`verified`/`confidence`/`status`/`match_dist`) o lo traiga con el tipo
+    equivocado (SC-2, 2026-07-11) — guarda estructural contra dicts reconstruidos o fabricados.
   Las candidatas se pasan EXACTAMENTE como las devolvió `sc_validate.py`, sin modificar nada.
 - `cover-preview.html` muestra un badge **✓ verificada** (verde) cuando la candidata pasó
   `_same_cover` contra la imagen actual, o **⚠ sin verificar** (ámbar) cuando no fue posible

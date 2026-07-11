@@ -111,14 +111,45 @@ def run(
         )
         return 1
 
-    raw_results = json.loads(results_path.read_text(encoding="utf-8"))
-    for r in raw_results:
+    try:
+        raw_results = json.loads(results_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] {results_path}: JSON inválido ({e}).", file=sys.stderr)
+        return 1
+
+    if not isinstance(raw_results, list):
+        print(f"[ERROR] {results_path}: se esperaba una lista de objetos, se "
+              f"encontró {type(raw_results).__name__}.", file=sys.stderr)
+        return 1
+
+    results: dict[str, dict[str, Any]] = {}
+    for i, r in enumerate(raw_results):
+        if not isinstance(r, dict):
+            print(f"[ERROR] {results_path}: entrada #{i} no es un objeto (dict): "
+                  f"{r!r}.", file=sys.stderr)
+            return 1
+        gid = r.get("group_id")
+        if not isinstance(gid, str) or not gid.strip():
+            print(f"[ERROR] {results_path}: entrada #{i} tiene group_id inválido "
+                  f"o vacío: {gid!r}.", file=sys.stderr)
+            return 1
         if r.get("verdict") not in VALID_VERDICTS:
-            print(f"[ERROR] {results_path}: group_id={r.get('group_id')!r} tiene "
+            print(f"[ERROR] {results_path}: group_id={gid!r} tiene "
                   f"verdict={r.get('verdict')!r} inválido (esperado uno de "
                   f"{sorted(VALID_VERDICTS)}).", file=sys.stderr)
             return 1
-    results = {r["group_id"]: r for r in raw_results}
+
+        if gid in results:
+            prev_verdict = results[gid]["verdict"]
+            if prev_verdict != r["verdict"]:
+                print(f"[ERROR] {results_path}: group_id={gid!r} duplicado con "
+                      f"verdicts distintos ({prev_verdict!r} vs {r['verdict']!r}) "
+                      f"— resolvé el conflicto en el archivo de resultados antes "
+                      f"de aplicar.", file=sys.stderr)
+                return 1
+            print(f"[WARN] group_id={gid!r} duplicado en {results_path} (mismo "
+                  f"verdict {r['verdict']!r}) — se usa la última entrada.")
+        results[gid] = r
 
     items = [json.loads(l) for l in items_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     print(f"[INFO] {len(items)} items en {items_path}, {len(results)} veredicto(s) en {results_path}")
@@ -127,6 +158,7 @@ def run(
     updated = 0
     inconclusive = 0
     skipped_approved = 0
+    consumed_gids: set[str] = set()
     log: list[dict[str, Any]] = []
 
     for item in items:
@@ -135,6 +167,9 @@ def run(
         if is_approved(item) and not include_approved:
             if rc.rarity_uncertainty_reason(item):
                 skipped_approved += 1
+                gid = item.get("edition_key") or item.get("slug") or item.get("url")
+                if gid in results:
+                    consumed_gids.add(gid)
             continue
         if not rc.rarity_uncertainty_reason(item):
             continue  # dejó de ser candidato (evidencia estructural apareció entretanto)
@@ -143,6 +178,7 @@ def run(
         res = results.get(gid)
         if not res:
             continue
+        consumed_gids.add(gid)
         if res["verdict"] == "inconclusive":
             inconclusive += 1
             continue
@@ -177,6 +213,20 @@ def run(
     for e in log:
         mark = "→" if e["old"] != e["new"] else "="
         print(f"  {e['old']:5s} {mark} {e['new']:10s} [{e['verdict']:12s}] {e['slug']}")
+
+    # VR-1: un veredicto cuyo group_id no matchea NINGÚN item (ni aplicado, ni
+    # inconclusive, ni skipped_approved) se perdía en silencio — se repetía el
+    # trabajo de verificación web sin que nadie se enterara. Reportarlo siempre
+    # (incluso con updated==0 o --dry-run) para que el Step 3 del skill lo
+    # revise y corrija el group_id o descarte el veredicto a propósito.
+    orphaned = [gid for gid in results if gid not in consumed_gids]
+    if orphaned:
+        print(f"[WARN] Veredictos sin match: {len(orphaned)} (group_id no "
+              f"matchea ningún item pendiente — puede ser un typo, un item "
+              f"que ya no es candidato, o que cambió de group_id entre la "
+              f"selección y la aplicación):")
+        for gid in orphaned:
+            print(f"  - {gid} [{results[gid]['verdict']}]")
 
     if dry_run:
         print("[DRY-RUN] No se escribió nada.")

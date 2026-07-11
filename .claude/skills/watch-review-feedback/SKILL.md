@@ -1,14 +1,20 @@
 ---
 name: watch-review-feedback
-description: Analyze items in data/feedback.jsonl that the user flagged via the 👎 dashboard button. Each entry already contains the full item data plus the user's reason. Categorize each feedback (filter issue vs. data quality issue), propose concrete fixes, apply approved changes with tests, run the relevant retrofit scripts, and finally truncate data/feedback.jsonl. Invoke whenever data/feedback.jsonl has entries, or when the user says they want to review feedback or improve the scraper/data.
+description: Analyze items in data/feedback.jsonl that the user flagged via the 👎 dashboard button. Each entry already contains the full item data plus the user's reason. Categorize each feedback (filter issue vs. data quality issue), propose concrete fixes, apply approved changes with tests, run the relevant retrofit scripts, and finally clear the processed rows from data/feedback.jsonl. Trigger manually — invoke ONLY when the user explicitly asks to review feedback or improve the scraper/data. Never run automatically just because data/feedback.jsonl has entries.
 argument-hint: "[--dry-run]"
 ---
 
 # Review feedback and improve catalog quality
 
-You are reviewing items the user flagged via the 👎 button. Each row in `data/feedback.jsonl` is a full item record (all fields from `items.jsonl`) plus `reason` and `submitted_at`. The item was **not removed** from the catalog — it is still visible. Your job: understand what's wrong, categorize it, propose a fix, apply approved changes, and close the loop by truncating the queue.
+You are reviewing items the user flagged via the 👎 button. `data/feedback.jsonl` is a MIXED log: rows with `action="feedback"` (or no `action`, legacy) are a full item record (all fields from `items.jsonl`) plus `reason` and `submitted_at` — that's your queue. But `serve.py`'s move/merge/remove/batch-move operations also append audit rows to this SAME file (`action` set to one of those) — those are already-applied curation, not feedback to process; only count/list them informationally (see Step 0/1). The flagged item was **not removed** from the catalog — it is still visible. Your job: understand what's wrong, categorize it, propose a fix, apply approved changes, and close the loop by clearing the processed rows from the queue.
 
 ## Step 0 — Bail early if the queue is empty
+
+> **`feedback.jsonl` es un log MIXTO.** El 👎 del dashboard escribe filas con
+> `action="feedback"` (o sin `action`, legacy). Pero `move`/`merge`/`remove`/
+> `batch-move` de `serve.py` escriben al MISMO archivo como registro de
+> auditoría de operaciones **ya aplicadas** — no son feedback pendiente de
+> procesar. El conteo de "items a revisar" debe filtrar por `action`.
 
 ```python
 import json
@@ -21,10 +27,15 @@ try:
                 rows.append(json.loads(line))
 except FileNotFoundError:
     pass
-print(f"{len(rows)} feedback items to review")
+
+feedback_rows = [r for r in rows if r.get('action', 'feedback') == 'feedback']
+curation_rows = [r for r in rows if r.get('action', 'feedback') != 'feedback']
+print(f"{len(feedback_rows)} feedback items to review "
+      f"({len(curation_rows)} filas de curación ya aplicada en el mismo archivo, informativo)")
 ```
 
-If 0 items → report "no feedback in queue" and stop.
+If 0 items en `feedback_rows` → report "no feedback in queue" and stop (aunque
+`curation_rows` tenga entradas — esas no son trabajo pendiente).
 
 ## Step 1 — Load and display the feedback queue
 
@@ -37,13 +48,40 @@ from collections import defaultdict
 with open('data/feedback.jsonl', encoding='utf-8') as f:
     rows = [json.loads(l) for l in f if l.strip()]
 
-# Dedupe: if the same cluster has multiple feedback entries, pick the latest
+# feedback.jsonl es un log MIXTO (ver Step 0): filtrar a solo action="feedback"
+# para la cola a procesar. Las filas move/merge/remove/batch-move son registro
+# de auditoría de curación YA aplicada — se cuentan y listan aparte, informativo,
+# NUNCA se procesan ni se "arreglan" acá.
+feedback_rows = [r for r in rows if r.get('action', 'feedback') == 'feedback']
+curation_rows = [r for r in rows if r.get('action', 'feedback') != 'feedback']
+
+if curation_rows:
+    print(f"\n{len(curation_rows)} filas de curación ya aplicada (informativo, NO procesar):")
+    for r in curation_rows[:10]:
+        label = r.get('title') or r.get('url', '?')
+        print(f"    {r.get('action','?'):12s} {r.get('submitted_at','?')}  {label[:60]}")
+    if len(curation_rows) > 10:
+        print(f"    ... {len(curation_rows) - 10} más")
+
+# Dedupe SOLO sobre feedback_rows: si el mismo cluster tiene múltiples entradas,
+# NO quedarse solo con la más reciente — concatenar todos los reasons (con su
+# submitted_at) para no perder contexto a la hora de categorizar. Las demás
+# columnas (title, score, signal_types, etc.) se toman de la fila más reciente,
+# porque el item pudo actualizarse entre feedbacks.
 seen_clusters = {}
-for r in rows:
+for r in feedback_rows:
     ck = r.get('cluster_key') or r.get('url')
-    # Keep latest by submitted_at
-    if ck not in seen_clusters or r.get('submitted_at','') > seen_clusters[ck].get('submitted_at',''):
-        seen_clusters[ck] = r
+    if ck not in seen_clusters:
+        merged = dict(r)
+        merged['_reasons'] = [(r.get('reason', '?'), r.get('submitted_at', '?'))]
+        seen_clusters[ck] = merged
+    else:
+        prev_reasons = seen_clusters[ck]['_reasons']
+        prev_reasons.append((r.get('reason', '?'), r.get('submitted_at', '?')))
+        if r.get('submitted_at', '') > seen_clusters[ck].get('submitted_at', ''):
+            merged = dict(r)
+            merged['_reasons'] = prev_reasons
+            seen_clusters[ck] = merged
 
 items = list(seen_clusters.values())
 
@@ -59,8 +97,8 @@ for i, it in enumerate(items, 1):
     print(f"    series_key    : {it.get('series_key','?')}")
     print(f"    edition_key   : {it.get('edition_key','?')}")
     print(f"    cover         : {((it.get('images') or [{}])[0].get('url') or '?')[:80]}")
-    print(f"    reason        : {it.get('reason','?')}")
-    print(f"    submitted_at  : {it.get('submitted_at','?')}")
+    for reason, ts in it['_reasons']:
+        print(f"    reason        : {reason}  ({ts})")
 ```
 
 ## Step 2 — Categorize each item
@@ -308,10 +346,18 @@ fields it covers (`isbn`, `publisher`, `language`, `description`…).
 
 2. If the issue is a missing alias (same work under a different name), add to `data/series_aliases.yml`.
 
-3. Refresh slug (cluster_key ya lo re-derivó `fix_item_fields.py`):
+3. `cluster_key` ya lo re-derivó `fix_item_fields.py` en el paso 1. El `slug`
+   es **sticky por diseño** (gotcha #65) — una vez asignado, NO se recalcula
+   solo porque cambiaron `series_key`/`edition_key`/`volume`. Correr
+   `generate_slugs.py --only-missing` acá es solo para rellenar el slug de
+   items que todavía no tengan uno (p. ej. si el fix también tocó un item sin
+   slug); **no refresca** el slug de este item recategorizado:
 ```bash
 .venv/bin/python scripts/retrofit/generate_slugs.py --only-missing
 ```
+   Si el owner quisiera que el slug de ESTE item puntual refleje la nueva
+   clasificación, es una decisión explícita aparte (no asumir que corresponde
+   solo por haber corregido la categoría M) — no la tomes de oficio acá.
 
 ### N: Bad title
 
@@ -349,12 +395,34 @@ Data quality fixes (K–N) do not need new tests unless they reveal a systematic
 
 ## Step 6 — Run retrofit scripts (filter changes only)
 
-| What changed | Retrofits to run |
-|---|---|
-| `_NON_MANGA_HARD` / `_NON_MANGA_SOFT` / `is_pure_novel` / `is_comic_not_manga` | `filter_non_manga.py` |
-| `is_collectible_edition` / `COLLECTIBLE_EDITION_SIGNAL_TYPES` | `filter_collectible.py` |
-| `KEYWORD_RULES` / `detect_signals` / `score_candidate` | `rescore.py` then `filter_collectible.py` |
-| `sources.yml` purity change | `filter_non_manga.py` |
+> ⚠️ **Gotcha #61 — el corpus está ~98.9% estandarizado, y eso apaga estos
+> retrofits sobre la fila que originó el feedback.** `rescore.py` (línea ~126)
+> saltea por defecto cualquier item con `standardized_at` (recomputar
+> `signal_types` desde texto crudo "lava" las señales de la etiqueta ya
+> derivada). `filter_collectible.py` (línea ~81) sobre un item estandarizado
+> solo aplica los gates duros (`title_too_short`, `title_junk_discount`,
+> `title_junk_generic`, `umbrella_magazine`, `no_title`); si el gate devuelve
+> `regular_tomo` (el caso típico de la categoría **D**) sobre un item con
+> `standardized_at`, el script lo **conserva a propósito** — no lo rechaza.
+>
+> Consecuencia práctica: para categorías **D** (`regular_edition`) e **I**
+> (`false_signal`) sobre un item YA estandarizado, correr `rescore.py` /
+> `filter_collectible.py` es **no-op sobre ese item puntual** — no esperes que
+> el retrofit lo saque del corpus. La vía correcta ahí es un **fix puntual**:
+> `fix_item_fields.py` para corregir el campo que corresponda (p. ej. bajar
+> `score` o quitar el signal falso de `signal_types` directamente), o
+> re-estandarizar el item (quitar su `standardized_at` puntual y correr el
+> flujo de standardize de nuevo para que re-derive la etiqueta desde cero).
+> El retrofit masivo (`rescore.py`/`filter_collectible.py` sin
+> `--include-standardized`) solo tiene efecto real sobre la porción **cruda**
+> del corpus (el ~1.1% restante) o sobre items nuevos que entren después.
+
+| What changed | Retrofits to run | Efecto sobre items estandarizados |
+|---|---|---|
+| `_NON_MANGA_HARD` / `_NON_MANGA_SOFT` / `is_pure_novel` / `is_comic_not_manga` | `filter_non_manga.py` | Sí aplica — estos filtros no tienen el guard de `standardized_at` |
+| `is_collectible_edition` / `COLLECTIBLE_EDITION_SIGNAL_TYPES` | `filter_collectible.py` | Solo gates duros; `regular_tomo` sobre estandarizado se CONSERVA (no-op para D) |
+| `KEYWORD_RULES` / `detect_signals` / `score_candidate` | `rescore.py` then `filter_collectible.py` | `rescore.py` SALTEA items con `standardized_at` por defecto (no-op para D/I sobre esa fila) |
+| `sources.yml` purity change | `filter_non_manga.py` | Sí aplica — mismo filtro sin guard |
 
 Always dry-run first:
 ```bash
@@ -362,26 +430,65 @@ Always dry-run first:
 .venv/bin/python scripts/retrofit/filter_non_manga.py   # apply if looks right
 ```
 
-## Step 7 — Truncate `feedback.jsonl`
+Estos retrofits SIGUEN siendo correctos para limpiar el resto del corpus
+(items crudos o futuros que matcheen el mismo patrón); lo que NO hacen es
+resolver automáticamente el item puntual que motivó el feedback si ya está
+estandarizado — ese va por el fix puntual descrito arriba.
 
-Once all approved changes are applied, back up and clear the queue:
+## Step 7 — Clear the processed rows from `feedback.jsonl`
 
-```bash
-.venv/bin/python -c "
-from scripts.manga_watch import backup_and_rotate
+`feedback.jsonl` es el log MIXTO descrito en el Step 0/1: además de las filas
+`action="feedback"` que este skill procesa, puede tener filas `move`/`merge`/
+`remove`/`batch-move` de `serve.py` (registro de auditoría de curación ya
+aplicada). El backup timestamped de abajo es la retención real de ese rastro
+completo — por eso corre siempre primero y nunca se salta —, pero la
+reescritura del archivo YA NO es un truncado ciego: en vez de
+`: > data/feedback.jsonl` (que también borraría, sin dejar rastro en el
+backup ya tomado, cualquier fila escrita por `serve.py` o por un nuevo 👎 del
+dashboard MIENTRAS el skill corría), reescribimos el archivo conservando solo
+las filas que esta corrida **no vio** — identificadas por `submitted_at`,
+comparado contra el `submitted_at` de cada fila cargada en el Step 1 (tanto
+`feedback_rows` como `curation_rows`, es decir el `rows` completo del Step 1).
+
+```python
+import json
 from pathlib import Path
-backup_and_rotate(Path('data/feedback.jsonl'), 'review', timestamped=True)
-"
-: > data/feedback.jsonl
+from scripts.manga_watch import backup_and_rotate
+
+path = Path('data/feedback.jsonl')
+
+# 1. Backup completo (feedback + curación) — retención del rastro de auditoría.
+#    timestamped=True (2026-07-07): cada corrida guarda su PROPIO timestamp en
+#    vez de pisar el slot fijo `feedback.jsonl.pre-review-bak`, así no se pierde
+#    el histórico de corridas anteriores (rota por el mismo label, conserva los
+#    3 más recientes). Ver docs/reference/conventions.md y
+#    scripts/retrofit/README.md § Backups.
+backup_and_rotate(path, 'review', timestamped=True)
+
+# 2. Reescritura atómica: conservar solo las filas NO vistas en el Step 1
+#    (mismo submitted_at que ya cargamos == procesada/registrada esta corrida).
+seen_submitted_at = {r.get('submitted_at') for r in rows}  # `rows` viene del Step 1
+
+remaining = []
+with open(path, encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        if row.get('submitted_at') not in seen_submitted_at:
+            remaining.append(line)
+
+tmp = path.with_suffix('.jsonl.tmp')
+with open(tmp, 'w', encoding='utf-8') as f:
+    for line in remaining:
+        f.write(line + '\n')
+tmp.replace(path)  # atómico (os.replace bajo el capó) — sin ventana de archivo vacío
+
+print(f"feedback.jsonl: {len(remaining)} filas nuevas retenidas (no vistas esta corrida)")
 ```
 
-`timestamped=True` (2026-07-07): cada corrida del skill guarda su backup con su
-PROPIO timestamp en vez de pisar el slot fijo `feedback.jsonl.pre-review-bak` — así
-no se pierde el histórico de corridas anteriores del skill (rota por el mismo label,
-conserva los 3 más recientes). Ver `docs/reference/conventions.md` y
-`scripts/retrofit/README.md` § Backups.
-
-**Do NOT truncate before all changes are applied.**
+**Do NOT clear before all approved changes are applied.**
 
 ## Step 8 — Final report + update CLAUDE.md
 
@@ -403,10 +510,22 @@ Cambios aplicados:
   - [3] series_key "berserk-41" → "berserk" + cluster_key refresh
   ...
 
-feedback.jsonl: truncado (0 items pendientes)
+feedback.jsonl: N filas procesadas retiradas (M filas nuevas no vistas retenidas)
 ```
 
-Luego actualizá la fecha de la línea `Last updated:` de `CLAUDE.md` (sin agregar prosa — CLAUDE.md ya no lleva changelog) y el doc de referencia que corresponda en `docs/reference/` según la política de documentación.
+Luego actualizá la fecha de la línea `Last updated:` de `CLAUDE.md` (sin agregar prosa — CLAUDE.md ya no lleva changelog) y el doc de referencia que corresponda en `docs/reference/` según la política de documentación. En concreto, según la naturaleza del fix aplicado:
+
+- **Regla dura de FUENTES**: si el fix tocó `sources.yml` (categorías E/J) o el
+  parser/selectores de una fuente específica, actualizá su ficha
+  `docs/scraper/sources/<fuente>.md` en el MISMO turn (si la fuente todavía no
+  tiene ficha, creala desde `_TEMPLATE.md`). No es opcional — aplica a
+  cualquier bug/quirk/fix/cambio de cobertura de esa fuente, lo haya
+  encontrado este skill o cualquier otro trabajo.
+- **Gotcha nueva**: si el fix reveló un quirk de parser, un caso de dedup, un
+  falso positivo/negativo, o cualquier comportamiento no documentado
+  previamente, agregalo a `docs/reference/gotchas.md` con el número
+  siguiente al último existente (bumpeá el heading — las gotchas se citan por
+  número en todo el repo, ese número es estable).
 
 ---
 
@@ -421,5 +540,7 @@ Luego actualizá la fecha de la línea `Last updated:` de `CLAUDE.md` (sin agreg
 - `_phrase_pattern()` para word-boundary: gotcha #9
 - `backfill_metadata.py`: file map en CLAUDE.md, sección retrofit
 - `clean_titles.py` / `generate_slugs.py`: file map en CLAUDE.md
+- Categorías D/I sobre item con `standardized_at` (rescore/filter_collectible no-op): gotcha #61 (Step 6)
+- Slug sticky por diseño, `--only-missing` no refresca: gotcha #65 (Step 4 → M)
 
 Ante la duda sobre si un fix es seguro, preferir **no cambiar código** y marcar como categoría H. Mejor dejar un item marginal en el corpus que romper items legítimos con un patrón demasiado amplio.

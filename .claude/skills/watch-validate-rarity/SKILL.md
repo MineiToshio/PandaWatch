@@ -157,6 +157,17 @@ a `data/diagnostics/rarity_validation_log.jsonl`. Imprime el resumen
 (actualizados / inconclusos / aprobados saltados) y el detalle por item
 (`old → new [verdict] slug`).
 
+Valida la estructura de `results.json` (lista de objetos, cada uno con
+`group_id` no vacío y `verdict` válido) y corta con error controlado (sin
+traceback, sin escribir) ante JSON malformado o `group_id` duplicado con
+verdicts distintos; si el duplicado tiene el mismo verdict, avisa y usa la
+última entrada. Al final imprime **"Veredictos sin match: N"** con la lista de
+`group_id` que no matchearon ningún item (typo, item que dejó de ser
+candidato, o cambió de `group_id` entre el Step 0/1 y este paso) — si aparece,
+revisalos antes de cerrar: puede significar que hay que corregir el
+`group_id` en `results.json` y re-aplicar, o que el veredicto ya no aplica y
+está bien descartarlo.
+
 ## Step 4 — Verificación y reporte final
 
 ```bash

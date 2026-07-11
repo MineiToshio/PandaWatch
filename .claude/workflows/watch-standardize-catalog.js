@@ -28,9 +28,10 @@ const PROMPT_RULES_FILE = `${BASE}/.claude/skills/watch-standardize-catalog/prom
 // 2000 items × 8 campos, DOS veces). Ahora vive en data/ (gitignored) y
 // sobrevive un reboot, así que el checkpoint solo necesita flags + qué
 // chunks YA tienen result_*.jsonl en disco (detectable listando el dir) —
-// nunca los payloads. `scripts/standardize_apply.py` declara su PROPIO
-// DEFAULT_BASE idéntico (otra ola de la auditoría, no se toca acá); por eso
-// TODAS las invocaciones de ambos scripts pasan `--base` explícito.
+// nunca los payloads. `standardize_apply.py` y `standardize_audit.py` declaran
+// el MISMO DEFAULT_BASE = data/standardize-run; igual TODAS las invocaciones de
+// ambos scripts pasan `--base` explícito por robustez (garantiza que apunten al
+// mismo run dir aunque un default cambie a futuro).
 const RUN_DIR = 'data/standardize-run'
 const PROGRESS_FILE = 'data/standardize-progress.json'
 
@@ -88,6 +89,22 @@ const S_CHUNK_SUMMARY = {
     urls_failed: { type: 'array', items: { type: 'string' }, description: 'URLs that could not be processed' },
   },
   required: ['count'],
+}
+
+// Salida del agente de merge/finalize (E1, 2026-07-11): captura el exit code
+// REAL de validate_corpus.py + un resumen de violaciones. El JS inspecciona
+// validate_exit_code: si != 0, NO limpia el run dir ni borra el progreso
+// (permite diagnóstico/resume) y el return sale como 'completed_with_violations'.
+// El gate del scrape (PHASE 4) es el backstop pero puede tardar días/meses, y
+// serve.py sirve items.jsonl EN VIVO sin pasar por build — por eso se valida acá.
+const S_MERGE_RESULT = {
+  type: 'object',
+  properties: {
+    validate_exit_code: { type: 'integer', description: 'Exit code REAL de scripts/validate_corpus.py (0 = corpus válido; 2 = violaciones duras)' },
+    validate_summary:   { type: 'string',  description: 'Resumen corto de las violaciones/warnings reportadas por el validador (vacío si exit 0)' },
+    tests_passed:       { type: 'boolean', description: 'true si pytest test_extraction.py quedó verde' },
+  },
+  required: ['validate_exit_code'],
 }
 
 // Checkpoint MÍNIMO (hallazgo F3d): solo flags, nunca payloads. Los chunks
@@ -219,8 +236,8 @@ fuente única compartida con el SKILL.md). Run this command and report the count
 
 // --- Helper: subagente Tier 2/3 para UN chunk. Lee las reglas de la fuente
 // única (prompt-rules.md) en vez de recibirlas inlineadas (hallazgo F7). ---
-function tierChunkTask({ tier, idx, model, phase: phaseName }) {
-  const label = String(idx).padStart(2, '0')
+function tierChunkTask({ tier, idx, model, phase: phaseName, labelOverride }) {
+  const label = labelOverride || String(idx).padStart(2, '0')
   const chunkFile = `${RUN_DIR}/t${tier}_chunk_${label}.json`
   const resultFile = `${RUN_DIR}/result_t${tier}_${label}.jsonl`
   const tierInstructions = tier === 2
@@ -256,17 +273,29 @@ cantidad de items de entrada.`,
 async function runTierChunks({ tier, tierCount, chunkSize, model, phaseName }) {
   if (tierCount === 0) {
     log(`No Tier ${tier} items.`)
-    return
+    return []
   }
   const chunkResult = await agent(
-    `Read ${RUN_DIR}/tier${tier}.json. Split into chunks of ${chunkSize} items.
-Write each chunk to ${RUN_DIR}/t${tier}_chunk_NN.json (00, 01, 02, ...).`,
+    `Read ${RUN_DIR}/tier${tier}.json and partition it into chunks of up to
+${chunkSize} items, writing each chunk to ${RUN_DIR}/t${tier}_chunk_NN.json
+(00, 01, 02, ...).
+
+REGLA DE AGRUPACIÓN (CRÍTICA — la MISMA que usa el Step 3 del camino manual del
+SKILL.md): items que comparten coleccion/page-id DEBEN quedar en el MISMO chunk;
+si no, el LLM parte una edición en dos chunks y les asigna keys inconsistentes.
+Antes de partir, agrupá por \`group_key\`:
+  - Si la \`url\` matchea \`listadomanga.es/coleccion.php?id=N\` → group_key = \`lmc:{N}\`.
+  - Si no → group_key = la URL base sin query string (\`url:{base}\`).
+Empaquetá grupos ENTEROS en cada chunk sin partir un grupo (los hermanos SIEMPRE
+juntos); si un solo grupo supera ${chunkSize} items, ese grupo va solo en su
+propio chunk. Los chunks pueden quedar desparejos — es correcto. Preservá el
+ORDEN de los items dentro de cada grupo.`,
     { label: `chunk-t${tier}`, phase: phaseName, schema: S_CHUNK_COUNT, model: 'haiku' }
   )
   const chunkCount = chunkResult.chunks || 0
   if (chunkCount === 0) {
     log(`Tier ${tier}: 0 chunks creados.`)
-    return
+    return []
   }
 
   const allIndices = Array.from({ length: chunkCount }, (_, i) => i)
@@ -290,15 +319,81 @@ each file found, extract the NN index from its name (e.g. result_t${tier}_03.jso
     await parallel(missingIndices.map(idx => tierChunkTask({ tier, idx, model, phase: phaseName })))
   }
   log(`Tier ${tier}: ${chunkCount} chunk(s) totales — ${missingIndices.length} corridos esta vez`)
+
+  // Verificación de integridad + retry único (E4).
+  return await verifyTierIntegrity({ tier, model, phaseName })
 }
 
-// Step 3: Process Tier 2 with haiku (lightweight validation)
-phase('Classify')
-await runTierChunks({ tier: 2, tierCount: tier2Count, chunkSize: 20, model: 'haiku', phaseName: 'Classify' })
+// --- Integridad (E4): tras procesar los chunks de un tier, verificar que cada
+// result_t{tier}_NN.jsonl tenga TODAS las urls de su chunk de entrada. Un
+// subagente puede omitir items (sin result → el merge los saltearía). Los
+// faltantes se relanzan UNA vez en un chunk de retry; los que sigan faltando se
+// devuelven para reportarlos en `missing_after_retry` del return final. Cada
+// faltante sin veredicto hace que el merge le incremente standardize_attempts
+// (escalado a standardize_exhausted), así que no se pierden en silencio. ---
+const S_INTEGRITY = {
+  type: 'object',
+  properties: {
+    missing_count: { type: 'integer', description: 'Items de entrada sin veredicto en su result' },
+    missing_urls:  { type: 'array', items: { type: 'string' }, description: 'URLs de los items faltantes' },
+  },
+  required: ['missing_count'],
+}
 
-// Step 4: Process Tier 3 with sonnet (full derivation)
+async function verifyTierIntegrity({ tier, model, phaseName }) {
+  const check = await agent(
+    `Verificá integridad de los resultados Tier ${tier}. Para CADA archivo
+${RUN_DIR}/t${tier}_chunk_NN.json, leé su result gemelo
+${RUN_DIR}/result_t${tier}_NN.jsonl y compará el set de \`url\` de los items de
+ENTRADA (el chunk) contra el set de \`url\` presentes en el result (una línea
+JSON por item). Junta TODOS los items de entrada cuya url NO aparece en su
+result (incluí los de un result que no existe). Escribí esos items faltantes
+COMPLETOS (los objetos tal cual del chunk de entrada, con su campo \`tier\`) a
+${RUN_DIR}/t${tier}_chunk_retry.json, en el MISMO formato que los demás
+t${tier}_chunk_NN.json. Devolvé missing_count = cantidad de faltantes y
+missing_urls = sus urls. Si no falta ninguno, missing_count = 0 y NO escribas el
+archivo de retry.`,
+    { label: `integrity-t${tier}`, phase: phaseName, schema: S_INTEGRITY, model: 'haiku' }
+  )
+  const missingCount = check.missing_count || 0
+  if (missingCount === 0) {
+    log(`Tier ${tier}: integridad OK — 0 items sin veredicto.`)
+    return []
+  }
+  log(`Tier ${tier}: ${missingCount} item(s) sin veredicto — relanzando UNA vez en chunk de retry`)
+  await tierChunkTask({ tier, idx: 0, model, phase: phaseName, labelOverride: 'retry' })()
+
+  const recheck = await agent(
+    `Re-verificá SOLO el chunk de retry Tier ${tier}: leé
+${RUN_DIR}/t${tier}_chunk_retry.json (items reintentados) y su result
+${RUN_DIR}/result_t${tier}_retry.jsonl. Devolvé missing_count = items cuya url
+sigue SIN aparecer en el result de retry, y missing_urls = esas urls.`,
+    { label: `integrity-t${tier}-recheck`, phase: phaseName, schema: S_INTEGRITY, model: 'haiku' }
+  )
+  const stillMissing = recheck.missing_urls || []
+  if (stillMissing.length > 0) {
+    log(`Tier ${tier}: ${stillMissing.length} item(s) siguen faltando tras el retry — a missing_after_retry (el merge les cuenta el intento).`)
+  } else {
+    log(`Tier ${tier}: retry recuperó todos los faltantes.`)
+  }
+  return stillMissing
+}
+
+// Step 3: Process Tier 2 with haiku (lightweight validation).
+// Chunk size canónico 20 (T2) — el mismo que documenta el Step 3 del SKILL.md.
+phase('Classify')
+const missingT2 = await runTierChunks({ tier: 2, tierCount: tier2Count, chunkSize: 20, model: 'haiku', phaseName: 'Classify' })
+
+// Step 4: Process Tier 3 with sonnet (full derivation).
+// Chunk size canónico 15 (T3) — el mismo que documenta el Step 3 del SKILL.md.
 phase('Derive')
-await runTierChunks({ tier: 3, tierCount: tier3Count, chunkSize: 15, model: 'sonnet', phaseName: 'Derive' })
+const missingT3 = await runTierChunks({ tier: 3, tierCount: tier3Count, chunkSize: 15, model: 'sonnet', phaseName: 'Derive' })
+
+// Faltantes tras el retry único de integridad (E4) — se reportan en el return.
+const missingAfterRetry = [...(missingT2 || []), ...(missingT3 || [])]
+if (missingAfterRetry.length > 0) {
+  log(`Integridad: ${missingAfterRetry.length} item(s) sin veredicto tras el retry — reportados en missing_after_retry (el merge les cuenta el intento hacia standardize_exhausted).`)
+}
 
 // Step 5: Merge everything back
 phase('Merge')
@@ -335,20 +430,45 @@ Then run slugs and translation:
 \`\`\`
 
 Then run tests and the corpus validator (ALL invariants at once — single-dimension
-checks give false "0 issues"):
+checks give false "0 issues"). CAPTURÁ el exit code REAL del validador:
 \`\`\`bash
 .venv/bin/python -m pytest tests/test_extraction.py -q
-.venv/bin/python scripts/validate_corpus.py
+.venv/bin/python scripts/validate_corpus.py; echo "VALIDATE_EXIT=$?"
 \`\`\`
 
-Report all results, including the validator output.`,
-  // Mecánico: corre comandos y reporta — la lógica vive en los scripts.
-  { label: 'merge-and-finalize', phase: 'Merge', model: 'haiku' }
+Devolvé la salida estructurada: validate_exit_code = el número que aparece en
+VALIDATE_EXIT (0 = corpus válido; 2 = violaciones duras), validate_summary = un
+resumen corto de las violaciones/warnings que imprimió el validador (vacío si
+exit 0), tests_passed = true si pytest quedó verde. NO inventes el exit code:
+copialo del eco VALIDATE_EXIT.`,
+  // Mecánico: corre comandos y reporta — la lógica vive en los scripts. El
+  // structured output trae el exit code REAL de validate_corpus (E1).
+  { label: 'merge-and-finalize', phase: 'Merge', schema: S_MERGE_RESULT, model: 'haiku' }
 )
 
-log(`Merge complete: ${mergeAgent}`)
+const validateExit = (mergeAgent && mergeAgent.validate_exit_code) || 0
+const validateSummary = (mergeAgent && mergeAgent.validate_summary) || ''
+log(`Merge complete — validate_corpus exit=${validateExit}`)
 
-// Cleanup: borrar el run dir Y el archivo de progreso (corrida exitosa)
+// GATE (E1): si el validador reportó violaciones (exit != 0), NO se limpia el
+// run dir NI se borra el progreso — se preservan para diagnóstico/resume. El
+// corpus puede tener invariantes rotas y serve.py lo sirve EN VIVO; el owner
+// debe investigar antes de dar la corrida por cerrada.
+if (validateExit !== 0) {
+  log(`⚠ validate_corpus exit=${validateExit} — corpus con violaciones. Run dir y progreso PRESERVADOS para diagnóstico. Resumen: ${validateSummary}`)
+  return {
+    status: 'completed_with_violations',
+    tier1_auto: tier1Count,
+    tier2_validated: tier2Count,
+    tier3_derived: tier3Count,
+    total_processed: tier1Count + tier2Count + tier3Count,
+    validate_corpus: { exit_code: validateExit, summary: validateSummary },
+    missing_after_retry: missingAfterRetry,
+  }
+}
+
+// Cleanup: borrar el run dir Y el archivo de progreso (SOLO en corrida limpia,
+// validate_corpus exit 0).
 await agent(
   `Run: rm -rf ${RUN_DIR} && rm -f ${PROGRESS_FILE} && echo "Cleanup OK"`,
   { label: 'cleanup', phase: 'Merge', model: 'haiku' }
@@ -360,4 +480,6 @@ return {
   tier2_validated: tier2Count,
   tier3_derived: tier3Count,
   total_processed: tier1Count + tier2Count + tier3Count,
+  validate_corpus: { exit_code: validateExit, summary: validateSummary },
+  missing_after_retry: missingAfterRetry,
 }

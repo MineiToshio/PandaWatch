@@ -173,10 +173,15 @@ String. Solo dígitos. "1", "100", "1-3" para sets, "" si no hay.
 
 ## Reglas específicas por tier
 
-**Tier 2** (el item trae `proposed_*`): valida la propuesta heurística. Si
-se ve correcta → `accept_proposal=true` y copiá los `proposed_*` verbatim a
-los campos de salida. Si algo está mal → `accept_proposal=false` y corregí
-usando las mismas reglas de arriba.
+**Tier 2** (el item trae `proposed_*`): validá la propuesta heurística contra
+las reglas de arriba. Si la propuesta es correcta, copiá los `proposed_*`
+**verbatim** a los campos de salida (`proposed_series_key` → `series_key`,
+`proposed_edition_key` → `edition_key`, `proposed_volume` → `volume`, etc.).
+Si algo está mal, corregí ese campo con las mismas reglas. **No existe ningún
+campo `accept_proposal`** — el contrato de salida son solo los 8 campos de la
+sección OUTPUT FIELDS; para aceptar una propuesta simplemente copiás sus
+valores. En particular, si el volumen propuesto es correcto, emití ese número
+en `volume` (nunca lo dejes vacío esperando que "se acepte" implícitamente).
 
 **Tier 3** (sin heurística confiable): derivá todo desde cero con las
 reglas de arriba. Misma serie/publisher → mismas keys consistentemente

@@ -220,6 +220,25 @@ def test_group_and_prioritize_respects_limit():
     assert len(candidates) == 2
 
 
+# ── G2: el output humano imprime el group_id exacto ─────────────────────────
+
+def test_main_text_output_prints_exact_group_id(tmp_path, capsys):
+    items = [
+        _item(slug="a-1", edition_key="ed-a-especial", rarity="rare",
+              signal_types=["retailer_exclusive"]),
+    ]
+    items_path = tmp_path / "items.jsonl"
+    with items_path.open("w", encoding="utf-8") as f:
+        for it in items:
+            import json
+            f.write(json.dumps(it, ensure_ascii=False) + "\n")
+    out_path = tmp_path / "candidates.json"
+    ret = rc.main(["--items", str(items_path), "--out", str(out_path)])
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "group_id: ed-a-especial" in out
+
+
 def test_group_and_prioritize_western_before_japan():
     items = [
         _item(slug="jp-1", edition_key="ed-jp", rarity="rare",

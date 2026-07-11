@@ -22,19 +22,13 @@ PandaWatch rastrea **ediciones especiales físicas de manga**:
 - ❌ Merchandise (figuras, posters, ropa)
 - ❌ Contenido digital
 
-**Fuentes ya activas** (para calcular overlap y detectar redundancia):
-
-| País/Región | Fuentes activas |
-|---|---|
-| Japón | Sumikko (限定版/特装版, ~2700 items), AnimeClick IT (ediz. speciali) |
-| España | ListadoManga calendario + colecciones, Panini ES, Norma, Planeta, Distrito |
-| Francia | Manga-Sanctuary (~950 items), Kurokawa, Glénat, Ki-oon, Pika |
-| Italia | SocialAnime (variants + cofanetti, ~523 items), AnimeClick IT (~1037 items) |
-| Alemania | MangaPassion (Sonderausgaben + Variants, ~841 items) |
-| Global | Mangavariant (~1613 items, 13 países) |
-| México | MangaMéxico, Panini MX, MangaLine MX |
-| Brasil | BlogBBM (variant covers + box sets) |
-| USA/EN | Dark Horse Direct, Otaku Calendar |
+**Fuentes ya activas** (para calcular overlap y detectar redundancia): NO hay
+tabla fija acá — `sources.yml` es la única fuente de verdad y cambia seguido
+(63 enabled de 151 al 2026-07-11; se podó/agregó varias veces desde que este
+doc tenía una tabla hardcodeada — hallazgo ES-2, auditoría Fable 2026-07-11:
+esa tabla no incluía las fuentes agregadas en junio 2026, PL-Mangarden ×2,
+PL-Mangastore, KR-Aladin, todas aprobadas usando ESTE MISMO skill). El Step 0
+carga la lista viva agrupada por país — ver ahí.
 
 **Lección crítica — BooksPrivilege (2026-05-26)**: tenía 11,000 items de
 店舗特典 (bonuses de tienda para tomos regulares). El 99.7% eran tomos
@@ -45,10 +39,31 @@ cubra bonuses/extras/tokuten DEBE tener foto del extra — si no, es ❌ automá
 
 ---
 
-## Step 0 — Parsear input
+## Step 0 — Parsear input + cargar fuentes activas en vivo
 
 Extrae la lista de fuentes candidatas del mensaje del usuario. Puede ser
 URLs, nombres, texto libre o mixto. Normaliza a lista de `{id, url, contexto_extra}`.
+
+Además, cargá la lista de fuentes `enabled` de `sources.yml` agrupada por país
+(reemplaza la tabla hardcodeada — hallazgo ES-2). Usa `load_active_sources_by_country()`
+de `scripts/audit/source_overlap.py` (no reimplementes el parseo de sources.yml):
+
+```python
+import sys
+sys.path.insert(0, "scripts/audit")
+from source_overlap import load_active_sources_by_country
+
+by_country = load_active_sources_by_country("sources.yml")
+for country, entries in sorted(by_country.items()):
+    print(f"{country or '(global/wiki)'}:")
+    for e in entries:
+        print(f"  - {e['name']} (kind={e['kind']}, purity={e['purity']})")
+```
+
+Esta lista `by_country` alimenta el criterio **C5 (Comparación con fuentes
+existentes)** del Step 1 — pasala como contexto al prompt de cada subagente
+(reemplazando `{FUENTES_ACTIVAS_DEL_PAIS}`, filtrado al país que cubre la
+fuente candidata cuando se conoce, o la lista completa si no).
 
 ---
 
@@ -65,6 +80,14 @@ barato que N Opus simultáneos). Prompt template:
 
 Eres un auditor de fuentes de datos para PandaWatch, un catálogo de ediciones
 especiales físicas de manga. Evalúa `{URL_O_NOMBRE}` siguiendo estos pasos.
+
+**Fuentes ya activas que cubren el país/nicho de esta candidata** (cargadas en
+vivo desde `sources.yml` en el Step 0 — usalas para C5, no asumas cobertura
+de memoria):
+
+```
+{FUENTES_ACTIVAS_DEL_PAIS}
+```
 
 ### A. Fetch listing principal
 
@@ -94,12 +117,29 @@ Por cada item de la muestra final registra:
    ¿Hay foto del EXTRA en sí (tapestry, acrylic stand, postal, accesorios)?
    ¿O solo la portada del manga?
    ESTO ES CRÍTICO. "Solo portada del manga" = el sitio no sirve para extras.
+5. **`isbn`** (hallazgo ES-1, auditoría Fable 2026-07-11): fetcheá la detail
+   page del item y capturá el ISBN si está publicado (código de barras,
+   metadata, ficha técnica). Dejalo `""` si la página no lo muestra —
+   NUNCA inventes un ISBN. Este campo es lo que le da al Step 2 un overlap
+   real en vez de un % estimado a ojo.
+6. **`series_key_guess`**: el nombre de la serie tal como aparece en el
+   título/ficha (ej. "One Piece"), SIN slugificar — el Step 2 lo normaliza
+   con el mismo slug que usa el pipeline. No es el `series_key` canónico del
+   corpus, es tu mejor lectura del nombre de la serie desde la página.
 
 ### C. Rubrica de evaluación
 
 **C1 — Content Fit** (falla aquí = skip el resto, veredicto ❌ directo)
 - ¿Qué % del listing son ediciones especiales reales (no tomos regulares)?
 - Si < 20%: FAIL. Si 20-60%: borderline. Si > 60%: pass.
+- **`catalog_scope`** (hallazgo F3b, auditoría Fable 2026-07-11): además del
+  ratio de ediciones especiales, preguntá explícitamente ¿qué fracción del
+  listing es NO-manga (figuras, comics occidentales, cards, merch)? Esta es
+  la señal que decide `purity: manga_only` vs `mixed` al dar de alta la
+  fuente (ver Source.purity en manga_watch.py) — C1 medía sólo "% especiales"
+  y nunca preguntaba esto, así que el purity del alta salía a ciegas.
+  Reportá `"manga_only"` (catálogo cerrado a manga) o `"mixed"` (vende manga
+  + otras cosas — sólo pasan items con STRONG manga hint).
 
 **C2 — Campos mínimos** (evaluar sobre los items sampleados — 8-10 si pasó C1)
 - Nombre de la serie: disponible? (s/n)
@@ -120,11 +160,24 @@ Por cada item de la muestra final registra:
 - ¿Protección anti-bot fuerte? (Cloudflare challenge, CAPTCHA) (s/n)
 - ¿API pública disponible? (s/n — ideal, más estable)
 - ¿HTML parseable con BeautifulSoup? (s/n)
+- **Muerto vs JS-rendered** (hallazgo ES-3/ES-4, auditoría Fable 2026-07-11):
+  WebFetch NO ejecuta JavaScript. Si la página vino vacía o como un esqueleto
+  sin items, **antes de concluir "sitio muerto"** revisá el HTML crudo en
+  busca de señales de que el contenido se hidrata client-side: `__NEXT_DATA__`,
+  `__NUXT__`, bundles JS grandes (`main.*.js`, `chunk.*.js`), endpoints XHR/API
+  referenciados en `<script>` inline, o un `<div id="app">`/`id="root">` casi
+  vacío. Si encontrás esas señales, NO es "sitio muerto" — es candidata a
+  `kind: js` (el pipeline ya soporta 17 fuentes con `kind: js`, opt-in
+  `--enable-js`, gotcha #12). Si hay tools de Chrome disponibles, opcionalmente
+  confirmá cargando la página con JS habilitado antes de descartar. El
+  veredicto "página vacía" que mezclaba sitio muerto con JS-rendered queda
+  separado en dos: ver los veredictos del Step 3.
 
 **C5 — Comparación con fuentes existentes**
 ¿Ya tenemos algo que cubra el mismo nicho (mismo país + tipo de contenido)?
-Si sí: ¿esta fuente es mejor (más items, más campos, más editoriales)?
-¿O es redundante?
+Usá la lista `{FUENTES_ACTIVAS_DEL_PAIS}` de arriba (cargada en vivo desde
+`sources.yml`, no de memoria). Si sí: ¿esta fuente es mejor (más items, más
+campos, más editoriales)? ¿O es redundante?
 
 ### D. Output (JSON estructurado, sin prose)
 
@@ -136,6 +189,7 @@ Si sí: ¿esta fuente es mejor (más items, más campos, más editoriales)?
   "content_fit": "pass|fail|borderline",
   "content_fit_note": "razón breve (1 frase)",
   "special_edition_ratio": "~X%",
+  "catalog_scope": "manga_only|mixed",
   "scale_estimate": "~N items",
   "active": true,
   "last_update": "YYYY-MM o desconocido",
@@ -159,6 +213,8 @@ Si sí: ¿esta fuente es mejor (más items, más campos, más editoriales)?
       "title": "...",
       "is_special_edition": true,
       "fields_found": ["series", "edition_type", "publisher", "cover_image"],
+      "isbn": "",
+      "series_key_guess": "...",
       "note": "..."
     }
   ],
@@ -166,6 +222,10 @@ Si sí: ¿esta fuente es mejor (más items, más campos, más editoriales)?
   "verdict_reason": "una frase"
 }
 ```
+
+`isbn` y `series_key_guess` (hallazgo ES-1) son los campos que el Step 2 usa
+para el overlap real — `isbn` vacío (`""`) es válido y esperado si la detail
+page no lo publica, NO inventes un valor para rellenar el campo.
 
 Además de devolver este JSON como resultado del subagente, **escribilo también a
 `data/diagnostics/source-eval-<id>.json`** (`<id>` = slug del nombre/dominio de la
@@ -184,39 +244,36 @@ el subagente devolvió en memoria.
 
 ## Step 2 — Overlap check (solo fuentes con preliminary_verdict viable o borderline)
 
-Corre este snippet para entender el estado actual del corpus:
+Hallazgo ES-1 (auditoría Fable 2026-07-11): este step YA NO le pide al LLM que
+"cruce a ojo" los ISBNs de la muestra — corre `scripts/audit/source_overlap.py`,
+que hace el cruce real contra `data/items.jsonl` usando las mismas funciones
+de normalización que el pipeline (`normalize_isbn`, `_slugify_kebab`). Es
+100% de solo lectura.
 
-```python
-import json
-from collections import defaultdict
+Para cada fuente viable, usá el JSON que el subagente ya escribió en
+`data/diagnostics/source-eval-<id>.json` (Step 1, sección D):
 
-existing_isbns = set()
-existing_series = set()
-country_counts = defaultdict(int)
-
-with open('data/items.jsonl') as f:
-    for line in f:
-        item = json.loads(line)
-        if item.get('isbn'):
-            existing_isbns.add(item['isbn'].strip())
-        if item.get('series_key'):
-            existing_series.add(item['series_key'])
-        country_counts[item.get('country', '?')] += 1
-
-print(f"Corpus: {sum(country_counts.values())} items, {len(existing_isbns)} ISBNs únicos, {len(existing_series)} series")
-for c, n in sorted(country_counts.items(), key=lambda x: -x[1])[:10]:
-    print(f"  {c}: {n}")
+```bash
+.venv/bin/python scripts/audit/source_overlap.py \
+  --eval-file data/diagnostics/source-eval-<id>.json --json
 ```
 
-Para cada fuente viable, cruza los ISBNs de su muestra con `existing_isbns`.
-Calcula % overlap. Si el subagente reportó series_keys, normaliza (slugify,
-minúsculas, sin diacríticos) y cruza con `existing_series`.
+Output (`--json`): `{"corpus": {...}, "isbn_overlap": {...}, "series_overlap": {...}}`.
+Cada bucket `overlap` trae `sample_total`, `matched`, `pct` y `classification`
+(`nuevo` / `parcial` / `redundante`), o `classification: "sin_datos"` con
+`pct: null` si la muestra no trajo ningún ISBN/serie (la detail page no lo
+publicaba — pasa seguido, no es un error).
 
-Regla de overlap:
-- < 30% overlap → fuente claramente nueva, aporta
-- 30-70% → viable si aporta campos que nos faltan o nuevo país/editorial
-- > 70% → solo viable si es SUPERIOR a la fuente existente (más items, más campos, fotos extras)
-- ~100% overlap Y no superior → ❌ Redundante
+Regla de overlap (aplicada por el script, `overlap_classification()`):
+- < 30% overlap → `nuevo` — fuente claramente nueva, aporta
+- 30-70% → `parcial` — viable si aporta campos que nos faltan o nuevo país/editorial
+- > 70% → `redundante` — sólo viable si es SUPERIOR a la fuente existente (más items, más campos, fotos extras)
+
+**Para la tabla del Step 3**: la celda "Overlap" sale del `pct`/`classification`
+del script. Si `classification == "sin_datos"`, la celda debe decir
+literalmente **"sin datos (muestra sin ISBN)"** — NUNCA un % inventado por el
+LLM. En ese caso, apoyate en `series_overlap` (si tiene datos) o en el
+`existing_coverage` cualitativo que ya reportó el subagente en el Step 1.
 
 ---
 
@@ -237,12 +294,19 @@ Regla de overlap:
 
 **Veredictos posibles:**
 - `Agregar` — genuinamente nuevo
+- `Viable — requiere kind: js` (hallazgo ES-3/ES-4) — el listing/detail depende
+  de JS para renderizar (WebFetch trajo un esqueleto vacío pero con señales de
+  hidratación client-side, C4); no es descarte, es una fuente `kind: js` más
+  para el pipeline (17 ya activas así) — el resto de la rúbrica se evalúa igual
 - `Reemplaza [fuente actual]` — superior a algo que ya tenemos, desactivar la vieja
 - `Complementa [fuente actual]` — overlap parcial pero aporta algo que la otra no tiene
 - `No — sin foto de extras` — cubre bonuses pero sin imagen del extra
 - `No — >70% redundante` — ya lo tenemos mejor cubierto
 - `No — contenido incorrecto` — mayoritariamente tomos regulares / noticias
-- `No — acceso bloqueado` — anti-bot fuerte, Playwright complejo
+- `No — sitio muerto` — página vacía SIN señales de JS (no `__NEXT_DATA__`,
+  no bundles grandes, no endpoints XHR) — distinto de "requiere kind: js" (C4)
+- `No — acceso bloqueado` — anti-bot fuerte (Cloudflare challenge/CAPTCHA),
+  Playwright no alcanzaría o sería demasiado frágil
 - `No — escala insuficiente` — < 50 items coleccionables
 
 ### Detalle (solo fuentes ✅ y ⚠️)
@@ -250,13 +314,29 @@ Regla de overlap:
 Por cada una: 2-3 bullets máximo.
 - Qué cubre que no tenemos
 - Qué falta o es condicional
-- Acción recomendada
+- Acción recomendada — si es `catalog_scope: mixed`, sugerí explícitamente
+  `purity: mixed` para el alta en sources.yml (ver Source.purity); si es
+  `manga_only`, sugerí `purity: manga_only` (default)
 
 ### Fuentes ❌ — razón en una frase
 
 | Fuente | Razón |
 |--------|-------|
 | ... | ... |
+
+### Nota final (sólo si algún veredicto es `Agregar`, `Reemplaza` o `Complementa`)
+
+Recordá al owner que el alta de una fuente nueva requiere crear su ficha
+`docs/scraper/sources/<fuente>.md` desde `_TEMPLATE.md` (política de docs de
+CLAUDE.md — regla dura de fuentes) además de la entrada en `sources.yml`. Esto
+NO es parte del reporte de viabilidad (este skill no implementa nada), es un
+recordatorio de qué falta después de que el owner decida agregar.
+
+Además: una fuente de **referencia sin e-commerce** (wiki, base de datos
+comunitaria tipo Mangavariant) es first-class para este catálogo — el
+objetivo es discovery, no siempre compra. La AUSENCIA de precio/botón de
+tienda NO es un motivo de descarte ni penaliza el veredicto; evaluála igual
+por la rúbrica C1-C5 normal.
 
 ---
 
@@ -266,5 +346,8 @@ Por cada una: 2-3 bullets máximo.
 - Output conciso — sin prose larga, sin repetir lo que ya dice la tabla.
 - Si una fuente falla en Content Fit: ❌ directo, sin evaluar el resto de criterios.
 - Si una fuente cubre extras/bonuses/tokuten y NO tiene foto del extra: ❌ automático (lección BooksPrivilege).
-- Si el sitio requiere login o está completamente bloqueado: ❌ "acceso bloqueado".
+- Si el sitio requiere login o está completamente bloqueado por anti-bot: ❌ "acceso bloqueado".
+- Si el sitio vino vacío pero sin señales de JS (ni `__NEXT_DATA__`, ni bundles, ni XHR): ❌ "sitio muerto" — NO lo confundas con JS-rendered (C4).
+- Si el sitio vino vacío CON señales de JS: NO es descarte — veredicto "Viable — requiere kind: js".
+- **La celda "Overlap" del Step 3 sale SIEMPRE de `scripts/audit/source_overlap.py` (Step 2), nunca de una estimación del LLM.** Si el script devuelve `classification: sin_datos`, la celda dice "sin datos (muestra sin ISBN)" — nunca un %.
 - Máximo 1 párrafo de detalle por fuente viable.

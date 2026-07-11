@@ -43,7 +43,13 @@ else:
 
 ### Invocar el workflow
 
-Para batches de **30+ items**, usar el workflow guardado:
+**Umbral único (regla): < 15 pendientes → procesar inline** (sin subagentes,
+pasos manuales de abajo). **≥ 15 pendientes → el workflow guardado es el camino
+PREFERIDO.** El camino manual con subagentes (Steps 3-10 de abajo) es el
+**fallback** para ≥ 15 items cuando el tool `Workflow` no está disponible — hace
+lo mismo que el workflow pero orquestado a mano.
+
+Para batches de **≥ 15 items**, usar el workflow guardado:
 
 ```javascript
 // Continuar desde progreso guardado:
@@ -66,7 +72,7 @@ The workflow automates the entire pipeline: audit → Tier 1 auto-standardize �
 validation → Tier 3 derivation → merge + dedup + slugs + translation. Schema-validated
 output eliminates truncated URLs and session-limit data loss.
 
-For **< 30 items**, process inline using the manual steps below.
+For **< 15 items**, process inline using the manual steps below.
 
 ## Architecture: 3-tier processing
 
@@ -109,16 +115,17 @@ If `PENDING = 0` (ver `summary.json`) → report "nothing to standardize" and st
 
 If `Pendientes < 15` → process ALL tiers inline (no subagents needed).
 
-If `Pendientes >= 15` → use the tiered workflow below.
+If `Pendientes >= 15` → el workflow guardado es el camino PREFERIDO; los Steps
+3-10 de abajo (subagentes) son el fallback si el tool `Workflow` no está
+disponible. (Mismo umbral que la intro — una sola regla, 15.)
 
 ## Step 2 — Auto-standardize Tier 1 (deterministic, no LLM)
 
 Tier 1 items have high-confidence heuristic assignments. Apply them directly
 (la lógica vive en `scripts/standardize_apply.py` — NO embebas una copia).
-**`standardize_apply.py` declara su PROPIO `DEFAULT_BASE` (todavía
-`/tmp/manga-standardize-run` — no se tocó en el movimiento a `data/`), así que
-hay que pasarle `--base` explícito para que apunte al mismo run dir que usó
-el audit:**
+**`standardize_apply.py` y `standardize_audit.py` declaran el MISMO
+`DEFAULT_BASE = data/standardize-run`; igual se pasa `--base` explícito por
+robustez, para garantizar que ambos scripts apunten al mismo run dir:**
 
 ```bash
 .venv/bin/python scripts/standardize_apply.py tier1 --base data/standardize-run     # [--force-all]
@@ -126,11 +133,18 @@ el audit:**
 
 ## Step 3 — Partition Tier 2 + 3 into chunks
 
-**CRITICAL** — items that share coleccion/page-id MUST go in the SAME chunk.
+**CRITICAL — REGLA DE AGRUPACIÓN (misma que usa el chunker del workflow):**
+items que comparten coleccion/page-id (`group_key`) DEBEN ir en el MISMO chunk.
+`group_key` = `lmc:{id}` para URLs `listadomanga.es/coleccion.php?id=N`; para el
+resto, la URL base sin query (`url:{base}`). Los hermanos SIEMPRE juntos; los
+chunks pueden quedar desparejos.
 
-Tier 2 and Tier 3 items get different prompt templates but can share chunks
-if they're siblings. Chunk size: **20-30 items** (smaller than before to avoid
-session limits — the #1 reliability problem in past runs).
+Tier 2 y Tier 3 usan prompts distintos pero pueden compartir chunk si son
+hermanos. **Tamaños de chunk canónicos: 20 (Tier 2) / 15 (Tier 3)** — los
+MISMOS que usa el workflow (que particiona cada tier por separado). Como el
+camino manual empaqueta chunks MIXTOS T2+T3 de hermanos, los limita a **20**
+(el mayor de los dos; chunks más chicos evitan los límites de sesión, el
+problema de fiabilidad #1 de corridas pasadas).
 
 ```bash
 .venv/bin/python << 'PY'
@@ -139,7 +153,7 @@ from pathlib import Path
 from collections import defaultdict
 
 BASE = Path('data/standardize-run')
-CHUNK_SIZE = 25
+CHUNK_SIZE = 20   # canónico: 20 (T2) / 15 (T3); chunks mixtos → cap 20
 
 # Las proyecciones YA vienen completas del audit (proposed_*, tier,
 # existing_edition_key, known_edition_keys) — acá solo se particiona.
@@ -185,7 +199,7 @@ PY
 ## Step 4 — Spawn subagents in parallel
 
 For each chunk, spawn a `general-purpose` subagent **in the background**.
-Wave size: 7 subagents max. Chunks are smaller (20-30) so more waves but
+Wave size: 7 subagents max. Chunks are small (≤20, ver Step 3) so more waves but
 each agent finishes faster and never hits session limits.
 
 Each subagent gets this prompt template. **Las reglas de negocio (edition_key,
@@ -344,6 +358,23 @@ y el Step 8 de slugs — ambos quedan cubiertos acá). Idempotente.
 .venv/bin/python -m pytest tests/test_extraction.py -q
 ```
 
+## Step 7b — Validar el corpus (gate DURO — BLOQUEANTE)
+
+Corré SIEMPRE el validador de invariantes DESPUÉS del merge/enforce. Es la
+misma red que el gate del scrape (`validate_corpus.py`, PHASE 4), pero ese
+backstop puede tardar días/meses en correr — y `serve.py` sirve `items.jsonl`
+EN VIVO sin pasar por el build. Por eso el skill valida en el mismo turn.
+
+```bash
+.venv/bin/python scripts/validate_corpus.py
+```
+
+**Si el exit code es != 0 → NO des la corrida por cerrada.** Hay violaciones de
+invariantes (exit 2 = violaciones DURAS). Investigá y arreglá ANTES de seguir
+con slugs/traducción o de anunciar éxito; no borres el run dir todavía
+(necesario para diagnóstico/resume). El workflow guardado hace exactamente esto
+y propaga el exit code al return final (`completed_with_violations`).
+
 ## Step 8 — Generate slugs
 
 > Nota: el enforcer del Step 6b ya corre `generate_slugs.py` internamente —
@@ -385,7 +416,7 @@ Report to the user:
   reference examples of correct data, but never overwrite their fields.
 - **Don't process items that already have `standardized_at`** unless `--force-all`.
 - **Don't skip Step 2 (Tier 1 auto-standardize)** — it saves ~30% of tokens.
-- **Don't use chunks larger than 30** — session limits cause data loss with big chunks.
+- **Don't use chunks larger than 20** — session limits cause data loss with big chunks (canónico: 20 T2 / 15 T3).
 - **Don't skip the `canonical_series_key` step in merge.**
 - **Don't skip Step 9 (translation)** for small runs.
 - **Don't truncate `data/standardize-run/` until merge is confirmed.**

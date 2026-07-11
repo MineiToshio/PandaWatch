@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-12 (alta de las 5 fuentes).
+> Última revisión: 2026-07-11 (gotcha #144: quirk series_key/display en IPM VN).
 
 Ficha agrupada: las 5 fuentes comparten el módulo
 [`scripts/wikis/storefront_json.py`](../../../scripts/wikis/storefront_json.py) —
@@ -69,6 +69,16 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
   expone ISBN en JSON (vive en la ficha SSR; ~1/3 ni ahí lo tiene).
 - products.json solo lista productos PUBLICADOS — especiales viejos despublicados
   se pierden → **Mangavariant sigue siendo complementario para el histórico VN**.
+- ⚠️ **Quirk series_key/display en IPM (2026-07-11, gotcha #144):** 3 volúmenes de
+  "Chàng Băng Giá Và Nàng Lạnh Lùng" (The Ice Guy and His Cool Female Colleague)
+  quedaron con `series_key`/`series_display` de una obra japonesa sin relación
+  ("Science Fell in Love, So I Tried to Prove It"), mientras otros volúmenes de la
+  MISMA obra IPM quedaron en 2 series_key más (`ice-guy-cool-colleague`,
+  `chang-bang-gia-va-nang-lanh-lung`) — una sola obra partida en 3 keys, probablemente
+  por el standardize LLM asignando series_key por heurística de volumen en vez de por
+  título real. Curado vía `/watch-enrich-series-aliases` fusionando los 3 keys bajo
+  `ice-guy-cool-colleague`; la causa raíz en el standardize NO se investigó (pendiente,
+  fuera de alcance del skill de aliases).
 
 ### yaakz (Tailandia)
 - ⚠️ La cifra "~1839 items" del discovery era un FALSO POSITIVO (índice de la

@@ -11,8 +11,21 @@ dicts manualmente y perdió el campo new_image, rompiendo la cola completa.
 
 Este script es la fuente de verdad permanente de esa lógica. Las candidatas SIEMPRE
 deben pasarse EXACTAMENTE como las devolvió sc_validate.py, sin reconstruir dicts a
-mano. Si un candidato no tiene 'new_image' o 'new_url', el script falla con exit 1
-antes de escribir nada — esa es la guarda estructural que previene la regresión.
+mano. La guarda estructural (validate_candidates) falla con exit 1 antes de escribir
+nada si una candidata: le falta new_image/new_url, su new_image no existe en el
+espejo local (--images-dir), o le falta algún campo de proveniencia que sc_validate
+emite SIEMPRE (new_pixels/verified/confidence/status/match_dist) o lo trae con el
+tipo equivocado.
+
+PARIDAD CON EL MOTOR (SC-7)
+----------------------------
+El rewrite del preview corre bajo el MISMO lock cross-proceso
+(`cover_preview.json.lock`) y usa el MISMO merge anti-carrera
+(`fetch_better_covers.preview_write_lock` + `_merge_preview_entries`) que
+`fetch_better_covers._write_preview` (F19 + hallazgo #14). En CADA flush se relee
+el disco y las decisiones del owner (status/reviewed_at/reject_reason) GANAN sobre
+el acumulador de corrida — una aprobación hecha después del primer flush de un slug
+ya no se pisa.
 
 FORMATO DE INPUT (flush_input.json)
 -------------------------------------
@@ -29,10 +42,13 @@ FORMATO DE INPUT (flush_input.json)
 
 USO
 ----
-  sc_flush.py <flush_input.json> [--preview data/cover_preview.json] [--acc .tmp_sc_acc.json]
+  sc_flush.py <flush_input.json> [--preview data/cover_preview.json]
+              [--acc .tmp_sc_acc.json] [--images-dir data/images]
 
-  --preview PATH  Ruta al archivo de preview (default: data/cover_preview.json)
-  --acc PATH      Ruta al acumulador de corrida (default: .tmp_sc_acc.json)
+  --preview PATH     Ruta al archivo de preview (default: data/cover_preview.json)
+  --acc PATH         Ruta al acumulador de corrida (default: .tmp_sc_acc.json)
+  --images-dir PATH  Espejo local donde sc_validate guardó new_image; se verifica
+                     que exista (sólo lectura). Default: data/images
 
 STDOUT
 -------
@@ -41,9 +57,36 @@ STDOUT
 """
 import argparse
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
+
+# El lock cross-proceso y el merge anti-carrera son la MISMA maquinaria que usa
+# fetch_better_covers._write_preview (F19 + hallazgo #14). Se IMPORTAN de ahí
+# (fuente única) para que el flush del skill y el rewrite del motor tengan
+# PARIDAD real: ambos toman `cover_preview.json.lock` sobre todo el intervalo
+# read→merge→replace, y ambos preservan las decisiones del owner (status/
+# reviewed_at/reject_reason) que estén en disco. Antes el flush no tomaba lock ni
+# releía el disco en cada flush → una aprobación del owner hecha DESPUÉS del primer
+# flush de un slug se pisaba (last-writer-wins) durante el resto de la corrida (SC-7).
+_SCRIPTS_RETROFIT = Path(__file__).resolve().parent
+if str(_SCRIPTS_RETROFIT) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_RETROFIT))
+
+import fetch_better_covers as fbc  # type: ignore
+
+# Campos de PROVENIENCIA que sc_validate.py emite SIEMPRE para cada candidata. Un
+# dict reconstruido a mano (la regresión que este script existe para prevenir) no
+# los tiene, o los tiene con el tipo equivocado. La guarda los exige ANTES de
+# escribir. `match_dist` puede ser None (item --include-no-image) pero la CLAVE
+# siempre está presente. Ver sc_validate.validate() → dict de salida.
+_REQUIRED_PROVENANCE = {
+    'new_pixels': int,          # resolución del archivo ya normalizado (AVIF)
+    'verified': bool,           # pasó _same_cover contra la referencia
+    'confidence': str,          # siempre 'low' (candidata sin auto-aplicar)
+    'status': str,              # siempre 'pending' al salir de sc_validate
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,27 +96,51 @@ def parse_args() -> argparse.Namespace:
                         help='Ruta al cover_preview.json (default: data/cover_preview.json)')
     parser.add_argument('--acc', default='.tmp_sc_acc.json',
                         help='Ruta al acumulador de corrida (default: .tmp_sc_acc.json)')
+    parser.add_argument('--images-dir', default='data/images',
+                        help='Directorio del espejo local donde sc_validate guardó '
+                             'new_image (default: data/images). Sólo LECTURA: se '
+                             'verifica que el archivo exista.')
     return parser.parse_args()
 
 
-def validate_candidates(candidates: list[dict], slug: str) -> None:
-    """Valida que todos los candidatos tengan los campos requeridos.
+def validate_candidates(candidates: list[dict], slug: str, images_dir: Path) -> None:
+    """Valida que cada candidata venga EXACTAMENTE como la emitió sc_validate.py.
 
-    Exit 1 si falta new_image o new_url — es la guarda contra dicts reconstruidos
-    a mano que causan datos rotos en la cola.
+    Exit 1 (antes de escribir nada) si una candidata:
+      - no tiene new_image o new_url (dict reconstruido a mano), o
+      - su new_image no existe en disco bajo images_dir (archivo fantasma), o
+      - le falta algún campo de proveniencia de sc_validate (`_REQUIRED_PROVENANCE`)
+        o lo trae con el tipo equivocado.
+
+    Es la guarda estructural contra la regresión histórica: un agente reconstruyó
+    los dicts a mano, perdió new_image y rompió la cola completa (2026-06-11).
     """
     errors = []
     for i, c in enumerate(candidates):
-        missing = []
+        problems = []
         if not c.get('new_image'):
-            missing.append('new_image')
+            problems.append('falta new_image')
+        elif not (images_dir / c['new_image']).exists():
+            problems.append(f'new_image "{c["new_image"]}" no existe en {images_dir}')
         if not c.get('new_url'):
-            missing.append('new_url')
-        if missing:
+            problems.append('falta new_url')
+        for field, typ in _REQUIRED_PROVENANCE.items():
+            if field not in c:
+                problems.append(f'falta el campo de proveniencia "{field}"')
+            elif not isinstance(c[field], typ):
+                problems.append(
+                    f'"{field}" debe ser {typ.__name__}, vino {type(c[field]).__name__}'
+                )
+        # match_dist: la CLAVE debe estar presente; el valor es int o None.
+        if 'match_dist' not in c:
+            problems.append('falta el campo de proveniencia "match_dist"')
+        elif c['match_dist'] is not None and not isinstance(c['match_dist'], int):
+            problems.append('"match_dist" debe ser int o None')
+        if problems:
             errors.append(
-                f'candidata[{i}] del slug "{slug}" le falta: {", ".join(missing)}. '
-                f'Pasa los dicts EXACTAMENTE como los devolvió sc_validate.py, '
-                f'sin reconstruir a mano.'
+                f'candidata[{i}] del slug "{slug}": {"; ".join(problems)}. '
+                f'Las candidatas deben venir EXACTAMENTE como las devolvió '
+                f'sc_validate.py (sin reconstruir dicts a mano ni fabricarlos).'
             )
     if errors:
         for err in errors:
@@ -81,7 +148,8 @@ def validate_candidates(candidates: list[dict], slug: str) -> None:
         sys.exit(1)
 
 
-def flush(input_path: str, preview_path: str, acc_path: str) -> None:
+def flush(input_path: str, preview_path: str, acc_path: str,
+          images_dir: str = 'data/images') -> None:
     inp_p = Path(input_path)
     if not inp_p.exists():
         print(json.dumps({'flushed': False, 'reason': f'input not found: {input_path}'}))
@@ -103,7 +171,7 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
         return
 
     # VALIDACIÓN DURA — rechazar antes de escribir cualquier cosa
-    validate_candidates(candidates, slug)
+    validate_candidates(candidates, slug, Path(images_dir))
 
     # Tagear cada candidata con la acción correcta
     for c in candidates:
@@ -140,31 +208,6 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
                 acc[slug]['candidates'].append(c)
                 existing_urls.add(c['new_url'])
     else:
-        # Leer la entrada existente en el preview para este slug (si la hay) y rescatar
-        # las candidatas ya revisadas (approved/rejected). Sin esto, si el skill re-corre
-        # sobre un slug con candidatas aprobadas-pero-no-aplicadas, la aprobación se pierde.
-        existing_reviewed: list[dict] = []
-        preview_p_tmp = Path(preview_path)
-        if preview_p_tmp.exists():
-            try:
-                for e in json.loads(preview_p_tmp.read_text(encoding='utf-8')):
-                    if e.get('slug') == slug:
-                        existing_reviewed = [
-                            c for c in e.get('candidates', [])
-                            if c.get('status') in ('approved', 'rejected')
-                        ]
-                        break
-            except (ValueError, OSError):
-                pass
-
-        # Combinar: reviewed primero (preservar estado), luego las nuevas (dedup por new_url)
-        existing_urls = {c['new_url'] for c in existing_reviewed}
-        merged_cands = list(existing_reviewed)
-        for c in candidates:
-            if c['new_url'] not in existing_urls:
-                merged_cands.append(c)
-                existing_urls.add(c['new_url'])
-
         acc[slug] = {
             'slug'          : slug,
             'title'         : item.get('title', ''),
@@ -176,33 +219,55 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
             'old_url'       : old_url,
             'old_pixels'    : curr_px,
             'current_images': current_images,
-            'candidates'    : merged_cands,
+            'candidates'    : list(candidates),
         }
 
-    # Persistir acumulador
+    # Persistir acumulador (estado CRUDO de esta corrida — las decisiones del owner
+    # se reconcilian contra el disco en cada flush, ver abajo).
     acc_p.write_text(json.dumps(acc, ensure_ascii=False), encoding='utf-8')
 
-    # Reconstruir preview: entradas ajenas (no de esta corrida) + mis entradas
+    # Reconstruir preview bajo el MISMO lock cross-proceso que fetch_better_covers.
+    # _write_preview (F19 + hallazgo #14). El intervalo read→merge→replace corre
+    # entero bajo `cover_preview.json.lock`, así que un save del owner desde el panel
+    # (serve, otro proceso) cae ENTERO antes o después, nunca en el medio.
+    #
+    # SC-7 — clave del fix: se relee el disco y se funde con `_merge_preview_entries`
+    # en CADA flush (no sólo el primero por slug). El estado de revisión de disco
+    # (status/reviewed_at/reject_reason de candidatas approved/rejected) GANA sobre
+    # el acumulador: una aprobación del owner hecha DESPUÉS del primer flush de un
+    # slug ya NO se pisa en los flushes siguientes de la corrida.
     preview_p = Path(preview_path)
-    external: list[dict] = []
-    if preview_p.exists():
-        try:
-            for e in json.loads(preview_p.read_text(encoding='utf-8')):
-                if e.get('slug') not in acc:
-                    external.append(e)
-        except (ValueError, OSError):
-            pass
-
-    merged = external + list(acc.values())
-
-    # Escritura atómica: tmp + replace
-    tmp_out = preview_p.with_suffix(f'.{uuid.uuid4().hex[:8]}.tmp')
     try:
-        tmp_out.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding='utf-8')
-        tmp_out.replace(preview_p)
-    except OSError as e:
-        tmp_out.unlink(missing_ok=True)
-        print(f'ERROR al escribir preview: {e}', file=sys.stderr)
+        with fbc.preview_write_lock(preview_p):
+            disk: list[dict] = []
+            if preview_p.exists():
+                try:
+                    disk_raw = json.loads(preview_p.read_text(encoding='utf-8'))
+                    if isinstance(disk_raw, list):
+                        disk = [fbc._normalize_preview_entry(e)
+                                for e in disk_raw if isinstance(e, dict)]
+                except (ValueError, OSError):
+                    pass
+
+            # memory = entradas de ESTA corrida (acc); disk = lo que hay en el archivo
+            # (que la UI/panel pudo modificar). El merge preserva las decisiones de
+            # disco y conserva las entradas ajenas (slugs que no tocó esta corrida).
+            merged = fbc._merge_preview_entries(list(acc.values()), disk)
+
+            # Escritura atómica: tmp + fsync + replace (misma disciplina que _write_preview)
+            tmp_out = preview_p.with_name(f'{preview_p.name}.{uuid.uuid4().hex[:8]}.tmp')
+            try:
+                with tmp_out.open('w', encoding='utf-8') as f:
+                    f.write(json.dumps(merged, ensure_ascii=False, indent=2))
+                    f.flush()
+                    os.fsync(f.fileno())
+                tmp_out.replace(preview_p)
+            except OSError as e:
+                tmp_out.unlink(missing_ok=True)
+                print(f'ERROR al escribir preview: {e}', file=sys.stderr)
+                sys.exit(1)
+    except TimeoutError as e:
+        print(f'ERROR: no se pudo tomar el lock del preview: {e}', file=sys.stderr)
         sys.exit(1)
 
     total_candidates = sum(len(e.get('candidates', [])) for e in merged)
@@ -212,7 +277,7 @@ def flush(input_path: str, preview_path: str, acc_path: str) -> None:
 
 def main() -> None:
     args = parse_args()
-    flush(args.input, args.preview, args.acc)
+    flush(args.input, args.preview, args.acc, args.images_dir)
 
 
 if __name__ == '__main__':

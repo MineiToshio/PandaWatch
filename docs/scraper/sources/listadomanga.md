@@ -424,6 +424,22 @@ recuperar requiere re-scrape + enforcer.
   + guarda durable invariante **STOLENIMG** en `validate_corpus.py` (warning si la portada de un
   tomo NORMAL es el `extra`/`bonus` de otra fila).
 
+- **(2026-07-09) Falso positivo de auditoría — "Regalo(s)/Cofre" con wording singular/plural
+  se pierde silenciosamente**: se investigó un hallazgo que afirmaba que 3 wordings reales de
+  H2 ("Regalo con {título}" singular, "Regalos de {título}" plural, "Cofre de regalo con la
+  primera edición de {título}") no eran reconocidos por `LAYOUT_B_SECTION_PATTERNS`, y que el
+  `<strong>` que envuelve el H2 real rompía el match. **Verificado NO reproducible contra HEAD**:
+  `_is_layout_b_section` ya matchea las 3 variantes (`^Regalos?\s+con\b`, `^Regalos?\s+de\b`,
+  `^Cofres?\s+de\s+regalo\b` cubren los 3 casos) y `h2.get_text()` ya ignora el `<strong>`
+  interno (extrae sólo texto, no tags) — confirmado con curl+BeautifulSoup en vivo sobre id=3760,
+  id=1514 e id=1597: los 3 producen los items `from_extras`/`layout_b` esperados y ya están en
+  `items.jsonl` (`coleccion:3760`→1, `coleccion:1514`→2, `coleccion:1597`→3 items). El log de
+  `UNKNOWN_H2_LOG` del último full run (2026-07-07) no registra ningún header con
+  "regalo"/"cofre" no reconocido. Se agregó `test_lmc_layout_b_h2_wordings_singular_plural_strong_wrapped`
+  (tests/test_extraction.py) como guarda de regresión con los 3 wordings reales + `<strong>`
+  wrapping, para que una futura edición de `LAYOUT_B_SECTION_PATTERNS` no lo rompa en silencio.
+  No se tocó `listadomanga_collections.py` (no había bug que arreglar).
+
 **Decisiones (lo que NO se hace):** omnibus pelado no califica (#18); no se mergea
 cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
 
@@ -534,3 +550,42 @@ echo "1606 2857" > /tmp/ids.txt
 **Antes de cerrar cualquier cambio en ListadoManga**: enforcer → `validate_corpus`
 (0 duras) → idempotencia (2× idéntico) → tests (`pytest tests/test_extraction.py`) →
 auditoría de red (0/0) → build. Si tocaste algo meaningful, actualiza este doc.
+
+## 11. Auditoría del proceso de ingesta (workflow `listadomanga-audit`)
+
+El workflow `.claude/workflows/listadomanga-audit.js` (skill `listadomanga-audit`)
+audita el **proceso de ingesta** de esta fuente: compara el HTML real del sitio
+(navegando con Chrome una muestra estratificada del corpus) contra lo que el
+parser espera, detecta gaps (secciones nuevas, cambios de layout, casos no
+cubiertos) y prioriza mejoras por impacto para **delta y full**.
+
+Fases: (1) análisis de código (parser + enforcer + scripts de pipeline), (2)
+selección de una muestra representativa del corpus local por tipo de caso, (3)
+inspección Chrome de esa muestra + `lista.php`/`calendario.php`, (4) síntesis y
+priorización de mejoras, (5) implementación de las críticas. Las fases 1-3 (las
+caras) se checkpointean en `data/listadomanga-audit-progress.json`.
+
+**Args** (`{ chrome_model, resume, apply }`):
+
+- `chrome_model` — modelo de los pasos Chrome (default `sonnet`; la tarea es
+  extracción mecánica constreñida por schema).
+- `resume` — reusa el checkpoint y saltea las fases 1-3 (o los grupos Chrome) ya
+  completados.
+- `apply` — **gate de aprobación (default `false`)**.
+
+**Por defecto NO aplica cambios.** Sin `apply`, el workflow corre las fases 1-4 y
+termina con `{ status: 'plan_ready', ... }` devolviendo el plan de mejoras
+críticas, sin tocar código. Para aplicarlas, el owner revisa el plan y **relanza
+con `{ apply: true, resume: true }`** — el `resume` reusa el checkpoint (no repite
+la parte cara) y sólo entonces corre la Fase 5. La Fase 5 está acotada a una
+**allowlist de 3 archivos** (`scripts/wikis/listadomanga_collections.py`,
+`scripts/retrofit/enforce_listadomanga_rules.py`, este doc) y protegida por una
+**red de seguridad git**: aborta si esos archivos tienen cambios sin commitear,
+corta la cadena ante el primer FAIL (circuit-breaker) y, si el gate final falla,
+revierte los 3 archivos dejando el diff fallido en
+`data/diagnostics/listadomanga-audit-failed-diff.txt`. Nunca toca `data/`
+(items.jsonl ni ningún JSONL de datos).
+
+**Cuándo correrlo**: tras un cambio de HTML sospechado en el sitio, antes de un
+`scrape_full` grande, o periódicamente para detectar drift del parser. Como todo
+skill del repo, sólo a pedido explícito (nunca automático).

@@ -379,9 +379,19 @@ scripts/
                                rarity_candidates.py; Step 3 (apply) → scripts/retrofit/
                                apply_rarity_verdicts.py (hallazgo F5, tracer fuente única).
   search-covers/               busca portadas hi-res para items con imagen pequeña (<min-pixels)
-                               o ausente. Usa Serper API (preferido) o Chrome (fallback). Escribe
+                               o ausente. Camino principal: Chrome (Yandex reverse-image primario +
+                               Google udm=2); Serper Lens es el fallback opcional de pago
+                               (--serper-fallback, solo targets con 0 matches). Escribe
                                candidatas a cover_preview.json. NUNCA toca items.jsonl. Step 1 (plan
                                de queries) compilado a scripts/retrofit/sc_plan.py (hallazgo F9).
+.claude/workflows/            — workflows GUARDADOS (orquestación de skills como código JS: fan-out
+                               de subagentes, schemas, checkpoints — no markdown para el modelo).
+                               Detalle en .claude/skills/README.md § "Workflows":
+  watch-standardize-catalog.js  camino preferido de /watch-standardize-catalog para lotes grandes
+                                 (umbral único, ver SKILL.md); lee prompt-rules.md, nunca la copia.
+  listadomanga-audit.js         /listadomanga-audit: navega el sitio real con Chrome, sintetiza
+                                 gaps, y (con {apply:true}) implementa acotado a una allowlist de
+                                 3 archivos con red de seguridad git (revert automático si falla).
 web/  (dashboard HTML público + paneles)
   index.html                 — dashboard Alpine.js. Filtros, detalle, feedback 👎,
                                aprobación 👍, edición inline ✏️, selección batch,

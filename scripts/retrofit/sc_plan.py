@@ -51,7 +51,7 @@ import fetch_better_covers as fbc  # type: ignore
 # 100 000 separado que generaba churn entre motor y skill; unificado 2026-07-08).
 LOW_QUALITY_PX = fbc.LOW_QUALITY_PX
 
-# Umbral de "referencia usable": por debajo de esto la imagen actual es un
+# Umbral de "referencia NO degenerada": por debajo de esto la imagen actual es un
 # placeholder roto (típico: GIF de 1×1 px de Amazon "imagen no disponible") y NO
 # sirve como referencia para _same_cover — el gate de aspect ratio y los hashes
 # rechazarían toda candidata (0 matches garantizados). Estos targets se tratan
@@ -59,7 +59,13 @@ LOW_QUALITY_PX = fbc.LOW_QUALITY_PX
 # sin variante reverse, porque no hay con qué hacer búsqueda por foto). Sin este
 # guard los ~46 placeholders de 1px copan el --limit en cada corrida y nunca se
 # llega a las portadas reales de baja resolución (causa estructural, 2026-06-12).
-MIN_REF_PX = 2_500
+#
+# SE IMPORTA de fbc (fuente única, SC-9): antes era un literal 2 500 acá y el motor
+# tenía su propio literal 10 000 (SAME_COVER_MIN_REF_PX) sin nombre — dos umbrales
+# de referencia DISTINTOS pero pelados, con riesgo de drift bajo --serper-fallback.
+# fbc.MIN_REF_PX (2 500) = piso de placeholder degenerado (lo que usa el plan);
+# fbc.SAME_COVER_MIN_REF_PX (10 000) = piso para _same_cover fiable (lo usa el motor).
+MIN_REF_PX = fbc.MIN_REF_PX
 
 SKIP_SIGNALS = frozenset({"variant_cover", "retailer_exclusive"})
 

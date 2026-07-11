@@ -317,6 +317,103 @@ def test_merge_unusable_edition_key_no_partial_mutation(tmp_path, monkeypatch):
     assert out["series_display"] == "Orig Display"
 
 
+# ── E3: volumen cae a proposed_volume cuando el LLM lo deja vacío ───────────
+# (rama has_edition: el item YA tiene edition_key; el LLM validó pero emitió
+# volume="" confiando en el pseudo-campo accept_proposal inexistente).
+
+def test_has_edition_volume_falls_back_to_proposed_volume(tmp_path, monkeypatch):
+    it = make_item(url="https://store.example/e3", series_key="e3-series",
+                   series_display="E3 Series",
+                   edition_key="e3-series-pub-regular-es", volume="")
+    items_path = setup_items(tmp_path, monkeypatch, [it])
+    base = tmp_path / "run"
+    base.mkdir()
+    # El audit propuso volume="7"; el LLM (Tier 2) devuelve volume vacío.
+    (base / "tier2.json").write_text(json.dumps([
+        {"url": "https://store.example/e3", "proposed_series_key": "e3-series",
+         "proposed_series_display": "E3 Series",
+         "proposed_edition_key": "e3-series-pub-regular-es",
+         "proposed_edition_display": "Reg", "proposed_volume": "7"},
+    ]), encoding="utf-8")
+    write_result(base, [{"url": "https://store.example/e3", "is_manga": True,
+                         "series_key": "e3-series", "volume": ""}])
+
+    assert standardize_apply.cmd_merge(base, force_all=False) == 0
+    out = read_jsonl(items_path)[0]
+    assert out.get("standardized_at")
+    # El proposed_volume del audit se usa en vez de descartarse.
+    assert out["volume"] == "7"
+
+
+def test_has_edition_volume_prefers_existing_then_llm(tmp_path, monkeypatch):
+    # Si el LLM SÍ da volume, gana sobre proposed_volume (orden de cascada).
+    it = make_item(url="https://store.example/e3b", series_key="e3b-series",
+                   series_display="E3b Series",
+                   edition_key="e3b-series-pub-regular-es", volume="")
+    items_path = setup_items(tmp_path, monkeypatch, [it])
+    base = tmp_path / "run"
+    base.mkdir()
+    (base / "tier2.json").write_text(json.dumps([
+        {"url": "https://store.example/e3b", "proposed_series_key": "e3b-series",
+         "proposed_series_display": "E3b Series",
+         "proposed_edition_key": "e3b-series-pub-regular-es",
+         "proposed_edition_display": "Reg", "proposed_volume": "7"},
+    ]), encoding="utf-8")
+    write_result(base, [{"url": "https://store.example/e3b", "is_manga": True,
+                         "series_key": "e3b-series", "volume": "9"}])
+
+    assert standardize_apply.cmd_merge(base, force_all=False) == 0
+    out = read_jsonl(items_path)[0]
+    assert out["volume"] == "9"   # el LLM gana sobre la propuesta
+
+
+# ── E4: item proyectado sin veredicto del subagente escala standardize_attempts
+
+def test_missing_result_increments_standardize_attempts(tmp_path, monkeypatch):
+    # Item pendiente proyectado a Tier 3 (está en tier3.json/proposals) pero el
+    # subagente NO escribió su línea en el result → r is None. Debe contar el
+    # intento para que el audit lo escale a standardize_exhausted más adelante.
+    it = make_item(url="https://store.example/e4", series_key="", edition_key="",
+                   standardize_attempts=1)
+    items_path = setup_items(tmp_path, monkeypatch, [it])
+    base = tmp_path / "run"
+    base.mkdir()
+    (base / "tier3.json").write_text(json.dumps([
+        {"url": "https://store.example/e4", "proposed_series_key": "e4-series",
+         "proposed_series_display": "E4 Series",
+         "proposed_edition_key": "e4-series-pub-regular-es",
+         "proposed_edition_display": "Reg", "proposed_volume": "1"},
+    ]), encoding="utf-8")
+    # result presente pero SIN la url del item (subagente lo omitió).
+    write_result(base, [{"url": "https://store.example/other", "is_manga": True,
+                         "series_key": "other-series",
+                         "edition_key": "other-series-pub-regular-es"}])
+
+    assert standardize_apply.cmd_merge(base, force_all=False) == 0
+    out = {i["url"]: i for i in read_jsonl(items_path)}
+    e4 = out["https://store.example/e4"]
+    assert not e4.get("standardized_at")               # sigue pendiente
+    assert e4.get("standardize_attempts") == 2         # 1 previo + 1 por omisión
+
+
+def test_missing_result_not_in_proposals_does_not_increment(tmp_path, monkeypatch):
+    # Item pendiente que NO fue proyectado (no está en proposals) — p.ej. un
+    # item que ni siquiera entró al audit este run — no debe contabilizar
+    # intento (no fue una omisión del subagente).
+    it = make_item(url="https://store.example/e4b", series_key="", edition_key="")
+    items_path = setup_items(tmp_path, monkeypatch, [it])
+    base = tmp_path / "run"
+    base.mkdir()
+    write_result(base, [{"url": "https://store.example/other", "is_manga": True,
+                         "series_key": "other-series",
+                         "edition_key": "other-series-pub-regular-es"}])
+
+    standardize_apply.cmd_merge(base, force_all=False)
+    out = read_jsonl(items_path)[0]
+    assert not out.get("standardized_at")
+    assert "standardize_attempts" not in out or out.get("standardize_attempts") in (0, None)
+
+
 # ── #14: veredictos LLM malformados contados y reportados ────────────────────
 
 def test_malformed_verdict_lines_reported(tmp_path, monkeypatch, capsys):

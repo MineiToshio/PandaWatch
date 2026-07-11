@@ -17,7 +17,26 @@ corre en el hilo principal, sin fan-out. Es un análisis corto quincenal
 (agregar señales de PostHog + feedback.jsonl y priorizar) — `sonnet` alcanza;
 no requiere `opus`.
 
-## Paso 1 — Señales de PostHog
+## Paso 1 — Verificar el proyecto PostHog activo (gate, ANTES de consultar nada)
+
+El MCP de PostHog opera sobre un **proyecto activo del entorno**, no
+necesariamente el de PandaWatch — las instrucciones del propio server
+declaran el proyecto activo (nombre + id + org) al inicio de la sesión.
+**Leé ese nombre antes de correr cualquier query.**
+
+- Si el proyecto activo NO es el de PandaWatch (p. ej. aparece "Redirector"
+  en la org "JobLeap AI" — otra app; estado real verificado 2026-07-11:
+  PandaWatch no tiene proyecto ni instrumentación propia todavía, 0
+  referencias a PostHog en `web-next/` ni en `.env.example`) → **cortá la
+  parte de PostHog**: reportá "gap de instrumentación — PandaWatch no tiene
+  PostHog integrado aún" (es en sí un item del backlog) y saltá directo al
+  Paso 2 (`feedback.jsonl`).
+- Si en el futuro PandaWatch tiene su propio proyecto instrumentado,
+  confirmá que sea ESE el proyecto activo antes de seguir — nunca asumas
+  que el proyecto activo del entorno es el correcto solo porque el MCP
+  respondió.
+
+## Paso 1b — Señales de PostHog (solo si el gate anterior confirmó el proyecto correcto)
 
 Carga las tools de PostHog vía ToolSearch (query `+posthog trends`) y
 consulta, para el período:

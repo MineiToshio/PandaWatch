@@ -338,7 +338,7 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    import json, subprocess, uuid
    from pathlib import Path
 
-   urls_from_chrome = [...]   # resultado del JS de Bing para ESTA variante
+   urls_from_chrome = [...]   # URLs extraídas del motor (Google udm=2 / Yandex reverse / fallback) para ESTA variante
    candidate_urls = [
        {'url': u, 'page_title': '', 'domain': u.split('/')[2] if u.startswith('http') else '',
         'query': variant['query']}

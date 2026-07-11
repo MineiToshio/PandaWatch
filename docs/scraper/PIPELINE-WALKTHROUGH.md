@@ -222,14 +222,29 @@ flowchart TD
     AUDIT["Audit · confidence_tier de items SIN standardized_at"] --> T1["Tier 1 ~30%<br/>determinista · 0 tokens"]
     AUDIT --> T2["Tier 2 ~9%<br/>LLM valida (chunks 20)"]
     AUDIT --> T3["Tier 3 ~37%<br/>LLM deriva full (chunks 15)"]
+    T2 --> INT["Integridad: urls del chunk vs result<br/>faltantes → 1 retry → missing_after_retry"]
+    T3 --> INT
     T1 --> MERGE["Merge + canonical_series_key<br/>+ consistency + coleccion=edicion<br/>+ dedup (consolidate_by_cluster)"]
-    T2 --> MERGE
-    T3 --> MERGE
+    INT --> MERGE
     MERGE --> NM["no-manga → PENDIENTE + unmapped_series.jsonl<br/>(llm_non_manga; gates deterministas expulsan después)"]
+    MERGE --> MISS["item sin veredicto (omitido) → PENDIENTE<br/>+standardize_attempts (escala a standardize_exhausted)"]
     MERGE --> SLUG["generate_slugs.py (ETAPA 4)"]
     SLUG --> TR["translate_descriptions.py (ETAPA 5)"]
     TR --> TEST["pytest test_extraction.py"]
+    TEST --> VAL{"validate_corpus.py<br/>gate DURO · BLOQUEANTE"}
+    VAL -->|exit 0| DONE["cleanup run dir + progreso"]
+    VAL -->|exit ≠ 0| HOLD["completed_with_violations<br/>run dir/progreso PRESERVADOS · investigar"]
 ```
+
+> **Gate de validación dentro del skill (E, 2026-07-11)**: ambos caminos
+> (workflow y manual, Step 7b) corren `validate_corpus.py` DESPUÉS del merge y lo
+> tratan como BLOQUEANTE — el gate del scrape (PHASE 4) es el backstop real pero
+> puede tardar días/meses, y `serve.py` sirve `items.jsonl` EN VIVO sin pasar por
+> el build. Si el validador sale con exit ≠ 0, el workflow NO limpia el run dir ni
+> el progreso (para diagnóstico/resume) y devuelve `status: completed_with_violations`
+> con `validate_corpus: {exit_code, summary}`. **Chunk sizes canónicos: 20 (Tier 2)
+> / 15 (Tier 3)** en ambos caminos. El chunker agrupa hermanos por `group_key`
+> (misma coleccion/page-id juntos) antes de partir.
 
 ### 2.5 Etapa 6 — sub-pipeline de imágenes (orden recomendado)
 
@@ -503,6 +518,8 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 Consume `data/unmapped_series.jsonl` (log de `series_key` no canónicos que el scraper detecta). Agrupa series bajo canonicals existentes o crea entradas nuevas en `data/series_aliases.yml` vía **Anilist API + web search**, luego corre el backfill sobre `items.jsonl`.
 
 `series_aliases.yml` es la fuente de verdad de `canonical_series_key()` — consolida la misma obra en distintos idiomas (`kimetsu no yaiba` / `鬼滅の刃` / `guardianes de la noche` → `demon-slayer`). Lookup exact-match-only (no substring).
+
+**Gates del skill (Lote B):** cada edición del YAML pasa por `scripts/audit/lint_series_aliases.py` (Loader estricto que ERROREA ante claves duplicadas — `safe_load` se quedaría con la última en silencio, perdiendo la entrada original y sus aliases — + colisiones de normalización vía `find_canonical_duplicates`). Las colisiones tienen semántica **baseline**: al arrancar, el skill captura el set pre-existente (`--snapshot data/diagnostics/aliases_collisions_baseline.json`); el gate post-edición (`--baseline`) aborta SOLO ante colisiones NUEVAS — las históricas quedan como warning informado al owner (las dup keys abortan SIEMPRE). El backfill respalda `items.jsonl` con `backup_and_rotate(..., timestamped=True)` (un backup por corrida, no un slot fijo: un falso merge es irreversible tras la siguiente corrida) e imprime `[SUMMARY] items cambiados: N` para verificar convergencia (2ª corrida con los mismos `--only-keys` → 0). Al cerrar, el skill corre `scripts/export_series_aliases.py` para refrescar `data/series_aliases.json` (índice de búsqueda que web-next lee por mtime).
 
 **Cuándo:** después de cada standardize que reportó series nuevas.
 
