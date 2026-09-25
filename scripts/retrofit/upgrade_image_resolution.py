@@ -100,7 +100,7 @@ import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlparse, urlencode
 
 _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → scripts
 if str(_SCRIPTS) not in sys.path:
@@ -244,7 +244,7 @@ def derive_original_url(url: str) -> str | None:
         qs_keys = {k.lower() for k, _ in qs_pairs}
         # Solo strippeamos si hay al menos un param de dimensión explícita
         if qs_keys & {"width", "height", "w", "h"} and qs_keys & _MAGENTO_RESIZE_PARAMS:
-            cleaned = parsed._replace(query="").geturl()
+            cleaned = parsed._replace(query=urlencode([(k, v) for k, v in qs_pairs if k.lower() not in _MAGENTO_RESIZE_PARAMS])).geturl()
             return cleaned if cleaned != url else None
 
     # ── 2. WordPress-style -NxM suffix ──
@@ -253,7 +253,7 @@ def derive_original_url(url: str) -> str | None:
     if m:
         clean_filename = m.group(1) + m.group(3)
         clean_path = path[: path.rfind("/") + 1] + clean_filename
-        cleaned = parsed._replace(path=clean_path, query="").geturl()
+        cleaned = parsed._replace(path=clean_path).geturl()
         return cleaned if cleaned != url else None
 
     # ── 3. Shopify-style _Nx suffix ──
@@ -261,14 +261,14 @@ def derive_original_url(url: str) -> str | None:
     if m:
         clean_filename = m.group(1) + m.group(3)
         clean_path = path[: path.rfind("/") + 1] + clean_filename
-        cleaned = parsed._replace(path=clean_path, query="").geturl()
+        cleaned = parsed._replace(path=clean_path).geturl()
         return cleaned if cleaned != url else None
 
     # ── 4. Amazon CDN embedded size modifiers (._SY300_. ._SL165_. etc.) ──
     if parsed.netloc in _AMAZON_HOSTS:
         if _AMAZON_SIZE_RE.search(path):
             clean_path = _AMAZON_SIZE_RE.sub("", path)
-            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            cleaned = parsed._replace(path=clean_path).geturl()
             return cleaned if cleaned != url else None
 
     # ── 5. Rakuten Books CDN: ?_ex=NxN ──
@@ -282,28 +282,28 @@ def derive_original_url(url: str) -> str | None:
     if _BUSCALIBRE_HOSTS_RE.match(parsed.netloc):
         if _BUSCALIBRE_FIT_RE.search(path):
             clean_path = _BUSCALIBRE_FIT_RE.sub(_buscalibre_fit_replacement, path, count=1)
-            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            cleaned = parsed._replace(path=clean_path).geturl()
             return cleaned if cleaned != url else None
 
     # ── 7. Cultura CDN: cdn-cgi/image/width=N/ segment (Cloudflare Polish) ──
     if parsed.netloc == _CULTURA_HOST:
         if _CULTURA_CDNCGI_RE.search(path):
             clean_path = _CULTURA_CDNCGI_RE.sub("/", path)
-            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            cleaned = parsed._replace(path=clean_path).geturl()
             return cleaned if cleaned != url else None
 
     # ── 8. Whakoom CDN: small/thumb/medium → large ──
     if parsed.netloc == _WHAKOOM_HOST:
         if _WHAKOOM_SIZE_RE.search(path):
             clean_path = _WHAKOOM_SIZE_RE.sub("/large/", path)
-            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            cleaned = parsed._replace(path=clean_path).geturl()
             return cleaned if cleaned != url else None
 
     # ── 9. Magento cache path: /media/catalog/product/cache/<hex>/ ──
     # ⚠️  Este patrón requiere validación same_cover (usa needs_same_cover_validation).
     if _MAGENTO_CACHE_RE.search(path):
         clean_path = _MAGENTO_CACHE_RE.sub("/media/catalog/product/", path)
-        cleaned = parsed._replace(path=clean_path, query="").geturl()
+        cleaned = parsed._replace(path=clean_path).geturl()
         return cleaned if cleaned != url else None
 
     # ── 10. Aladin CDN: cover<N>/ → cover500/ (gotcha #177) ──
@@ -311,7 +311,7 @@ def derive_original_url(url: str) -> str | None:
         m = _ALADIN_COVER_RE.search(path)
         if m and int(m.group(1)) < _ALADIN_MAX_COVER:
             clean_path = _ALADIN_COVER_RE.sub(f"/cover{_ALADIN_MAX_COVER}/", path, count=1)
-            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            cleaned = parsed._replace(path=clean_path).geturl()
             return cleaned if cleaned != url else None
 
     # ── 11. Rakuten Books CDN familia r10s.jp: downsize/fitin → sin query ──
@@ -370,7 +370,7 @@ def _pixels(path: Path) -> int | None:
             return px
     except ImportError:
         pass
-    return len(data)
+    return None
 
 
 # ─────────────────────────────────────────────────────────
@@ -378,30 +378,14 @@ def _pixels(path: Path) -> int | None:
 # ─────────────────────────────────────────────────────────
 
 def _load_items(src: Path) -> list[dict]:
-    items: list[dict] = []
-    for line in src.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                items.append(json.loads(line))
-            except json.JSONDecodeError:
-                items.append({"_raw": line})
-    return items
+    from image_snapshot import read_snapshot
+    return read_snapshot(src)
 
 
 def _write_items(dst: Path, items: list[dict]) -> None:
-    lines = []
-    for it in items:
-        if "_raw" in it:
-            lines.append(it["_raw"])
-        else:
-            lines.append(json.dumps(it, ensure_ascii=False, sort_keys=True))
-    write_lines_atomic(dst, lines)
+    from image_snapshot import write_snapshot
+    write_snapshot(dst, items)
 
-
-# ─────────────────────────────────────────────────────────
-# Lógica de upgrade
-# ─────────────────────────────────────────────────────────
 
 def _try_upgrade(
     old_url: str,
@@ -437,45 +421,18 @@ def _try_upgrade(
     if not new_local:
         return None  # Error de red, anti-bot, o no es imagen válida
 
-    # Comparamos tamaño de imagen: nuevo vs viejo (si existe el local).
+    # Every unattended transform must prove the same asset and retain logos,
+    # typography, colours and borders. Missing reference is never permission.
+    from cover_identity import automatic_upgrade
     new_path = images_dir / new_local
     old_path = images_dir / old_local if old_local else None
-
-    if old_path and old_path.exists():
-        old_px = _pixels(old_path)
-        new_px = _pixels(new_path)
-        if old_px and new_px:
-            # Solo aceptamos si la nueva imagen es al menos (1 + min_gain) veces
-            # más grande en píxeles (evita reemplazar por la misma imagen).
-            if new_px < old_px * (1 + min_gain):
-                # Nueva no es suficientemente mejor — descartamos.
-                # El archivo descargado (new_local) queda en disco; se limpiará
-                # con mirror_images.py --gc en el próximo run si no lo usa nadie.
-                return None
-
-        # ── Validación same_cover para Magento cache path ──
-        # ~20% de los CDNs Magento devuelven una imagen distinta al quitar el
-        # cache path (ej. bdfugue sirve la imagen de otro producto). Con
-        # referencia local disponible, la identidad DEBE poder validarse —
-        # cualquier capa incomputable es un rechazo, no un pase (hallazgo #4,
-        # 2026-07-08: fail-closed, gotcha #131 — antes el `except (ImportError,
-        # Exception): pass` era fail-open y contradecía esa convención).
-        if needs_same_cover_validation(old_url):
-            try:
-                import fetch_better_covers as _fbc  # type: ignore  # noqa: PLC0415
-                old_bytes = old_path.read_bytes()
-                new_bytes = new_path.read_bytes()
-                if not old_bytes or not _fbc._same_cover(old_bytes, new_bytes):
-                    return None
-            except ImportError:
-                # Sin fetch_better_covers/PIL no hay CÓMO validar identidad para
-                # un patrón que la EXIGE — rechazar, no asumir que está bien.
-                return None
-    elif needs_same_cover_validation(old_url):
-        # Sin espejo local de referencia no hay contra qué validar identidad
-        # para un patrón que la requiere (hallazgo #4, 2026-07-08): antes se
-        # aceptaba a ciegas (`old_path` vacío saltaba todo este bloque). Ahora
-        # fail-closed, igual que con referencia mala/incomputable arriba.
+    if not old_path or not old_path.is_file():
+        return None
+    old_px, new_px = _pixels(old_path), _pixels(new_path)
+    if not old_px or not new_px or new_px < old_px * (1 + min_gain):
+        return None
+    evidence = automatic_upgrade(old_url, new_url, old_path.read_bytes(), new_path.read_bytes())
+    if not evidence['ok']:
         return None
 
     return new_url, new_local

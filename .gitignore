@@ -64,3 +64,8 @@ data/.source-baselines/
 
 # Runtime write locks
 data/*.jsonl.lock
+
+# Automated image maintenance receipts
+data/cover_maintenance.jsonl
+data/cover_maintenance.run.lock
+data/image_mirror_attempts.jsonl

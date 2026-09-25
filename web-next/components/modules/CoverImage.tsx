@@ -33,7 +33,7 @@ function Placeholder({ className }: { className?: string }) {
   )
 }
 
-export function CoverImage({
+function CoverImageContent({
   imageLocal,
   imageUrl,
   alt,
@@ -69,7 +69,7 @@ export function CoverImage({
         sizes={sizes}
         priority={priority}
         className={className}
-        style={{ objectFit: 'cover' }}
+        style={{ objectFit: 'contain' }}
         onError={() => setSrc(imageUrl ?? null)}
       />
     )
@@ -90,12 +90,18 @@ export function CoverImage({
       referrerPolicy="no-referrer"
       style={
         fill
-          ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
-          : { objectFit: 'cover', width: '100%', height: '100%' }
+          ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }
+          : { objectFit: 'contain', width: '100%', height: '100%' }
       }
       onError={() => setSrc(null)}
     />
   )
+}
+
+export function CoverImage(props: CoverImageProps) {
+  // A different product/source must not inherit the previous image's fallback
+  // state when React reuses a card between filters or navigation.
+  return <CoverImageContent key={JSON.stringify([props.imageLocal, props.imageUrl])} {...props} />
 }
 
 export default CoverImage

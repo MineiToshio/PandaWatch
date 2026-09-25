@@ -723,3 +723,12 @@ cambia `edition_key` y por lo tanto slugs.
 Corregido el upsert compartido: también indexa sources[]. Una relectura de Rakuten actualiza el producto canónico curado en vez de generar una fila cruda. URLs secundarias reclamadas por varios productos se rechazan por ambigüedad, sin fusionar destructivamente.
 
 Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

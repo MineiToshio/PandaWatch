@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -99,13 +100,27 @@ def _load_items(src: Path) -> list[dict]:
 
 
 def _write_items(dst: Path, items: list[dict]) -> None:
-    out_lines: list[str] = []
-    for item in items:
-        if "_raw" in item:
-            out_lines.append(item["_raw"])
-        else:
-            out_lines.append(json.dumps(item, ensure_ascii=False, sort_keys=True))
-    write_lines_atomic(dst, out_lines)
+    try:
+        from scripts.manga_watch import items_write_lock, read_jsonl_strict, write_items_atomic
+    except ImportError:
+        from manga_watch import items_write_lock, read_jsonl_strict, write_items_atomic
+    def identity(row):
+        return row.get('url') or row.get('slug')
+    with items_write_lock(dst):
+        if not dst.exists():
+            write_items_atomic(dst, items)
+            return
+        current = read_jsonl_strict(dst)
+        patches = {identity(row): row for row in items if identity(row)}
+        for row in current:
+            patch = patches.get(identity(row))
+            if not patch:
+                continue
+            images = {im.get('url'): im for im in patch.get('images', []) if im.get('url')}
+            for im in row.get('images', []):
+                if im.get('url') in images and (not im.get('local') or not (dst.parent / image_store.IMAGES_DIRNAME / im['local']).is_file()):
+                    im['local'] = images[im['url']].get('local', '')
+        write_items_atomic(dst, current)
 
 
 def _normalize_missing_local_keys(items: list[dict], *, apply: bool) -> int:
@@ -211,6 +226,15 @@ def _run_backfill(
     esa); si acá filtráramos `items` en vez de sólo los targets, un flush a
     mitad de la descarga truncaría items.jsonl al subconjunto acotado.
     """
+    try:
+        from scripts.manga_watch import read_jsonl_strict, write_items_atomic
+    except ImportError:
+        from manga_watch import read_jsonl_strict, write_items_atomic
+    attempts_path = images_dir.parent / 'image_mirror_attempts.jsonl'
+    attempts = {row['url']: row for row in read_jsonl_strict(attempts_path)}
+    def recent_failure(url):
+        return time.time() - attempts.get(url, {}).get('at', 0) < 86400
+
     # Targets: (item, idx) por cada entry de images[] con url y sin local.
     img_targets: list[tuple[dict, int]] = []
     skipped_host_targets: list[tuple[dict, int]] = []
@@ -223,13 +247,14 @@ def _run_backfill(
         for idx, im in enumerate(imgs):
             if not isinstance(im, dict):
                 continue
-            if im.get("url") and not im.get("local"):
+            if im.get("url") and (not im.get("local") or not (images_dir / im["local"]).is_file()) and not recent_failure(im["url"]):
                 host = urlparse(im["url"]).hostname or ""
                 if host.lower() in skip_hosts:
                     skipped_host_targets.append((it, idx))
                 else:
                     img_targets.append((it, idx))
 
+    img_targets.sort(key=lambda entry: entry[1])  # Covers before galleries.
     if limit > 0:
         img_targets = img_targets[:limit]
 
@@ -298,6 +323,13 @@ def _run_backfill(
         return 0
 
     session = make_session(user_agent)
+    # Images are independent optional assets: a blocked host must not stall
+    # thousands of unrelated URLs behind Retry-After sleeps.
+    from requests.adapters import HTTPAdapter
+    session.mount('https://', HTTPAdapter(max_retries=0, pool_connections=32, pool_maxsize=32))
+    session.mount('http://', HTTPAdapter(max_retries=0, pool_connections=32, pool_maxsize=32))
+    blocked_hosts = set()
+
     # Cortesía por-host (conventions.md § anti-bot): 8 workers globales sin
     # límite por host saturarían un solo dominio chico (16 en manga-sanctuary,
     # 9 en media-amazon, etc.) — mismo semáforo `ThrottleRegistry` que usa el
@@ -310,13 +342,22 @@ def _run_backfill(
         """Devuelve (consumers, filename_o_"", reason_de_fallo_o_"placeholder:X", px)."""
         url, consumers = entry
         referer = consumers[0][0].get("url", "")
+        host = urlparse(url).hostname
+        if host in blocked_hosts:
+            return consumers, "", "host_blocked", 0
         with throttle.acquire(url):
+            if host in blocked_hosts:
+                return consumers, "", "host_blocked", 0
             filename = image_store.download_image(
                 url, images_dir, session=session,
                 timeout=timeout, referer=referer,
             )
         if not filename:
-            return consumers, "", _classify_failure(url, session, timeout, referer), 0
+            reason = getattr(session, '_image_download_failures', {}).get(image_store.normalize_image_url(url))
+            reason = reason or _classify_failure(url, session, timeout, referer)
+            if reason in {'http_403', 'http_429'}:
+                blocked_hosts.add(host)
+            return consumers, "", reason, 0
         # Descarga OK — pero puede ser un placeholder que NADIE fichó todavía
         # por URL (contenido genérico servido ad-hoc). No propagar eso como
         # portada real (item 2 del encargo). `normalize_image` (dentro de
@@ -333,7 +374,10 @@ def _run_backfill(
             # docstring del módulo); queda huérfano en disco y el GC de esta
             # misma corrida lo manda a cuarentena si no se pasó --no-gc.
             return consumers, "", f"placeholder:{preason}", 0
-        return consumers, filename, "", _pixels_of(data)
+        pixels = _pixels_of(data)
+        if pixels <= 0:
+            return consumers, "", "unreadable_image", 0
+        return consumers, filename, "", pixels
 
     updated = 0
     failed_urls = 0
@@ -349,9 +393,20 @@ def _run_backfill(
     # de una corrida larga sobre miles de URLs.
     _FLUSH_EVERY = 50  # flush items.jsonl cada N URLs procesadas (no pérdida si se cancela)
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="mirror") as pool:
-        for fut in as_completed(pool.submit(_one, e) for e in by_url.items()):
+        # Round-robin hosts prevents all workers waiting on one semaphore.
+        from itertools import zip_longest
+        by_host = {}
+        for e in by_url.items():
+            by_host.setdefault(urlparse(e[0]).hostname, []).append(e)
+        ordered = [e for batch in zip_longest(*by_host.values()) for e in batch if e is not None]
+        for fut in as_completed(pool.submit(_one, e) for e in ordered):
             consumers, filename, reason, px = fut.result()
             done += 1
+            attempted_url = consumers[0][0]['images'][consumers[0][1]]['url']
+            if filename:
+                attempts.pop(attempted_url, None)
+            else:
+                attempts[attempted_url] = {'url': attempted_url, 'at': time.time(), 'reason': reason}
             if filename:
                 for it, idx in consumers:
                     it["images"][idx]["local"] = filename
@@ -371,8 +426,11 @@ def _run_backfill(
                 # Flush periódico: no pérdida de datos si se cancela mid-run
                 if items_path is not None and not dry_run:
                     _write_items(items_path, items)
+                    write_items_atomic(attempts_path, list(attempts.values()))
                     print(f"  → flush parcial ({done} procesadas)", flush=True)
 
+    if not dry_run:
+        write_items_atomic(attempts_path, list(attempts.values()))
     print(f"[BACKFILL] {updated} consumers actualizados, {failed_urls} URLs "
           f"fallidas (esas entries quedan con images[].url como fallback), "
           f"{placeholder_urls} URLs descargaron un placeholder (no se asignó local).")
@@ -416,6 +474,13 @@ def _run_gc(
         for s in (it.get("sources") or []):
             if isinstance(s, dict) and s.get("image_local"):
                 referenced.add(s["image_local"])
+
+    # Retain the original bytes needed to undo an automatic upgrade.
+    for item in items:
+        for change in item.get('cover_history', []):
+            for field in ('old_local', 'new_local'):
+                if change.get(field):
+                    referenced.add(change[field])
 
     # cover_preview.json referencia archivos del espejo por `old_image`/
     # `new_image` (revisión de portadas mejoradas, web/cover-preview.html). NO

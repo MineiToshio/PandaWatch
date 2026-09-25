@@ -10924,7 +10924,7 @@ def test_sync_cover_dedupes_exact_duplicates():
 def test_sync_cover_collapses_http_https_duplicate():
     it = {
         "images": [
-            {"url": "https://funside.it/cdn/shop/files/cover_x.jpg", "local": "c.jpg", "kind": "gallery"},
+            {"url": "https://funside.it/cdn/shop/files/cover_x.jpg?v=1", "local": "c.jpg", "kind": "gallery"},
             {"url": "http://funside.it/cdn/shop/files/cover_x.jpg?v=1", "local": "", "kind": "gallery"},
         ],
     }
@@ -11013,14 +11013,14 @@ def test_build_web_merge_cover_first_in_carousel():
     assert merged["images"][1]["url"] == "https://dh.com/photo.png"
 
 
-def test_build_web_merge_dedupes_by_url_stem():
+def test_build_web_merge_keeps_distinct_versioned_assets():
     a = {"url": "https://a", "cluster_key": "edition:y|1", "isbn": "9",
          "images": [{"url": "https://cdn/c.jpg", "local": "c.jpg", "kind": "gallery"}]}
     b = {"url": "https://b", "cluster_key": "edition:y|1",
          "images": [{"url": "http://cdn/c.jpg?v=2", "local": "", "kind": "gallery"}]}
     merged = _bw._merged_canonical([a, b], _pick_by_completeness)
-    # http/https + query distintos pero MISMA imagen → 1 sola en el carrusel.
-    assert len(merged["images"]) == 1
+    # Version parameters can identify different physical covers: retain both.
+    assert len(merged["images"]) == 2
 
 
 # ---------------------------------------------------------------------------

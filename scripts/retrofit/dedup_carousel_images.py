@@ -165,6 +165,17 @@ def _redteam_fingerprint(im: dict) -> dict | None:
     }
 
 
+def _proven_duplicate(a: dict, b: dict) -> bool:
+    first, second = _img_bytes(a), _img_bytes(b)
+    if not first or not second:
+        return False
+    if first == second:
+        return True
+    from cover_identity import automatic_upgrade
+    return (automatic_upgrade(a.get('url', ''), b.get('url', ''), first, second)['ok']
+            or automatic_upgrade(b.get('url', ''), a.get('url', ''), second, first)['ok'])
+
+
 def _redteam_classify(rf1: dict, rf2: dict) -> str | None:
     """'auto' | 'dudoso' | None (par fuera de la banda de interés).
 
@@ -231,6 +242,10 @@ def _process_item_redteam(it: dict, imgs: list[dict]):
                 continue
             if _redteam_classify(rfs[i], rfs[j]) != "auto":
                 continue
+            if not _proven_duplicate(imgs[i], imgs[j]):
+                continue
+            if i == 0 and rfs[j]['px'] > rfs[i]['px']:
+                continue  # Dedup never chooses a new cover; maintenance owns that.
             reason = "sha256" if rfs[i]["sha256"] == rfs[j]["sha256"] else "dhash_rescale"
             drop, win = (j, i) if rfs[j]["px"] <= rfs[i]["px"] else (i, j)
             keep[drop] = False
@@ -296,7 +311,8 @@ def _process_item_redteam(it: dict, imgs: list[dict]):
 def _write_items(dst: Path, items: list[dict]) -> None:
     """Escritura atómica (tmp + fsync + replace) con `sort_keys=True`
     (idempotencia byte-idéntica entre corridas, hallazgo #5e, 2026-07-08)."""
-    write_items_atomic(dst, items)
+    from image_snapshot import write_snapshot
+    write_snapshot(dst, items)
 
 
 DUDOSOS_REPORT = ROOT / "data" / "diagnostics" / "dedup-wave2-dudosos.json"
@@ -339,7 +355,8 @@ def main() -> int:
                           "y además reporta pares DUDOSOS (sin tocarlos) en "
                           "data/diagnostics/dedup-wave2-dudosos.json.")
     args = ap.parse_args()
-    items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
+    from image_snapshot import read_snapshot
+    items = read_snapshot(ITEMS)
 
     backup = None
     if not args.dry_run:
@@ -421,6 +438,10 @@ def main() -> int:
                         continue
                     if r1 and r2 and aspect_diff > ASPECT_TOL:
                         continue
+                if not _proven_duplicate(imgs[i], imgs[j]):
+                    continue
+                if i == 0 and px2 > px1:
+                    continue  # Never promote an arbitrary surviving gallery image.
                 # misma foto → descartar la de menos píxeles (j si px2<=px1, sino i)
                 drop = j if px2 <= px1 else i
                 keep[drop] = False

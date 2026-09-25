@@ -579,3 +579,11 @@ bloqueos de Cloudflare si los hubo, y el link a
     `we_plan.py` no lo vuelve a plantear.
 11. Borrar los `.tmp_we_*`/`.tmp_sc_*` al finalizar. `sc_validate.py` y
     `sc_flush.py` son PERMANENTES — nunca borrarlos ni regenerar su lógica inline.
+
+## Identidad y automatización — 2026-09-25
+
+Las coincidencias editoriales y visuales son evidencia complementaria, no una
+certeza del 100%. No confundir misma ilustración con misma cubierta publicada.
+El mantenimiento automático del mismo archivo vive en `maintain_covers.py` y
+no depende de esta skill ni de aprobar su cola. Mantener esta búsqueda manual;
+no eludir el gate RGB ni aprobar variantes regionales por parecerse.

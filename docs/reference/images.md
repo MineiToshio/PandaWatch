@@ -3317,3 +3317,73 @@ de fuente), 18 son Manga-Sanctuary "planning" (404 recurrente, ver su ficha), 9
 SocialAnime + 5 Yen Press + resto (bugs/hosts ya documentados o de bajo volumen). No
 queda ningún caso nuevo sin diagnosticar: las 3 categorías (404 fuente muerta / 5xx bug
 de proxy conocido / SKU Amazon muerto) cubren el 100% de lo pendiente.
+
+## Política vigente — mantenimiento sin cola, 2026-09-25
+
+Esta sección reemplaza las reglas históricas de auto-aplicación por hash de las
+secciones anteriores. Un hash perceptual o una coincidencia visual **no confirma
+la edición**, aunque coincidan ilustración y número: pueden variar país, sello,
+idioma, tipografía o tirada. Tampoco se garantiza reconocimiento al 100% con una
+miniatura insuficiente. Ante incertidumbre se conserva la imagen actual.
+
+`retrofit/maintain_covers.py` es el camino automático de full y delta. Busca
+versiones mayores del **mismo recurso**, usando transformaciones conocidas de URL,
+conservando los parámetros de identidad. No usa Serper, Tavily, navegador ni LLM;
+no consume créditos de búsqueda y no agrega candidatos a `cover_preview.json`.
+El delta procesa hasta 200 candidatas por ejecución, el full todas las elegibles.
+Los intentos sin mejora esperan siete días; cambia la referencia o metadata y se
+permite un nuevo intento. No modifica registros aprobados ni identidades marcadas
+para revisión. El plan sin `--apply` no descarga ni modifica el catálogo.
+
+`cover_identity.py` concentra los requisitos: procedencia del mismo recurso,
+referencia legible de al menos 96 px por lado, proporción con diferencia ≤2%,
+comparación RGB del encuadre completo y 64 regiones locales (incluidos logos y
+bordes). No recorta, alinea ni normaliza el color para forzar una coincidencia.
+Se exige ≥20% más píxeles en mantenimiento, y se rechaza la extracción de paths
+Magento cache: se observó que pueden apuntar a otra imagen. Estos umbrales son
+reglas conservadoras de rechazo, no una probabilidad ni prueba universal de identidad.
+
+El resultado se vuelve a comprobar contra URL, bytes y metadata actuales bajo
+lock antes de aplicar; se conservan cambios concurrentes ajenos. `cover_history`
+guarda URL/local anteriores, hashes, evidencia y motivo en la misma escritura
+atómica. El GC conserva esos archivos para permitir reversión. El ledger local
+`data/cover_maintenance.jsonl` registra intentos y cooldown. Una segunda ejecución
+sin nuevas referencias no vuelve a descargar las mismas candidatas.
+
+Los caminos antiguos `--apply` de búsqueda, promoción desde galería y backfill
+PRH ya no pueden elevar similitud/ISBN a autorización para cambiar de recurso.
+PRH por ISBN puede servir otra cubierta/reimpresión; se conserva como herramienta
+histórica, pero ese endpoint no aporta evidencia suficiente para auto-reemplazar
+una imagen distinta. `sc_validate` y la búsqueda comparan también RGB completo;
+el badge de preview dice **similitud visual**, sin prometer edición verificada.
+La cola antigua se conserva para revisión opcional; no bloquea el mantenimiento.
+
+Se retiró la reutilización del stem legacy que descartaba parámetros de identidad.
+WordPress/Shopify conservan queries al normalizar. El catálogo HTML usa `contain`
+para mostrar la portada completa sin cortar logos ni márgenes. No se generan
+portadas con IA ni se considera un upscale sintético como detalle editorial nuevo.
+
+
+La limpieza de duplicados también exige bytes idénticos o evidencia del mismo
+recurso y comparación RGB. No elimina `images[0]` para promover arbitrariamente
+otra foto del carrusel. Las marcas `upscaled` se respetan también en AVIF: no se
+infiere calidad nativa por extensión o cantidad de píxeles. Los mirrors ahora
+aplican únicamente rellenos de `local` sobre el corpus vigente, sin restaurar
+metadata de un snapshot viejo. Los 403/429 abren un corte por host para esa
+corrida, y los hosts se intercalan para evitar que uno bloqueado monopolice los
+workers. Se registra el error de la descarga original sin repetirla para
+clasificar un 403/429. Un archivo ilegible no se publica como espejo válido.
+
+El delta también completa hasta 200 espejos originales pendientes, priorizando
+portadas sobre galería. `image_mirror_attempts.jsonl` evita repetir fallos durante
+24 horas. Se recuperan rutas `local` rotas, además de campos `local` vacíos.
+
+Las claves de imagen compartidas por Python/HTML/Next.js conservan también `id`,
+`isbn`, `v`, otros parámetros desconocidos y el case del path. Quitar toda la query
+o convertir todo el path a minúsculas puede fusionar imágenes distintas; solo
+se descartan presentación conocida y tracking `utm_*`. Detalles de la ejecución
+y límites: [auditoría 2026-09-25](../scraper/audits/2026-09-25-images.md).
+
+Los comandos históricos usan `image_snapshot.py`: si el corpus cambia durante
+su procesamiento, abortan en lugar de restaurar una copia vieja. La limpieza
+manual de previews también conserva archivos referenciados por `cover_history`.

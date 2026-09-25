@@ -940,3 +940,17 @@ requiere la corrida de estandarización autorizada por el owner; esta auditoría
 invoca automáticamente skills de pago ni considera ese backlog "datos perdidos".
 
 La protección de identidad también separa box set/tomo, partes chinas `第N部` y SKUs distintos de Kingstone. Una actualización por URL secundaria conserva la URL canónica y recalcula su clave protegida. `identity_review_required` conserva el producto ante evidencia contradictoria; no lo elimina ni representa una deduplicación ya resuelta.
+
+### Mantenimiento automático de portadas (2026-09-25)
+
+Después de ingestión/cleanup, full y delta ejecutan `maintain_covers.py --apply`.
+Delta limita a 200 candidatas por corrida; full usa `--limit 0`. No busca imágenes
+externas ni espera aprobación: mejora solo versiones verificables del mismo
+recurso y mantiene las inciertas. La evidencia y originales quedan en
+`cover_history`; el ledger local evita repetir intentos durante siete días.
+Ver la política vigente de [imágenes](../reference/images.md). Las búsquedas
+manuales son una vía opcional y no parte necesaria de la ingesta diaria.
+
+El delta completa primero hasta 200 copias locales de imágenes ya vinculadas al
+producto (`mirror_images --no-gc --limit 200`), con prioridad a portadas y descanso
+de 24 horas para fallos. Esto no busca ni inventa una portada nueva.

@@ -486,3 +486,11 @@ y escritura atómica; invocado por el dispatcher después de persistir resultado
 - `tests/test_source_lifecycle.py`: full/delta, errores parciales, políticas, identidad y alcance.
 - `docs/scraper/audits/2026-09-25-source-strategy.md`: decisiones y límites de cobertura.
 - `reports/source-strategy-2026-09-25/`: inventario, solapamiento observado, pruebas y corridas.
+
+- `scripts/cover_identity.py`: política de identidad para mejoras automáticas;
+  procedencia del recurso y comparación RGB completa (helper sin CLI).
+- `scripts/retrofit/maintain_covers.py`: mantenimiento sin búsqueda, con ledger,
+  cooldown, historial y publicación por compare-and-swap; registrado en Panel.
+
+- `scripts/image_snapshot.py`: lectura versionada y escritura optimista para los
+  comandos históricos de imágenes; aborta si otro proceso cambió el corpus.

@@ -123,3 +123,12 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

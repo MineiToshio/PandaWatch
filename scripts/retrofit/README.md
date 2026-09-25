@@ -356,3 +356,11 @@ Los filtros `filter_non_manga` y `filter_collectible` escriben los destinos
 explícitos `--kept-output`/`--rejected-output` aunque todas las filas pasen. El
 no-op sin escrituras se conserva al filtrar in-place sin descartes. Esto permite
 encadenar etapas de validación en staging sin que falte el archivo de salida.
+
+### Mantenimiento de portadas sin búsquedas (2026-09-25)
+
+`maintain_covers.py` muestra el plan por defecto; `--apply` mejora hasta 200
+portadas del mismo recurso y `--limit 0` procesa todas las elegibles. No llena la
+cola manual. `--retry-days 7` controla el descanso entre intentos. No reemplaza
+por una portada de otra editorial aunque la ilustración coincida. Conserva
+referencia/evidencia en `cover_history`; es el paso automático de full/delta.

@@ -1069,3 +1069,12 @@ La colección contiene cómic occidental además de manga (Dylan Dog, Wayne Fami
 Publisher vacío desde 2026-09-25: Funside es tienda, no sello editorial. No se
 reescriben ciegamente los campos históricos curados; se impide generar nuevos
 edition_keys con la tienda como editorial desde esta configuración.
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

@@ -2491,16 +2491,8 @@ def _gallery_url_normalize(url: str) -> str:
         url,
         flags=re.IGNORECASE,
     )
-    # Strip query params irrelevantes para dedup (v, version, _, t).
-    if "?" in url:
-        base, q = url.split("?", 1)
-        keep = []
-        for pair in q.split("&"):
-            k = pair.split("=", 1)[0].lower()
-            if k in {"v", "version", "_", "t", "rev", "cache", "ts"}:
-                continue
-            keep.append(pair)
-        url = base + ("?" + "&".join(keep) if keep else "")
+    # Version/SKU parameters can distinguish physical covers: preserve them.
+
     return url
 
 
@@ -5501,8 +5493,13 @@ def _img_stem(url: str) -> str:
     params irrelevantes) ANTES de quitar el protocolo, para que
     "cdn.example.com/img_100x100.jpg" == "cdn.example.com/img.jpg".
     """
-    normalized = _gallery_url_normalize(url or "")
-    return re.sub(r"^https?://", "", normalized.split("?", 1)[0]).lower()
+    from urllib.parse import parse_qsl, urlencode, urlsplit
+    parsed = urlsplit(_gallery_url_normalize(url or ""))
+    presentation = {"width", "height", "w", "h", "quality", "dpr"}
+    query = urlencode(sorted((k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+                             if k.lower() not in presentation and not k.lower().startswith('utm_')))
+    # URL paths are case-sensitive. Only the host may be lowercased.
+    return parsed.netloc.lower() + parsed.path + ('?' + query if query else '')
 
 
 # Portada del row = primer images[] con url (images[0]). Es la ÚNICA fuente de
@@ -5663,6 +5660,12 @@ def merge_cluster(group: list[dict[str, Any]]) -> dict[str, Any]:
     sources.sort(key=lambda s: (s.get("url", "") != canonical.get("url", ""),
                                 s.get("country", ""), s.get("name", "")))
     merged["sources"] = sources
+    history = {}
+    for member in group:
+        for change in member.get('cover_history', []):
+            history[json.dumps(change, sort_keys=True)] = change
+    if history:
+        merged['cover_history'] = list(history.values())
     return merged
 
 
@@ -6182,7 +6185,7 @@ def _append_jsonl_upsert(
                     url_owners[alias_key].discard(owner)
         old = existing.get(key)
         if old:
-            for field in ("detected_at", "standardize_attempts", "identity_review_required"):
+            for field in ("detected_at", "standardize_attempts", "identity_review_required", "cover_history"):
                 if old.get(field) is not None:
                     row[field] = old[field]
             for field in ("isbn", "author", "release_date", "description", "publisher"):

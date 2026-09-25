@@ -90,7 +90,7 @@ class TestExistingLocalImageLegacyCompat:
     están espejados bajo el stem LEGACY (query completa borrada). El fix no
     debe huerfanarlos ni forzar una re-descarga."""
 
-    def test_falls_back_to_legacy_stem_when_new_stem_missing(self, tmp_path):
+    def test_never_reuses_legacy_stem_that_discarded_identity(self, tmp_path):
         url = "https://x.com/img.php?id=123&width=300"
         legacy_stem = image_store._legacy_image_stem(url)
         new_stem = image_store.image_stem(url)
@@ -98,7 +98,7 @@ class TestExistingLocalImageLegacyCompat:
         (tmp_path / f"{legacy_stem}.avif").write_bytes(b"fake-avif-bytes")
 
         found = image_store.existing_local_image(tmp_path, url)
-        assert found == f"{legacy_stem}.avif"
+        assert found == ""
 
     def test_prefers_new_stem_when_both_exist(self, tmp_path):
         url = "https://x.com/img.php?id=123&width=300"
@@ -282,11 +282,11 @@ class TestPixelsDelegatesToFetchBetterCovers:
         px = uir._pixels(p)
         assert px == 300 * 500  # antes medía len(bytes) (proxy), no píxeles reales
 
-    def test_falls_back_to_file_size_when_unparseable(self, tmp_path):
+    def test_unparseable_bytes_are_not_a_pixel_count(self, tmp_path):
         p = tmp_path / "junk.bin"
         p.write_bytes(b"not an image, just filler bytes 1234567890")
         px = uir._pixels(p)
-        assert px == len(p.read_bytes())
+        assert px is None
 
     def test_missing_file_returns_none(self, tmp_path):
         assert uir._pixels(tmp_path / "nope.avif") is None
@@ -331,7 +331,7 @@ class TestTryUpgradeFailClosed:
         )
         assert result is None  # _same_cover rechaza: no es la misma portada
 
-    def test_accepts_when_old_local_present_and_same_cover_bigger(self, tmp_path, monkeypatch):
+    def test_magento_cache_does_not_prove_asset_even_with_similar_larger_cover(self, tmp_path, monkeypatch):
         magento_url = "https://www.bdfugue.com/media/catalog/product/cache/abc123/i/m/image.jpg"
         old_local = "old.avif"
         (tmp_path / old_local).write_bytes(_dummy_avif(100, 150, seed=1))
@@ -345,7 +345,7 @@ class TestTryUpgradeFailClosed:
         result = uir._try_upgrade(
             magento_url, old_local, tmp_path, object(), (5, 5), 0.1,
         )
-        assert result == (uir.derive_original_url(magento_url), new_local)
+        assert result is None  # A cache path can identify another edition.
 
 
 def _dummy_avif(w: int, h: int, seed: int = 0, scale: int = 1) -> bytes:

@@ -386,3 +386,12 @@ Reporte de salud del delta: `[search: variant]` 0 vs mediana 2 (26 corridas) y
 esta ficha el 2026-09-16/17: el buscador devuelve productos pero son estatuas, pins y
 skate decks que el filtro descarta correctamente, y las medianas arrastran corridas viejas
 con ranking distinto. No es avería. Nada aplicado.
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

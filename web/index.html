@@ -27,7 +27,7 @@
   .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
   /* Image aspect ratio */
   .img-wrap { aspect-ratio: 3 / 4; overflow: hidden; background: #f3f3ee; position: relative; }
-  .img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .img-wrap img { width: 100%; height: 100%; object-fit: contain; }
   .img-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: #bbb; font-size: 2.5em; }
   /* Limited badge */
   .badge-limited { background: linear-gradient(90deg, #f97316, #fb7185); color: white; }
@@ -1680,11 +1680,20 @@ function mangaApp() {
           // la referencia Python (su docstring menciona "WP -NxM" pero la
           // regex nunca lo implementó; ver tests/test_audit_wo_g.py).
           const IMG_KEY_SUFFIX_RE = /_(?:\d+x\d+|small|medium|grande|large|master|compact|original|x\d+|pico|icon|thumb|mini|crop_center)(?=\.(?:jpe?g|png|webp|gif|avif)(?:\?|$))/gi;
-          const imgKey = (u) => (u || "")
-            .replace(IMG_KEY_SUFFIX_RE, "")
-            .split(/[?#]/)[0]
-            .replace(/^https?:\/\//, "")
-            .toLowerCase();
+          const imgKey = (url) => {
+  const normalized = (url ?? '').replace(IMG_KEY_SUFFIX_RE, '')
+  if (!normalized) return ''
+  try {
+    const parsed = new URL(normalized)
+    const presentation = new Set(['width', 'height', 'w', 'h', 'quality', 'dpr'])
+    const kept = [...parsed.searchParams.entries()].filter(([k]) => !presentation.has(k.toLowerCase()) && !k.toLowerCase().startsWith('utm_'))
+    kept.sort(([a, av], [b, bv]) => a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0)
+    const query = new URLSearchParams(kept).toString()
+    return parsed.host.toLowerCase() + parsed.pathname + (query ? '?' + query : '')
+  } catch {
+    return normalized.split('#')[0]
+  }
+          };
           const seenImg = new Set();
           const mergedImages = [];
           const pushImg = (im) => {

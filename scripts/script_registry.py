@@ -86,6 +86,24 @@ def _flag(arg: str, label: str, help: str, *, type: str = "bool",
 # ---------------------------------------------------------------------------
 
 SCRIPTS: list[dict[str, Any]] = [
+    {
+        "id": "maintain_covers", "mutates_items": True, "category": "🖼️ Imágenes",
+        "icon": "🖼️", "name": "Mejorar portadas del mismo archivo",
+        "tagline": "Mejora resolución sin búsquedas pagadas ni aprobaciones.",
+        "what": "Solo reemplaza versiones del mismo recurso con coincidencia visual completa. Conserva originales y registra evidencia; ante dudas no cambia la portada.",
+        "when": "Corre automáticamente con full y delta; también puedes revisar el plan sin aplicar.",
+        "command": [PYTHON, "scripts/retrofit/maintain_covers.py"],
+        "presets": [
+            {"id": "plan", "label": "Ver plan", "desc": "Cuenta candidatas sin descargar ni reemplazar.", "values": {}},
+            {"id": "apply", "label": "Aplicar mejoras verificadas", "desc": "Procesa hasta 200 portadas.", "values": {"--apply": True}},
+        ],
+        "flags": [
+            _flag("--apply", "Aplicar", "Conserva la portada ante cualquier duda.", default=False),
+            _flag("--limit", "Límite", "0 procesa todas las candidatas.", type="int", default=200),
+            _flag("--workers", "Workers", "Máximo de hosts concurrentes.", type="int", default=4, advanced=True),
+            _flag("--retry-days", "Reintento (días)", "Espera tras un intento sin mejora.", type="int", default=7, advanced=True),
+        ],
+    },
     # =====================================================================
     # ⭐ SCRIPTS CANÓNICOS — los 2 que ejecutás regularmente
     # =====================================================================
@@ -1914,20 +1932,8 @@ SCRIPTS: list[dict[str, Any]] = [
         "icon": "🇺🇸",
         "name": "Portadas EN via PRH CDN",
         "tagline": "Mejora portadas de items EN con ISBN usando el CDN determinístico de Penguin Random House.",
-        "what": (
-            "Para items en inglés con ISBN-13 de prefijo 978-0 / 978-1, "
-            "prueba la URL determinística del CDN de PRH: "
-            "images.penguinrandomhouse.com/cover/{isbn13}. PRH distribuye manga EN "
-            "de Dark Horse, Kodansha Comics, Seven Seas, Square Enix, TOKYOPOP, "
-            "Titan, Vertical, Inklore, Yen Press y más. Para ISBNs fuera del "
-            "catálogo PRH el CDN devuelve 404 (descartado automáticamente). "
-            "Compara por píxeles antes de reemplazar (--min-gain 0.10 = 10% mínimo)."
-        ),
-        "when": (
-            "Después de ingestas de fuentes EN con imágenes pequeñas (Yen Press "
-            "Calendar, VIZ, Manga-Sanctuary EN). Idempotente — items ya usando PRH "
-            "CDN se saltan. 39 candidatos en el corpus actual."
-        ),
+        "what": "Herramienta histórica: un ISBN coincidente no certifica la cubierta exacta. Se conserva la portada si no hay evidencia del mismo recurso.",
+        "when": "Usa maintain_covers para el mantenimiento automático; esta ruta no sustituye portadas externas por el solo hecho de coincidir el ISBN.",
         "command": [PYTHON, "scripts/retrofit/backfill_prh_covers.py"],
         "presets": [
             {
@@ -2382,20 +2388,8 @@ SCRIPTS: list[dict[str, Any]] = [
         "icon": "⬆️",
         "name": "Promover portada hi-res desde la galería",
         "tagline": "Mueve a images[0] la portada en alta resolución que ya está en images[1+].",
-        "what": (
-            "Algunos items de listadomanga tienen el thumbnail de la portada en images[0] "
-            "(<90 000 px) pero la MISMA portada en alta resolución ya está en images[1+] "
-            "(vino de otra fuente del cluster, ej. Panini, Norma, Whakoom). "
-            "Este script intercambia images[0] ↔ images[k]: la hi-res pasa a ser la portada. "
-            "La identidad se verifica con _same_cover (AND-gate multi-hash + NCC), mismo "
-            "umbral que el skill watch-search-covers. El thumbnail NO se elimina — queda en "
-            "la galería; dedup_carousel_images puede quitarlo después si lo decide."
-        ),
-        "when": (
-            "Tras una ingesta de listadomanga-collections que trajo thumbnails pequeños, "
-            "cuando el cluster ya tiene la portada real en otra fuente. "
-            "Correr primero con --dry-run. Requiere: pip install Pillow."
-        ),
+        "what": "Promueve una imagen de la galería únicamente si es una versión del mismo recurso y coincide en color, bordes y regiones locales. La similitud del dibujo no basta.",
+        "when": "Comprobación opcional de imágenes ya descargadas. El mantenimiento rutinario es maintain_covers.",
         "command": [PYTHON, "scripts/retrofit/promote_hires_cover.py"],
         "presets": [
             {

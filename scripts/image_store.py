@@ -109,10 +109,7 @@ def normalize_image_url(url: str) -> str:
     # al mismo stem (`/img.php`) → cross-cover silencioso (la 2ª pisaba el `local`
     # de la 1ª). Filtrar solo `_CDN_RESIZE_PARAMS` mantiene la idempotencia (una
     # 2ª pasada ya no tiene esos keys en la query → el `if` de abajo da False) y
-    # elimina la colisión. Compat hacia atrás: `existing_local_image` prueba el
-    # stem legacy (query completa borrada) si el nuevo no tiene archivo — ver
-    # `_legacy_image_stem` — así los ~67 archivos ya espejados bajo el stem viejo
-    # (corpus real, análisis de impacto 2026-07-08) no quedan huérfanos.
+    # elimina la colisión. Los stems legacy ambiguos ya no se reutilizan.
     if parsed.query:
         qs_pairs = parse_qsl(parsed.query, keep_blank_values=True)
         qs_keys = {k.lower() for k, _ in qs_pairs}
@@ -125,19 +122,19 @@ def normalize_image_url(url: str) -> str:
     m = _WP_SUFFIX_RE.match(filename)
     if m:
         clean_path = path[: path.rfind("/") + 1] + m.group(1) + m.group(3)
-        return parsed._replace(path=clean_path, query="").geturl()
+        return parsed._replace(path=clean_path).geturl()
 
     # 3. Shopify _Nx suffix
     m = _SHOPIFY_SUFFIX_RE.match(filename)
     if m:
         clean_path = path[: path.rfind("/") + 1] + m.group(1) + m.group(3)
-        return parsed._replace(path=clean_path, query="").geturl()
+        return parsed._replace(path=clean_path).geturl()
 
     # 4. Amazon CDN embedded size modifiers (._SY300_. ._SL165_. ._SS120_. etc.)
     if parsed.netloc in _AMAZON_HOSTS:
         if _AMAZON_SIZE_RE.search(path):
             clean_path = _AMAZON_SIZE_RE.sub("", path)
-            return parsed._replace(path=clean_path, query="").geturl()
+            return parsed._replace(path=clean_path).geturl()
 
     # 5. Rakuten Books CDN: ?_ex=NxN thumbnail resize param
     if parsed.netloc in _RAKUTEN_THUMB_HOSTS and parsed.query:
@@ -232,11 +229,7 @@ def existing_local_image(images_dir: Path, image_url: str) -> str:
     Hace glob por `<stem>.*` para no depender de la extensión (que sólo
     se conoce tras descargar). Devuelve "" si no existe.
 
-    Compat hacia atrás (2026-07-08, hallazgo #2): si el stem CORRECTO no tiene
-    archivo, prueba el stem LEGACY (pre-fix de `normalize_image_url`, que
-    borraba la query completa en vez de preservar params de identidad) — el
-    corpus real tiene ~67 archivos ya espejados bajo ese stem viejo; sin este
-    fallback quedarían huérfanos y se re-descargarían con el stem nuevo.
+    No reutiliza stems legacy que descartaban parámetros de identidad.
     """
     images_dir = Path(images_dir)
     if not images_dir.exists():
@@ -245,11 +238,8 @@ def existing_local_image(images_dir: Path, image_url: str) -> str:
     for path in sorted(images_dir.glob(stem + ".*")):
         if path.is_file() and not path.name.endswith(".tmp"):
             return path.name
-    legacy = _legacy_image_stem(image_url)
-    if legacy and legacy != stem:
-        for path in sorted(images_dir.glob(legacy + ".*")):
-            if path.is_file() and not path.name.endswith(".tmp"):
-                return path.name
+    # Legacy stems discarded identity query parameters and can belong to a
+    # different product. A fresh fetch is safer than reusing ambiguous bytes.
     return ""
 
 
@@ -294,14 +284,21 @@ def download_image(
         except UnicodeEncodeError:
             headers = None
 
-    try:
-        resp = getter(image_url, timeout=timeout, stream=True, headers=headers)
-    except (requests.RequestException, UnicodeError):
+    def failure(reason):
+        if session is not None:
+            if not hasattr(session, '_image_download_failures'):
+                session._image_download_failures = {}
+            session._image_download_failures[image_url] = reason
         return ""
 
     try:
+        resp = getter(image_url, timeout=timeout, stream=True, headers=headers)
+    except (requests.RequestException, UnicodeError) as exc:
+        return failure(type(exc).__name__)
+
+    try:
         if resp.status_code != 200:
-            return ""
+            return failure(f"http_{resp.status_code}")
         body = bytearray()
         for chunk in resp.iter_content(_CHUNK_BYTES):
             if not chunk:

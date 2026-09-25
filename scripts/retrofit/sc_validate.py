@@ -230,6 +230,9 @@ def validate(data: dict, images_dir: Path = Path('data/images'),
         if curr_bytes:
             if not fbc._same_cover(curr_bytes, img_bytes, MAX_HASH_DIST):
                 continue
+            from cover_identity import visual_identity
+            if not visual_identity(curr_bytes, img_bytes)['ok']:
+                continue
             h1 = fbc._ahash(curr_bytes); h2 = fbc._ahash(img_bytes)
             if h1 is not None and h2 is not None:
                 match_dist = fbc._hamming(h1, h2)

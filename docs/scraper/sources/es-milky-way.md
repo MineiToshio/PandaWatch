@@ -193,3 +193,12 @@ Se quitó 1 referencia de `www.milkywayediciones.com` asociada a otra fila con I
 válido diferente del producto cuya URL primaria es esa misma referencia. Se
 conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
 por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

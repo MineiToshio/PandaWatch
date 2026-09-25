@@ -40,7 +40,7 @@ def test_run_backfill_slugs_only_downloads_targeted_items(tmp_path, monkeypatch)
     monkeypatch.setattr(mi.image_store, "placeholder_reason", lambda *a, **k: "")
     images_dir = tmp_path / "images"
     images_dir.mkdir()
-    (images_dir / "downloaded.jpg").write_bytes(b"fake")
+    __import__('PIL.Image', fromlist=['Image']).new('RGB', (300, 450), 'blue').save(images_dir / 'downloaded.jpg')
 
     items = _items()
     updated = mi._run_backfill(
@@ -64,7 +64,7 @@ def test_run_backfill_slugs_empty_means_all(tmp_path, monkeypatch):
     monkeypatch.setattr(mi.image_store, "placeholder_reason", lambda *a, **k: "")
     images_dir = tmp_path / "images"
     images_dir.mkdir()
-    (images_dir / "downloaded.jpg").write_bytes(b"fake")
+    __import__('PIL.Image', fromlist=['Image']).new('RGB', (300, 450), 'blue').save(images_dir / 'downloaded.jpg')
 
     items = _items()
     updated = mi._run_backfill(
@@ -90,7 +90,7 @@ def test_main_cli_with_slugs_never_truncates_the_full_corpus(tmp_path, monkeypat
     items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n", encoding="utf-8")
     images_dir = tmp_path / "images"
     images_dir.mkdir()
-    (images_dir / "downloaded.jpg").write_bytes(b"fake")
+    __import__('PIL.Image', fromlist=['Image']).new('RGB', (300, 450), 'blue').save(images_dir / 'downloaded.jpg')
 
     old_argv = sys.argv
     sys.argv = [

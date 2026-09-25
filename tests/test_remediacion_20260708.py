@@ -263,6 +263,8 @@ def test_include_upscaled_bypasses_early_return(tmp_path, monkeypatch):
     cand_path = tmp_path / "cand.jpg"
     _make_jpeg(cand_path, (300, 300))  # 90k px, con detalle real
     cand_bytes = cand_path.read_bytes()
+    # Same cover at synthetic resolution, not unrelated pastel artwork.
+    Image.open(cand_path).resize((600, 600)).save(images / 'up.png')
 
     item = {
         "slug": "up-item",

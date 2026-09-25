@@ -1,38 +1,7 @@
 #!/usr/bin/env python3
-"""promote_hires_cover.py — promueve la portada hi-res desde la galería a images[0].
-
-Caso: ~13 items de listadomanga tienen su portada en baja resolución en images[0]
-(thumbnail de static.listadomanga.com, <90 000 px) pero LA MISMA portada en alta
-resolución ya aparece en images[1+] (vino de otra fuente del cluster, ej. Panini,
-Norma, Whakoom). Este script intercambia images[0] ↔ images[k] para que la
-hi-res quede como portada.
-
-Verificación de identidad — criterio "thumbnail↔full" (igual que dedup_carousel_images.py,
-caso documentado gotcha #39):
-
-  El thumbnail de listadomanga (~100×150 px) degrada tanto el aHash que la distancia
-  con su portada full supera el umbral estricto de _same_cover (6/64 bits). Por eso
-  usamos el mismo criterio relajado de dedup_carousel_images.py:
-
-  - Si la portada actual es un thumbnail (lado menor ≤ THUMB_MAX_SIDE) y la candidata
-    es ≥ 2× más grande en su lado menor → par thumbnail↔full → aHash ≤ THUMB_HAMMING
-    (14/64 bits) + aspect ratio ≤ THUMB_ASPECT_TOL (6%). Centralizado en
-    `image_store.THUMB_ASPECT_TOL` (2026-07-08, hallazgo #12): antes duplicado acá y
-    en dedup_carousel_images.py con drift real (0.12 vs 0.06, corregido en el
-    hallazgo #3 previo) — ahora ambos scripts importan la MISMA constante, así que
-    un futuro ajuste del umbral no puede volver a driftear entre los dos. THUMB_MAX_SIDE
-    y THUMB_HAMMING siguen duplicados (no forman parte de este paquete de fixes) pero
-    son menos sensibles al drift: no mutan la portada por sí solos, solo definen qué
-    par se considera "thumbnail↔full" antes de aplicar el umbral ya centralizado.
-  - Si no es un par thumbnail↔full → usamos _same_cover (AND-gate estricto).
-
-  El thumbnail NO se elimina: queda en la galería; dedup_carousel_images.py
-  puede quitarlo después si lo decide.
-
-Uso:
-    .venv/bin/python scripts/retrofit/promote_hires_cover.py --dry-run
-    .venv/bin/python scripts/retrofit/promote_hires_cover.py
-"""
+"""Promote a gallery image only with same-asset provenance and full-frame RGB identity.
+No relaxed thumbnail hashes. The original remains in the gallery; approved items
+are preserved. Routine unattended work uses maintain_covers.py instead."""
 from __future__ import annotations
 
 import argparse
@@ -82,25 +51,14 @@ THUMB_ASPECT_TOL = image_store.THUMB_ASPECT_TOL
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _load_items(path: Path) -> list[dict]:
-    items: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            items.append(json.loads(line))
-        except json.JSONDecodeError:
-            items.append({"_raw": line})
-    return items
+def _load_items(src: Path) -> list[dict]:
+    from image_snapshot import read_snapshot
+    return read_snapshot(src)
 
 
 def _write_items(dst: Path, items: list[dict]) -> None:
-    lines = [
-        it["_raw"] if "_raw" in it else json.dumps(it, ensure_ascii=False, sort_keys=True)
-        for it in items
-    ]
-    write_lines_atomic(dst, lines)
+    from image_snapshot import write_snapshot
+    write_snapshot(dst, items)
 
 
 def _read_and_px(local: str) -> tuple[bytes, int]:
@@ -124,44 +82,8 @@ def _read_and_px(local: str) -> tuple[bytes, int]:
 # ── core ──────────────────────────────────────────────────────────────────────
 
 def _is_same_cover(bytes0: bytes, bytes_k: bytes) -> bool:
-    """
-    Verifica si bytes_k es la misma portada que bytes0.
-
-    Caso thumbnail↔full (gotcha #39 — igual que dedup_carousel_images.py):
-    Si bytes0 es un thumbnail pequeño (lado menor ≤ THUMB_MAX_SIDE) y bytes_k
-    es ≥2× más grande, el aHash se degrada demasiado para pasar _same_cover
-    (distancia 8-14 vs umbral 6). Usamos el criterio relajado de dedup.
-
-    Caso general: delegamos en fbc._same_cover (AND-gate multi-hash + NCC).
-    """
-    w0, h0 = fbc._get_dims_from_bytes(bytes0)
-    wk, hk = fbc._get_dims_from_bytes(bytes_k)
-    if w0 <= 0 or h0 <= 0 or wk <= 0 or hk <= 0:
-        return False
-
-    side0 = min(w0, h0)
-    sidk = min(wk, hk)
-    small, big = (side0, sidk) if side0 <= sidk else (sidk, side0)
-
-    r0 = w0 / h0 if h0 else 0
-    rk = wk / hk if hk else 0
-    aspect_diff = abs(r0 - rk) / r0 if r0 else 1.0
-
-    is_thumb_pair = (
-        small <= THUMB_MAX_SIDE
-        and big >= 2 * small
-        and aspect_diff <= THUMB_ASPECT_TOL
-    )
-
-    if is_thumb_pair:
-        # Criterio relajado: solo aHash + aspect ratio (igual que dedup_carousel)
-        h_a0 = fbc._ahash(bytes0)
-        h_ak = fbc._ahash(bytes_k)
-        if h_a0 is None or h_ak is None:
-            return False
-        return fbc._hamming(h_a0, h_ak) <= THUMB_HAMMING
-    else:
-        return fbc._same_cover(bytes0, bytes_k)
+    from cover_identity import visual_identity
+    return visual_identity(bytes0, bytes_k)['ok']
 
 
 def _best_hires_idx(
@@ -204,6 +126,10 @@ def _best_hires_idx(
         if px_k <= best_px:
             continue  # ya hay una mejor
         if not bytes_k:
+            continue
+        # Similar artwork alone cannot establish edition identity.
+        from cover_identity import same_asset_url
+        if not same_asset_url(imgs[0].get('url', ''), im.get('url', '')):
             continue
         # Verificar identidad
         if not _is_same_cover(cover_bytes, bytes_k):

@@ -289,3 +289,13 @@ When filters produce 0 results:
   trap + Escape + backdrop-click gratis, sin dependencia — antes el foco se
   escapaba con Tab pese a `aria-modal="true"`.
 - **`hasActiveFilters` completo (auditoría #21)**.
+
+## Corrección de portadas — 2026-09-25
+
+Las portadas se muestran completas (`object-fit: contain`) para conservar logos,
+bordes y proporciones. Al cambiar el recurso/producto, CoverImage reinicia su
+estado de fallback; una tarjeta reutilizada no debe mostrar la portada anterior.
+
+La clave de deduplicación de imágenes mantiene parámetros de producto/versión y
+mayúsculas del path, en paridad con Python y el catálogo HTML. Las consultas
+`?id=1` y `?id=2` no se colapsan como si fueran un solo archivo.

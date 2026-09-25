@@ -763,3 +763,17 @@ cluster por URL, sobrevive a upserts y aparece como warning IDENTITY_REVIEW. No 
 borra metadato ni producto para resolver conflictos; queda revisión explícita.
 
 La protección de identidad también separa box set/tomo, partes chinas `第N部` y SKUs distintos de Kingstone. Una actualización por URL secundaria conserva la URL canónica y recalcula su clave protegida. `identity_review_required` conserva el producto ante evidencia contradictoria; no lo elimina ni representa una deduplicación ya resuelta.
+
+### Identidad de portada y escritura concurrente (2026-09-25)
+
+El mantenimiento automático usa `cover_identity.py`; similitud visual no equivale
+a identidad editorial. Solo transforms del mismo recurso más comprobación RGB
+completa pueden cambiar una portada automáticamente. `cover_history` registra
+la procedencia y referencia anterior en el propio producto; los archivos se
+conservan por GC. `maintain_covers.py` descarga fuera del lock y hace compare-and-swap
+por URL, hashes y metadata bajo el lock del corpus. Sus intentos son locales y
+no requieren el servicio de búsqueda ni la cola de aprobación.
+
+Los comandos históricos usan `image_snapshot.py`: si el corpus cambia durante
+su procesamiento, abortan en lugar de restaurar una copia vieja. La limpieza
+manual de previews también conserva archivos referenciados por `cover_history`.

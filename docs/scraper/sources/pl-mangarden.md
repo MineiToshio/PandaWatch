@@ -153,3 +153,11 @@ embebido — general, no sólo para Polonia.
 Se reconoce `tom 06` como volumen 6. Antes, los tomos sin volumen detectado
 compartían clave de edición vacía y se absorbían entre sí. El volumen observado
 incompatible elimina una asociación secundaria incorrecta, preservando productos.
+
+### Comprobación de imágenes — 2026-09-25
+
+El recorrido del espejo registró 289 URLs de `mangarden.pl` con `ConnectTimeout`
+(portadas y galerías). No se publicó contenido alternativo ni se descartó la fuente
+de catálogo por este fallo de imagen. Se conserva la URL vinculada y se aplica
+cooldown de 24 horas antes de reintentar. Evidencia local:
+`reports/image-audit-2026-09-25/closeout.json` y `mirror-final.log`.

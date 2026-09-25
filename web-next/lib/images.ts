@@ -13,7 +13,7 @@ const IMG_KEY_SUFFIX_RE =
 
 /**
  * Clave normalizada de una imagen: sin sufijo de tamaño de CDN conocido, sin
- * esquema, sin query/hash, lowercase. Dos URLs que sólo difieren en
+ * esquema/hash; preserva versión, SKU y mayúsculas del path. Dos URLs que sólo difieren en
  * http/https, en params de tracking, o en el sufijo de miniatura Shopify son
  * la misma imagen.
  *
@@ -24,11 +24,18 @@ const IMG_KEY_SUFFIX_RE =
  * duplicarse en la galería.
  */
 export function imageKey(url?: string): string {
-  return (url ?? '')
-    .replace(IMG_KEY_SUFFIX_RE, '')
-    .split(/[?#]/)[0]
-    .replace(/^https?:\/\//, '')
-    .toLowerCase()
+  const normalized = (url ?? '').replace(IMG_KEY_SUFFIX_RE, '')
+  if (!normalized) return ''
+  try {
+    const parsed = new URL(normalized)
+    const presentation = new Set(['width', 'height', 'w', 'h', 'quality', 'dpr'])
+    const kept = [...parsed.searchParams.entries()].filter(([k]) => !presentation.has(k.toLowerCase()) && !k.toLowerCase().startsWith('utm_'))
+    kept.sort(([a, av], [b, bv]) => a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0)
+    const query = new URLSearchParams(kept).toString()
+    return parsed.host.toLowerCase() + parsed.pathname + (query ? '?' + query : '')
+  } catch {
+    return normalized.split('#')[0]
+  }
 }
 
 /**

@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
-"""backfill_prh_covers.py — portadas EN vía CDN de Penguin Random House.
-
-Para items EN con ISBN-13 (prefijos 978-0 / 978-1), prueba la URL
-determinística del CDN de PRH:
-
-    https://images.penguinrandomhouse.com/cover/{isbn13}
-
-PRH distribuye manga en inglés de: Dark Horse Manga, Kodansha Comics,
-Seven Seas, Square Enix, TOKYOPOP, Titan, Vertical, Inklore, Yen Press
-(Hachette) y más.  Para ISBNs fuera del catálogo PRH el CDN devuelve 404
-(el magic-bytes validator de download_image lo descarta), así que el script
-es seguro sobre cualquier item con ISBN-13 de prefijo anglófono.
-
-Uso:
-    python scripts/retrofit/backfill_prh_covers.py --dry-run
-    python scripts/retrofit/backfill_prh_covers.py --limit 20
-    python scripts/retrofit/backfill_prh_covers.py --workers 8
-    python scripts/retrofit/backfill_prh_covers.py --min-gain 0  # acepta siempre
-"""
+"""Legacy PRH ISBN cover helper, retained for diagnostic compatibility.
+ISBN equality does not establish a cover variant/reprint. This helper no longer
+replaces an external image or fills an unverified missing cover merely from ISBN.
+Use maintain_covers.py for verified same-asset resolution upgrades."""
 
 from __future__ import annotations
 
@@ -126,26 +111,14 @@ def _pixels(path: Path) -> int | None:
 # ── IO ────────────────────────────────────────────────────────────────────────
 
 def _load_items(src: Path) -> list[dict]:
-    items: list[dict] = []
-    for line in src.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                items.append(json.loads(line))
-            except json.JSONDecodeError:
-                items.append({"_raw": line})
-    return items
+    from image_snapshot import read_snapshot
+    return read_snapshot(src)
 
 
 def _write_items(dst: Path, items: list[dict]) -> None:
-    lines = []
-    for it in items:
-        lines.append(it["_raw"] if "_raw" in it
-                     else json.dumps(it, ensure_ascii=False, sort_keys=True))
-    write_lines_atomic(dst, lines)
+    from image_snapshot import write_snapshot
+    write_snapshot(dst, items)
 
-
-# ── Target collection ─────────────────────────────────────────────────────────
 
 def _collect_targets(
     items: list[dict], *, include_approved: bool = False,
@@ -190,6 +163,9 @@ def _try_prh(
 ) -> tuple[str, str] | None:
     """Descarga la portada PRH y devuelve (new_url, new_local) si mejora."""
     candidate_url = PRH_CDN_BASE + isbn13
+    from cover_identity import same_asset_url
+    if not same_asset_url(image_store.cover_url(item), candidate_url):
+        return None
     new_local = image_store.download_image(
         candidate_url, images_dir, session=session, timeout=timeout,
     )
@@ -211,6 +187,14 @@ def _try_prh(
         if old_px and new_px and new_px < old_px * (1 + min_gain):
             return None  # No hay mejora suficiente
 
+    # An ISBN CDN can serve a reprint or a different cover variant. It is not
+    # evidence that the replacement is the exact asset currently displayed.
+    from cover_identity import automatic_upgrade
+    if not old_path or not old_path.is_file():
+        return None
+    if not automatic_upgrade(image_store.cover_url(item), candidate_url,
+                             old_path.read_bytes(), new_path.read_bytes())["ok"]:
+        return None
     return candidate_url, new_local
 
 

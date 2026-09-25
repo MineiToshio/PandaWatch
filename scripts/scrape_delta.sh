@@ -750,9 +750,19 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     record_step "enforce_listadomanga_rules" $?
     echo "    duración: $(($(date +%s) - P4F3_START))s — items: $(count_lines)"
 
+    echo ">>> [4g1] mirror_images (originales vinculados, sin búsqueda)"
+    _run_timed 1200 "$VENV_PY" scripts/retrofit/mirror_images.py --no-gc --limit 200 --workers 4 \
+        > "$LOG_DIR/04g1-mirror-images.log" 2>&1
+    record_step "mirror_images:daily" $?
+
+    echo ">>> [4g2] maintain_covers (misma imagen, sin búsqueda ni cola)"
+    _run_timed 1800 "$VENV_PY" scripts/retrofit/maintain_covers.py --apply --limit 200 \
+        > "$LOG_DIR/04g2-maintain-covers.log" 2>&1
+    record_step "maintain_covers" $?
+
     # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
     # fuentes hermanas → puede quedar la MISMA portada en dos resoluciones. Quita
-    # la de menor resolución (hash perceptual). Network-bound (descarga thumbs).
+    # duplicados probados sin promover otra portada. Network-bound.
     echo ">>> [4h] dedup_carousel_images (misma portada en 2 resoluciones)"
     P4H_START=$(date +%s)
     _run_timed 1200 "$VENV_PY" scripts/retrofit/dedup_carousel_images.py \

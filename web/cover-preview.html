@@ -184,7 +184,7 @@
 
   <h1>Revisión de imágenes</h1>
   <p class="subtitle">
-    Portadas e imágenes de galería mejoradas con <b>baja confianza</b> (imagen original muy pequeña para verificar por hash).<br>
+    Revisión opcional de propuestas obtenidas por búsqueda. Las mejoras verificables del mismo archivo se aplican por mantenimiento automático.<br>
     Cada producto puede tener varias candidatas. Elegí la <b>acción</b> de cada una
     (reemplazar portada, reemplazar imagen de galería, agregar como extra) y aprobá o rechazá individualmente.
   </p>
@@ -215,7 +215,7 @@
 
   <template x-if="loaded && entries.length === 0">
     <p class="empty">No hay items pendientes de revisión.<br>
-    Todas las mejoras fueron de alta confianza (verificadas por hash).</p>
+    El mantenimiento automático conserva la imagen actual cuando no puede demostrar una mejora segura.</p>
   </template>
 
   <template x-if="loaded && entries.length > 0">
@@ -425,7 +425,7 @@
                       <template x-if="currentCand(e).verified === true">
                         <span class="card-badge"
                               style="background:var(--green);color:#000;margin-left:0.4rem;"
-                              title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
+                              title="Coincidencia visual; por sí sola no confirma país, editorial ni edición exacta">✓ similitud visual</span>
                       </template>
                       <template x-if="isUnverified(currentCand(e)) && currentCand(e).action !== 'remove_image'">
                         <span class="card-badge"
@@ -592,7 +592,7 @@
             <template x-if="currentCand(compareEntry).verified === true">
               <span class="card-badge"
                     style="background:var(--green);color:#000;margin-left:0.5rem;"
-                    title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
+                    title="Coincidencia visual; por sí sola no confirma país, editorial ni edición exacta">✓ similitud visual</span>
             </template>
             <template x-if="isUnverified(currentCand(compareEntry)) && currentCand(compareEntry).action !== 'remove_image'">
               <span class="card-badge"

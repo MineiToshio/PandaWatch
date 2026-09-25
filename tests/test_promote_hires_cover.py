@@ -97,9 +97,9 @@ def _make_item(
     item = {
         "title": "Test Manga Vol 1",
         "images": [
-            {"url": "https://static.listadomanga.com/thumb.jpg",
+            {"url": "https://cdn.publisher.test/cover-100x150.jpg",
              "local": thumb_fname, "kind": "gallery", "description": ""},
-            {"url": "https://publisher.com/hires.jpg",
+            {"url": "https://cdn.publisher.test/cover.jpg",
              "local": hires_fname, "kind": "gallery", "description": ""},
         ],
     }

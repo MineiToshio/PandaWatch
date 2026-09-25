@@ -344,3 +344,7 @@ su propio buffering, usá `python -u` o flush manual.
 **El job no termina aunque le di stop**
 → El proceso ignoró SIGTERM. A los 3s `admin_serve.py` manda SIGKILL.
 Si tampoco salió, matalo a mano (`ps aux | grep python`, `kill -9 <pid>`).
+
+Portadas: el comando `maintain_covers` permite planificar o aplicar mejoras del
+mismo recurso, sin búsqueda pagada ni aprobación individual. Respeta registros
+aprobados, mantiene originales y no crea cola manual (2026-09-25).

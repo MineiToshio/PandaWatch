@@ -35,12 +35,12 @@ const IMAGE_KEY_FIXTURES: Array<[url: string, expected: string, note: string]> =
   ],
   [
     'https://example.com/img.jpg?v=12345&utm_source=x',
-    'example.com/img.jpg',
+    'example.com/img.jpg?v=12345',
     'query params se descartan por completo',
   ],
   [
     'https://example.com/img.jpg?v=1#main',
-    'example.com/img.jpg',
+    'example.com/img.jpg?v=1',
     'fragment pegado a un query param — coincide en las 3 implementaciones',
   ],
   ['http://example.com/img.jpg', 'example.com/img.jpg', 'scheme http se stripea'],
@@ -56,12 +56,12 @@ const IMAGE_KEY_FIXTURES: Array<[url: string, expected: string, note: string]> =
   ],
   [
     'https://EXAMPLE.com/IMG.JPG',
-    'example.com/img.jpg',
+    'example.com/IMG.JPG',
     'case-insensitive (host + path se lowercasean)',
   ],
   [
     'https://cdn.shop.com/files/cover_100x100.jpg?v=99',
-    'cdn.shop.com/files/cover.jpg',
+    'cdn.shop.com/files/cover.jpg?v=99',
     'sufijo Shopify + query combinados',
   ],
 ]
@@ -81,4 +81,11 @@ describe('imageKey — paridad con manga_watch._img_stem (WO-G)', () => {
     // que ninguna URL real llega acá con un "#" bare.
     expect(imageKey('https://example.com/img.jpg#main')).toBe('example.com/img.jpg')
   })
+})
+
+it('preserves edition identity in query parameters and case-sensitive paths', () => {
+  expect(imageKey('https://cdn.test/image?id=1')).not.toBe(imageKey('https://cdn.test/image?id=2'))
+  expect(imageKey('https://cdn.test/image?q=onepiece')).not.toBe(imageKey('https://cdn.test/image?q=berserk'))
+  expect(imageKey('https://cdn.test/Cover.jpg')).not.toBe(imageKey('https://cdn.test/cover.jpg'))
+  expect(imageKey('https://cdn.test/cover.jpg?v=1')).not.toBe(imageKey('https://cdn.test/cover.jpg?v=2'))
 })

@@ -714,3 +714,12 @@ Al terminar, reportar cuántas candidatas nuevas aportó este paso (comparar `to
     momento del plan. Recomendación de proceso, no reemplazada por este guard: no correr este
     skill en paralelo con `purge_placeholder_images.py`/`mirror_images.py --gc` sobre el mismo
     corpus.
+
+## Política posterior de identidad (2026-09-25)
+
+El mantenimiento rutinario ahora es `scripts/retrofit/maintain_covers.py`; no
+invocar esta búsqueda para cada imagen pequeña ni para desbloquear el delta.
+Esta skill sigue siendo manual. `verified` significa similitud visual, nunca
+confirmación del país/editorial/edición. No aprobar en bloque ni auto-aplicar
+una imagen externa por ISBN/hash. `sc_validate` añade comparación RGB completa;
+si rechaza no reducir umbrales ni omitir logos/bordes para conseguir un match.

@@ -739,34 +739,19 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
     record_step "enforce_listadomanga_rules" $?
     echo "    duración: $(($(date +%s) - P4F3_START))s — items: $(count_lines)"
 
-    # [4g2] upgrade de resolución: quita parámetros/segmentos CDN de resize de las
-    # URLs de imagen (buscalibre fit-in, cultura cdn-cgi, whakoom small/thumb/medium,
-    # Magento cache path, WP -NxM, Shopify _Nx, Rakuten ?_ex=NxN). Descarga la
-    # versión full-res y reemplaza si gana ≥10% de píxeles. Solo en scrape_full
-    # (el delta no lo necesita — los items nuevos ya traen la URL limpia del scraper).
-    echo ">>> [4g2] upgrade_image_resolution (re-fetch portadas en full-res)"
+    # [4g2] Misma imagen + comparación RGB completa + ganancia >=20%.
+    # Sin búsquedas externas; conserva la referencia cuando falta evidencia.
+    echo ">>> [4g2] maintain_covers (misma imagen, sin búsqueda ni cola)"
     P4G2_START=$(date +%s)
-    _run_timed 3600 "$VENV_PY" scripts/retrofit/upgrade_image_resolution.py \
-        --workers 8 \
-        > "$LOG_DIR/04g2-upgrade-resolution.log" 2>&1
-    record_step "upgrade_image_resolution" $?
+    _run_timed 3600 "$VENV_PY" scripts/retrofit/maintain_covers.py --apply --limit 0 \
+        --workers 4 \
+        > "$LOG_DIR/04g2-maintain-covers.log" 2>&1
+    record_step "maintain_covers" $?
     echo "    duración: $(($(date +%s) - P4G2_START))s — items: $(count_lines)"
 
-    # [4g3]/[4g4] (OPT-IN, RUN_COVER_BACKFILL=1) backfill_prh_covers + fetch_better_covers:
-    # mejora de portadas vía fuentes EXTERNAS (CDN determinístico de PRH + búsqueda
-    # web Serper/Tavily) — van MÁS ALLÁ de lo que upgrade_image_resolution puede hacer
-    # (ese solo re-pide la misma URL sin parámetros de resize, dentro del MISMO
-    # dominio; esto busca portadas hi-res en OTRAS fuentes). Ubicados DESPUÉS de
-    # [4g2] (que ya agotó la mejora "gratis" intra-dominio, así que solo quedan
-    # candidatos con imagen chica de verdad) y ANTES de [4h] dedup_carousel_images
-    # (que necesita ver el estado FINAL de portadas — incluida cualquier que
-    # backfill_prh_covers haya reemplazado en alta confianza — para decidir qué
-    # imagen del carrusel es redundante). Default OFF: son network-heavy
-    # (fetch_better_covers hace hasta 1 búsqueda web por item candidato) y
-    # fetch_better_covers necesita SERPER_API_KEY o TAVILY_API_KEY en .env para la
-    # búsqueda (sin key, sólo corre el fallback CDN/ISBN — funciona igual, acotado).
-    # SEGURO POR DEFECTO: fetch_better_covers sin --apply NO reemplaza nada — todo
-    # queda en data/cover_preview.json para aprobación manual (ver P24, cover-preview.html).
+    # [4g3]/[4g4] Herramientas históricas opt-in. La búsqueda externa sólo
+    # propone candidatas: parecido visual o ISBN no autorizan su reemplazo.
+    # El mantenimiento habitual no necesita estos créditos ni su cola manual.
     if [ "${RUN_COVER_BACKFILL:-0}" = "1" ]; then
         echo ">>> [4g3] backfill_prh_covers --workers 8 (CDN PRH determinístico, EN/ISBN)"
         P4G3_START=$(date +%s)
@@ -787,7 +772,7 @@ if [ "$SKIP_CLEANUP" != "1" ]; then
 
     # [4h] dedup de portada en el carrusel: consolidate_sources UNE imágenes de
     # fuentes hermanas → puede quedar la MISMA portada en dos resoluciones. Quita
-    # la de menor resolución (hash perceptual). Network-bound (descarga thumbs).
+    # duplicados probados sin promover otra portada. Network-bound.
     echo ">>> [4h] dedup_carousel_images (misma portada en 2 resoluciones)"
     P4H_START=$(date +%s)
     _run_timed 2400 "$VENV_PY" scripts/retrofit/dedup_carousel_images.py --all \

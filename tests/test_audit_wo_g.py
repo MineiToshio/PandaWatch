@@ -56,12 +56,12 @@ IMAGE_KEY_FIXTURES: list[tuple[str, str, str]] = [
     ),
     (
         "https://example.com/img.jpg?v=12345&utm_source=x",
-        "example.com/img.jpg",
+        "example.com/img.jpg?v=12345",
         "query params se descartan por completo",
     ),
     (
         "https://example.com/img.jpg?v=1#main",
-        "example.com/img.jpg",
+        "example.com/img.jpg?v=1",
         "fragment pegado a un query param que se descarta entero — "
         "coincide en las 3 implementaciones",
     ),
@@ -82,12 +82,12 @@ IMAGE_KEY_FIXTURES: list[tuple[str, str, str]] = [
     ),
     (
         "https://EXAMPLE.com/IMG.JPG",
-        "example.com/img.jpg",
+        "example.com/IMG.JPG",
         "case-insensitive (host + path se lowercasean)",
     ),
     (
         "https://cdn.shop.com/files/cover_100x100.jpg?v=99",
-        "cdn.shop.com/files/cover.jpg",
+        "cdn.shop.com/files/cover.jpg?v=99",
         "sufijo Shopify + query combinados",
     ),
 ]
@@ -138,4 +138,4 @@ def test_img_stem_bare_fragment_without_query_is_a_python_only_quirk() -> None:
     stripean `#` explícitamente por robustez (piden esto en WO-G) — no rompe
     la paridad real porque este input nunca ocurre en el corpus; sólo diverge
     en este caso sintético que no representa datos reales."""
-    assert mw._img_stem("https://example.com/img.jpg#main") == "example.com/img.jpg#main"
+    assert mw._img_stem("https://example.com/img.jpg#main") == "example.com/img.jpg"

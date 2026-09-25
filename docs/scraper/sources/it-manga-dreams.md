@@ -155,3 +155,12 @@ tres candidatos de cartas de esta recuperación.
 ## Auditoría estratégica — 2026-09-25
 
 Se mantienen sus exclusivas y catálogo de importación; overlap por serie no autoriza retirar la fuente. El gate común de cómics/merch aplica aun con manga_only. Los jobs administrados recorren paginación completa y deduplican por producto, no por país de la tienda ni mera serie.
+
+### Caché de imágenes — auditoría 2026-09-25
+
+El inventario detectó referencias locales con nombres derivados de una normalización
+legacy que descartaba parámetros de URL. Se desactivó esa reutilización ambigua;
+se preservan parámetros de identidad/versión. Esto es un riesgo del caché local,
+no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
+resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
+contenido cambiado o descarga fallida se conserva la imagen anterior.

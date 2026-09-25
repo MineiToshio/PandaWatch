@@ -131,7 +131,7 @@ def _run(argv):
         sys.argv = old
 
 
-def test_extra_does_not_promote_to_cover_when_portada_dropped(harness):
+def test_dedup_preserves_original_cover_and_extra(harness):
     """Hallazgo #12: la portada (thumb) cae como dup del `full` hi-res; el
     `extra` que queda en el medio NUNCA debe terminar en images[0]."""
     dci, items_path, images = harness
@@ -151,12 +151,12 @@ def test_extra_does_not_promote_to_cover_when_portada_dropped(harness):
 
     saved = json.loads(items_path.read_text(encoding="utf-8").splitlines()[0])
     imgs = saved["images"]
-    assert len(imgs) == 2  # el thumb (dup de menor resolución) se quitó
-    assert imgs[0]["local"] == "full.png"  # el hi-res quedó de portada
+    assert len(imgs) == 3  # Dedup cannot replace a cover using visual similarity.
+    assert imgs[0]["local"] == "thumb.png"
     assert imgs[0]["kind"] == "gallery"
     # el extra sigue en la galería, nunca se descarta ni se promueve
     assert any(im["local"] == "extra.png" for im in imgs)
-    assert not any(im["local"] == "thumb.png" for im in imgs)
+    assert any(im["local"] == "thumb.png" for im in imgs)
 
 
 def test_backup_and_rotate_used_not_fixed_slot(harness):
@@ -247,7 +247,7 @@ def test_incremental_flush_called_before_final_write(harness, monkeypatch):
         lines.append(json.dumps({
             "slug": f"s{i}", "title": f"T{i}",
             "images": [
-                {"url": f"http://x/thumb{i}.png", "local": "thumb.png", "kind": "gallery"},
+                {"url": f"http://x/thumb{i}.png", "local": "full.png", "kind": "gallery"},
                 {"url": f"http://x/full{i}.png", "local": "full.png", "kind": "gallery"},
             ],
         }))
@@ -340,7 +340,7 @@ def test_redteam_auto_removes_byte_identical_duplicate(harness):
     assert len(saved["images"]) == 1  # el duplicado byte-idéntico se quitó
 
 
-def test_redteam_auto_removes_rescaled_duplicate_and_repromotes_cover(harness):
+def test_redteam_auto_does_not_replace_cover_with_similar_resource(harness):
     """La portada (images[0]) es la versión CHICA; el `extra` queda en medio;
     el hi-res gana. El `extra` nunca debe terminar en images[0]."""
     dci, items_path, images = harness
@@ -365,11 +365,11 @@ def test_redteam_auto_removes_rescaled_duplicate_and_repromotes_cover(harness):
     assert rc == 0
     saved = json.loads(items_path.read_text(encoding="utf-8").splitlines()[0])
     imgs = saved["images"]
-    assert len(imgs) == 2
-    assert imgs[0]["local"] == "big.png"  # el hi-res quedó de portada
+    assert len(imgs) == 3
+    assert imgs[0]["local"] == "small.png"
     assert imgs[0]["kind"] == "gallery"
     assert any(im["local"] == "extra2.png" for im in imgs)  # el extra sobrevive
-    assert not any(im["local"] == "small.png" for im in imgs)
+    assert any(im["local"] == "small.png" for im in imgs)
 
 
 def test_redteam_dudoso_same_dims_is_reported_not_removed(harness):

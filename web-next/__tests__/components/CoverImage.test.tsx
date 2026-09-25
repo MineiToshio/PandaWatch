@@ -44,3 +44,12 @@ describe('CoverImage — cadena de fallback', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 })
+
+
+it('changes source after rerender instead of retaining another product cover', () => {
+  const { rerender } = render(<CoverImage imageUrl="https://store.example/one.jpg" alt="One" fill />)
+  expect(screen.getByRole('img')).toHaveAttribute('src', 'https://store.example/one.jpg')
+  rerender(<CoverImage imageUrl="https://store.example/two.jpg" alt="Two" fill />)
+  expect(screen.getByRole('img')).toHaveAttribute('src', 'https://store.example/two.jpg')
+  expect(screen.getByRole('img')).toHaveStyle({ objectFit: 'contain' })
+})

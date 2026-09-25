@@ -456,3 +456,11 @@ El preset normal del scraper usa --ingestion-mode delta, que verifica la carga i
 El control avanzado permite full/delta/manual tanto para scraper como para wikis;
 manual es diagnóstico y no certifica carga histórica. Los wrappers siguen siendo
 la vía canónica para el ciclo completo.
+
+### Portadas (2026-09-25)
+
+El Panel ofrece «Mejorar portadas del mismo archivo»: plan sin descarga y aplicación
+con evidencia. La revisión de búsqueda es opcional. `verified` en propuestas
+históricas se presenta como «similitud visual», no como identidad editorial
+certificada. Las tarjetas del catálogo HTML muestran la portada completa con
+`object-fit: contain`, preservando logos y márgenes.

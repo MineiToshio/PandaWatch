@@ -1444,13 +1444,8 @@ def _save_image(data: bytes, images_dir: Path) -> Optional[str]:
 
 
 def _atomic_write(items_path: Path, rows: list[dict]) -> None:
-    """Delega en `write_items_atomic` (manga_watch, A7/A12): tmp + flush +
-    fsync + os.replace, bajo `items_write_lock` cross-proceso — antes este
-    helper tenía SU PROPIO fsync (F12) pero SIN lock, así que un save
-    concurrente del panel (serve.py) entre el read y el replace podía
-    perderse (last-writer-wins). El lock cierra ese hueco (mismo patrón que
-    ya usa `preview_write_lock` para cover_preview.json en este archivo)."""
-    write_items_atomic(items_path, rows)
+    from image_snapshot import write_snapshot
+    write_snapshot(items_path, rows)
 
 
 def _now_iso() -> str:
@@ -2021,6 +2016,13 @@ def _process_item(
                 if not _passes_no_ref_gate(item, cand, data, orig_bytes, session, verbose):
                     continue
 
+        # Full-frame colour and local patches preserve publisher logos and
+        # typography that global grayscale hashes can miss.
+        if verified:
+            from cover_identity import visual_identity
+            if not visual_identity(orig_bytes, data)['ok']:
+                continue
+
         # F6 — gate de detalle (gotcha #98): una candidata blanda (escaneo
         # sobre-comprimido / upscale) NO es upgrade aunque tenga más px. Mismo
         # criterio que sc_validate.py — fuente única.
@@ -2555,6 +2557,8 @@ def _collect_referenced_locals(items: list[dict]) -> set:
     huérfanos de forma segura tras aplicar el preview."""
     referenced: set = set()
     for it in items:
+        for change in it.get('cover_history', []):
+            referenced.update(change[k] for k in ('old_local', 'new_local') if change.get(k))
         for img in (it.get("images") or []):
             if isinstance(img, dict) and img.get("local"):
                 referenced.add(img["local"])
@@ -2567,6 +2571,9 @@ def _collect_referenced_locals(items: list[dict]) -> set:
 def _is_upscaled(item: dict, images_dir: Path, _bytes: Optional[bytes] = None) -> bool:
     """Detecta si la portada actual es un PNG upscaleado por waifu2x (look pastel).
     F17 — acepta `_bytes` ya leídos (ver `_get_current_pixels`)."""
+    cover = next((im for im in item.get('images', []) if im.get('url')), {})
+    if cover.get('upscaled'):
+        return True
     local = image_store.cover_local(item)
     if not local or not local.endswith(".png"):
         return False
@@ -2622,7 +2629,8 @@ def run(
     if not tavily_key:
         tavily_key = os.environ.get("TAVILY_API_KEY", "")
 
-    items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
+    from image_snapshot import read_snapshot
+    items = read_snapshot(items_path)
 
     def _is_candidate(i: int) -> bool:
         item = items[i]
@@ -2774,7 +2782,13 @@ def run(
                 # generación de candidatas hacia cover_preview.json (más abajo), que es
                 # una cola de revisión, no una escritura directa.
                 item_is_approved = is_approved(item) and not include_approved
-                if confidence == "high" and not preview and not dry_run and not item_is_approved:
+                from cover_identity import automatic_upgrade
+                safe_auto = False
+                if not preview and not dry_run and new_local and (images_dir / new_local).is_file():
+                    safe_auto = automatic_upgrade(old_url, new_url,
+                        _get_current_bytes(item, images_dir),
+                        (images_dir / new_local).read_bytes())["ok"]
+                if confidence == "high" and safe_auto and not preview and not dry_run and not item_is_approved:
                     applied_high += 1
                     _apply_improvement(item, new_url, new_local)
                     _atomic_write(items_path, items)
@@ -2984,7 +2998,8 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
         return {"ok": True, "applied": 0, "rejected": 0, "pending": n_pending,
                 "message": "Nada que procesar (todo pendiente)."}
 
-    items = [json.loads(l) for l in items_path.open(encoding="utf-8")]
+    from image_snapshot import read_snapshot
+    items = read_snapshot(items_path)
     if not dry_run:
         backup_and_rotate(items_path, "apply-preview")
 
