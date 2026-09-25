@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-11 (gotcha #144: quirk series_key/display en IPM VN).
+> Última revisión: 2026-09-15 (yaakz: probable duplicado HAPPINESS 10 con publisher IPM equivocado; §2).
 
 Ficha agrupada: las 5 fuentes comparten el módulo
 [`scripts/wikis/storefront_json.py`](../../../scripts/wikis/storefront_json.py) —
@@ -59,6 +59,9 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
   endurecer el exclude.
 - Detalle `/SalePage/Index/{id}` tiene barcode/fecha/autor embebidos (HTML
   estático) — enrich futuro si hace falta ISBN.
+- **Curación LLM non-manga 2026-08-23**: 1 item expulsado — guía de juegos de
+  Roblox; no se pudo blacklistear por keyword porque el título embebe "ROBLOX"
+  entre caracteres CJK y `\b` no hace frontera contra CJK, así que se curó por URL.
 
 ### kimdong / ipm (Vietnam)
 - Ambas plataformas clonan el `/products.json` de Shopify → `_shopify_like_list`
@@ -79,6 +82,12 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
   título real. Curado vía `/watch-enrich-series-aliases` fusionando los 3 keys bajo
   `ice-guy-cool-colleague`; la causa raíz en el standardize NO se investigó (pendiente,
   fuera de alcance del skill de aliases).
+- **Curación LLM non-manga 2026-08-23**: 6 items de Kim Đồng flageados → 1 light
+  novel conservada (Chúa tể bóng tối = Kage no Jitsuryokusha, edición limitada),
+  3 expulsados (boxset de libros de texto de primaria, Việt Nam sử lược = libro de
+  historia, Dế Mèn phiêu lưu ký = literatura infantil vietnamita en prosa) y 2
+  INCIERTOS conservados (los kamishibai "Kể chuyện bằng tranh", porque el "Combo
+  Kamishibai (8 cuốn)" ya está estandarizado en el corpus).
 
 ### yaakz (Tailandia)
 - ⚠️ La cifra "~1839 items" del discovery era un FALSO POSITIVO (índice de la
@@ -89,6 +98,25 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
 - Sin ISBN (el `code` tipo LISBX… es SKU interno) → dedup fuzzy.
 - 37/58 títulos llevan el nombre de serie en latín (ONE PIECE, HAIKYU!!) →
   mapeo directo; los thai-only vía el campo "ชื่อ eng" de la descripción.
+- **Curación LLM non-manga 2026-08-23**: 1 item INCIERTO conservado ("YAAKZ
+  Collector Box") — la URL da 404 y no se pudo verificar si es una caja vacía de
+  merch o un box set real.
+- **2026-09-15 — probable DUPLICADO por cambio de slug + publisher inconsistente**: el
+  delta trajo `HAPPINESS เล่ม 10 + (ชุดพิเศษ Boxset)`
+  (`/product/happiness-เล่ม-10-ชุดพิเศษ-boxset`), y el corpus ya tenía desde el 06-12
+  `HAPPINESS เล่ม 10 (จบ) + (ชุดพิเศษ boxset)` (`/product/happiness-เล่ม-10-จบ-ชุดพิเศษ-boxset`).
+  Mismo tomo final 10 con box, misma tienda; la única diferencia del título es `(จบ)`
+  ("fin"). Quedaron como 2 filas porque el standardize les dio publishers distintos:
+  `happiness-ipm-boxset-th` (IPM, que es editorial VIETNAMITA, no tailandesa, así que
+  la fila vieja casi seguro está mal) vs `happiness-siaminter-boxset-th`. No se unió ni
+  se tocó (regla: publisher distinto = edición distinta, y la decisión es del owner).
+  Además la serie es un homónimo ambiguo: en Anilist hay 3 obras japonesas llamadas
+  "Happiness" (Shūzō Oshimi, 10 tomos, que calza con "tomo 10 fin"; Usamaru Furuya;
+  Goma Gorilla) más un webtoon coreano. Por eso NO se acuñó una canónica `happiness` en
+  `/watch-enrich-series-aliases`. **Recomendación (no aplicada)**: corregir el
+  publisher de la fila vieja a Siam Inter y dejar que consolide; si se crea la
+  canónica, usar clave desambiguada (`happiness-oshimi`) y NO el alias pelado
+  "Happiness".
 
 ---
 
@@ -124,3 +152,60 @@ su One Piece VN más nuevo era el 103 vs 110 en venta).
 # Ingesta real de un perfil
 .venv/bin/python scripts/manga_watch.py --bootstrap-wiki jd-intl --sleep-seconds 0.3 --min-score 20
 ```
+
+
+## Revisión de ingestión — 2026-09-24
+
+SPP devolvió 403 CloudFront en prueba viva. El helper JSON notifica fallos tras tres intentos y SPP denuncia esquema desconocido; cero silencioso ya no se confunde con éxito. No se da por reparado el acceso remoto.
+
+Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+### Continuación de auditoría — 2026-09-24
+
+SPP continúa después de páginas enteramente repetidas entre búsquedas distintas; detecta repeticiones dentro de una búsqueda como error. Se elevan los topes de catálogo de Jade Dynasty, Shopify/Haravan y Yaakz a 1000 páginas, con aviso de ingestión incompleta si se alcanzan. Las respuestas de esquema desconocido de Jade Dynasty y Shopify/Haravan se reportan. SPP sigue devolviendo 403 de CloudFront tanto por requests como Chromium; el dominio sin www falla TLS y no se usa como fallback.
+
+Jade Dynasty: la corrida real recuperó tomos que antes compartían indebidamente
+cluster al no reconocer `第N期`. El extractor general ahora reconoce números
+arábigos/full-width con 巻, 卷, 期, 冊 o 册. Un volumen distinto impide que una
+asociación secundaria antigua absorba el nuevo tomo. Sin volumen ni identidad
+explícita, el heurístico mantiene el producto independiente por URL.
+
+### Comprobación viva adicional — 2026-09-24
+
+Tres perfiles recorrieron sus catálogos actuales en staging con salida 0:
+Kim Đồng 89 candidatos/88 reportables (17 URLs primarias nuevas), IPM 57/57
+(una nueva), Yaakz 45/45 (ninguna nueva). Los códigos comerciales que no son
+ISBN se conservan como evidencia con `ISBN_ANOMALY`; no se interpretan como
+ISBN válidos para resolver asociaciones entre diferentes tiendas.
+
+SPP también devolvió la página `301 Moved Permanently / CloudFront` en el
+navegador normal de la aplicación; no hay recuperación automatizada verificada.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 6 referencias de `nxbkimdong.com.vn` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+### Delta 2026-09-25 — `spp-tw` agotó reintentos
+
+El storefront de Taiwán falló su request JSON en los 3 intentos:
+
+```
+[WIKI-ISSUE] JSON request failed after 3 attempts:
+https://www.spp.com.tw/webapi/SearchV2/GetShopSalePageBySearch
+```
+
+Paso `storefront:spp-tw` → **rc=1**, 0 items. Los otros storefronts del mismo paso
+(jd-intl HK, kimdong/ipm VN, yaakz TH) corrieron bien en la misma corrida — de hecho
+Jade Dynasty aportó 2 de los 23 items nuevos del día, así que **no es una caída del
+paso completo ni del borde compartido**: es específico de `spp-tw`.
+
+Primera aparición registrada. **No verificado en vivo** si es rate-limit, cambio de
+contrato del endpoint o bloqueo. Si se repite mañana, conviene sonda manual antes de
+tocar configuración. Nada aplicado.
+
+## Auditoría estratégica — 2026-09-25
+
+SPP-TW queda retirado del job administrado por 403 persistente también en ficha real (CloudFront). Alternativa incorporada: catálogo SPP Manga de Kingstone; ficha tw-kingstone-spp.md. Books.com.tw respondió 403 y no se habilita. TongLi webpagebooks.aspx sí expone BooksDetail.aspx, pero cubre otro editor y no reemplaza SPP; queda candidato, sin activar un parser incompleto.

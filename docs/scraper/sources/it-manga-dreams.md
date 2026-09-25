@@ -91,6 +91,8 @@ solapa entre ambas entradas.
   borde compartido. Fix: `throttle_group: "shopify"` en ambas entradas — semáforo
   compartido (limit 1) + delay mínimo 2s entre requests del grupo
   (`--throttle-group-delay`). Monitorear el próximo run.
+- **Curación LLM non-manga 2026-08-23**: 1 item expulsado — Cthulhu Death May Die
+  (fumetto italiano de Bonelli basado en un juego de mesa) con variant Manicomix.
 
 ---
 
@@ -137,3 +139,19 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Auditoría full — 2026-09-24
+
+Se recorrieron 40 páginas (628 candidatos previos a filtros). El bundle Blue Lock
+x Liverpool FC de cinco volúmenes estaba enlazado a dos productos individuales
+(Variant BD 48H y Variant Anime). Se separa el bundle y se retiran esas referencias
+incorrectas; no se altera la identidad curada de los productos individuales.
+
+La revisión de las nuevas filas detectó cajas de cartas (boosters/TCG) que
+pasaban como manga por el nombre One Piece. Se rechazan como inventario de cartas;
+un tomo explícito con booster incluido como bonus se conserva. Se excluyeron
+tres candidatos de cartas de esta recuperación.
+
+## Auditoría estratégica — 2026-09-25
+
+Se mantienen sus exclusivas y catálogo de importación; overlap por serie no autoriza retirar la fuente. El gate común de cómics/merch aplica aun con manga_only. Los jobs administrados recorren paginación completa y deduplican por producto, no por país de la tienda ni mera serie.

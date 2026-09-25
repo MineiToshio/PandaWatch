@@ -260,14 +260,14 @@ Para cada fuente viable, usá el JSON que el subagente ya escribió en
 
 Output (`--json`): `{"corpus": {...}, "isbn_overlap": {...}, "series_overlap": {...}}`.
 Cada bucket `overlap` trae `sample_total`, `matched`, `pct` y `classification`
-(`nuevo` / `parcial` / `redundante`), o `classification: "sin_datos"` con
+(`nuevo` / `parcial` / `overlap_alto`), o `classification: "sin_datos"` con
 `pct: null` si la muestra no trajo ningún ISBN/serie (la detail page no lo
 publicaba — pasa seguido, no es un error).
 
 Regla de overlap (aplicada por el script, `overlap_classification()`):
 - < 30% overlap → `nuevo` — fuente claramente nueva, aporta
 - 30-70% → `parcial` — viable si aporta campos que nos faltan o nuevo país/editorial
-- > 70% → `redundante` — sólo viable si es SUPERIOR a la fuente existente (más items, más campos, fotos extras)
+- > 70% → `overlap_alto` — NO implica redundancia. Mantener si aporta productos únicos; no retirar por porcentaje de series o ISBN. Retirar por cobertura solo con comparación completa de productos, país, volumen y variante.
 
 **Para la tabla del Step 3**: la celda "Overlap" sale del `pct`/`classification`
 del script. Si `classification == "sin_datos"`, la celda debe decir
@@ -301,7 +301,7 @@ LLM. En ese caso, apoyate en `series_overlap` (si tiene datos) o en el
 - `Reemplaza [fuente actual]` — superior a algo que ya tenemos, desactivar la vieja
 - `Complementa [fuente actual]` — overlap parcial pero aporta algo que la otra no tiene
 - `No — sin foto de extras` — cubre bonuses pero sin imagen del extra
-- `No — >70% redundante` — ya lo tenemos mejor cubierto
+- `No — cobertura completa demostrada` — todos sus productos/ediciones están en otra fuente; documentar el cruce y las excepciones.
 - `No — contenido incorrecto` — mayoritariamente tomos regulares / noticias
 - `No — sitio muerto` — página vacía SIN señales de JS (no `__NEXT_DATA__`,
   no bundles grandes, no endpoints XHR) — distinto de "requiere kind: js" (C4)

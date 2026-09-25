@@ -2,7 +2,7 @@
 
 > Catálogo histórico y continuo de ediciones especiales de manga: ediciones limitadas,
 > deluxe, box sets, variant covers, artbooks, kanzenban y extras de primera edición.
-> Scraping de ~76 fuentes activas en 10 países y 6 idiomas.
+> Manga, manhwa/manhua y novelas ligeras/danmei premium. Inventario vigente: 55 entradas YAML activas y 21 módulos wiki activos; 20 países nominales representados. La presencia de un país no implica cobertura exhaustiva.
 
 ---
 
@@ -11,7 +11,7 @@
 | Fase | Estado | Descripción |
 |---|---|---|
 | Fase 1 — Búsquedas dirigidas multi-keyword | ✅ Completo | `search_template + keywords` en sources.yml; N fuentes virtuales por editorial |
-| Fase 2 — Wikis comunitarias | ✅ Completo | 19 wikis implementados (ver lista abajo) |
+| Fase 2 — Wikis comunitarias | ✅ Completo | 27 módulos implementados; 21 habilitados por ingestion_policy.yml |
 | Fase 3 — Sitemap mining | ✅ Completo | Mangavariant (~2700 entries), listadomanga lista.php (~3432 colecciones) |
 | Fase 4 — LLM enrichment | ✅ Completo | Skills `/watch-standardize-catalog` + `/watch-enrich-series-aliases` |
 
@@ -21,15 +21,12 @@
 
 | Métrica | Valor |
 |---|---|
-| Items totales | **10.329** |
-| Fuentes habilitadas | **67 / 138** (71 deshabilitadas: cero yield o duplicadas por wikis; audit 2026-06-01 deshabilitó 8 más — 4 JS muertas + 4 feeds de noticias) |
-| Wikis disponibles | **19** |
-| Países representados | **13** (JP, IT, FR, ES, DE, US, VN, MX, BR, TH, AR, TW, LatAm) |
-| Top países | Japón 3.758, Italia 2.182, Francia 1.295, España 1.279, Alemania 841 |
-| Cobertura ISBN | ~48% |
-| Cobertura imagen local | ~99.8% |
-| `series_aliases.yml` | 2.844 canonicals |
-| `standardized_at` | ~99.6% |
+| Items totales | **19.378** (auditoría 2026-09-25) |
+| Fuentes YAML | **55 / 152**; 139 endpoints al expandir búsquedas |
+| Wikis | **27 implementados / 21 activos** |
+| Países | **20 nominales**, más etiquetas regionales/globales y registros sin país |
+| Estandarización | Las nuevas recuperaciones quedan disponibles como datos crudos; no se ejecutó enriquecimiento LLM en esta auditoría |
+| Evidencia y límites | [Auditoría de fuentes del 25 de septiembre](../scraper/audits/2026-09-25-source-strategy.md) |
 
 ---
 
@@ -71,8 +68,10 @@ independientemente de si está disponible hoy para comprar. Las URLs de referenc
 | shueisha | JP | Suplemento JP-native de One Piece (artbooks/databooks; el catálogo JP no es generalizable — ver SOURCES.md) |
 | whakoom | ES/LatAm | Spider 3-nivel (opt-in, Cloudflare-throttled) |
 
+La tabla anterior es inventario de parsers implementados, incluidos históricos retirados; la habilitación efectiva y los motivos están en `ingestion_policy.yml`.
+
 ### Fuentes directas
-67 fuentes habilitadas en `sources.yml` cubriendo retailers oficiales, tiendas,
+55 entradas habilitadas en `sources.yml` cubriendo retailers oficiales, tiendas,
 y bases de datos comunitarias. Ver `docs/scraper/SOURCES.md` para la guía completa.
 
 ---
@@ -80,11 +79,11 @@ y bases de datos comunitarias. Ver `docs/scraper/SOURCES.md` para la guía compl
 ## Pipeline de scraping
 
 ```
-scrape_delta.sh   (diario/semanal, ~30-60 min)
+scrape_delta.sh   (diario; primera ejecución sin recibo completo realiza backfill)
   → listadomanga calendario (últimos 3 meses)
   → resto de fuentes y wikis
 
-scrape_full.sh    (mensual/trimestral, ~2-4 horas)
+scrape_full.sh    (histórico completo de los endpoints configurados)
   → listadomanga lista.php (~3432 colecciones)
   → mangavariant sitemap completo
   → wikis históricos completos
@@ -101,7 +100,7 @@ Ver `docs/scraper/ARCHITECTURE.md` para el detalle técnico completo del pipelin
 
 ### Filtros activos (en orden de aplicación)
 1. **`is_likely_manga()`** — 4 reglas en cascada: figuras/merch → manga fuerte → manga con extras → soft non-manga
-2. **`is_pure_novel()`** — Rechaza light novels puras (URL hints + palabras indicadoras)
+2. **Novelas** — Se conservan light novels y danmei premium; la prosa regular debe superar el gate de edición coleccionable.
 3. **`is_comic_not_manga()`** — Blacklist Marvel/DC/franquicias occidentales (bypass si title contiene "manga")
 4. **`is_collectible_edition()`** — Segundo gate: solo pasan ediciones especiales, no tomos regulares
 

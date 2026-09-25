@@ -112,3 +112,16 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## Auditoría estratégica — 2026-09-25
+
+Los 10 productos observados de la sección Artbooks tenían también referencia en
+Manga-Sanctuary; no prueba cobertura completa futura. Se conserva el catálogo
+oficial. La entrada Pika general aporta al menos un producto exclusivo observado.
+No se elimina por el antiguo umbral >70% de series/ISBN compartidos.
+
+Air Gear Unlimited: Pika confirma nuevas portadas, páginas a color y extras en
+[su anuncio oficial](https://www.pika.fr/actualite/air-gear-unlimited-arrive-dans-la-collection-pika-shonen/).
+Se conserva por ese contenido; se corrige la clasificación limitada inventada
+por el mapeo «unlimited double». No se confunde un formato doble sin extras con
+una edición especial.

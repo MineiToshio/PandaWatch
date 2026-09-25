@@ -33,6 +33,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup, Tag
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -171,6 +176,7 @@ def fetch_listing(
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as exc:
+        report_issue(session, f"kinokuniya: fetch failed: {exc}")
         print(f"[kinokuniya] ERROR al obtener {LISTING_URL}: {exc}")
         return ""
 

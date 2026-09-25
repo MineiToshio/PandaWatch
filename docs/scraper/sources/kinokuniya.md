@@ -238,3 +238,87 @@ PY
 **Antes de cerrar cualquier cambio en Kinokuniya**: validar (`validate_corpus`, 0 duras) →
 tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza esta
 ficha.
+
+---
+
+## 2026-09-24 — El parser sólo emite título + ISBN: 96 % de los items sin editorial (gotcha #215)
+
+**Corrida**: delta diario. La fuente rindió **47 candidatos, 5 reportables**, sin errores
+ni skips — o sea es una fuente **sana en disponibilidad** y el problema es de **riqueza
+del dato**, no de acceso. 4 de los 9 items realmente nuevos del día salieron de acá.
+
+**Medición sobre los 47 items de la fuente en el corpus**:
+
+| Campo | Faltante | % |
+|---|---|---|
+| `publisher` | 45 | 96 % |
+| `release_date` | 47 | 100 % |
+| `volume` | 39 | 83 % |
+| `edition_key` con `-unknown-` | 11 | 23 % |
+| rareza `rare` (por `retailer_exclusive`, sin stock verificado) | 6 | 13 % |
+
+El `description` que emite el parser es literalmente `"Kinokuniya Exclusive. ISBN:
+<isbn>."`. La causa es el discovery: el módulo lee la grilla de
+`usa.kinokuniya.com/kinokuniya-exclusives` (portada + título + ISBN) y **no visita la
+ficha por producto** `united-states.kinokuniya.com/bw/<isbn>`, que sí trae editorial,
+fecha y tomo.
+
+**Por qué esto no es cosmético**: `publisher` es un componente del `edition_key`. Con la
+editorial vacía el item acuña `…-unknown-variant-us`, y si el mismo producto entra
+después por una fuente que sí la trae, nacen **dos ediciones para un solo producto** —
+el mecanismo de **#210**. Los 4 items nuevos de hoy entraron los 4 así:
+
+```
+servant-beasts-unknown-variant-us
+it-s-strictly-business-unknown-variant-us
+omniscient-reader-s-viewpoint-novel-unknown-variant-us
+can-you-kiss-me-first-unknown-variant-us
+```
+
+Dicho de otro modo: **Kinokuniya no sufre #210, lo produce.**
+
+**Contexto de alcance medido el mismo día**: el corpus tiene **1672 items** con
+`-unknown-` en el `edition_key` y **204 grupos partidos** (misma serie + volumen + tipo
++ país repartidos en ≥2 `edition_key`, uno `-unknown-`). El 2026-09-17 eran **110**
+grupos sobre 1662 items: el pool está estable pero la fragmentación **casi se duplicó en
+una semana**.
+
+**Recomendación (NO aplicada — decisión del owner)**: agregar fetch-details de
+`/bw/<isbn>` en `scripts/wikis/kinokuniya.py`. Es **1 request por item sobre ~47 items**
+(costo trivial, la fuente ya responde bien) y cierra el agujero en el origen: recupera
+editorial, fecha y tomo de una sola vez, lo que además convierte 6 rarezas
+"rare-por-incertidumbre" en rarezas con evidencia. Retorno alto, riesgo bajo: no cambia
+slugs de items existentes salvo los 11 que hoy tienen `-unknown-`.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Comprobación viva adicional — 2026-09-24
+
+Catálogo de exclusivas reingerido en staging: 47 candidatos/reportables, salida
+0. El rango de fechas no convierte el índice de exclusivas actual en histórico.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 2 referencias de `united-states.kinokuniya.com` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+### Delta 2026-09-25 — `language` fuera del enum (47 items)
+
+La fuente emite `"English"` en vez del valor del enum del corpus (`"Inglés"`): **47
+de sus items** caen en el warn `LANG_ENUM` de `validate_corpus`. Es el segundo mayor
+contribuyente después de VIZ (148). Detalle y tabla completa en
+[viz.md](viz.md#delta-2026-09-25--429-puntual--idioma-fuera-del-enum).
+
+Se suma a #215 (el módulo emite sólo título + ISBN): Kinokuniya es una fuente
+estructuralmente pobre en metadata. **Nada aplicado**; el fix correcto es normalizar
+el idioma en el extractor compartido, no por fuente.

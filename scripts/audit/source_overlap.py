@@ -52,9 +52,9 @@ if str(_SCRIPTS) not in sys.path:
 # bajo pytest `manga_watch` resuelve vía el paquete `scripts`; en CLI directo
 # (`python scripts/audit/source_overlap.py`) cae al import plano de arriba.
 try:
-    from manga_watch import _slugify_kebab, load_sources, normalize_isbn  # type: ignore
+    from manga_watch import _slugify_kebab, load_sources, normalize_isbn, read_jsonl_strict  # type: ignore
 except ImportError:  # pragma: no cover
-    from scripts.manga_watch import _slugify_kebab, load_sources, normalize_isbn  # type: ignore
+    from scripts.manga_watch import _slugify_kebab, load_sources, normalize_isbn, read_jsonl_strict  # type: ignore
 
 
 # --------------------------------------------------------------------------- #
@@ -73,8 +73,7 @@ def load_corpus(items_path: Path) -> CorpusStats:
     """Lee `data/items.jsonl` y agrega ISBNs/series_keys/países.
 
     Read-only — nunca escribe. Tolera archivo ausente (corpus vacío, no
-    explota) y líneas corruptas (se saltean, igual que el resto de
-    scripts/audit/*.py).
+    explota) pero rechaza líneas corruptas: un corpus parcial no sirve para retirar fuentes.
 
     ISBNs se re-normalizan con `normalize_isbn()` al cargar (idempotente
     sobre un ISBN-13 ya limpio) para que el cruce con la muestra sea
@@ -83,26 +82,18 @@ def load_corpus(items_path: Path) -> CorpusStats:
     stats = CorpusStats()
     if not items_path.exists():
         return stats
-    with items_path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            stats.total_items += 1
-            isbn_raw = item.get("isbn") or ""
-            if isbn_raw:
-                normalized = normalize_isbn(str(isbn_raw))
-                if normalized:
-                    stats.isbns.add(normalized)
-            series_key = item.get("series_key") or ""
-            if series_key:
-                stats.series_keys.add(str(series_key))
-            country = item.get("country") or "?"
-            stats.country_counts[str(country)] += 1
+    for item in read_jsonl_strict(items_path):
+        stats.total_items += 1
+        isbn_raw = item.get("isbn") or ""
+        if isbn_raw:
+            normalized = normalize_isbn(str(isbn_raw))
+            if normalized:
+                stats.isbns.add(normalized)
+        series_key = item.get("series_key") or ""
+        if series_key:
+            stats.series_keys.add(str(series_key))
+        country = item.get("country") or "?"
+        stats.country_counts[str(country)] += 1
     return stats
 
 
@@ -146,7 +137,7 @@ def load_active_sources_by_country(sources_yaml: Path) -> dict[str, list[dict]]:
 def overlap_classification(pct: float | None) -> str:
     """Bucket de la regla de overlap del Step 2 (SKILL.md).
 
-    < 30% → nuevo · 30-70% → parcial · > 70% → redundante · sin muestra → sin_datos.
+    < 30% → nuevo · 30-70% → parcial · > 70% → overlap_alto (no demuestra cobertura completa) · sin muestra → sin_datos.
     """
     if pct is None:
         return "sin_datos"
@@ -154,7 +145,7 @@ def overlap_classification(pct: float | None) -> str:
         return "nuevo"
     if pct <= 70.0:
         return "parcial"
-    return "redundante"
+    return "overlap_alto"
 
 
 def _overlap_bucket(sample_raw: list[str], existing: set[str], normalize) -> dict:
@@ -187,6 +178,8 @@ def compute_overlap(
     MISMO slug que usa el pipeline para derivar `series_key`) antes de cruzar.
     """
     return {
+        "safe_to_retire": False,
+        "coverage_note": "ISBN/series overlap is descriptive only. Retirement requires complete product/edition coverage, including market and variants.",
         "isbn_overlap": _overlap_bucket(sample_isbns_raw, corpus.isbns, normalize_isbn),
         "series_overlap": _overlap_bucket(sample_series_raw, corpus.series_keys, _slugify_kebab),
     }

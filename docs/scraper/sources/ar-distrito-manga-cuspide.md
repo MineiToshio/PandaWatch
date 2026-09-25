@@ -92,6 +92,35 @@ mercado **argentino** de ese sello. Aporta cobertura de un país poco representa
   si se trunca.}}
 - {{pendiente: calidad de imágenes y eventuales quirks de layout/anti-bot sin verificar.}}
 
+## 2026-09-01 — denylist del placeholder "sin imagen" de cdn.livriz.com
+
+Ola 3 de depuración de imágenes (ver `docs/reference/images.md` § "OLA 3"). Nota:
+las imágenes de esta fuente no vienen de `cuspide.com` sino de `cdn.livriz.com`
+(la plataforma de e-commerce que Distrito Manga/Cúspide usa para alojar assets de
+producto). Tres items (`beck-distrito-kanzenban-ar-{3,5,8}`, BECK Kanzenban vols
+3/5/8) tenían como ÚNICA foto un ícono genérico "sin imagen" (cámara tachada) que
+esa CDN sirve cuando el producto no tiene foto real — confirmado visualmente
+(conversión AVIF→PNG + lectura). Las 3 URLs originales terminan literalmente en
+`no-disp.png` (dentro de un path con UUID único por asset), y las 3 resultaron
+byte-idénticas en el espejo local (mismo sha1 pese a URLs/UUID distintos — el
+mismo archivo template subido 3 veces). Agregado a `data/placeholder_signatures.json`
+(sha1 `74527790152165b7db548ffb5ebfa09d426534c7`, dims 1200×1500). Purgado con
+`purge_placeholder_images.py --only-reasons signature` (gotcha #161): las 3 filas
+quedaron sin ninguna foto (pasan al bucket de búsqueda web / 📚 en la UI).
+
+**Hallazgo NO aplicado — 4ª instancia detectada, fuera de la denylist aprobada**:
+`beck-distrito-kanzenban-ar-14` (idx 0 de su galería) tiene el MISMO ícono, mismo
+patrón de URL (`.../no-disp.png`), pero un archivo de OTRO tamaño (300×375, sha1
+`0344093e1b791d935bc907a6c3888b660eb14806`, distinto del registrado). Es visualmente
+el mismo placeholder, pero **no se agregó su firma ni se tocó** — no formaba parte
+de las 28 filas que el owner revisó/aprobó en la ola 3, y la regla dura de gotcha
+#160 exige validación explícita por instancia, no basta con "mismo patrón de URL
+que una ya aprobada". `no-disp.png` (el basename literal, "no disponible" en
+español) es candidato natural a un futuro `KNOWN_PLACEHOLDER_URL_FRAGMENTS` en
+`image_store.py` si el owner quiere generalizar en vez de ir firma-por-firma —
+pero eso barrería CUALQUIER item futuro con ese basename sin revisión visual
+individual, así que queda como decisión suya, no aplicado acá.
+
 ---
 
 ## 10. Runbook / comandos útiles

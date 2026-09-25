@@ -1885,11 +1885,21 @@ def test_log_unmapped_series_appends_only_non_canonical(tmp_path, monkeypatch):
     lines = fake_log.read_text().strip().splitlines()
     assert len(lines) == 1
 
-    # 5) Reset → segunda corrida puede re-loguear
+    # 5) Reset → la corrida siguiente NO re-loguea una series_key que YA está
+    #    en la cola (gotcha #157). Antes sí lo hacía, y por eso el 76-92% del
+    #    archivo eran duplicados: la cola crecía por re-apilado, no por
+    #    descubrimiento, y la condición "¿creció la cola?" de la rutina diaria
+    #    se disparaba siempre. El dedup ahora se siembra desde disco.
     sa.reset_unmapped_run_state()
     sa.log_unmapped_series('new-series', 'New Series', 'New Series Vol 4', 'http://x/4', 'src')
     lines = fake_log.read_text().strip().splitlines()
-    assert len(lines) == 2  # ahora hay 2 líneas, segunda del segundo run
+    assert len(lines) == 1, "una series_key ya encolada no se re-apila entre corridas"
+
+    # 6) …pero una series_key NUEVA sí entra tras el reset.
+    sa.log_unmapped_series('other-series', 'Other', 'Other Vol 1', 'http://x/5', 'src')
+    lines = fake_log.read_text().strip().splitlines()
+    assert len(lines) == 2
+    assert _json.loads(lines[1])['series_key'] == 'other-series'
 
 
 def test_whakoom_is_publisher_url():
@@ -2609,6 +2619,88 @@ def test_is_likely_manga_bonus_context_still_rejects_products():
         assert not is_manga, f"Should NOT be manga ({label}): {t!r} (reason={reason})"
 
 
+def test_product_region_text_skips_mega_menu_and_breadcrumb():
+    """Gotcha #193: el fallback de autor leía los primeros 3000 caracteres del
+    <body> ENTERO, así que en una plantilla con mega-menú extraía el MENÚ."""
+    from bs4 import BeautifulSoup
+    html = """
+    <html><body>
+      <nav class="mega-menu">
+        <div class="mega-menu__promotions">Scopri i Comics di Batman ELDEN RING ARTBOOK</div>
+      </nav>
+      <main>
+        <nav class="breadcrumb">Home A CACCIA DI VARIANT! NAGATORO 1</nav>
+        <div class="descrizione">Volume a fumetti.</div>
+      </main>
+    </body></html>
+    """
+    text = mw._product_region_text(BeautifulSoup(html, "html.parser"))
+    assert "Batman" not in text, f"el mega-menú no debe entrar: {text!r}"
+    assert "CACCIA" not in text, f"el breadcrumb no debe entrar: {text!r}"
+    assert "Volume a fumetti" in text
+
+
+def test_looks_like_person_name_accepts_real_authors_rejects_prose():
+    """El guard del último recurso NO puede matar a los 24 autores reales que
+    la rama `di|du` de AUTHOR_BY_PATTERN recupera de las fichas italianas."""
+    for real in ("Tsutomu Nihei", "Kohta Hirano", "Shotaro Ishinomori",
+                 "Shun Umezawa", "Yoshiki Nakamura", "岸本斉史", "Hayao de la Cruz"):
+        assert mw._looks_like_person_name(real), f"autor real rechazado: {real!r}"
+    for prose in ("Providence: Il richiamo di Cthulhu", "Uthrel alimentò la fiamma",
+                  "VARIANT! NON TORMENTARMI", "Batman ELDEN RING ARTBOOK y otros mas"):
+        assert not mw._looks_like_person_name(prose), f"prosa aceptada: {prose!r}"
+
+
+def test_author_is_title_fragment_detects_title_echo():
+    """`di <X>` engancha dentro de títulos italianos ("Ai Tempi di Bocchan")."""
+    assert mw._author_is_title_fragment("Bocchan", "AI TEMPI DI BOCCHAN PERFECT EDITION VOL 3")
+    assert not mw._author_is_title_fragment("Junji Ito", "Uzumaki Deluxe 3")
+
+
+def test_merch_jp_gate_rejects_standalone_merchandising():
+    """Gotcha #191: el merchandising japonés que es EL PRODUCTO se expulsa
+    determinísticamente, sin depender del veredicto por-item del LLM (que no es
+    reproducible: de tres artículos del mismo evento de KADOKAWA, rechazó dos y
+    aprobó el tercero, que quedó publicado como product_type=manga)."""
+    cases = [
+        "TVアニメ「ガチアクタ」ポジフィルム風クリアシートコレクション BOX",
+        "DIGIMON BEATBREAK キラキラ缶バッジ お祭りVer. Box",
+        "『週に一度クラスメイトを買う話 ～ふたりの秘密は一つ屋根の下～』Birthday 描き下ろしB2タペストリー With Ver.",
+        "『週に一度クラスメイトを買う話 ～ふたりの秘密は一つ屋根の下～』Birthday 描き下ろしB2タペストリー 宮城志緒理",
+        "『週に一度クラスメイトを買う話 ～ふたりの秘密は一つ屋根の下～』Birthday 描き下ろしアクリルジオラマ",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Merchandising, no manga: {t!r} (reason={reason})"
+        assert "merch_jp" in reason, f"Debe rechazar por el gate de merch: {t!r} ({reason})"
+
+
+def test_merch_jp_gate_never_kills_a_real_volume():
+    """El reverso del test anterior, y la trampa de la gotcha #189: la PRIMERA
+    versión de esta regla iba a destruir 10 manga reales del corpus. Un tomo
+    con merchandising de REGALO no es merchandising — el discriminante es que
+    el título nombre un libro (nº de tomo o señal STRONG), o que el marcador de
+    inclusión esté cerca, INCLUIDA su forma en hiragana (つき, no sólo 付き)."""
+    cases = [
+        # Marcador en hiragana tras un contador — el caso que el dry-run destapó
+        "七つの大罪(31)限定版 アクリルキーホルダー2個つき限定版",
+        "おしえて執事くん(3)アクリルスタンドつき限定版",
+        "マギ シンドバッドの冒険 10 Wラバーストラップつき限定版!!!",
+        # Número de tomo SUELTO tras el nombre de la serie, sin 巻 ni marcador
+        "僕とロボコ 11(アクリルキーホルダー(ガチゴリラ))",
+        "僕とロボコ 11(アクリルキーホルダー(ボンド))",
+        # Señal STRONG (巻) aunque el merch vaya entre paréntesis sin marcador
+        "空気が「読める」新入社員と無愛想な先輩 7巻(オリジナル描き下ろしアクリルスタンド)【楽天ブックス限定グッズ】",
+        # 付 en kanji después de un sustantivo entremedio
+        "組長娘と世話係 15 缶バッジセット+描き下ろし小冊子付限定版",
+        # 特装版 = término de edición de LIBRO
+        "花燭の白 12巻 特装版 タペストリー同梱",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Tomo con merch de regalo, es manga: {t!r} (reason={reason})"
+
+
 def test_is_likely_manga_default_accepts_unknown():
     # Sin pattern claro: aceptar (mejor false-positive que perder mangas reales).
     is_manga, _ = mw.is_likely_manga("Some Unusual Title Here")
@@ -2957,6 +3049,43 @@ def test_is_likely_manga_rejects_video_game_artbooks_and_guides():
     for t in cases:
         is_manga, reason = mw.is_likely_manga(t)
         assert not is_manga, f"Should reject as VG artbook/guide: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_rejects_non_manga_general_books_etapa1():
+    """Etapa 1 de triage de imágenes (2026-09-02, gotcha #176): la IA de visión
+    detectó 6 items non-manga colados por searches amplios de JP - Rakuten Books
+    y listadomanga.es (almanaque de adivinación, artbook de historia natural,
+    guía de viaje temática, ensayo/tanka ilustrado, enciclopedia de consolas).
+    Verificados uno a uno (título/fuente/descripción) antes de blacklistear."""
+    cases = [
+        "【楽天ブックス限定カバー：サイン付き（数量限定）】ゲッターズ飯田の五星三心占い2021完全版",
+        "ゲッターズ飯田の五星三心占い2026完全版(限定カバー：サイン入り（数量限定）)",
+        "ゲランのフランス博物画集",
+        "地球の歩き方 アニメ Dr.STONE",
+        "『猫のいる家にまだいたい』ダイカットシール付き特装版",
+        "La gran enciclopedia de las videoconsolas",
+        "La gran enciclopedia de las videoconsolas Edición Especial",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert not is_manga, f"Should reject as non-manga general book: {t!r} (reason={reason})"
+
+
+def test_is_likely_manga_general_book_patterns_dont_overmatch():
+    """Los patrones nuevos de la Etapa 1 (gotcha #176) son precisos: no deben
+    tumbar manga real. `画集` genérico (sin el prefijo `博物`) sigue siendo un
+    formato habitual de artbook de manga/mangaka; el corgi manhwa de Daewon
+    C.I. es manga real pese a que la IA de visión lo marcó como "libro de fotos
+    de perros" mirando sólo la portada (verificado por búsqueda web: es un
+    manhwa publicado por Daewon C.I., no un libro de fotos)."""
+    cases = [
+        "rurudo画集 UNREAL",
+        "〈葬送のフリーレン〉画集 = Frieren Beyond Journey's End Art Works. Vol.1",
+        "하루 한 코기 (굿즈 한정판)",
+    ]
+    for t in cases:
+        is_manga, reason = mw.is_likely_manga(t)
+        assert is_manga, f"Should NOT reject (real manga/artbook): {t!r} (reason={reason})"
 
 
 def test_is_likely_manga_keeps_manga_artbooks():
@@ -4617,7 +4746,7 @@ def test_append_jsonl_cover_local_is_sticky(tmp_path):
     assert len(items) == 1
     assert imgstore.cover_local(items[0]) == "abc123def4567890.jpg"
     assert "image_local" not in items[0] and "image_url" not in items[0]
-    assert items[0]["detected_at"] == "2026-02-01"
+    assert items[0]["detected_at"] == "2026-01-01"  # first detection survives re-ingestion
 
 
 def test_extract_images_anchor_href_wins_over_src():
@@ -5541,6 +5670,59 @@ def test_mangavariant_fetch_url_entries_reads_lastmod():
     # fetch_variant_urls (compat) sigue devolviendo solo las 3 locs.
     urls = mv.fetch_variant_urls(_MvFakeSitemapSession(), sitemaps=("dummy",))
     assert urls == [loc for loc, _ in entries]
+
+
+# --- Fail-hard cuando los sitemaps no producen nada (post-mortem 2026-08-24) --
+
+def test_mangavariant_all_sitemaps_malformed_xml_raises():
+    """Si los 3 sitemaps devuelven XML malformado (p.ej. el HTML del challenge
+    sgcaptcha disfrazado de 200), antes `fetch_variant_url_entries` devolvía
+    [] en silencio — el bootstrap terminaba exit 0 con 0 candidatos,
+    clasificado 'healthy' en source_health (gotcha #107, patrón "muro que
+    devuelve 200"). Ahora debe abortar con MangavariantSitemapError."""
+    from wikis import mangavariant as mv
+
+    class _FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.status_code = 200
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeSession:
+        def get(self, url, timeout):  # noqa: ARG002
+            return _FakeResponse("<html>esto no es XML de sitemap</html>")
+
+    with pytest.raises(mv.MangavariantSitemapError):
+        mv.fetch_variant_url_entries(_FakeSession(), sitemaps=("a", "b", "c"))
+
+
+def test_mangavariant_challenge_unresolved_aborts_without_reparsing_garbage(monkeypatch):
+    """Si el challenge 'se resuelve' pero exporta 0 cookies, la session sigue
+    SIN autenticar: reintentar el mismo request sólo devuelve el HTML del
+    challenge de nuevo (que ni siquiera vale la pena reintentar). El fix
+    cuenta el sitemap como fallido directamente en vez de reintentar y tragar
+    un ET.ParseError genérico; si los 3 sitemaps corren esa suerte, aborta con
+    MangavariantSitemapError."""
+    from wikis import mangavariant as mv
+
+    calls: list[str] = []
+
+    class _ChallengeResponse:
+        status_code = 202
+        text = ""
+
+    class _FakeSession:
+        def get(self, url, timeout):  # noqa: ARG002
+            calls.append(url)
+            return _ChallengeResponse()
+
+    monkeypatch.setattr(mv, "_solve_challenge_into_session", lambda session: False)
+
+    with pytest.raises(mv.MangavariantSitemapError):
+        mv.fetch_variant_url_entries(_FakeSession(), sitemaps=("a", "b", "c"))
+    # Un solo GET por sitemap: no reintenta si el challenge no exportó cookies.
+    assert calls == ["a", "b", "c"]
 
 
 def test_mangavariant_load_seen_variant_urls(tmp_path):
@@ -7955,6 +8137,7 @@ def test_lmc_orphan_extra_creates_special_item():
     assert "special_edition" in c.signal_types
     assert "orphanext5" in c.image_url
     assert "especial-5" in c.url
+    assert c.title == "Test Manga 5 Edición Especial"
 
 
 def test_lmc_from_extras_has_cover_and_extra_separate_no_boxset_signal():
@@ -7986,6 +8169,7 @@ def test_lmc_from_extras_has_cover_and_extra_separate_no_boxset_signal():
     cands = lmc.parse_collection_page(html, 9100)
     assert len(cands) == 1, f"expected 1 item, got {len(cands)}"
     c = cands[0]
+    assert c.title == "Test Manga 1"
     assert "from_extras" in c.tags
     # images[]: primero cover del tomo regular, después extra del cofre
     assert len(c.images) == 2, f"expected [cover, extra], got {[im['kind'] for im in c.images]}"
@@ -11132,11 +11316,30 @@ def test_serve_item_update_product_field_propagates_row_field_does_not(tmp_path)
 # ---------------------------------------------------------------------------
 
 def test_compute_junk_local_flags_tiny_zero_and_shared(tmp_path):
+    # Gotcha #185 (2026-09-02): `_compute_junk_local` ya no decide por bytes
+    # crudos — delega en `image_store.placeholder_reason()` (estructura real),
+    # así que "no junk" necesita una imagen REALMENTE decodificable y con
+    # textura (no un archivo roto/garbage con un magic-number falso). "ad.png"
+    # sigue sin necesitar bytes válidos: el criterio "compartido por >=4 obras"
+    # cortocircuita ANTES de la evaluación estructural.
+    import io
+    from PIL import Image
+
+    def _real_image_bytes(w=208, h=300) -> bytes:
+        im = Image.new("RGB", (w, h))
+        px = im.load()
+        for y in range(h):
+            for x in range(w):
+                px[x, y] = ((x * 7) % 256, (y * 13) % 256, ((x + y) * 5) % 256)
+        buf = io.BytesIO()
+        im.save(buf, "PNG")
+        return buf.getvalue()
+
     imgs = tmp_path / "images"; imgs.mkdir()
-    (imgs / "pixel.gif").write_bytes(b"GIF89a" + b"\x00" * 30)          # 36B tiny
+    (imgs / "pixel.gif").write_bytes(b"GIF89a" + b"\x00" * 30)          # 36B tiny, roto/no decodifica
     (imgs / "empty.jpg").write_bytes(b"")                                # 0B
-    (imgs / "ad.png").write_bytes(b"\x89PNG" + b"\x00" * 50000)          # 50KB
-    (imgs / "realcover.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 50000)
+    (imgs / "ad.png").write_bytes(b"\x89PNG" + b"\x00" * 50000)          # 50KB, garbage (no importa: shared corta antes)
+    (imgs / "realcover.jpg").write_bytes(_real_image_bytes())            # imagen real, chica, con textura
     def _it(local, series, title):
         return {"images": [{"url": f"https://x/{local}", "local": local, "kind": "gallery"}],
                 "series_display": series, "title": title}
@@ -11809,3 +12012,256 @@ def test_extract_image_url_skips_lazy_placeholder_file():
     # Una imagen real llamada lazy.jpg NO se saltea (no es placeholder exacto)
     soup2 = make_soup('<div><img data-src="/img/lazy.jpg"></div>')
     assert mw.extract_image_url(soup2.find("div"), "https://example.com/") == "https://example.com/img/lazy.jpg"
+
+
+# --- Curación de los 265 `llm_non_manga` (2026-08-23) -----------------------
+
+
+def test_blacklist_20260823_rejects_curated_western_comics():
+    """Cabeceras de cómic occidental verificadas en la curación 2026-08-23.
+
+    Entraban por retailers de "variant covers" (IT - Funside, Star Comics
+    search, Edizioni BD, Dark Horse Direct, Panini MX/ES/BR, Aladin KR) con
+    purity manga_only, así que ningún gate determinista las tocaba.
+    """
+    cases = [
+        "MARVEL MINISERIE 298 - I DUNGEON DI DESTINO 2 - VARIANT LONDRA DI ALAN DAVIS",
+        "One World Under Doom #8 (Portada Variante)",
+        "ULTIMATE ENDGAME VOL.1 - VARIANT DI SIMONE DI MEO",
+        "Marvel Now! Deluxe. Secret Wars: Integral",
+        "Marvel Treasury Edition",
+        "SINISTER'S SIX (2025) 1 - X-FORCE 64 - VARIANT DI RICKIE YAGAWA",
+        "CAPITAN AMERICA 3 (2025) - CAPITAN AMERICA 190 - STITCH VARIANT",
+        "TOPOLINO 3679 VARIANT ETNA COMICS 2026",
+        "PAPERINO 549 - VARIANT CON STATUINA SPORT INVERNALI",
+        "A TWISTED TALE ONCE UPON A DREAM VOL.1 - VARIANT",
+        "ZAGOR 700 (ZENITH GIGANTE 751) - LA FORESTA DEI DESTINI INCROCIATI - VARIANT",
+        "SENZANIMA 18 - VENDETTA - VARIANT MANICOMIX",
+        "MONDO OSCURO VOL.37 - DRAGONERO 150 - LA FINE DI TUTTO - VARIANT LUCCA 2025",
+        "SCOTTECS GIGAZINE 30 - VARIANT ORO LIMITATA",
+        "SCHELETRI - ZEROCALCARE - TASCABILE - VARIANT",
+        "TUTTO UN ALTRO LUPO ALBERTO - VARIANT SILVER LAMINATA ARGENTO",
+        "ZODIACO - LEO ORTOLANI - VARIANT AUTOGRAFATA",
+        "LE CRONACHE DI FLORENS VOL.1 - ELISIA VARIANT",
+        "GEIST MASCHINE VOL.2 - VARIANT FUMETTERIE",
+        "X-O MANOWAR NUOVA SERIE n. 4 VISIGOTO - VARIANT COVER",
+        "BLOODSHOT n. 4 BLOODSHOT - H.A.R.D. CORPS - VARIANT COVER",
+        "RABBIDS n. 1 BWAAAAAAAAAAH - VARIANT COVER SIO",
+        "LA CASTA DEI META-BARONI n. 1 COLLECTOR EDITION",
+        "SONIC THE HEDGEHOG VOL.1 - L'ECO DELLA GUERRA - VARIANT",
+        "VOID RIVALS VOL.4 - VARIANT",
+        "House of Slaughter 6 - Ed. Variant Sketchata da Letizia Cadonici",
+        "Archie Box - Con Cofanetto E Poster Omaggio",
+        "Tom Strong: Edição Definitiva Vol. 2",
+        "Critical Role: Vox Machina Origins Series I and II Library Edition HC",
+        "The Witcher Library Edition Hardcover Volumes",
+        "World of Warcraft: Chronicle Hardcover Volumes",
+        "The Art of Masters of the Universe: Origins and Masterverse HC (Deluxe Edition)",
+        "Art of Over the Garden Wall: Expanded Edition HC",
+        "블랙팬서 히든 젬 패키지 세트",
+        "시빌 워 2 스페셜 에디션 (한정판)",
+        "『くまのプーさん 100エーカーの森の不思議な物語』 カドスト限定版",
+    ]
+    for title in cases:
+        is_manga, reason = mw.is_likely_manga(title)
+        assert not is_manga, f"Debe rechazarse como no-manga: {title!r} (reason={reason})"
+
+
+def test_hard_patterns_20260823_kadokawa_merch_markers():
+    """Marcadores ESTRUCTURALES de merch, no sustantivos sueltos.
+
+    - 【日本進口精品】: sello de la línea de goods importados de Kadokawa Taiwan.
+    - ファミ通DXパック: bundles de videojuego de KADOKAWA Store.
+    El sustantivo suelto de merch NO sirve (gotcha #92): 缶バッジ/クリアファイル
+    aparecen como BONUS en ediciones especiales legítimas y deben pasar.
+    """
+    rejected = [
+        "預購-「文豪Stray dogs」貼紙收藏組 BOX販售【日本進口精品】",
+        "預購-怪獸8號 徽章收藏組＋５６ BOX販售【日本進口精品】",
+        "ペルソナ4 リバイバル アトラスDショップ限定版 ファミ通DXパック（先着購入特典付き）",
+    ]
+    for title in rejected:
+        is_manga, reason = mw.is_likely_manga(title)
+        assert not is_manga, f"Debe rechazarse (merch): {title!r} (reason={reason})"
+    kept = [
+        "葬送のフリーレン 11 描き下ろし缶バッジ2種セット(第3弾)付き特装版",
+        "アルスラーン戦記(23)ミニクリアファイル付き特装版",
+        "終將成為妳畫集 Astrolabe （限定掛軸）",
+    ]
+    for title in kept:
+        is_manga, reason = mw.is_likely_manga(title)
+        assert is_manga, f"Bonus incluido, NO debe rechazarse: {title!r} (reason={reason})"
+
+
+def test_blacklist_20260823_does_not_kill_real_manga_or_light_novels():
+    """Anti-drift: las keywords nuevas no deben matar manga/LN reales."""
+    cases = [
+        "Disney Twisted Wonderland - Il manga: Book of Heartslabyul 1",
+        "Il richiamo di Cthulhu - Deluxe Edition Variant",   # Gou Tanabe
+        "ダンジョンに出会いを求めるのは間違っているだろうか4 小冊子付き限定版 (GA文庫)",
+        "I'm in Love with the Villainess (Light Novel, 2-in-1) Band 1 – Limited Edition",
+        "The Holy Grail of Eris – Light Novel (2-in-1) Band 1 – Ultra Limited Edition (signiert)",
+        "Grandmaster of Demonic Cultivation: Mo Dao Zu Shi (Deluxe Hardcover Novel) Volume 5",
+        "Case File Compendium: Bing An Ben (Novel) Vol. 10 (Special Edition)",
+        "twoje imię. (LN) twarda oprawa",
+        "86─不存在的戰區─(Ep.14) ─Paint it black─（限定版）",
+        "無職転生 〜蛇足編〜4 グッズ付き特装版 （MFブックス）",
+    ]
+    for title in cases:
+        is_manga, reason = mw.is_likely_manga(title)
+        assert is_manga, f"Manga/LN legítimo NO debe rechazarse: {title!r} (reason={reason})"
+
+
+def test_prompt_rules_no_declara_light_novel_como_no_manga():
+    """Anti-drift del prompt del skill standardize (gotcha #146).
+
+    La regla `Light novels → false` en prompt-rules.md contradecía CLAUDE.md,
+    `is_likely_manga()` y el enum de `product_type` (que incluye `novel`), y en
+    la corrida 2026-08-23 mandó 83 light novels legítimas a curación manual.
+    """
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / ".claude" / "skills" / \
+        "watch-standardize-catalog" / "prompt-rules.md"
+    txt = p.read_text(encoding="utf-8")
+    assert 'non_manga_reason="light_novel"' not in txt.split("NUNCA emitas")[0], \
+        "prompt-rules.md no debe instruir marcar light novels como no-manga"
+    assert "Light novels" in txt and "SON parte del catálogo" in txt
+
+
+def test_blog_url_patterns_shopify_blogs(tmp_path=None):
+    """Un post del blog de Shopify no es un producto (curación 2026-08-23).
+
+    Milky Way publica en /blogs/news/<slug>; el scraper lo tomó como item con
+    el titular de la noticia por `title`. Los productos Shopify viven en
+    /products/ y las listas en /collections/, así que /blogs/<handle>/ es
+    inequívoco.
+    """
+    is_manga, reason = mw.is_likely_manga(
+        "Nuevas licencias: “Given 10th Mix”, “Pink Heart Jam Beat”",
+        url="https://www.milkywayediciones.com/blogs/news/nuevas-licencias-given-10th-mix",
+    )
+    assert not is_manga and reason.startswith("blog_url:"), reason
+    # Un producto Shopify normal NO se ve afectado
+    ok, _ = mw.is_likely_manga(
+        "SAKAMOTO DAYS VOL.24 - VARIANT",
+        url="https://funside.it/products/sakamoto-days-vol-24-variant",
+    )
+    assert ok
+
+
+# --- Revisión de fuentes 2026-09-02 (pedido del owner) ---------------------
+#
+# Los 4 mecanismos que dejaban entrar material fuera de alcance a diario por
+# los searches de formato de Dynit (IT), Panini España, Star Comics (IT),
+# Funside (IT) y Dark Horse Direct (US). Ver docs/reference/gotchas.md #186.
+
+
+def test_home_video_box_with_plus_contents_list_is_rejected():
+    """Un '+' INMEDIATAMENTE DESPUÉS del token de home video enumera el
+    CONTENIDO de la caja — el Blu-ray es el producto, no el bonus.
+
+    Caso real Dynit 2026-09-02: '(Blu-Ray+Dvd+Booklet+Settei Book)' se
+    rescataba como si fuera un manga con Blu-ray de regalo.
+    """
+    for title in [
+        "Manie Manie (Box Set Limited Edition) (Blu-Ray+Dvd+Booklet+Settei Book)",
+        "Harmagedon Limited Edition (Blu-Ray+Dvd+Booklet+Settei Book)",
+    ]:
+        is_manga, reason = mw.is_likely_manga(title)
+        assert not is_manga, f"Home video debe rechazarse: {title!r} (reason={reason})"
+        assert reason.startswith("non_manga_hard:"), f"Razón inesperada: {reason}"
+
+
+def test_bonus_rescue_before_the_match_still_works():
+    """El '+' DELANTE del producto-bonus sí une dos obras y debe seguir
+    rescatando (guard de regresión del fix de arriba)."""
+    is_manga, _ = mw.is_likely_manga("Yomi No Tsugai Variant + FMA Variant Bundle 1")
+    assert is_manga
+    # Marcadores léxicos posteriores (con/with/…) intactos.
+    is_manga, _ = mw.is_likely_manga("Variant Bundle con Storia Extra")
+    assert is_manga
+    # 同梱 posterior (japonés) intacto.
+    is_manga, _ = mw.is_likely_manga("DVD＋パクティオカード同梱")
+    assert is_manga
+
+
+def test_comic_franchise_detected_from_url_slug():
+    """El slug nombra el sello que el título omite.
+
+    Caso real Star Comics 2026-09-02: 'FAITH n. 1 …' no dice nada, pero la URL
+    es /fumetto/valiant-variant-cover-29-faith-1 (Valiant = editorial US).
+    """
+    is_comic, reason = mw.is_comic_not_manga(
+        "FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER",
+        publisher="Star Comics",
+        url="https://www.starcomics.com/fumetto/valiant-variant-cover-29-faith-1",
+    )
+    assert is_comic, f"Debe rechazarse por el slug (reason={reason})"
+    assert reason.startswith("comic_franchise_url:"), f"Razón inesperada: {reason}"
+    # Sin URL, el título solo no alcanza — confirma que la evidencia es la URL.
+    is_comic_no_url, _ = mw.is_comic_not_manga(
+        "FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER", publisher="Star Comics",
+    )
+    assert not is_comic_no_url
+
+
+def test_url_franchise_does_not_fire_on_manga_slugs():
+    """Guard: el matcher de URL no debe rechazar manga real."""
+    for title, url in [
+        ("ONE-PUNCH MAN 26 - VARIANT", "https://funside.it/products/one-punch-man-26-variant"),
+        ("Gachiakuta Variant Cover 3", "https://www.starcomics.com/fumetto/gachiakuta-variant-cover-3"),
+        ("Berserk Deluxe Hardcover Volumes", "https://www.darkhorsedirect.com/products/berserk-deluxe-hardcover-volumes"),
+    ]:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="", url=url)
+        assert not is_comic, f"Falso positivo por URL: {title!r} (reason={reason})"
+
+
+def test_trading_card_box_rejected_by_url_evidence():
+    """El título no dice de qué es la caja; el slug sí.
+
+    Caso real Panini España 2026-09-02: 'COFANETTO TREASURE BOX ONLINE HARRY
+    POTTER' → .../harry-potter-always-trading-card-treasure-box-panini-...
+    """
+    for who in ["harry-potter", "hermione-granger", "ron-weasley"]:
+        url = f"https://www.panini.es/shp_esp_es/harry-potter-always-trading-card-treasure-box-panini-{who}-005663cofon1-it.html"
+        is_manga, reason = mw.is_likely_manga(
+            "COFANETTO TREASURE BOX ONLINE HARRY POTTER", url=url,
+        )
+        assert not is_manga, f"Caja de cromos debe rechazarse (reason={reason})"
+        assert reason.startswith("non_manga_url:"), f"Razón inesperada: {reason}"
+
+
+def test_bare_300_is_not_blacklisted():
+    """'300' pelado NO puede estar en franchise_keywords: mataría manga real.
+
+    Guard permanente — si alguien agrega '300' a data/comics_blacklist.yml,
+    este test lo frena. El producto de Frank Miller se filtra por la frase
+    completa ('300 Variant Edition'), no por el número.
+    """
+    for title in [
+        "300 jours avec toi Coffret 2",
+        "Ich habe 300 Jahre lang Schleim getötet und aus Versehen das höchste Level erreicht",
+    ]:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="")
+        assert not is_comic, f"Manga real rechazado por '300': {title!r} ({reason})"
+    is_comic, _ = mw.is_comic_not_manga("300 VARIANT EDITION", publisher="Star Comics")
+    assert is_comic, "El 300 de Frank Miller sí debe rechazarse"
+
+
+def test_url_franchise_respects_exceptions_found_in_the_url():
+    """Las title_exceptions se evalúan contra el MISMO blob del que salió el
+    match. Si el match vino de la URL, la excepción también puede vivir ahí.
+
+    Regresión real detectada en dry-run el 2026-09-02: el matcher de URL iba a
+    expulsar 3 manga (Vanitas vol.4, Akame ga Kill! vols. 8 y 10) porque su URL
+    contiene `gangan-joker` — Gangan Joker es una REVISTA DE MANGA de Square
+    Enix, ya presente en title_exceptions, pero sólo se comprobaba el título.
+    """
+    for title, url in [
+        ("The Case Study of Vanitas Vol. 4",
+         "https://mangavariant.com/variant/the-case-study-of-vanitas/vol-4-gangan-joker/"),
+        ("Akame ga Kill! Variant Vol. 8",
+         "https://mangavariant.com/variant/akame-ga-kill/vol-8-gangan-joker/"),
+    ]:
+        is_comic, reason = mw.is_comic_not_manga(title, publisher="", url=url)
+        assert not is_comic, f"Manga real expulsado por la URL: {title!r} ({reason})"

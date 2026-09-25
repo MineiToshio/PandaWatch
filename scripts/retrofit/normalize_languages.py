@@ -31,7 +31,13 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # type: ignore
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
+# patrón que fetch_better_covers.py / backfill_series_aliases.py).
+try:
+    from manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # type: ignore
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, is_approved, write_lines_atomic  # type: ignore
 
 # Mismo set que `_LANG_CANON` en scripts/validate_corpus.py (14 idiomas del
 # proyecto + el valor compuesto legítimo "Español / Catalán"). No se importa

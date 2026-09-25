@@ -94,6 +94,9 @@ fichas de la editorial oficial, útil para descubrir ediciones especiales del me
   aplicada en `_extract_volume`, `_normalize_series_name`, `derive_cluster_key` y la frontera
   de escritura de `volume` en `candidate_to_json`. Los 2 items afectados se repararon con
   `backfill_cluster_key.py`.
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 4 items flageados, los 4
+  conservados (light novels 特装版) — falso negativo del skill por el
+  `prompt-rules.md` que excluía light novels por default.
 
 ---
 
@@ -136,3 +139,65 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha. Recuerda: NUNCA setear `publisher` con el nombre de la tienda (#44).
+
+## 2026-08-25 — `series_key` derivada del SUFIJO de edición, no del nombre de la serie
+
+Delta diario (`logs/scrape-delta-2026-08-25-110223/`), detectado al curar la cola de
+aliases. Sanyodo fue el mayor emisor de `series_key` inservibles: la key no sale del
+nombre de la obra sino de una palabra suelta del **sufijo de edición** del título
+japonés. Casos reales de esta corrida:
+
+| `series_key` derivada | Título real | Serie que correspondía |
+|---|---|---|
+| `deep` | 今泉ん家はどうやらギャルの溜まり場になってるらしい DEEP 特装版 10 | Imaizumin-chi… ~DEEP~ |
+| `box` | ちいかわ … ふせん&ノートBox付き特装版 | Chiikawa |
+| `memories` | ヴァンパイア騎士 Memories … 特装版 | Vampire Knight Memories |
+| `27-book` | 『機動戦士ガンダムサンダーボルト』27集限定版 特製Book付き | Gundam Thunderbolt |
+| `10-book` | ぷにるはかわいいスライム 10 ポストカード&シールBook付き特装版 | Punirunes |
+| `bd-holic` | Bd付き ×××Holic・戻 特装版 | xxxHOLiC Rei |
+| `graduation` | 魔法科高校の劣等生 石田可奈画集 Graduation | Mahouka Koukou no Rettousei (artbook) |
+| `yona-memorial` | 暁のヨナ ４７ ＹＯＮＡ ＭＥＭＯＲＩＡＬ 特装版 | Yona of the Dawn |
+
+El patrón: el título JP trae el bonus/edición **al final y en alfabeto latino**
+(`…Box付き`, `…Book付き`, `CD付き`, `Memories`, `DEEP`, `Graduation`), y el derivador se
+queda con ese fragmento latino por ser el único token "legible" de la cadena, en vez de
+con el nombre CJK de la obra que va al principio. Cuando el sufijo empieza por número
+(`27集`, `10`) la key hereda hasta el número: `27-book`, `10-book`.
+
+**Consecuencias, en orden de gravedad:**
+
+1. **Keys genéricas que colisionan.** `deep`, `box`, `memories` son palabras comunes: la
+   siguiente obra con el mismo sufijo cae en la MISMA key y quedan dos series distintas
+   agrupadas bajo una. Este es el riesgo real, no la estética.
+2. Cada una llega a `data/unmapped_series.jsonl` como candidata, y el fuzzy del audit
+   propone merges disparatados (`memories` → `metamorphosis` 0.67, `deep` → `deep-3`
+   0.80 🟢): un 🟢 **falso** que invita a un merge irreversible. En esta corrida se
+   saltearon todas por esa razón (la regla dura de 🟡/🟢 sin evidencia estructural).
+3. Las que sí tenían destino verificable se mapearon a mano (`27-book` →
+   `gundam-thunderbolt`, `yona-memorial` → `yona-of-the-dawn`, `mihara-jun` →
+   `mihara-jun-special-box`), pero eso es curación manual recurrente, no una solución.
+
+Mismo patrón, menor volumen, en `jp-rakuten-books` (`cd-division-rap-battle-side-d-h-b`
+para Hypnosis Mic, `au-artbook` para AU画集) — se documenta allí por separado.
+
+**Para el owner (no aplicado — es un cambio de parser, decisión suya):** al derivar la
+`series_key` de un título JP, cortar los sufijos de edición/bonus **antes** de derivar
+(`…付き`, `特装版`, `限定版`, `初回限定版` y el bloque latino final que los acompaña) y
+derivar del segmento CJK inicial. La lista de sufijos ya existe para
+`canonicalize_edition_slugs` (gotcha #69), así que sería reusarla del lado de la serie.
+El retorno es que deja de fabricarse la clase de key genérica que puede fusionar series
+sin relación — el modo de falla más caro del corpus.
+
+### Auditoría full — 2026-09-24
+
+El enlace `.next` de la noticia apunta a otra noticia, no a otra página del
+catálogo. Full estaba recorriendo artículos ajenos. El detector ahora permite
+paginación por query o rutas explícitas de página y rechaza saltos a artículos
+con otro slug. La ficha principal sigue siendo el discovery de esta fuente.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitó 1 referencia de `www.sanyodo.co.jp` asociada a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.

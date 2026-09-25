@@ -28,8 +28,12 @@ Patrones soportados:
       Mejora típica: 164×200 → 988×1200 (×36 más píxeles)
 
   • Buscalibre CDN (images.cdn{N}.buscalibre.com):
-      .../fit-in/<W>x<H>/...  →  quitar segmento fit-in/<W>x<H>
-      Mejora típica: 2×-22× más píxeles (verificado empíricamente 2026-06-11)
+      .../fit-in/<W>x<H>/...  →  fit-in/1200x1200/ (NO se quita el segmento
+      entero — gotcha #167, 2026-09-01: quitarlo del todo devuelve un tamaño
+      "base" intermedio del CDN, bastante menor que pedir 1200x1200 explícito;
+      verificado en vivo: fit-in/360x360→92 160px, sin fit-in→207 360px,
+      fit-in/1200x1200→1 023 600px). No re-capa si el fit-in pedido ya es
+      ≥1200 en ambas dimensiones.
 
   • Cultura CDN (cdn.cultura.com):
       .../cdn-cgi/image/width=<N>/...  →  quitar segmento cdn-cgi/image/...
@@ -43,6 +47,32 @@ Patrones soportados:
       /media/catalog/product/cache/<hex>/...  →  quitar segmento cache/<hex>/
       ⚠️  ~20% devuelve imagen distinta → se valida con _same_cover antes
       de aceptar.
+
+  • Aladin CDN (image.aladin.co.kr, KR - fuente Corea del Sur):
+      .../cover150/<archivo>  →  .../cover500/<archivo>
+      .../cover200/<archivo>  →  .../cover500/<archivo>
+      Mismo archivo, carpeta de tamaño mayor en la misma ruta (NO es una
+      candidata externa — gotcha #177). Verificado con requests reales
+      (2026-09-02): `cover800`/`cover1000`/`cover1200` dan 404 (cover500 es
+      el techo real del CDN); `coversum` y `letslook` son variantes MÁS
+      chicas o de archivo DISTINTO, no se usan como target. La ganancia
+      varía por producto — algunos ya estaban al tope real bajo cover150/200
+      (mismas dimensiones, el min-gain los descarta sin aplicar), otros
+      suben hasta 6× los píxeles.
+
+  • Rakuten Books CDN familia r10s.jp (tshop.r10s.jp, shop.r10s.jp — distinto
+    del host thumbnail.image.rakuten.co.jp de arriba, misma tienda):
+      ...cabinet/4771/9784040764771_1_15.jpg?downsize=130:*  →  (sin query)
+      ...cabinet/3733/9784758023733_1_3.jpg?fitin=560:400&composite-to=...
+        →  (sin query)
+      Quita la query ENTERA, no un downsize=N más grande (gotcha #180).
+      Verificado con requests reales (2026-09-02): downsize=130:* → 130×184;
+      downsize=1000:* → 844×1200 (igual a la nativa, no upscala); sin query
+      (sigue el 302 tshop→shop) → 844×1200 (misma imagen); downsize=9999:* →
+      HTTP 400 (el param SÍ tiene techo, pero no hace falta buscarlo — quitar
+      la query entera da la nativa directo). Excluye `.gif` (tarjeta de
+      título placeholder generada por Rakuten cuando no tiene la portada
+      real, gotcha #171/#176) vía `image_store.known_placeholder_url_reason()`.
 
 La comparación usa dimensiones de imagen (Pillow si está instalado, o
 tamaño de archivo como proxy) para evitar reemplazar con imágenes iguales
@@ -63,6 +93,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -78,11 +109,11 @@ if str(_SCRIPTS) not in sys.path:
 import image_store  # type: ignore
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
     from manga_watch import (  # type: ignore  # noqa: E402
-        backup_and_rotate, make_session, is_approved, write_lines_atomic,
+        _img_stem, backup_and_rotate, make_session, is_approved, write_lines_atomic,
     )
 except ImportError:  # pragma: no cover
     from scripts.manga_watch import (  # type: ignore  # noqa: E402
-        backup_and_rotate, make_session, is_approved, write_lines_atomic,
+        _img_stem, backup_and_rotate, make_session, is_approved, write_lines_atomic,
     )
 
 DEFAULT_USER_AGENT = "manga-watch-personal/0.2 (+personal-use)"
@@ -129,9 +160,23 @@ _RAKUTEN_EX_RE = re.compile(r"^\d+x\d+$")
 
 # Buscalibre CDN: images.cdnN.buscalibre.com con segmento fit-in/<W>x<H>/
 # Ejemplo: https://images.cdn1.buscalibre.com/fit-in/360x360/...imagen...
-# → https://images.cdn1.buscalibre.com/...imagen...
+# → https://images.cdn1.buscalibre.com/fit-in/1200x1200/...imagen...
+# (gotcha #167, 2026-09-01: reescribir a un fit-in explícito grande, NO quitar
+# el segmento — quitarlo del todo NO da la imagen en máxima resolución, ver
+# docstring del módulo).
 _BUSCALIBRE_HOSTS_RE = re.compile(r"^images\.cdn\d+\.buscalibre\.com$", re.IGNORECASE)
-_BUSCALIBRE_FIT_RE = re.compile(r"/fit-in/\d+x\d+(?:/|$)")
+_BUSCALIBRE_FIT_RE = re.compile(r"/fit-in/(\d+)x(\d+)(/|$)")
+_BUSCALIBRE_MAX_FIT = 1200
+
+
+def _buscalibre_fit_replacement(m: "re.Match[str]") -> str:
+    """Reescribe fit-in/<W>x<H>/ a fit-in/1200x1200/, preservando el separador
+    que cerraba el match (`/` o fin de string). No re-capa si el fit-in pedido
+    ya es ≥1200 en ambas dimensiones (evita empeorar una URL ya en alta res)."""
+    w, h = int(m.group(1)), int(m.group(2))
+    if w >= _BUSCALIBRE_MAX_FIT and h >= _BUSCALIBRE_MAX_FIT:
+        return m.group(0)
+    return f"/fit-in/{_BUSCALIBRE_MAX_FIT}x{_BUSCALIBRE_MAX_FIT}{m.group(3)}"
 
 # Cultura CDN: cdn.cultura.com con segmento cdn-cgi/image/width=N/ (Cloudflare Polish).
 # Ejemplo: https://cdn.cultura.com/cdn-cgi/image/width=300/...imagen...
@@ -150,6 +195,33 @@ _WHAKOOM_SIZE_RE = re.compile(r"/(small|thumb|medium)/", re.IGNORECASE)
 # ⚠️  ~20% de CDNs Magento sirven imagen distinta sin el cache path.
 # Requiere validación same_cover antes de aceptar.
 _MAGENTO_CACHE_RE = re.compile(r"/media/catalog/product/cache/[^/]+/")
+
+# Aladin CDN (KR): image.aladin.co.kr/product/<id>/<sub>/cover<N>/<archivo>
+# Mismo archivo, carpeta de tamaño mayor en la misma ruta — no una candidata
+# externa (gotcha #177). Verificado en vivo (2026-09-02): cover500 es el
+# techo real (cover800/1000/1200 → 404); no re-capa si ya es >= 500.
+_ALADIN_HOST = "image.aladin.co.kr"
+_ALADIN_COVER_RE = re.compile(r"/cover(\d{2,4})/")
+_ALADIN_MAX_COVER = 500
+
+# Rakuten Books CDN (familia r10s.jp, distinta del host thumbnail.image.rakuten.co.jp
+# del patrón #5): tshop.r10s.jp / shop.r10s.jp sirven la MISMA imagen con params de
+# resize propios de su CDN — `?downsize=<N>:*` (el más común, ~177 items) y
+# `?fitin=<W>:<H>&composite-to=...`. Verificado con requests reales (2026-09-02):
+#   downsize=130:*  → 130×184   (thumbnail de card)
+#   downsize=1000:* → 844×1200  (igual a la nativa, no upscala)
+#   sin query (sigue el 302 tshop→shop) → 844×1200  (misma nativa)
+#   downsize=9999:* → HTTP 400 (el param SÍ tiene techo, pero no hace falta
+#     buscarlo: quitar la query entera da directo la nativa sin ese riesgo)
+# → la reescritura es quitar la query COMPLETA (no sólo el param), igual que el
+# patrón #5 de thumbnail.image.rakuten.co.jp — mismo mecanismo, host CDN distinto
+# de la misma tienda. `requests`/`image_store.download_image` siguen el 302
+# automáticamente (allow_redirects por defecto), así que no hace falta resolverlo
+# a mano. Excluye `.gif` (tarjeta de título generada sin portada real, gotcha
+# #171/#176) vía `image_store.known_placeholder_url_reason()` — no tiene sentido
+# "mejorar la resolución" de un placeholder.
+_RAKUTEN_R10S_HOSTS = frozenset({"tshop.r10s.jp", "shop.r10s.jp"})
+_RAKUTEN_RESIZE_PARAMS = frozenset({"downsize", "fitin", "composite-to"})
 
 
 def derive_original_url(url: str) -> str | None:
@@ -206,10 +278,10 @@ def derive_original_url(url: str) -> str | None:
             cleaned = parsed._replace(query="").geturl()
             return cleaned if cleaned != url else None
 
-    # ── 6. Buscalibre CDN: fit-in/<W>x<H>/ segment ──
+    # ── 6. Buscalibre CDN: fit-in/<W>x<H>/ → fit-in/1200x1200/ (gotcha #167) ──
     if _BUSCALIBRE_HOSTS_RE.match(parsed.netloc):
         if _BUSCALIBRE_FIT_RE.search(path):
-            clean_path = _BUSCALIBRE_FIT_RE.sub("/", path)
+            clean_path = _BUSCALIBRE_FIT_RE.sub(_buscalibre_fit_replacement, path, count=1)
             cleaned = parsed._replace(path=clean_path, query="").geturl()
             return cleaned if cleaned != url else None
 
@@ -233,6 +305,24 @@ def derive_original_url(url: str) -> str | None:
         clean_path = _MAGENTO_CACHE_RE.sub("/media/catalog/product/", path)
         cleaned = parsed._replace(path=clean_path, query="").geturl()
         return cleaned if cleaned != url else None
+
+    # ── 10. Aladin CDN: cover<N>/ → cover500/ (gotcha #177) ──
+    if parsed.netloc.lower() == _ALADIN_HOST:
+        m = _ALADIN_COVER_RE.search(path)
+        if m and int(m.group(1)) < _ALADIN_MAX_COVER:
+            clean_path = _ALADIN_COVER_RE.sub(f"/cover{_ALADIN_MAX_COVER}/", path, count=1)
+            cleaned = parsed._replace(path=clean_path, query="").geturl()
+            return cleaned if cleaned != url else None
+
+    # ── 11. Rakuten Books CDN familia r10s.jp: downsize/fitin → sin query ──
+    if parsed.netloc.lower() in _RAKUTEN_R10S_HOSTS and parsed.query:
+        qs_keys = {k.lower() for k, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        if qs_keys & _RAKUTEN_RESIZE_PARAMS:
+            # Guard: nunca "mejorar" una tarjeta de título .gif (gotcha #171/#176) —
+            # image_store es la fuente única para detectar placeholders conocidos.
+            if not image_store.known_placeholder_url_reason(url):
+                cleaned = parsed._replace(query="").geturl()
+                return cleaned if cleaned != url else None
 
     return None
 
@@ -396,7 +486,7 @@ def _try_upgrade(
 # ─────────────────────────────────────────────────────────
 
 def _collect_targets(
-    items: list[dict], *, include_approved: bool = False,
+    items: list[dict], *, include_approved: bool = False, host: str = "",
 ) -> tuple[list[tuple[dict, str, str, str, str]], int]:
     """Construye la lista de (item, campo, old_url, old_local, item_url) a procesar.
 
@@ -407,9 +497,14 @@ def _collect_targets(
     Items aprobados (`approved_at`) se saltean por defecto (segundo valor
     devuelto = cuántos): este script reemplaza url/local de una entry existente
     sin cola de revisión, así que no debe pisar un golden record.
+
+    `host`: si se pasa (substring case-insensitive), acota los targets a URLs
+    cuyo netloc lo contenga (ej. "aladin.co.kr" para correr acotado a una
+    sola fuente/CDN sin tocar el resto de los patrones soportados).
     """
     targets: list[tuple[dict, str, str, str, str]] = []
     skipped_approved = 0
+    host_lower = host.lower()
     for it in items:
         if "_raw" in it:
             continue
@@ -423,7 +518,11 @@ def _collect_targets(
             if not isinstance(img, dict):
                 continue
             img_url = img.get("url") or ""
-            if img_url and derive_original_url(img_url):
+            if not img_url:
+                continue
+            if host_lower and host_lower not in urlparse(img_url).netloc.lower():
+                continue
+            if derive_original_url(img_url):
                 targets.append((it, f"img:{idx}", img_url, img.get("local") or "", item_url))
     return targets, skipped_approved
 
@@ -446,6 +545,132 @@ def _apply_upgrade(
             imgs[idx]["local"] = new_local
 
 
+# ─────────────────────────────────────────────────────────
+# Dedup post-upgrade de images[] (gotcha #181, 2026-09-02)
+# ─────────────────────────────────────────────────────────
+#
+# Causa raíz confirmada con datos reales (backup `items.jsonl.pre-aladin-
+# upgrade-bak`): un item podía tener, ANTES de este script, dos entries de
+# `images[]` apuntando al MISMO archivo del CDN de Aladin en dos carpetas de
+# tamaño distintas — ej. `cover500/k382030457_1.jpg` en `images[0]` (la
+# portada, ya en alta resolución por un camino previo — JSON-LD/og:image) y
+# `cover150/k382030457_1.jpg` en `images[3]` (capturado por el selector de
+# galería, todavía sin `local`). Antes del upgrade las dos URLs eran
+# textualmente DISTINTAS, así que ningún dedup existente las veía como
+# duplicado. `_apply_upgrade` reescribe cada entry de forma independiente
+# (una por `campo`/índice) sin mirar el resto de `images[]` del mismo item —
+# al normalizar `cover150/` → `cover500/`, la entry de galería termina con la
+# MISMA url/local que la portada, y el `images[]] queda con la imagen
+# literalmente duplicada (109 items / 151 entries, 100% KR-Aladin).
+#
+# Fix: tras aplicar upgrades, dedupear `images[]` de cada item TOCADO por
+# clave canónica — misma familia de criterios que `fetch_better_covers.
+# _apply_improvement` (gotcha #164): `_img_stem(url)` (fuente única de
+# manga_watch), con fallback a `local` idéntico, y un 3er fallback de
+# contenido (sha256 de los bytes del archivo local) para el caso en que dos
+# entries con stem/local distintos terminen siendo la MISMA imagen en disco.
+# Conserva SIEMPRE el primer sobreviviente en orden de aparición (así
+# `images[0]`, la portada, nunca se pierde ni se reordena) y traslada
+# `kind`/`description` del duplicado eliminado al sobreviviente cuando éste
+# no los tenía — mismo comportamiento sticky que `_apply_improvement`.
+
+
+def _local_sha256(local: str, images_dir: Path) -> str | None:
+    """sha256 del archivo `local` en `images_dir`, o None si no existe/legible."""
+    if not local:
+        return None
+    p = images_dir / local
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def dedupe_item_images(item: dict, images_dir: Path) -> bool:
+    """Dedupea `images[]` de UN item por clave canónica. Devuelve True si cambió.
+
+    Clave de "misma foto" = cualquiera de:
+      (a) `_img_stem(url)` idéntico (misma normalización que el resto del
+          pipeline: strip de query irrelevante + sufijos de thumb conocidos),
+      (b) `local` idéntico (mismo archivo del espejo),
+      (c) sha256 de los bytes del archivo `local` idéntico (mismo contenido,
+          aunque stem/local difieran — ej. dos hosts distintos sirviendo la
+          misma imagen).
+    Conserva el PRIMER sobreviviente en orden de aparición (nunca reordena ni
+    vacía `images[]`); el duplicado eliminado dona `kind`/`description` al
+    sobreviviente cuando éste no los tenía (sticky, igual que
+    `_union_merge_images`/`_apply_improvement`). El sha256 sólo se calcula
+    cuando stem/local no alcanzan para decidir, con cache por-`local` dentro
+    de la llamada (barato: son unos pocos KB por imagen del espejo AVIF).
+    """
+    images = item.get("images")
+    if not isinstance(images, list) or len(images) < 2:
+        return False
+
+    sha_cache: dict[str, str | None] = {}
+
+    def _sha_of(local: str) -> str | None:
+        if not local:
+            return None
+        if local not in sha_cache:
+            sha_cache[local] = _local_sha256(local, images_dir)
+        return sha_cache[local]
+
+    kept: list[dict] = []
+    kept_stems: list[str] = []
+    kept_locals: list[str] = []
+    kept_shas: list[str | None] = []
+    changed = False
+
+    for im in images:
+        if not isinstance(im, dict):
+            kept.append(im)
+            kept_stems.append("")
+            kept_locals.append("")
+            kept_shas.append(None)
+            continue
+
+        stem = _img_stem(im.get("url", ""))
+        local = im.get("local") or ""
+        sha = None
+
+        dup_idx = None
+        for i in range(len(kept)):
+            if stem and kept_stems[i] == stem:
+                dup_idx = i
+                break
+            if local and kept_locals[i] == local:
+                dup_idx = i
+                break
+            # sha256 sólo se calcula si stem/local no decidieron (evita I/O
+            # innecesario en el camino feliz sin duplicados).
+            if sha is None:
+                sha = _sha_of(local)
+            if sha and kept_shas[i] is None:
+                kept_shas[i] = _sha_of(kept_locals[i])
+            if sha and kept_shas[i] and sha == kept_shas[i]:
+                dup_idx = i
+                break
+
+        if dup_idx is None:
+            kept.append(im)
+            kept_stems.append(stem)
+            kept_locals.append(local)
+            kept_shas.append(sha)
+            continue
+
+        # Duplicado: dona kind/description al sobreviviente (sticky) y descarta.
+        survivor = kept[dup_idx]
+        for f in ("kind", "description"):
+            if not survivor.get(f) and im.get(f):
+                survivor[f] = im[f]
+        changed = True
+
+    if changed:
+        item["images"] = kept
+    return changed
+
+
 def run(
     items_path: Path,
     images_dir: Path,
@@ -457,9 +682,12 @@ def run(
     dry_run: bool,
     user_agent: str,
     include_approved: bool = False,
+    host: str = "",
 ) -> None:
     items = _load_items(items_path)
-    targets, skipped_approved = _collect_targets(items, include_approved=include_approved)
+    targets, skipped_approved = _collect_targets(
+        items, include_approved=include_approved, host=host,
+    )
     if limit > 0:
         targets = targets[:limit]
 
@@ -519,6 +747,15 @@ def run(
                     new_url, new_local = result
                     for item, campo, _ in unique_by_url[old_url]:
                         _apply_upgrade(item, campo, new_url, new_local)
+                        # Dedup post-upgrade (gotcha #181): la entry recién
+                        # reescrita puede haber colapsado con OTRA entry del
+                        # mismo item que ya apuntaba a la misma foto bajo una
+                        # URL distinta antes del upgrade (ver docstring de
+                        # dedupe_item_images). Se corre por-item, apenas se
+                        # toca ese item, para que ningún flush parcial
+                        # persista un duplicado a mitad de camino.
+                        if dedupe_item_images(item, images_dir):
+                            counter["deduped"] += 1
                     counter["upgraded"] += 1
                     # Flush periódico: protege contra cancels mid-run
                     if not dry_run and counter["upgraded"] % _FLUSH_EVERY == 0:
@@ -542,6 +779,7 @@ def run(
         f"\n  Mejoradas:     {counter['upgraded']:>5}"
         f"\n  Sin mejora:    {counter['no_gain']:>5}  (misma resolución o descarga fallida)"
         f"\n  Errores:       {counter['errors']:>5}"
+        f"\n  Items dedupeados post-upgrade: {counter['deduped']:>5}  (images[] con foto duplicada, gotcha #181)"
     )
 
 
@@ -570,6 +808,9 @@ def _parse_args() -> argparse.Namespace:
                     help="También sube la resolución de items aprobados (golden records). "
                          "Por defecto se saltean: este script reemplaza url/local de una "
                          "entry existente sin cola de revisión.")
+    p.add_argument("--host", default="",
+                    help="Acota a URLs cuyo netloc contenga este substring "
+                         "(ej. --host aladin.co.kr). Vacío = todos los patrones/hosts.")
     return p.parse_args()
 
 
@@ -586,4 +827,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         user_agent=args.user_agent,
         include_approved=args.include_approved,
+        host=args.host,
     )

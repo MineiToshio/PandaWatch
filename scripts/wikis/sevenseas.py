@@ -50,6 +50,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -182,9 +187,9 @@ def fetch_books(
     # hops de caché/CDN lo omiten — NO tratar su ausencia como "última página")
     while page <= max_pages:
         params: dict[str, Any] = {"per_page": 100, "page": page,
-                                  "orderby": "date", "order": "desc"}
+                                  "orderby": "modified", "order": "desc"}
         if after:
-            params["after"] = after
+            params["modified_after"] = after
 
         # Bajo ráfaga el WAF a veces devuelve 200 con cuerpo no-JSON o corta
         # la conexión — una página perdida NO debe truncar el catálogo en
@@ -194,7 +199,7 @@ def fetch_books(
             try:
                 resp = session.get(API_BOOKS, params=params, headers=_HEADERS,
                                    timeout=timeout)
-                if resp.status_code == 400:  # página fuera de rango = fin real
+                if resp.status_code == 400 and resp.json().get("code") == "rest_post_invalid_page_number":
                     return out
                 resp.raise_for_status()
                 data = resp.json()
@@ -205,8 +210,7 @@ def fetch_books(
                 pass
             time.sleep(1.5 * (attempt + 1))
         if batch is None:
-            print(f"[sevenseas] WARN página {page} falló 3 intentos — "
-                  f"continúo con {len(out)} books")
+            report_issue(session, f"sevenseas page={page} failed after 3 attempts; partial books={len(out)}")
             break
         if not batch:
             break
@@ -221,6 +225,8 @@ def fetch_books(
         page += 1
         if sleep_seconds:
             time.sleep(sleep_seconds)
+    else:
+        report_issue(session, f"sevenseas: pagination limit reached ({max_pages})")
     return out
 
 

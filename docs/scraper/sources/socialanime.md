@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-09-23 (4º día consecutivo en 0 por el Managed Challenge, #211).
 
 ---
 
@@ -181,6 +181,11 @@ API paralela a `mangavariant.py` / `otaku_calendar.py`:
   señales: sólo garantiza que la palabra aparezca).
 - **Decisiones (lo que NO se hace)**: los feeds `popolari` / `novita-piu-interessanti` NO
   se ingieren (mayormente tomos regulares); sólo `variant` + `box`.
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 4 items flageados — 2
+  conservados (No Game No Life cofanetto limited = light novel; Death Stranding
+  Collection Box = novela de Hitori Nojima, J-POP) y 2 expulsados (Wayne Family
+  Adventures variant = webtoon de DC; Box Tutto Attica = fumetto italiano de
+  Bonelli).
 
 ---
 
@@ -232,3 +237,186 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-09-18 — el campo `editore` trae una coma final (`"Edizioni BD,"`)
+
+Detectado en el delta diario: 4 items nuevos de SocialAnime Cofanetti llegaron con
+`publisher = "Panini Comics,"` / `"Edizioni BD,"`, y de ahí `edition_display` quedó como
+`Cofanetto (Panini Comics,)`. Medido en el corpus: **28 items** afectados, todos de
+SocialAnime (19 Cofanetti + 9 Variant), desde la primera ingesta (2026-05-23): `Edizioni BD,`
+×15, `Dynit Manga,` ×5, `Panini Comics,` ×5, `Star Comics,` ×3.
+
+Causa: `scripts/wikis/socialanime.py` toma `item["editore"]` con `clean_text()`, que no
+quita puntuación final; la fuente separa editoriales con comas. El `edition_key` NO se
+parte (usa el slug de editorial normalizado, `PUBMIX` = 0), así que la agrupación está
+sana; el daño es cosmético (display y faceta de editorial duplicada en la UI).
+
+**Recomendación (NO aplicada — decisión del owner)**: `.rstrip(" ,;")` sobre `editore` en
+el parser + retrofit de `publisher`/`edition_display` en los 28 items existentes.
+
+## 2026-09-20 — Cloudflare Managed Challenge: la fuente pasó de ~641 items a 0 (gotcha #211)
+
+Primera corrida en 0 de esta fuente. El log del delta muestra **403 en la primera
+página de los dos tipos**:
+
+```
+[socialanime] WARN type=variant group_no=0: 403 Client Error: Forbidden for url:
+  https://socialanime.it/store/backend/flow_mangafeed.php?type=variant&group_no=0&macro_filter=best_of_all
+[socialanime] WARN type=box group_no=0: 403 Client Error: Forbidden ...
+[socialanime] terminado: 0 candidates con score>=20
+```
+
+**Verificado en vivo el mismo día** (3 sondas): con el UA del scraper, con el UA + un
+`Referer` del propio store, y contra la **home** `https://socialanime.it/store/` — las
+tres devuelven 403 con `cf-mitigated: challenge`, `server: cloudflare` y el cuerpo
+"Just a moment..." de Turnstile. O sea:
+
+- **No es el User-Agent** (el mismo UA funcionó 25 corridas seguidas hasta ayer).
+- **No es el endpoint**: la home del sitio está igual de bloqueada, así que no hay
+  ruta alternativa sana que sirva de fallback.
+- **No es rate-limit**: falla en la primera request de la corrida, `group_no=0`.
+
+Contraste útil con las otras dos fuentes con anti-bot: el `sgcaptcha` de Mangavariant
+es **intermitente** (se cayó solo al día siguiente el 2026-09-06) y la Queue-it de
+Panini (#208) es **silenciosa** (yield parcial sin error). Acá el fallo es ruidoso y
+total, que es el mejor caso: el reporte de salud lo marcó 🔴 con 0% de la mediana en la
+misma corrida.
+
+Ojo con el reporte de salud: `wiki:socialanime` sale a la vez en 🔴 YIELD REGRESSIONS
+(0 vs mediana 641) y en 🟢 Healthy con `Zero runs 1` — doble contabilidad de la
+familia #199.
+
+**Nada aplicado (decisión del owner).** Antes de intentar cualquier cosa, re-medir con
+una sonda de una línea; si el challenge se cayó, la fuente vuelve sola:
+
+```bash
+curl -sI -A "Mozilla/5.0" "https://socialanime.it/store/" | grep -i "cf-mitigated\|HTTP/"
+# 403 + cf-mitigated: challenge  → sigue bloqueada
+# 200 sin cf-mitigated           → se destrabó, la próxima corrida la recupera
+```
+
+Opciones si persiste, de menor a mayor costo: (a) esperar (precedente Mangavariant);
+(b) `--enable-js` NO alcanza por sí solo — Turnstile hay que resolverlo, no sólo
+ejecutar JS; (c) inyectar `cf_clearance` obtenida a mano del navegador, que caduca y
+ata la ingesta a una sesión manual.
+
+## 2026-09-21 — Challenge persistente, 2º día (gotcha #211)
+
+Delta `logs/scrape-delta-2026-09-21-110220/02e-socialanime.log`: mismo cuadro exacto que
+ayer — `403 Client Error: Forbidden` en `group_no=0` de los dos tipos (`variant` y `box`),
+0 items raw, 0 candidates. La fuente lleva **2 corridas seguidas en 0** contra una mediana
+histórica de 641 items.
+
+Sonda de la propia ficha re-corrida hoy, el challenge NO se cayó:
+
+```
+curl -sI "https://socialanime.it/store/"   →  HTTP/2 403  +  cf-mitigated: challenge
+curl .../flow_mangafeed.php?type=variant&group_no=0&macro_filter=best_of_all  →  403
+```
+
+O sea: a diferencia del `sgcaptcha` de Mangavariant (intermitente, se cayó solo en 24 h),
+el Managed Challenge de Cloudflare acá **se sostiene**. Eso descarta la hipótesis
+optimista de "esperar un día" y deja las opciones (b)/(c) de arriba como las únicas vías,
+las dos con costo real.
+
+El fallo sigue siendo **ruidoso** (WARN 403 + 0 items + 🔴 en el reporte), que es lo
+deseable: no corrompe el baseline con yield parcial como hace la Queue-it de Panini (#208).
+
+**Nada aplicado (decisión del owner).**
+
+### Seguimiento 2026-09-23 — 4º día consecutivo en 0
+
+Delta del 2026-09-23: `wiki:socialanime` volvió a rendir **0 items** contra una mediana
+histórica de **641** (27 corridas), duración del paso 1 s. Es el **cuarto día seguido**
+desde que se activó el Managed Challenge (#211, detectado 2026-09-20).
+
+Lectura acumulada: ya no es un incidente, es el **estado estable** de la fuente. Cuatro
+días descartan definitivamente la analogía con el `sgcaptcha` intermitente de
+Mangavariant (que se cayó solo en 24 h) y confirman que la única salida son las vías con
+costo real ya listadas arriba. Mientras tanto la fuente aporta 0 y **no ensucia el
+corpus** — el fallo sigue siendo ruidoso y honesto (403 → WARN → 🔴), así que no hay
+urgencia de dato, sí de cobertura: SocialAnime era la vía IT de variantes y cofanetti,
+y hoy esa cobertura depende sólo de Funside y AnimeClick.
+
+**Nada aplicado (decisión del owner).**
+
+---
+
+## 2026-09-24 — 5º día consecutivo en 0 (gotcha #211): estado estable, no incidente
+
+Quinta corrida seguida con la fuente en **0 items** contra una mediana histórica de
+**641**. Los dos tipos siguen dando 403 en la primera página:
+
+```
+[socialanime] WARN type=variant group_no=0: 403 Client Error: Forbidden
+              .../flow_mangafeed.php?type=variant&group_no=0&macro_filter=best_of_all
+[socialanime] WARN type=box     group_no=0: 403 Client Error: Forbidden
+[socialanime] terminado: 0 candidates con score>=20
+```
+
+Con 5 días idénticos queda **descartada** cualquier lectura de fallo transitorio: el
+Managed Challenge de Cloudflare es la configuración actual del sitio, no un pico. La
+comparación con Mangavariant (que se recuperó sola en 1 día) ya se había cerrado el
+09-21; hoy sólo lo confirma.
+
+**Lo bueno sigue siendo que este fallo es RUIDOSO**: WARN 403 explícito, 0 items y 🔴 en
+el reporte de salud (`wiki:socialanime | 0 | 641 | 0% | 28 runs`). Es el caso contrario a
+la Queue-it de Panini (#208), que degrada en silencio. Nada que arreglar del lado del
+reporte.
+
+**Nada aplicado (decisión del owner).** Las opciones siguen siendo las de #211: resolver
+Turnstile (fuera de alcance y de política), buscar una ruta alternativa del sitio, o
+deshabilitar la entrada para dejar de gastar 2 requests por corrida y sacar el 🔴
+permanente del reporte. Mientras la fuente quede habilitada, el coste es despreciable y
+el día que el sitio afloje la ingesta se reanuda sola.
+
+
+## Revisión de ingestión — 2026-09-24
+
+HTTP vivo 403 Cloudflare confirmado. Se conservan candidatos adquiridos antes de fallos y se registra WIKI-ISSUE; la rutina devuelve estado parcial y salud deja de marcar healthy. La causa externa no está resuelta.
+
+Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+### Continuación de auditoría — 2026-09-24
+
+El feed ya reporta esquema inválido y límite de páginas como fallos de cobertura. requests y Chromium continúan recibiendo challenge 403, también con www. No se eliminaron datos ni se deshabilitó la fuente.
+
+### Verificación con navegador normal — 2026-09-24
+
+El navegador integrado logró cargar `/store/manga/variant` y sus 25 primeras
+fichas tras la comprobación automática del sitio. El acceso directo al feed en
+ese navegador fue rechazado por el cliente; requests y Chromium del scraper
+siguen sin una recuperación verificada. Ver la página manualmente no equivale
+a resolver el bloqueo de ingestión ni demostrar cobertura del catálogo completo.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitó 1 referencia de `www.amazon.it` asociada a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+### Delta 2026-09-25 — #211 continúa, ahora con rc=1
+
+Sexto día consecutivo en 0 items. El challenge de Cloudflare golpeó **los dos
+tipos** en su primera página:
+
+```
+[WIKI-ISSUE] socialanime type=variant page=0: challenge=cloudflare: .../flow_mangafeed.php
+[WIKI-ISSUE] socialanime type=box     page=0: challenge=cloudflare: .../flow_mangafeed.php
+```
+
+Cambio respecto a los días anteriores: el paso ahora sale **rc=1** (antes rendía 0
+items sin marcar el paso como fallido). Lo produce el guard de respuesta nuevo
+(`wikis/health.install_response_guard`), que convierte una página de WAF servida
+con HTTP 200 en un `HTTPError` — así un challenge deja de avanzar el checkpoint y
+de contarse como corrida exitosa.
+
+Con seis corridas idénticas, la lectura de #211 se mantiene: **no es un fallo
+transitorio, es la configuración actual del sitio**. Sigue sin haber ruta de
+fallback (`--enable-js` no alcanza: Turnstile hay que resolverlo, no sólo ejecutar JS).
+Nada aplicado.
+
+## Auditoría estratégica — 2026-09-25
+
+Feed automático retirado de full/delta administrados por 403 persistente. AnimeClick, MangaVariant, Panini y tiendas exclusivas siguen activos; no se afirma equivalencia total. Conservamos históricos. Wayne Family Adventures era cómic DC infiltrado: ahora el gate lo excluye aun si el título omite Batman.

@@ -27,10 +27,16 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import (  # type: ignore
-    is_likely_manga, load_sources, backup_and_rotate, is_approved,
-    write_lines_atomic,
-)
+try:
+    from manga_watch import (  # type: ignore
+        is_likely_manga, load_sources, backup_and_rotate, is_approved,
+        write_lines_atomic,
+    )
+except ImportError:
+    from scripts.manga_watch import (
+        is_likely_manga, load_sources, backup_and_rotate, is_approved,
+        write_lines_atomic,
+    )
 
 
 def _build_source_purity_map() -> dict[str, str]:
@@ -151,7 +157,7 @@ def main() -> int:
         print("\n[DRY-RUN] No se escribió ningún archivo.")
         return 0
 
-    if not rejected_lines:
+    if not rejected_lines and Path(args.kept_output).resolve() == src.resolve():
         print("\n[OK] Nada que filtrar.")
         return 0
 

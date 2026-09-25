@@ -12,7 +12,8 @@ Endpoint::
 
     GET https://prhcomics.com/manga/
 
-Una sola página HTML estática. Sin paginación, sin JS, sin autenticación.
+Dos selecciones oficiales HTML (manga y Seven Seas).
+Cobertura curada, no bibliografía histórica exhaustiva. Sin autenticación.
 Todos los metadatos del listing están disponibles en el HTML directamente —
 no se necesita hitear páginas de detalle.
 
@@ -60,6 +61,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup, Tag
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -85,6 +91,11 @@ except ImportError:
 
 
 PRH_MANGA_URL = "https://prhcomics.com/manga/"
+# Curated official catalogs, not an exhaustive publisher bibliography.
+PRH_CATALOG_URLS = (
+    PRH_MANGA_URL,
+    "https://prhcomics.com/seven-seas/",
+)
 COVER_BASE = "https://images.penguinrandomhouse.com/cover"
 BOOK_BASE = "https://prhcomics.com/book/?isbn="
 
@@ -291,22 +302,21 @@ def fetch_manga_page(
     session: requests.Session,
     timeout: tuple[int, int] = (10, 30),
 ) -> list[Tag]:
-    """Descarga la página /manga/ de PRH Comics y devuelve todos los
-    <li class='toast-anchor'> encontrados."""
-    try:
-        resp = session.get(
-            PRH_MANGA_URL,
-            timeout=timeout,
-            headers={"Accept": "text/html,application/xhtml+xml"},
-        )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"[prhcomics] ERROR al obtener {PRH_MANGA_URL}: {exc}")
-        return []
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-    items = soup.select("li.toast-anchor")
-    print(f"[prhcomics] {len(items)} items encontrados en el HTML")
+    """Fetch every official collection; report partial failure without losing siblings."""
+    items: list[Tag] = []
+    for url in PRH_CATALOG_URLS:
+        try:
+            resp = session.get(url, timeout=timeout,
+                               headers={"Accept": "text/html,application/xhtml+xml"})
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            report_issue(session, f"prhcomics: {url}: fetch failed: {exc}")
+            continue
+        page_items = BeautifulSoup(resp.text, "html.parser").select("li.toast-anchor")
+        if not page_items:
+            report_issue(session, f"prhcomics: {url}: catalog cards missing; layout/access failure")
+        items.extend(page_items)
+        print(f"[prhcomics] {url}: {len(page_items)} catalog cards")
     return items
 
 
@@ -325,11 +335,11 @@ def bootstrap(
 ) -> list[Candidate]:
     """Descarga el catálogo /manga/ de PRH Comics y extrae ediciones especiales.
 
-    ``year_from``/``month_from`` filtran opcionalmente los items por fecha
-    de lanzamiento — útil en modo delta para obtener solo lo reciente.
-    Si ``year_from`` < 2010 se devuelven todos sin filtro de fecha.
+    Se releen las selecciones completas también en delta: una edición antigua
+    recién incorporada no se puede filtrar por su fecha de publicación. El estado
+    persistido identifica cambios y la deduplicación conserva una fila por producto.
     """
-    date_filter = year_from >= 2010
+    date_filter = False  # Older editions newly listed must also enter delta.
     date_cutoff = f"{year_from:04d}-{month_from:02d}-01" if date_filter else ""
 
     print(

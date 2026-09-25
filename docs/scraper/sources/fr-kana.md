@@ -95,3 +95,22 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0
 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful,
 actualiza esta ficha.
+
+## 2026-09-19 — Título capturado = etiqueta "Prochainement" (falta `title_selector`)
+
+Delta `logs/scrape-delta-2026-09-19-110115/`: entró `https://www.kana.fr/produit/slam-dunk-deluxe-t17/`
+con `title = "Prochainement"`. Verificado en vivo sobre la home: cada tarjeta
+`div.loop--product` tiene DOS anclas al mismo producto — la primera (`.loop__image`) envuelve
+la portada + un badge `<span class="label label-next">Prochainement</span>` (o
+`label-new">Nouveauté`), y la segunda (`.loop__content`) lleva el nombre real en
+`h3.loop__name` ("Slam Dunk deluxe / Tome 17"). La fuente NO declara `title_selector`, así que
+el extractor genérico toma el texto de la primera ancla, que es sólo el badge. Hoy la home
+muestra 20 badges "Prochainement" y 5 "Nouveauté": cualquier producto nuevo que pase el filtro
+entra con ese título. Mismo mecanismo que Aladin (#195). El standardize recuperó serie/tomo
+desde el `description`, pero el `title` (nombre oficial, title-policy) quedó mal.
+**Recomendación (no aplicada):** `title_selector: "h3.loop__name"` en `FR - Kana` + corrida de
+`clean_titles`/retrofit sobre el único item afectado (1 de 3 items de Kana en el corpus).
+
+## Auditoría estratégica — 2026-09-25
+
+Overlap observado: 3 productos, los 3 con referencia Manga-Sanctuary. Muestra pequeña, no demuestra que todo el catálogo futuro esté cubierto; se conserva. Ya no se clasifica como descartable solo por porcentaje de ISBN/serie.

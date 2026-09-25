@@ -49,9 +49,9 @@ if str(_SCRIPTS) not in sys.path:
 # sys.path — p.ej. bajo pytest. En ese caso `load_sources` no existe ahí;
 # caemos al paquete real scripts.manga_watch. Ver gotcha de import dual.
 try:
-    from manga_watch import WIKI_BOOTSTRAP_IDS, load_sources  # type: ignore
-except ImportError:
     from scripts.manga_watch import WIKI_BOOTSTRAP_IDS, load_sources  # type: ignore
+except ImportError:
+    from manga_watch import WIKI_BOOTSTRAP_IDS, load_sources  # type: ignore
 
 
 # Regex para parsear líneas de log del scraper.
@@ -102,13 +102,13 @@ _ERROR_RE = re.compile(
 # Fallback: split naive (comportamiento pre-fix) para un mensaje NUEVO que no
 # esté en la lista de arriba — mejor una atribución imperfecta que perder el
 # error por completo.
-_ERROR_RE_LEGACY = re.compile(r"^\[ERROR\]\s+([^:]+):\s+(.+)$")
+_ERROR_RE_LEGACY = re.compile(r"^\[ERROR\]\s+(.+):\s+(.+)$")
 
 # (#1, 2026-07-08) `\w+` no capturaba categorías con guion — manga_watch.py
 # emite `no-links` y `js-shell` (ver detect_empty_or_js, manga_watch.py:6297)
 # además de `empty`; sólo `empty`/`js` matcheaban antes, dejando invisible el
 # síntoma más común de ListadoManga.
-_SKIP_RE = re.compile(r"^\[SKIP-([\w-]+)\]\s+([^:]+):\s+(.+)$")
+_SKIP_RE = re.compile(r"^\[SKIP-([\w-]+)\]\s+(.+):\s+(.+)$")
 
 # (#2, 2026-07-08) Un 200 OK que es en realidad un challenge anti-bot
 # (Cloudflare/WAF, gotcha #107) NO imprime `[ERROR]` ni la línea de
@@ -116,6 +116,18 @@ _SKIP_RE = re.compile(r"^\[SKIP-([\w-]+)\]\s+([^:]+):\s+(.+)$")
 # fuente bloqueada quedaba con stats todo-None → "healthy".
 _CHALLENGE_RE = re.compile(
     r"^\[CHALLENGE_DETECTED\]\s+source=(?P<name>.+?)\s+type=(?P<type>\S+)\s*$"
+)
+
+# (post-mortem 2026-08-24, Fix 4) Un paso muerto (rc≠0, típicamente 124 =
+# timeout de `_run_timed`) no imprime nada reconocible al morir a mitad de
+# ejecución — sin `[ERROR]`, sin candidatos, sin challenge. `classify()` con
+# runs_seen=1 y stats todo-None caía por default a "healthy" (evidencia real:
+# mangavariant-incremental murió por timeout el 08-22 y quedó "healthy" en
+# metrics.jsonl). scrape_delta.sh/scrape_full.sh ahora escriben esta línea en
+# el log del paso cuando su wrapper `_run_timed` devuelve rc≠0, así el paso
+# muerto se clasifica `broken_timeout` en vez de caer al default engañoso.
+_STEP_TIMEOUT_RE = re.compile(
+    r"^\[STEP_TIMEOUT\]\s+source=(?P<name>.+?)\s+rc=(?P<rc>\d+)\s*$"
 )
 
 # (#4, 2026-07-08; J-higiene 2026-07-08) Los wikis (26, fuera de sources.yml)
@@ -207,7 +219,7 @@ def collect_run_dirs(log_root: Path, last_n: int = 10) -> list[Path]:
 
 
 def _blank_stats() -> dict:
-    return {"candidates": None, "error": None, "skipped": None, "challenge": None}
+    return {"candidates": None, "error": None, "skipped": None, "challenge": None, "timeout": None}
 
 
 def parse_run_log(run_dir: Path) -> dict[str, dict]:
@@ -258,10 +270,23 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
                     sources[current_wiki] = _blank_stats()
                 continue
             if current_wiki:
+                if "[WIKI-ISSUE]" in line or re.search(r"\bWARN\b.*(?:fall|error|403|429|timeout)", line, re.I):
+                    sources[current_wiki]["error"] = line.strip()[:160]
+                if "Traceback (most recent call last)" in line:
+                    sources[current_wiki]["error"] = "bootstrap traceback"
                 m_wiki_sum = _WIKI_SUMMARY_RE.match(line)
                 if m_wiki_sum:
                     sources[current_wiki]["candidates"] = int(m_wiki_sum.group("n"))
                     continue
+            if line.startswith("[COVERAGE-LIMIT] source="):
+                name = line.split("source=", 1)[1].split(" page limit ", 1)[0]
+                sources[name]["skipped"] = "coverage-limit: listing incomplete"
+                continue
+            m_timeout = _STEP_TIMEOUT_RE.match(line)
+            if m_timeout:
+                name = m_timeout.group("name").strip()
+                sources[name]["timeout"] = m_timeout.group("rc").strip()
+                continue
             m_challenge = _CHALLENGE_RE.match(line)
             if m_challenge:
                 name = m_challenge.group("name").strip()
@@ -277,6 +302,8 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
                 sources[m_skip.group(2).strip()]["skipped"] = (
                     f"{m_skip.group(1)}: {m_skip.group(3).strip()[:60]}"
                 )
+        if current_wiki and sources[current_wiki]["candidates"] is None and not sources[current_wiki].get("error"):
+            sources[current_wiki]["skipped"] = "incomplete bootstrap: missing final summary"
     return sources
 
 
@@ -300,11 +327,13 @@ def aggregate_health(
         "runs_with_error": 0,
         "runs_with_skip": 0,
         "runs_with_challenge": 0,
+        "runs_with_timeout": 0,
         "total_candidates": 0,
         "candidates_per_run": [],
         "errors": [],
         "skips": [],
         "challenges": [],
+        "timeouts": [],
         "enabled": True,
         "kind": "",
     })
@@ -324,7 +353,13 @@ def aggregate_health(
         for name, stats in source_stats.items():
             a = agg[name]
             a["runs_seen"] += 1
-            if stats["error"]:
+            if stats.get("timeout"):
+                # Máxima prioridad: un paso que murió (rc≠0, el wrapper del
+                # shell lo marcó explícito) es una señal más confiable que
+                # cualquier texto que haya alcanzado a imprimir antes de morir.
+                a["runs_with_timeout"] += 1
+                a["timeouts"].append((run_dir.name, f"rc={stats['timeout']}"))
+            elif stats["error"]:
                 a["runs_with_error"] += 1
                 a["errors"].append((run_dir.name, stats["error"]))
             elif stats.get("challenge"):
@@ -339,13 +374,17 @@ def aggregate_health(
                 if stats["candidates"] == 0:
                     a["runs_with_zero"] += 1
 
-    # Enrichment from sources.yml / wiki registry
+    try:
+        from scripts.ingestion_policy import load_policy
+    except ImportError:
+        from ingestion_policy import load_policy
+    wiki_policy = load_policy()["wikis"]
+    # Enrichment from sources.yml / effective wiki policy
     for name, a in agg.items():
         if name.startswith("wiki:"):
-            # Los wikis no viven en sources.yml (registro aparte, #4); se
-            # tratan como siempre-enabled ya que no hay flag equivalente.
+            # Runtime policy is shared with the managed full/delta jobs.
             a["kind"] = "wiki"
-            a["enabled"] = True
+            a["enabled"] = wiki_policy.get(name[5:], {}).get("enabled", False)
         else:
             src = yaml_lookup.get(name)
             # Para search-templates, el name expandido tiene formato "X (search) [search: Y]"
@@ -380,13 +419,25 @@ def aggregate_health(
 
 def classify(stats: dict) -> str:
     """Clasifica una source en una categoría de salud."""
+    if stats.get("enabled") is False:
+        return "retired"
     runs = stats["runs_seen"]
     if runs == 0:
         return "unseen"
     error_rate = stats["runs_with_error"] / runs
     challenge_rate = stats.get("runs_with_challenge", 0) / runs
+    timeout_rate = stats.get("runs_with_timeout", 0) / runs
     skip_rate = stats["runs_with_skip"] / runs
     zero_rate = stats["runs_with_zero"] / runs
+    # (Fix 4, post-mortem 2026-08-24) Timeout primero, antes incluso del
+    # challenge: es la señal MÁS confiable de las cuatro — la escribe el
+    # wrapper del shell (`_run_timed`) a partir del exit code real del
+    # proceso, no una inferencia sobre texto que alcanzó a imprimirse antes
+    # de morir. Sin esto, un paso muerto con stats vacías caía al default
+    # "healthy" al final de esta función (evidencia real: mangavariant-
+    # incremental, rc=124, quedó "healthy" en metrics.jsonl el 08-22).
+    if timeout_rate >= 0.5:
+        return "broken_timeout"
     # (#2, 2026-07-08) Anti-bot primero: una fuente bloqueada por Cloudflare/WAF
     # (gotcha #107) NO es "healthy" aunque nunca tire un [ERROR] HTTP — es el
     # síntoma más insidioso (200 OK que en realidad es un muro).
@@ -398,7 +449,7 @@ def classify(stats: dict) -> str:
         return "broken_skip"   # JS requerido sin --enable-js, etc.
     if zero_rate >= 0.8 and runs >= 2:
         return "selector_dead" # devuelve siempre 0 — selector probablemente roto
-    if stats["avg_candidates"] < 1.0 and runs >= 2:
+    if stats["avg_candidates"] < 1.0:
         return "low_yield"
     if stats["trend"] == "↓ declining":
         return "declining"
@@ -409,24 +460,26 @@ def _single_run_agg(stats: dict) -> dict:
     """Arma el mini-agregado que `classify` espera, para UN solo run/fuente.
 
     Con runs_seen=1 el clasificador nunca dispara selector_dead/low_yield/decline
-    (exigen >=2 runs); por eso la métrica per-run sólo distingue broken_http /
-    broken_skip / broken_challenge / healthy. Ese es justamente el límite que
-    metrics.jsonl + el baseline vienen a cubrir acumulando historia.
+    (exigen >=2 runs); por eso la métrica per-run sólo distingue broken_timeout /
+    broken_http / broken_skip / broken_challenge / healthy. Ese es justamente el
+    límite que metrics.jsonl + el baseline vienen a cubrir acumulando historia.
     """
+    timeout = stats.get("timeout")
     error = stats.get("error")
     challenge = stats.get("challenge")
     skipped = stats.get("skipped")
     candidates = stats.get("candidates")
     a = {
         "runs_seen": 1,
-        "runs_with_error": 1 if error else 0,
-        "runs_with_challenge": 1 if (challenge and not error) else 0,
-        "runs_with_skip": 1 if (skipped and not error and not challenge) else 0,
+        "runs_with_timeout": 1 if timeout else 0,
+        "runs_with_error": 1 if (error and not timeout) else 0,
+        "runs_with_challenge": 1 if (challenge and not timeout and not error) else 0,
+        "runs_with_skip": 1 if (skipped and not timeout and not error and not challenge) else 0,
         "runs_with_zero": 0,
         "avg_candidates": 0.0,
         "trend": "—",
     }
-    if not error and not challenge and not skipped and candidates is not None:
+    if not timeout and not error and not challenge and not skipped and candidates is not None:
         a["avg_candidates"] = float(candidates)
         if candidates == 0:
             a["runs_with_zero"] = 1
@@ -474,7 +527,13 @@ def append_metrics(metrics_path: Path, run_dir: Path, source_stats: dict[str, di
             "mode": mode,
             "source": name,
             "candidates": candidates if candidates is not None else 0,
-            "errors": 1 if stats.get("error") else 0,
+            # (Fix 4, post-mortem 2026-08-24) Un timeout también cuenta como
+            # "errors" acá aunque no sea un [ERROR] de texto: compute_yield_regressions
+            # excluye los runs con errors=1 al armar la mediana histórica (#5,
+            # 2026-07-08) — sin esto, un rc=124 persistía candidates=0 como si
+            # fuera yield real y hundía la mediana justo para la fuente que más
+            # necesita que la detección de regresión siga funcionando.
+            "errors": 1 if (stats.get("error") or stats.get("timeout")) else 0,
             "status": classify(_single_run_agg(stats)),
         }
         new_lines.append(json.dumps(rec, ensure_ascii=False))
@@ -601,6 +660,7 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         by_class[classify(stats)].append((name, stats))
 
     order = [
+        ("broken_timeout", "⏱️ Broken (step timed out / crashed)"),
         ("broken_challenge", "🛡️ Broken (anti-bot / challenge)"),
         ("broken_http", "🔴 Broken (HTTP errors)"),
         ("broken_skip", "🟠 Broken (skip/JS issues)"),
@@ -608,6 +668,7 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         ("low_yield", "🟤 Low yield (avg < 1 candidate/run)"),
         ("declining", "📉 Declining trend"),
         ("healthy", "🟢 Healthy"),
+        ("retired", "⚪ Retired / disabled"),
         ("unseen", "⚪ Not seen in recent runs"),
     ]
 
@@ -616,7 +677,8 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         if not items:
             continue
         items.sort(key=lambda x: (
-            -x[1]["runs_with_challenge"] - x[1]["runs_with_error"] - x[1]["runs_with_zero"]
+            -x[1].get("runs_with_timeout", 0) - x[1]["runs_with_challenge"]
+            - x[1]["runs_with_error"] - x[1]["runs_with_zero"]
         ))
         lines.append(f"## {label} ({len(items)})")
         lines.append(f"")
@@ -628,7 +690,7 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
             # se corre con --last-n > 1. La fecha se deriva del nombre del run
             # (robusto al orden de iteración).
             last_issue = ""
-            issues = s["errors"] or s.get("challenges") or s["skips"]
+            issues = s.get("timeouts") or s["errors"] or s.get("challenges") or s["skips"]
             if issues:
                 text = max(issues, key=lambda ri: infer_run_ts(ri[0]))
                 last_run = max((r for r, _ in issues), key=infer_run_ts, default="")
@@ -736,10 +798,11 @@ def main() -> int:
         # JSON serializable
         agg_clean = {}
         for k, v in agg.items():
-            agg_clean[k] = {kk: vv for kk, vv in v.items() if kk not in ("errors", "skips", "challenges")}
+            agg_clean[k] = {kk: vv for kk, vv in v.items() if kk not in ("errors", "skips", "challenges", "timeouts")}
             agg_clean[k]["errors"] = [e[1] for e in v["errors"][-3:]]
             agg_clean[k]["skips"] = [s[1] for s in v["skips"][-3:]]
             agg_clean[k]["challenges"] = [c[1] for c in v.get("challenges", [])[-3:]]
+            agg_clean[k]["timeouts"] = [t[1] for t in v.get("timeouts", [])[-3:]]
             agg_clean[k]["classification"] = classify(v)
         payload = {"runs": [r.name for r in runs], "sources": agg_clean}
         if regressions is not None:

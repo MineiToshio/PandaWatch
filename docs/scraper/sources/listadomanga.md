@@ -3,7 +3,7 @@
 > Catálogo de fuentes de PandaWatch. Esta es la ficha de **ListadoManga** — la fuente
 > más importante y delicada del proyecto. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-08.
+> Última revisión: 2026-09-11 (el nombre de la colección se mudó a `<h1>`; gotcha #200).
 
 ---
 
@@ -443,6 +443,22 @@ recuperar requiere re-scrape + enforcer.
 **Decisiones (lo que NO se hace):** omnibus pelado no califica (#18); no se mergea
 cross-país (#46); el LLM no decide agrupación (lo hace el enforcer).
 
+- **2026-08-22 — 404 de `diagnostic.py` en `coleccion.php` es falso positivo, NO
+  un problema real**: el diagnóstico del delta (`logs/diagnostic-2026-08-22-174459.md`)
+  reportó `404 Client Error` al hacer HEAD/GET a la URL base de `sources.yml`
+  (`https://www.listadomanga.es/coleccion.php`, SIN `?id=N`). Confirmado con curl en
+  vivo: `coleccion.php` sin parámetro devuelve 404 (el sitio lo requiere), pero
+  `coleccion.php?id=1` → 200 y `calendario.php` (el endpoint real que usa el
+  discovery del delta, `--coleccion-mode calendar`) → 200. Es decir, el check
+  genérico del diagnóstico le pega a una plantilla de URL que estructuralmente no es
+  fetcheable sola — no refleja el estado real del sitio ni de la ingesta (el run del
+  mismo día trajo 225 items reportables sin problema, ver `02a-listadomanga-collections-calendar.log`).
+  Nótese que en el diagnóstico de 2026-07-07 esa misma URL bare SÍ devolvió 200 (el
+  sitio a veces sirve una página default en vez de 404 sin id) — el código HTTP de
+  ese chequeo específico es inestable e irrelevante; no usarlo como señal de salud de
+  esta fuente. Health real: mirar el log de `listadomanga-collections` (candidates/
+  reportables), no el diagnóstico genérico sobre la URL base.
+
 ---
 
 ## 9. Pendientes / limitaciones conocidas (NO resuelto)
@@ -589,3 +605,183 @@ revierte los 3 archivos dejando el diff fallido en
 **Cuándo correrlo**: tras un cambio de HTML sospechado en el sitio, antes de un
 `scrape_full` grande, o periódicamente para detectar drift del parser. Como todo
 skill del repo, sólo a pedido explícito (nunca automático).
+
+---
+
+## 2026-08-24 — el 🔴 "ListadoManga (colecciones): 404" del reporte de salud es un FALSO POSITIVO
+
+Delta diario (`logs/scrape-delta-2026-08-24-183301/`). `source_health` marcó
+**ListadoManga (colecciones)** como 🔴 *Broken (HTTP errors)* con
+`404 Client Error: Not Found for url: https://www.listadomanga.es/coleccion.php`.
+
+**No hay nada roto en la ingestión.** El 404 es sobre `coleccion.php` **pelada, sin
+`?id=N`** — esa URL siempre devuelve 404, porque la página sólo existe para una edición
+concreta. Es la entrada del `sources.yml` la que apunta ahí; el trabajo real de esta
+fuente lo hace el parser dedicado de colecciones (fase 2a del pipeline,
+`listadomanga_collections.py`), que en la misma corrida procesó **589 colecciones → 441
+candidatas con score ≥20** sin un solo error (`02a-listadomanga-collections-calendar.log`).
+
+Consecuencia práctica: el reporte de salud arranca con un 🔴 permanente que no
+corresponde a un problema, y entrena al owner a ignorar la sección de fuentes rotas.
+**PENDIENTE para el owner** (cambio de configuración, no aplicado por la rutina diaria):
+sacar/deshabilitar esa entrada HTML de `sources.yml`, o apuntarla a una URL que exista
+(p. ej. `lista.php`), para que `source_health` refleje el estado real de la fuente.
+
+## 2026-09-02 — sus portadas de ~210×300 px NO son un problema de calidad
+
+Hallazgo de la Etapa 1 de triage de imágenes (`docs/reference/images.md` § "Etapa 1 —
+resultados"), relevante porque **ListadoManga es el 84% del lote de "baja resolución"**:
+488 de las 579 portadas del corpus con `area < 90.000 px` vienen de
+`static.listadomanga.com`, y la enorme mayoría son de ~190-216 × 290-300 px. En una card de
+300×420 px (fit *contain*) eso se renderiza con un factor de **1.4×** y se ve **bien** —
+revisado a ojo sobre hojas de contacto renderizadas al ancho real de la card. **No hay que
+mandarlas a búsqueda web**: el umbral de área de 90.000 px las marca como problema y no lo
+son (ver la recomendación de cambiar el target de `sc_plan` a `min(300/w, 420/h) >= 1.6`).
+
+La excepción real son **12 ítems** donde ListadoManga sirve la miniatura chica de ~92-115 px
+de ancho (reescalado 2.6-2.8× en card, texto secundario ilegible): `tomie-planeta-boxset-es`,
+`radiant-letrablanka-regular-es-10`, `sensor-planeta-deluxe-es`,
+`numeros-en-preparacion-cofre-planeta-boxset-es`, `pintor-nocturno-panini-special-es-1`,
+`bomba-planeta-deluxe-es`, `junji-ito-un-estudio-profundo-planeta-deluxe-es`,
+`meaheim-planeta-special-es-1`, `orgullo-y-prejuicio-planeta-special-es`,
+`rumiko-takahashi-colors-1978-2024-planeta-artbook-es`,
+`detective-conan-ilustraciones-planeta-artbook-es`, `radiant-letrablanka-boxset-es-7-8`.
+Vale la pena revisar si el parser está tomando el thumbnail de listado en vez de la imagen
+de la ficha en esos casos (fix de mecanismo) antes de mandarlos a búsqueda web.
+
+## 2026-09-02 — sus thumbnails chicos-pero-reales (<6KB en AVIF) fueron confundidos con basura
+
+Consecuencia directa de la nota anterior: los thumbnails REALES de listadomanga
+(96-124×150-160px, coherente con el ~210×300px de arriba) comprimen en AVIF a 2.6-6KB — un
+peso que `sync_cover_images.py::_compute_junk_local` usaba como umbral crudo de "basura"
+(`< 6000 bytes`, sin mirar dimensión/contenido). La corrida real del 2026-08-23 21:31 vació
+`images[]` de **111 items ES** de listadomanga que NO tenían galería de respaldo —
+verificados uno por uno: 2577-5992 bytes, dims tipo 208×300/234×320, 0/111 estructuralmente
+placeholder. Gotcha #185 (`docs/reference/gotchas.md`) tiene el detalle completo del fix de
+mecanismo (`image_store.placeholder_reason()` como fuente única, ya no bytes crudos) y de la
+reparación del dato (`scripts/retrofit/restore_lm_thumbnails_20260902.py`, 111/111
+restaurados: 17 desde disco, 94 recuperados de la cuarentena `_orphans/`, 0 requirieron
+re-descarga). **Para cualquier código nuevo que toque `images[]` de listadomanga**: un
+archivo local chico NUNCA es por sí sólo señal de basura — sólo lo es si
+`image_store.placeholder_reason()` lo confirma estructuralmente (o si el archivo/URL está en
+el registro de placeholders conocidos). 57 de los 111 restaurados tienen además una
+candidata whakoom pendiente de aprobación en `data/cover_preview.json` (§ "Búsqueda de
+portadas hi-res" en `docs/reference/images.md`) que va a mejorar la portada cuando se
+apruebe la cola — la restauración no compite con eso, sólo evita la ausencia total de
+portada mientras tanto.
+
+## 2026-09-11 — el sitio movió el nombre de la colección a `<h1>`: ediciones rotuladas "Números editados" y premium-por-título perdidas
+
+Destapado en el delta diario (`logs/scrape-delta-2026-09-11-111743/`) al procesar la cola
+de aliases: dos "series" nuevas se llamaban `numeros-en-preparacion-cofre` (5 items) y
+`numeros-editados-cofre` (2 items), con títulos como `Números en preparación — Cofre
+(Ivrea)`. No son series: son **el encabezado de sección de la página tomado como nombre
+de la colección**. Detalle completo y cifras en la **gotcha #200**; resumen para quien
+toque esta fuente:
+
+- **Qué cambió en el sitio**: la página de colección hoy es
+  `<h1>{nombre}</h1><h2>Números editados</h2>…`. El parser
+  (`_extract_collection_title`, línea 578) sigue asumiendo "el primer `<h2>` es el
+  título" — la premisa del §5.2 ya no vale. Verificado en vivo en una colección vieja
+  (id=1326, *Rin-ne*) y en una nueva (id=6740, *Juntos en cualquier mundo…*).
+- **Daño en el corpus** (medido, sin tocar nada): 231 items / 113 ediciones con
+  `edition_display` = "Números editados" / "Números en preparación". Es el 100% de lo
+  detectado desde julio; ningún item aprobado afectado. Los títulos de los tomos
+  regulares están bien (vienen de la tabla del tomo); sólo los 7 cofres sin serie propia
+  heredaron el título contaminado.
+- **Daño en la captura**: la detección premium por nombre de colección está muerta. A/B
+  en memoria sobre las 29 colecciones del `[ZERO-YIELD]` de hoy: 0 candidatos con el
+  título actual vs **38** leyendo el `<h1>` (Berserk Maximum Català, Ranma ½ Kanzenban
+  Català, The Walking Dead Nueva Edición Integral, Mientras Yubooh duerme Edición
+  Especial). El `[ZERO-YIELD]` lo venía mostrando desde al menos el 08-28: todas sus
+  colecciones figuraban con el nombre "Números editados".
+- **Cola de aliases**: las dos candidatas `numeros-*-cofre` se **saltaron** (acción C,
+  dato corrupto) — crear una canónica para ellas consolidaría el bug.
+- **NO aplicado (decisión del owner)**: fix de mecanismo (leer `<h1>` con fallback al
+  primer `<h2>` + test con HTML capturado actual) y limpieza (re-fetch de las 113
+  colecciones afectadas vía la ingesta puntual por id del §10, más re-evaluar las
+  colecciones premium-por-título descartadas desde el cambio). El workflow
+  `listadomanga-audit` (§11) es el vehículo natural para ambas cosas.
+
+## 2026-09-20 — gotcha #200 sigue viva y medida en la cola de aliases
+
+La cola de series sin mapear del día trae **2 candidatas basura generadas por #200**
+(el parser lee el primer `<h2>` —"Números editados" / "Números en preparación"— en vez
+del `<h1>` con el nombre real de la colección):
+
+| `series_key` candidata | items | publishers involucrados |
+|---|--:|---|
+| `numeros-en-preparacion-cofre` | 5 | Planeta Cómic, Ediciones Martínez Roca, Diábolo Ediciones |
+| `numeros-editados-cofre` | 2 | Planeta Cómic |
+
+El síntoma es especialmente claro acá: **`numeros-en-preparacion-cofre` agrupa items de
+TRES editoriales distintas** bajo una misma "serie", porque el texto del `<h2>` es el
+mismo en todas las colecciones. Son 7 items de cofres cuyo nombre de colección real se
+perdió; se dejaron sin mapear (Action C) en vez de acuñarles una canónica, porque
+crearla cementaría el bug.
+
+Nada aplicado (el fix de #200 es decisión del owner). Mientras #200 siga abierta, estas
+dos candidatas van a reaparecer en cada corrida que toque cofres.
+
+## 2026-09-21 — #200 medida otra vez en la cola de aliases: 7 items, 5 colecciones
+
+La cola de series sin mapear del delta volvió a traer la basura del `<h2>` (gotcha #200)
+como las DOS candidatas de más impacto del día:
+
+| series_key | items | Editoriales que agrupa |
+|---|---|---|
+| `numeros-en-preparacion-cofre` | 5 | Planeta Cómic, Ediciones Martínez Roca, Diábolo Ediciones |
+| `numeros-editados-cofre` | 2 | Planeta Cómic (cols. 6151 y 5907) |
+
+O sea: 7 items de al menos 5 colecciones distintas y 3 editoriales colapsados bajo el
+texto del encabezado ("Números en preparación" / "Números editados") en vez del nombre real
+de la colección, que vive en el `<h1>`. Es exactamente el mecanismo de #200, sin novedad de
+diagnóstico, pero vale el registro: la candidata #1 del día por `item_count` es un
+artefacto del parser, no una serie — y mientras el bug viva, cada corrida la re-encola y
+consume el cupo de atención del skill de aliases.
+
+Se saltearon las dos en la corrida de aliases (crear una canónica para ellas sería
+consolidar la basura). Nada aplicado.
+
+---
+
+## 2026-09-24 — #200 otra vez: 7 items bajo dos "series" que son texto de encabezado
+
+La cola de aliases del día volvió a traer las dos candidatas de siempre, y siguen siendo
+las de mayor `item_count` del lote:
+
+| Candidata | Items | Editoriales distintas bajo la misma "serie" |
+|---|---|---|
+| `numeros-en-preparacion-cofre` | 5 | Planeta Cómic, Ediciones Martínez Roca, Diábolo Ediciones |
+| `numeros-editados-cofre` | 2 | Planeta Cómic (colecciones 6151 y 5907) |
+
+Son **7 items** cuyo `series_display` es el texto del `<h2>` ("Números en preparación",
+"Números editados") en vez del nombre de la colección, que vive en el `<h1>` desde el
+cambio de plantilla del sitio. El síntoma delator sigue siendo el mismo: **una sola
+"serie" que agrupa items de TRES editoriales distintas** es estructuralmente imposible en
+una fuente donde una `/coleccion` es una edición.
+
+Ambas se saltaron en la curación de aliases (no son series). Es el 5º día consecutivo que
+aparecen, y van a seguir apareciendo en cada corrida mientras el parser lea el `<h2>`.
+
+**Nada aplicado (decisión del owner).** El fix y su A/B están en #200: leer el `<h1>` para
+el nombre de la colección reactivaría además la detección premium por nombre (0 → 38
+candidatos en las 4 colecciones medidas).
+
+
+## Revisión de ingestión — 2026-09-24
+
+Fallos de lista/calendario/colección quedan en WIKI-ISSUE y marcan corrida parcial; el calendario ya no omite errores de meses sin diagnóstico. Se mantiene parser común full/delta y preservación por spool.
+
+Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+El full de 2026-09-24 recorrió las 3469 colecciones de lista.php sin errores:
+1713 candidatos y 971 reportables; 39 URLs nuevas en staging. Se detectaron
+12 títulos creados desde extras que omitían la normalización aplicada a los
+tomos normales. La rama de extras usa ahora la misma función, preservando
+volumen, portada y extras; se probó con tomo regular y edición especial.
+
+Cierre 2026-09-25: se incorporaron 2 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.

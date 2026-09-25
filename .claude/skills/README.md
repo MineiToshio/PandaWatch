@@ -121,7 +121,10 @@ y 0 veces en el workflow, drift confirmado).
    `data/non_manga_blacklist.jsonl` — queda PENDIENTE y se registra en
    `data/unmapped_series.jsonl` (reason `llm_non_manga`); la expulsión real
    la deciden los gates deterministas (`filter_non_manga`/
-   `filter_collectible`) en la próxima corrida del scrape. Además detecta
+   `filter_collectible`) en la próxima corrida del scrape. Esa cola se cura a
+   mano cada tanto (playbook en `docs/reference/conventions.md`); la última fue
+   el 2026-08-23 sobre 265 items → 94 KEEP / 171 EXPEL, con la causa raíz del
+   bloque grande en el propio prompt del skill (gotcha #147). Además detecta
    outliers de serie por /coleccion, consolida duplicados y reporta INTEGRITY.
 5. **Enforcer** (`scripts/retrofit/enforce_listadomanga_rules.py`, Step 6b):
    re-aplica determinísticamente las reglas duras de agrupación — el LLM NO
@@ -200,6 +203,14 @@ actualizado con traducciones multilingües. `argument-hint` real:
    (fuente única, backup timestamped propio) para remapear + consolidar
    `items.jsonl` (**salta items con `approved_at`**; `--only-keys` REQUERIDO —
    scope acotado a la corrida, regla anti-colapso).
+6. **Poda la cola con `scripts/prune_unmapped_queue.py` — NUNCA la trunca**
+   (gotchas #155/#198, corregido 2026-09-07). `unmapped_series.jsonl` son DOS
+   colas en un archivo: las filas sin `reason` son el insumo de este skill y el
+   scrape las regenera; las filas con `reason` (`llm_non_manga`,
+   `standardize_exhausted`) son **curación manual y NO se regeneran**. El paso
+   hacía `: > data/unmapped_series.jsonl` y borraba las dos — el costo real fue
+   que la rutina diaria pasó 7 corridas salteándose este skill entero para no
+   destruir la curación, con lo que tampoco se procesó la cola de series.
 6. Trunca la queue (`data/unmapped_series.jsonl`) — solo si el backfill salió
    exit 0.
 7. **Cierre (gates, todos bloqueantes)**: lint contra baseline + `validate_corpus.py`
@@ -369,10 +380,12 @@ píxeles) o sin imagen. Usa **Chrome exclusivamente** (`mcp__claude-in-chrome__*
 y combina, por cada imagen objetivo, **Yandex búsqueda-por-foto** (reverse
 image, usando la imagen actual como consulta) como fuente **primaria** — sin
 captcha, devuelve portadas del tomo/edición correctos — más **variantes de
-texto con contexto** en **Google Imágenes** (`udm=2`), con fallback a Bing si
-Google muestra consent wall. Escribe candidatas a `data/cover_preview.json`
+texto con contexto** en **Bing Imágenes** (motor de texto primario desde
+2026-07-11; Google udm=2 quedó como fallback de emergencia por riesgo de cuenta —
+gotcha #145). Escribe candidatas a `data/cover_preview.json`
 para aprobación manual en `cover-preview.html`. **NUNCA modifica `items.jsonl`.**
-Por defecto solo procesa portadas (`img_idx 0`).
+Por defecto procesa portadas Y fotos de galería (`img_idx 0` y `>= 1`); acotable
+con `--only-covers` o `--gallery-only`.
 
 > **Corrección (auditoría Fable 2026-07-11, hallazgo SC-1)**: esta ficha decía
 > "Google Imágenes con fallback a Bing" sin mencionar Yandex como motor
@@ -387,9 +400,15 @@ Por defecto solo procesa portadas (`img_idx 0`).
 1. Plan de queries determinístico, compilado a `scripts/retrofit/sc_plan.py`
    (0 tokens LLM). Salta targets ya adjudicados por el skill (campo
    `match_dist` en cualquier estado — pending/approved/rejected) y los que
-   fallaron hace menos de 30 días (salvo `--retry-failed`).
-2. Por cada target, itera variantes (Yandex reverse primero, texto en Google
-   después) hasta juntar varias candidatas verificadas o agotarlas.
+   fallaron hace menos de 30 días (salvo `--retry-failed`). También saltea
+   DURO cualquier target cuya referencia sea un placeholder conocido (por URL
+   o por contenido/firma, vía `image_store` — gotcha #171/#179): reverse-image
+   contra un placeholder devuelve basura sistemática, así que se trata como
+   "sin imagen" (`reference_kind: "placeholder"`, sólo texto con
+   `--include-no-image`).
+2. Por cada target, itera variantes (Yandex reverse primero, texto en Bing
+   después; cada variante trae un campo `engine` que se registra en el ledger de
+   intentos) hasta juntar varias candidatas verificadas o agotarlas.
 3. Valida cada URL con `scripts/retrofit/sc_validate.py` (script permanente,
    fuente única con producción): exige identidad — `fetch_better_covers._same_cover()`,
    un AND-gate cuyo umbral real es la constante `fetch_better_covers.DEFAULT_MAX_HASH_DIST`
@@ -397,7 +416,10 @@ Por defecto solo procesa portadas (`img_idx 0`).
    ficha) — más ausencia de conflicto de metadata (otro volumen/ISBN) y
    calidad de display (`_is_soft_image()`, gotcha #98: descarta escaneos
    chicos y blandos). Solo pasa la MISMA portada en mejor resolución y buena
-   calidad.
+   calidad. También corre el guard anti-drift (`reference_drift_reason`,
+   gotcha #178/#179): si la referencia con la que se armó el plan cambió o
+   desapareció a mitad de la corrida (purga/reemplazo concurrente), corta el
+   target SIN gastar red en vez de validar contra una referencia obsoleta.
 4. Guarda imágenes válidas en `data/images/` y las agrega a `cover_preview.json`
    con `confidence: "low"`, `status: "pending"`. Flush self-healing
    (`scripts/retrofit/sc_flush.py`) después de cada item.
@@ -406,14 +428,20 @@ Por defecto solo procesa portadas (`img_idx 0`).
    comentada) para reverse-image vía Serper Lens en los targets que quedaron
    en 0 matches. De pago; solo si el owner lo pide explícitamente.
 
-**Umbral de calidad**: mismo valor que `scripts/audit/data_quality.py --px`
-(el panel de calidad) — constante compartida
-(`fetch_better_covers.LOW_QUALITY_PX`), no la dupliques acá.
+**Umbral de calidad**: PORTADAS (`img_idx 0`) usan por defecto
+`fetch_better_covers.cover_upscale_factor(w, h) >= fetch_better_covers.UPSCALE_TARGET_MIN`
+(factor de reescalado en card, apaisadas primero — Etapa 1 de triage de imágenes,
+2026-09-02, gotcha #175); `sc_plan.py --target-rule area` vuelve al criterio viejo,
+el mismo valor que `scripts/audit/data_quality.py --px` (el panel de calidad) —
+constante compartida `fetch_better_covers.LOW_QUALITY_PX`. La GALERÍA
+(`img_idx >= 1`) sigue usando siempre `LOW_QUALITY_PX`. No dupliques los números
+acá — citá el símbolo y remití al `SKILL.md`.
 
-**Args**: 8 flags, ninguno obligatorio — ver el `argument-hint` del
+**Args**: 9 flags, ninguno obligatorio — ver el `argument-hint` del
 [`SKILL.md`](watch-search-covers/SKILL.md) para la lista completa
-(`--limit`, `--slug`, `--include-no-image`, `--gallery-only`,
-`--include-gallery`, `--retry-failed`, `--query-extra`, `--serper-fallback`).
+(`--limit`, `--slug`, `--include-no-image`, `--only-covers`, `--gallery-only`,
+`--target-rule {scale,area}`, `--retry-failed`, `--query-extra`, `--serper-fallback`;
+`--include-gallery` sigue aceptado pero es no-op — la galería ya es default).
 Ojo: **sin `--limit` se procesan TODAS** las imágenes pendientes de la
 corrida — no hay un default acotado (la ficha anterior decía "default 20",
 error corregido en SC-1).
@@ -426,6 +454,62 @@ error corregido en SC-1).
 **Tier de modelo (hallazgo F10)**: hilo principal; el loop es mecánico
 (navegar + regex + subprocess) y el criterio vive en scripts —
 `sonnet` alcanza de sobra, nunca hace falta `opus`.
+
+---
+
+### `/watch-whakoom-covers`
+
+**Propósito**: vía **alternativa** a `/watch-search-covers`, específica para el
+mercado **España** (owner, 2026-09-02). En vez de buscar una imagen suelta por
+texto/reverse-image (que sobre el pool ES sólo acertó 1% real validado por
+`_same_cover`, gotcha #173), resuelve la **página de edición** de Whakoom
+(`whakoom.com/ediciones/<id>/<slug>`, pública, sin login) y sólo propone una
+portada si editorial + idioma `"Spanish (Spain)"` + total de tomos de la
+edición coinciden con la colección de `listadomanga.es` a la que pertenece el
+item. Usa el **Browser pane de Claude Code** (`mcp__Claude_Browser__*`, no la
+sesión del owner — las páginas de edición son públicas) con
+`mcp__claude-in-chrome__*` como fallback. **Alcance limitado**: Whakoom sólo
+lista los primeros ~11 tomos de una edición sin login (`/comics/` y `/todos`
+exigen cuenta y están fuera del alcance de este skill — `/comics/` además
+está en `Disallow:` de robots.txt) — items con `volume > 11` quedan fuera.
+
+**Cómo funciona** (detalle completo en el propio
+[`SKILL.md`](watch-whakoom-covers/SKILL.md)):
+0. Verifica el Browser pane (sanity-check de acceso a whakoom.com).
+1. Plan determinista, `scripts/retrofit/we_plan.py` (0 tokens LLM): selecciona
+   items ES sin imagen o con portada chica y `volume <= 11`/vacío; calcula
+   `total_tomos` LOCAL (conteo del corpus por `edition_key`, sin red) y
+   reutiliza `data/whakoom_edition_map.jsonl` si la serie ya se resolvió antes.
+2. Por target, busca `site:whakoom.com "<serie>" <editorial>` en Bing (máx 3
+   candidatas) y abre cada `/ediciones/` en el Browser pane, extrayendo SOLO
+   un JSON compacto (nunca el DOM completo) con editorial/idioma/formato/total
+   de tomos/ediciones hermanas/lista de tomos con cover.
+3. `scripts/retrofit/we_resolve.py` (0 tokens LLM, determinista) decide si
+   alguna edición abierta ES la edición correcta (editorial + idioma + total de
+   tomos coinciden; ambigüedad entre hermanas → no resuelve) y arma la URL de
+   la imagen del tomo pedido. Siempre apendea el intento a
+   `data/whakoom_edition_map.jsonl` (caché, éxito o no).
+4. La URL resuelta pasa por el MISMO validador permanente que
+   `/watch-search-covers` — `scripts/retrofit/sc_validate.py`
+   (`_same_cover`/`candidate_metadata_conflict`/`_is_soft_image`, sin
+   reimplementar) — y se encola con `scripts/retrofit/sc_flush.py`, marcada
+   `via: "whakoom_edicion"` (así `we_plan.py` no la vuelve a plantear).
+
+**Regla dura de acceso**: nunca navega a `/comics/` ni a `/todos` (login +
+robots.txt), nunca intenta resolver un captcha/challenge de Cloudflare (si
+aparece, abandona el target y espera antes de la próxima navegación a
+whakoom.com), nunca ingresa credenciales.
+
+**Args**: `--limit N`, `--slugs SLUG1,SLUG2`, `--target-rule {area,scale}`
+(default `area` — distinto del default de `sc_plan.py`, ver `SKILL.md`),
+`--include-approved`.
+
+**Cuándo invocarlo**: cuando quieras mejorar portadas ES específicamente y
+`/watch-search-covers` ya se corrió (o en su lugar, para el pool ES) — no
+reemplaza `/watch-search-covers` para el resto de los mercados/idiomas.
+
+**Tier de modelo**: igual que `/watch-search-covers` — hilo principal, el
+loop es mecánico y el criterio vive en scripts; `sonnet` alcanza de sobra.
 
 ---
 
@@ -442,6 +526,7 @@ manga_watch.py scrape
 /watch-validate-rarity          (opcional — si hay rares por incertidumbre nuevos)
        ↓ 1 verificación web por edición → stock_status + re-derivación
 /watch-search-covers            (opcional — si querés mejorar portadas pequeñas)
+/watch-whakoom-covers           (opcional — alternativa específica para el pool ES)
        ↓ candidatas en cover_preview.json → aprobar en cover-preview.html
 build_web.py  (opcional)
        ↓ refresh del dashboard

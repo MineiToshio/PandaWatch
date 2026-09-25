@@ -56,6 +56,11 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -288,6 +293,7 @@ def fetch_book_page(
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as exc:
+        report_issue(session, f"shueisha_books: fetch failed: {exc}")
         print(f"[shueisha] ERROR fetching {url}: {exc}")
         return None
 
@@ -315,11 +321,13 @@ def walk_series(
 
         html = fetch_book_page(current, session, timeout=timeout)
         if html is None:
+            report_issue(session, f"shueisha: unavailable linked book {current}")
             print(f"[shueisha] {current} → 404 or error, stopping chain")
             break
 
         meta = parse_book_page(html, current)
         if meta is None:
+            report_issue(session, f"shueisha: could not parse book {current}")
             print(f"[shueisha] {current} → could not parse, stopping")
             break
 
@@ -337,6 +345,10 @@ def walk_series(
         if current:
             time.sleep(sleep_seconds)
 
+    if current and vol_num >= max_vols:
+        report_issue(session, f"shueisha: series pagination limit reached ({max_vols} volumes)")
+    elif current and current in seen and html is not None and meta is not None:
+        report_issue(session, f"shueisha: repeated next-volume link {current}")
     return results
 
 

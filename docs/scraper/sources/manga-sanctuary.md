@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Las gotchas se citan por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-10.
+> Última revisión: 2026-09-08 (edición `collector` derivada como `special`; §8).
 
 ---
 
@@ -214,6 +214,29 @@ Se activa con `--bootstrap-wiki manga-sanctuary` (bypassea el loop de fuentes de
 - **Decisiones (lo que NO se hace)**: no se mergea cross-país (#46); un tomo `simple` sin
   señal coleccionable no entra; releases derivados no-manga se descartan vía
   `is_likely_manga()`.
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 4 items flageados, los 4
+  conservados — light novels/danmei con edición collector (The Husky and His White
+  Cat Shizun 1-3, Une fleur venue d'ailleurs coffret).
+- **2026-09-08 — ediciones `collector` que quedan derivadas como `special`** (lead
+  medido, NO corregido). Detectado con el item nuevo del día `Shinjū - Mourir d'amour`
+  (Komics Initiative, FR): la URL dice `...-vol-1-collector-...`, su propia
+  `description` dice `Collector · collector edition`, y sin embargo quedó
+  `edition_key = shinju-mourir-d-amour-unknown-special-fr` /
+  `edition_display = "Special (Komics Initiative)"`. **`collector` es un slug de tipo
+  de edición de primera clase en el corpus** (889 items), así que no es que falte:
+  se eligió el equivocado. **Alcance medido**: de los **345** items de esta fuente con
+  evidencia `collector` (en URL o descripción), **31 (9%)** llevan `-special-` en el
+  `edition_key`.
+  **Lo que la medición NO respalda** (anotado para que nadie lo repita): la hipótesis
+  de que esto explicaría las violaciones blandas `URLDUP` quedó **refutada** — de las
+  112 URLs compartidas por más de un `edition_key`, sólo **3 (2%)** son un par
+  collector/special de la misma edición. Y de las 26 series del corpus con la misma
+  edición partida entre `-collector-` y `-special-`, la mayoría **no comparte URL**, o
+  sea que pueden ser dos líneas comerciales legítimamente distintas del mismo sello
+  (Collector y Special conviven en varias editoriales). **Por eso no se tocó nada**: un
+  merge masivo collector→special (o al revés) fusionaría ediciones reales. Lo accionable
+  es acotado: revisar los 3 pares que comparten URL y la derivación del slug para esta
+  fuente. Decisión del owner.
 
 ---
 
@@ -274,3 +297,116 @@ PY
 **Antes de cerrar cualquier cambio en Manga-Sanctuary**: validar (`validate_corpus`, 0
 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful,
 actualiza esta ficha.
+
+## 2026-09-01 — 16/16 portadas pendientes de "(planning)" son URLs muertas (404)
+
+OLA 1 de depuración de imágenes (auditoría de portadas sin espejo local, gotcha #158).
+De los items sin espejo local del corpus, 16 eran de `Manga-Sanctuary (planning)` — la
+totalidad de sus portadas pendientes. Las 16 URLs (`www.manga-sanctuary.com/img/o/
+<slug>-s<id>-p<id>.jpg`) devuelven **404 en las 16/16**, reconfirmado dos veces más
+en la misma auditoría (no es un 404 transitorio). Son items de la sección "planning"
+(anuncios de próximos lanzamientos — coffrets/collector/deluxe futuros); la hipótesis
+más probable es que la imagen de anuncio se retira o se re-numera cuando el producto
+sale a la venta de verdad y la URL capturada en su momento queda huérfana, pero no se
+confirmó contra el HTML actual de esas páginas (fuera del alcance de esta ola, que sólo
+mirrorea, no re-scrapea).
+
+**Para el owner (no aplicado)**: si el patrón se repite en futuras auditorías, vale la
+pena un backfill de metadata puntual sobre estos ~16 items (`backfill_metadata.py
+--only images`) para re-extraer la portada actual desde la página del producto en vez
+de reintentar la URL vieja — un 404 persistente en `images[0].url` no se arregla
+reintentando la descarga, hay que volver a la fuente. Bajo impacto: son items de
+"planning" (preventa/anuncio), no ediciones ya en catálogo confirmado.
+
+## 2026-09-02 — portadas "COUVERTURE PROVISOIRE" (categoría propia, ni placeholder ni purga)
+
+En `img.sanctuary.fr`, las 4 *Happy! Édition de Luxe* de Panini FR
+(`happy-panini-deluxe-fr-1/3/4/12`) traen **arte real del editor con una banda impresa
+"COUVERTURE PROVISOIRE"**. No son placeholder (el arte es de la obra y lo publicó el
+editor), pero envejecen mal: son candidatas a **re-fetch cuando salga la portada
+definitiva**, no a purga. Quedan marcadas con el flag `portada_provisional` en
+`data/diagnostics/etapa1-triage.json`. Detectadas en la Etapa 1 de triage de imágenes
+(`docs/reference/images.md` § "Etapa 1 — resultados").
+
+De la misma fuente salió 1 `imagen_equivocada`: `kagurabachi-kana-special-fr-10`, donde
+`images[0]` es la foto del **merch/goodies del pack** (chapitas, marcapáginas) en vez de la
+portada del tomo.
+
+## 2026-09-02 — continuación: 18/23 portadas pendientes del delta de hoy siguen siendo 404
+
+Backfill post-delta de imágenes (`mirror_images.py`, balance de cierre del delta diario
+`logs/scrape-delta-2026-09-02-110142/`). El delta de hoy sumó portadas nuevas de
+`Manga-Sanctuary (planning)`; de las 23 pendientes, **18 (78%) dan HTTP 404** — mismo
+patrón que las 16/16 confirmadas el 2026-09-01 (URLs `img/o/<slug>-s<id>-p<id>.jpg` de
+la sección "planning" que quedan huérfanas). Las otras 5 sí mirrorearon con éxito (≥90 000
+px). Confirma que el patrón no fue un evento aislado del 09-01 sino recurrente en cada
+delta que toca "planning" — sigue sin aplicarse el backfill de metadata puntual sugerido
+arriba (decisión del owner).
+
+## 2026-09-21 — Dos casos nuevos del lead "collector de tienda → edition_key `special`"
+
+Los 2 items FR nuevos de la corrida delta son los dos collectors exclusivos de una CADENA
+de tiendas, y los dos quedaron con `edition_key` genérico `…-special-fr`:
+
+| Título | URL (fragmento) | edition_key asignado |
+|---|---|---|
+| Jojolands 6 | `…vol-6-collector-comptoir-du-r-ve-…` | `the-jojolands-delcourt-special-fr` |
+| Gachiakuta 17 | `…vol-17-collector-momie-…` | `gachiakuta-pika-special-fr` |
+
+"Comptoir du Rêve" y "Momie" son librerías/cadenas francesas, no líneas editoriales: son
+**exclusivos de retailer**, la misma categoría que ya venía midiéndose en esta ficha (31
+de 345 items con evidencia `collector` cayendo en `special`). El dato que agregan estos
+dos es que el discriminante está **en el slug de la URL** (`collector-<tienda>`), no en el
+título — igual que el sello occidental de la gotcha #189 — así que es recuperable de forma
+determinista sin LLM.
+
+Consecuencia práctica: dos ediciones de tienda distintas de la misma serie/volumen
+colapsarían en el mismo `edition_key` `…-special-fr`, y la rareza no distingue un
+exclusivo de cadena (que es lo escaso) de un "special" cualquiera.
+
+**Nada aplicado (decisión del owner).** El lead sigue abierto con la misma cautela ya
+anotada acá: parte de estas series pueden ser dos líneas comerciales legítimas, así que un
+merge o un split automático no está justificado sin revisar la muestra.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+La revisión histórica 2010-01–2026-09 terminó sin errores: 2090 candidatos,
+2064 reportables. El full ahora solicita explícitamente desde 2010-01 (antes el
+default empezaba en 2024); el delta usa la ventana reciente. Ambos incluyen hasta
+tres meses futuros. La prueba 2026-10–12 encontró 60 candidatos, 59 reportables.
+Estos conteos son de ingestión aislada, no altas netas del catálogo.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 12 referencias de `www.manga-sanctuary.com` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+Cierre 2026-09-25: se incorporaron 72 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.
+
+## Auditoría estratégica — 2026-09-25
+
+Se corrige el mapeo «unlimited double» → «limited edition»: Unlimited no prueba
+tirada limitada. Air Gear mantiene su lugar por portadas nuevas, páginas de color
+y extras confirmados en [Pika](https://www.pika.fr/actualite/air-gear-unlimited-arrive-dans-la-collection-pika-shonen/); ahora aporta señal bonus.
+Se reconoce la etiqueta «Spéciale» como édition spéciale. El nombre Medaka-Box
+no indica cofre: los tomos edition:simple salen; la edición spéciale permanece.
+Se repite el calendario completo 2010-01 a 2026-12 con estas reglas para recuperar
+ediciones especiales cuyo título no expresaba su formato. Revisión de política 2.
+
+Full verificado 2026-09-25: **204 meses (2010-01 a 2026-12), 2168 candidatos, 2140 admisiones/cambios, 2129 filas tras consolidación**. La integración detecta ISBN contradictorios en grupos antiguos y preserva ambas ediciones con marca de revisión, en lugar de perder una. No supone que el calendario incluya todas las ediciones francesas históricas.

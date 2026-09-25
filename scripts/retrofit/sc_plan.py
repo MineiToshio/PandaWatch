@@ -4,12 +4,20 @@
 
 Compila a código el bloque Python embebido más grande que quedaba en el skill
 (auditoría Fable 2026-07-08, hallazgo F9, ~300 líneas): identifica qué
-imágenes necesitan búsqueda (portada de baja calidad / ausente, o galería con
-`--include-gallery`/`--gallery-only`), arma la lista ORDENADA de variantes de
+imágenes necesitan búsqueda (por defecto portada Y galería de baja calidad /
+ausentes; acotable con `--only-covers`/`--gallery-only`), arma la lista ORDENADA de variantes de
 query por target (whakoom/yandex/texto, orden por idioma), aplica los guards
 de exclusión (ya adjudicado en `cover_preview.json`, memoria de intentos de 30
 días, referencia degenerada `< MIN_REF_PX`), y persiste el plan para el loop
 interactivo de Chrome (Step 3 del skill).
+
+El target de PORTADA usa por defecto `--target-rule scale` (factor de
+reescalado en card >= `fbc.UPSCALE_TARGET_MIN`, apaisadas primero — Etapa 1
+de triage de imágenes, 2026-09-02, gotcha #172): el ÁREA sola (criterio viejo,
+disponible con `--target-rule area`) marca 579 portadas como "baja calidad" en
+el corpus real de las que el 91% se ven BIEN en la card del catálogo. La
+galería (img_idx >= 1) sigue usando el criterio de área siempre — la Etapa 1
+sólo evaluó portadas.
 
 Es 100% determinista — el mismo perfil de tarea que ya tenían
 `sc_validate.py`/`sc_flush.py` (permanentes, con tests, tras 3 incidentes de
@@ -21,17 +29,19 @@ Escribe:
   - `.tmp_sc_acc.json`   — reset del acumulador self-healing de esta corrida
 
 Uso:
-    sc_plan.py                                   # todas las imágenes pendientes
+    sc_plan.py                                   # todas: portadas + galería
     sc_plan.py --limit 20
     sc_plan.py --slug berserk-darkhorse-deluxe-1
-    sc_plan.py --gallery-only
-    sc_plan.py --include-gallery --query-extra "portada oficial"
+    sc_plan.py --only-covers                     # solo portadas (img_idx 0)
+    sc_plan.py --gallery-only --query-extra "portada oficial"
     sc_plan.py --retry-failed
+    sc_plan.py --target-rule area                # criterio viejo (compatibilidad)
 """
 from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -67,7 +77,30 @@ LOW_QUALITY_PX = fbc.LOW_QUALITY_PX
 # fbc.SAME_COVER_MIN_REF_PX (10 000) = piso para _same_cover fiable (lo usa el motor).
 MIN_REF_PX = fbc.MIN_REF_PX
 
+# Criterio de selección de targets de PORTADA (img_idx 0). Default "scale" desde
+# 2026-09-02 (Etapa 1 de triage de imágenes, gotcha #172): factor de reescalado
+# en card >= fbc.UPSCALE_TARGET_MIN (1.6), apaisadas primero — ver
+# `fbc.cover_upscale_factor`. "area" es el criterio viejo (píxeles < LOW_QUALITY_PX),
+# conservado tras `--target-rule area` por compatibilidad; la galería (img_idx >= 1)
+# SIEMPRE usa el criterio de área, independiente de este flag (no evaluado en
+# la Etapa 1, que sólo cubrió portadas).
+DEFAULT_TARGET_RULE = "scale"
+
 SKIP_SIGNALS = frozenset({"variant_cover", "retailer_exclusive"})
+
+
+# Motor de TEXTO primario = Bing image search (decisión 2026-07-11, investigación web +
+# red team; ver docs/reference/gotchas.md). Razón principal NO es velocidad sino RIESGO DE
+# CUENTA: scrapear Google con las cookies del owner (credentials:include) ata el 429/`/sorry`
+# a su cuenta Google real y puede escalar a suspensión (Gmail/Ads colaterales). Bing es el
+# motor más tolerante al scraping de los tres grandes, con patrón `murl` estable, y —crítico—
+# HONRA el operador `site:` (verificado en vivo: devolvió covers de whakoom con
+# site:whakoom.com), así que la vía whakoom se conserva. Google udm=2 queda como FALLBACK de
+# emergencia documentado en el SKILL (no se emite en el plan). El reverse-by-photo sigue
+# siendo Yandex (gratis) → Serper Lens (Step 5, server-side, sin cookies del owner).
+def _text_search_url(query: str) -> str:
+    return f"https://www.bing.com/images/search?q={urllib.parse.quote(query)}&first=1"
+
 
 # Términos de edición que NO cubre fbc._EDITION_HINT, por idioma.
 EXTRA_EDITION_HINT = {
@@ -83,18 +116,85 @@ def _default_data_path(name: str) -> Path:
     return base / name
 
 
-def get_pixels_local(local_fname: str, images_dir: Path) -> int:
+def get_dims_local(local_fname: str, images_dir: Path) -> tuple[int, int]:
+    """(width, height) del archivo local, vía la fuente única de dimensiones
+    (`fbc._get_dims_from_bytes` — parsing de JPEG/PNG/WebP + fallback PIL para
+    AVIF/GIF/WebP lossless, ya usada por el motor para candidatas). `(0, 0)` si
+    no hay `local_fname`, el archivo no existe, o no se puede leer/decodificar."""
     if not local_fname:
-        return 0
+        return 0, 0
     p = images_dir / local_fname
     if not p.exists():
-        return 0
+        return 0, 0
     try:
-        from PIL import Image
-        with Image.open(p) as img:
-            return img.width * img.height
-    except Exception:
-        return 0
+        data = p.read_bytes()
+    except OSError:
+        return 0, 0
+    return fbc._get_dims_from_bytes(data)
+
+
+def get_pixels_local(local_fname: str, images_dir: Path) -> int:
+    w, h = get_dims_local(local_fname, images_dir)
+    return w * h
+
+
+# ── Guard de referencia placeholder (gotcha #17x, 2026-09-02) ──────────────────
+# Hallazgo del juez sobre la Etapa 2: 9/9 candidatas de Yandex reverse-image que
+# usaron como CONSULTA una referencia placeholder (la "tarjeta de título" .gif de
+# Rakuten — texto negro quemado sobre fondo pálido, gotcha #171) fueron basura
+# sistemática (slides, cabeceras de blog, logos): reverse-image de un placeholder
+# encuentra imágenes visualmente parecidas AL PLACEHOLDER, no a la portada real
+# que reemplaza. El guard MIN_REF_PX (arriba) sólo atrapa referencias DEGENERADAS
+# por TAMAÑO (1×1); la tarjeta de Rakuten tiene tamaño de canvas real (hasta
+# 1004×1172 px) y lo pasa de largo. Se detecta por las DOS fuentes únicas de
+# `image_store` (fbc.image_store — el motor ya las importa, no se reimplementan
+# acá): `known_placeholder_url_reason(url)` (por URL — stem/fragmento/regla
+# host+extensión de Rakuten `.gif`, sin tocar disco) y `placeholder_reason(bytes)`
+# (por contenido del archivo local — estructural + firma sha1 de
+# `data/placeholder_signatures.json`).
+def reference_placeholder_reason(local_fname: str, ref_url: str, images_dir: Path) -> str:
+    """"" si la referencia (portada o foto de galería) actual NO es un
+    placeholder conocido; si lo es, el motivo (`known:...`/`tiny:...`/
+    `solid:...`/`signature:...`, tal cual lo devuelven las fuentes únicas).
+    Se consulta la URL primero (no toca disco) y sólo si no matchea se leen
+    los bytes del archivo local, si existe."""
+    reason = fbc.image_store.known_placeholder_url_reason(ref_url) if ref_url else ""
+    if reason:
+        return reason
+    if not local_fname:
+        return ""
+    p = images_dir / local_fname
+    if not p.exists():
+        return ""
+    try:
+        data = p.read_bytes()
+    except OSError:
+        return ""
+    return fbc.image_store.placeholder_reason(data)
+
+
+def reference_sha256(local_fname: str, images_dir: Path) -> str:
+    """sha256 hex del archivo local de referencia, o "" si no es legible.
+
+    Se persiste en el target del plan (campo `reference_sha256`) como guard
+    ANTI-DRIFT (gotcha #178, 2026-09-02): el loop de Chrome del Step 3 tarda
+    decenas de minutos, y en esa ventana otra sesión puede purgar/reemplazar
+    la imagen de referencia (p.ej. la purga de placeholders `.gif` de Rakuten
+    de gotcha #176a corriendo en paralelo). `sc_validate.py`
+    (`reference_drift_reason`) recalcula este hash contra el archivo actual
+    ANTES de correr `_same_cover` — si cambió, el target se omite en vez de
+    generar candidatas `verified:false` sobre una referencia que ya no es la
+    portada real del item (el caso medido: 8 items con 1-2 candidatas de
+    dudosa relación, `docs/reference/images.md` § "Etapa 2, tanda 2")."""
+    if not local_fname:
+        return ""
+    p = images_dir / local_fname
+    if not p.exists():
+        return ""
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        return ""
 
 
 def edition_term(item: dict[str, Any]) -> str:
@@ -144,26 +244,28 @@ def build_variants(
     if series:
         variants.append(("amplia", clean(f"{series} {volume} {ed_term} {pub_short}")))
 
-    # Dedup conservando orden (variantes de TEXTO → Google udm=2)
+    # Dedup conservando orden (variantes de TEXTO → Bing image search, motor primario)
     seen: set[str] = set()
     out: list[dict[str, str]] = []
     for label, q in variants:
         if q and q.lower() not in seen:
             seen.add(q.lower())
             out.append({"label": label, "query": q, "kind": "text",
-                        "url": f"https://www.google.com/search?q={urllib.parse.quote(q)}&udm=2"})
+                        "engine": "bing", "url": _text_search_url(q)})
 
-    # Variante WHAKOOM (texto, Google udm=2) — va PRIMERO para ítems en Español.
+    # Variante WHAKOOM (texto, Bing image search) — va PRIMERO para ítems en Español.
     # Evidencia: whakoom produjo el 100% de los matches ES en la corrida piloto
     # (8/8); yandex-reverse 0 (los thumbnails de listadomanga no están indexados
     # por Yandex). Su CDN (i1.whakoom.com/small/) tiene upgrade automático a
-    # /large/ en sc_validate.py.
+    # /large/ en sc_validate.py. Bing HONRA `site:` (verificado en vivo 2026-07-11:
+    # site:whakoom.com devolvió covers de whakoom /large/), así que la vía whakoom se
+    # conserva al ser Bing el motor de texto primario.
     if lang == "Español":
         wk_q = " ".join(p for p in [series or title, volume] if p).strip()
         if wk_q:
             wk_query = f"site:whakoom.com {wk_q}"
-            wk_url = f"https://www.google.com/search?q={urllib.parse.quote(wk_query)}&udm=2"
-            out.insert(0, {"label": "whakoom", "query": wk_query, "kind": "text", "url": wk_url})
+            out.insert(0, {"label": "whakoom", "query": wk_query, "kind": "text",
+                           "engine": "bing", "url": _text_search_url(wk_query)})
 
     # Variante REVERSE-IMAGE (Yandex) — segundo para ES, primero para otros idiomas.
     # Solo si hay URL http usable. Va detrás de whakoom para ES. EXCEPCIÓN: si la
@@ -173,7 +275,7 @@ def build_variants(
         yx = f"https://yandex.com/images/search?rpt=imageview&url={urllib.parse.quote(old_url, safe='')}"
         yandex_pos = 1 if (lang == "Español" and out and out[0].get("label") == "whakoom") else 0
         out.insert(yandex_pos, {"label": "yandex-reverse", "query": f"[reverse] {series or title}",
-                                "kind": "reverse", "url": yx})
+                                "kind": "reverse", "engine": "yandex", "url": yx})
 
     return out
 
@@ -226,6 +328,28 @@ def _load_recently_failed(attempts_path: Path, retry_failed: bool) -> set[tuple[
     return recently_failed
 
 
+def _target_sort_key(t: dict[str, Any], target_rule: str) -> tuple:
+    """Orden de procesamiento de la lista final de targets (peor primero).
+
+    - `pixels == 0` ("sin imagen", sólo con `--include-no-image`): siempre
+      primero, igual que antes de esta tarea.
+    - Portada (`img_idx == 0`) con `target_rule == "scale"`: apaisadas
+      (`width > height`, recorte destruido — p.ej. `cover150/` de Aladin)
+      primero, y dentro de cada grupo por factor de reescalado DESCENDENTE
+      (peor = más estirada, primero). Recomendación del juez de visión de la
+      Etapa 1 (gotcha #172 / docs/reference/images.md § "Etapa 1 — resultados").
+    - Todo lo demás (galería, o portada con `target_rule == "area"` de
+      compatibilidad): criterio viejo, por píxeles ASCENDENTE (peor = más
+      chico, primero).
+    """
+    if t["pixels"] == 0:
+        return (0, 0, 0.0)
+    if target_rule == "scale" and t["img_idx"] == 0:
+        is_landscape = t.get("width", 0) > t.get("height", 0)
+        return (1, 0 if is_landscape else 1, -(t.get("scale") or 0.0))
+    return (1, 2, float(t["pixels"]))
+
+
 def build_plan(
     items: list[dict[str, Any]],
     *,
@@ -236,9 +360,16 @@ def build_plan(
     slug_filter: str = "",
     include_no_image: bool = False,
     gallery_only: bool = False,
-    include_gallery: bool = False,
+    only_covers: bool = False,
     query_extra: str = "",
+    target_rule: str = DEFAULT_TARGET_RULE,
+    skip_counts: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
+    """`skip_counts` (opcional, mutado in-place): contador de motivos de skip
+    DURO que no quedan implícitos en el largo de `targets` — hoy sólo
+    `placeholder_reference` (referencia actual detectada como placeholder
+    conocido, ver `reference_placeholder_reason`). Puramente aditivo/opcional:
+    no cambia el valor de retorno ni requiere que el caller lo pase."""
     targets: list[dict[str, Any]] = []
     for item in items:
         if slug_filter and item.get("slug") != slug_filter:
@@ -259,27 +390,72 @@ def build_plan(
         for img_idx, img in enumerate(imgs):
             local = img.get("local", "")
             ref_url = img.get("url", "")
-            px = get_pixels_local(local, images_dir)
+            # `orig_ref_url` NUNCA se pisa: para galería es la identidad del
+            # slot (`candidate_target` — QUÉ foto se reemplaza), independiente
+            # de si sirve o no como referencia de búsqueda/verificación.
+            orig_ref_url = ref_url
+            w, h = get_dims_local(local, images_dir)
+            px = w * h
+
+            # Guard de referencia placeholder (gotcha #171/#176a/#178, 2026-09-02):
+            # una referencia puede tener tamaño de canvas real (no cae en el guard
+            # MIN_REF_PX de abajo) y seguir siendo inservible como consulta —
+            # p.ej. la "tarjeta de título" .gif de Rakuten. Reverse-image sobre un
+            # placeholder devuelve basura sistemática (hallazgo del juez: 9/9).
+            # Se detecta ANTES de aplicar el criterio de calidad (scale/area) —
+            # un placeholder nunca es una referencia válida sin importar su tamaño.
+            placeholder_why = reference_placeholder_reason(local, ref_url, images_dir)
+            reference_kind = "real"
 
             if img_idx == 0:
                 if gallery_only:
                     continue
-                if px < MIN_REF_PX:
+                if px < MIN_REF_PX or placeholder_why:
                     if not include_no_image:
+                        if placeholder_why and skip_counts is not None:
+                            skip_counts["placeholder_reference"] = (
+                                skip_counts.get("placeholder_reference", 0) + 1
+                            )
                         continue
                     local = ""
                     ref_url = ""
                     px = 0
-                elif px >= LOW_QUALITY_PX:
-                    continue
+                    w = h = 0
+                    reference_kind = "placeholder" if placeholder_why else "none"
+                elif target_rule == "scale":
+                    # Etapa 1 (2026-09-02): el ÁREA no predice si se ve mal —
+                    # el factor de reescalado en card sí. Ver gotcha #172 y
+                    # fbc.cover_upscale_factor.
+                    if fbc.cover_upscale_factor(w, h) < fbc.UPSCALE_TARGET_MIN:
+                        continue
+                else:  # target_rule == "area" — criterio viejo, compatibilidad
+                    if px >= LOW_QUALITY_PX:
+                        continue
             else:
-                if not gallery_only and not include_gallery:
+                # Galería (img_idx >= 1): se procesa POR DEFECTO, SIEMPRE con el
+                # criterio de área (la Etapa 1 sólo evaluó portadas). Se salta
+                # solo si se pidió --only-covers explícitamente.
+                if only_covers:
                     continue
-                if px < MIN_REF_PX or px >= LOW_QUALITY_PX:
+                if placeholder_why:
+                    if not include_no_image:
+                        if skip_counts is not None:
+                            skip_counts["placeholder_reference"] = (
+                                skip_counts.get("placeholder_reference", 0) + 1
+                            )
+                        continue
+                    # El SLOT (candidate_target = orig_ref_url) se conserva —
+                    # sigue identificando QUÉ foto de galería se reemplaza. Sólo
+                    # se blanquea la referencia de BÚSQUEDA/verificación.
+                    local = ""
+                    ref_url = ""
+                    px = 0
+                    reference_kind = "placeholder"
+                elif px < MIN_REF_PX or px >= LOW_QUALITY_PX:
                     continue
 
             action = "replace_cover" if img_idx == 0 else "replace_image"
-            target_url = "" if img_idx == 0 else ref_url
+            target_url = "" if img_idx == 0 else orig_ref_url
             skip_key = (slug, action, target_url)
             if skip_key in already_in_preview or skip_key in recently_failed:
                 continue
@@ -288,15 +464,32 @@ def build_plan(
                 "slug": slug,
                 "pixels": px,
                 "img_idx": img_idx,
+                "width": w,
+                "height": h,
+                # None (no `inf`, no serializable en JSON estándar) cuando no hay
+                # dimensiones utilizables — el mismo caso "sin imagen" de arriba.
+                "scale": fbc.cover_upscale_factor(w, h) if (w > 0 and h > 0) else None,
                 "image_ref_local": local,
                 "image_ref_url": ref_url,
+                # "real" (referencia utilizable) / "placeholder" (detectada por
+                # image_store, blanqueada) / "none" (degenerada por tamaño, sin
+                # placeholder conocido). El Step 3 del skill la lee para decidir
+                # la vía de búsqueda — aunque ya es estructural: sin referencia
+                # real no hay URL para armar la variante yandex-reverse (ver
+                # build_variants), así que "placeholder"/"none" nunca la generan.
+                "reference_kind": reference_kind,
+                # sha256 del archivo de referencia AL MOMENTO DEL PLAN — sólo con
+                # referencia real (si no hay archivo o no es "real" no hay nada
+                # que proteger). Guard anti-drift (gotcha #178): sc_validate.py lo
+                # recalcula contra el archivo actual antes de correr _same_cover.
+                "reference_sha256": reference_sha256(local, images_dir) if reference_kind == "real" else "",
                 "candidate_action": action,
                 "candidate_target": target_url,
                 "target_label": "portada" if img_idx == 0 else f"galería {img_idx}",
                 "variants": build_variants(item, ref_url=ref_url, query_extra=query_extra),
             })
 
-    targets.sort(key=lambda x: (x["pixels"] > 0, x["pixels"]))
+    targets.sort(key=lambda t: _target_sort_key(t, target_rule))
     return targets[:limit] if limit else targets
 
 
@@ -310,12 +503,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="Incluye items sin imagen actual (candidatas quedan verified:false).")
     ap.add_argument("--gallery-only", action="store_true",
                     help="Salta portadas (img_idx 0); procesa solo galería (img_idx >= 1).")
+    ap.add_argument("--only-covers", action="store_true",
+                    help="Salta galería (img_idx >= 1); procesa solo portadas (img_idx 0).")
     ap.add_argument("--include-gallery", action="store_true",
-                    help="Procesa portadas Y galería (sin esto, solo portadas).")
+                    help="DEPRECADO / no-op: la galería ya se procesa por defecto. "
+                         "Se mantiene para no romper invocaciones viejas.")
     ap.add_argument("--retry-failed", action="store_true",
                     help="Ignora la exclusión de 30 días de intentos fallidos.")
     ap.add_argument("--query-extra", default="",
                     help="Texto adicional al final de cada variante de query en Google.")
+    ap.add_argument("--target-rule", choices=["scale", "area"], default=DEFAULT_TARGET_RULE,
+                    help="Criterio de selección de PORTADAS de baja calidad (img_idx 0; "
+                         "la galería SIEMPRE usa área). 'scale' (default, 2026-09-02): "
+                         "factor de reescalado en card (fbc.cover_upscale_factor) >= "
+                         "fbc.UPSCALE_TARGET_MIN (1.6), apaisadas primero — gotcha #172. "
+                         "'area' (criterio viejo, compatibilidad): píxeles < LOW_QUALITY_PX "
+                         "(90 000).")
     ap.add_argument("--items", type=Path, default=None,
                     help="items.jsonl a leer (default: data/items.jsonl / MANGA_WATCH_DATA_DIR).")
     ap.add_argument("--preview", type=Path, default=None,
@@ -343,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     already_in_preview = _load_already_in_preview(preview_path)
     recently_failed = _load_recently_failed(attempts_path, args.retry_failed)
 
+    skip_counts: dict[str, int] = {}
     targets = build_plan(
         items,
         images_dir=images_dir,
@@ -352,12 +556,21 @@ def main(argv: list[str] | None = None) -> int:
         slug_filter=args.slug,
         include_no_image=args.include_no_image,
         gallery_only=args.gallery_only,
-        include_gallery=args.include_gallery,
+        only_covers=args.only_covers,
         query_extra=args.query_extra,
+        target_rule=args.target_rule,
+        skip_counts=skip_counts,
     )
 
     args.out.write_text(json.dumps(targets, ensure_ascii=False), encoding="utf-8")
     args.acc_out.write_text("{}", encoding="utf-8")
+
+    n_placeholder_skipped = skip_counts.get("placeholder_reference", 0)
+    if n_placeholder_skipped:
+        print(f"Saltados DURO por referencia placeholder (known_placeholder_url_reason / "
+              f"placeholder_reason — gotcha #171/#176a): {n_placeholder_skipped}. "
+              f"Con --include-no-image entran como 'sin imagen' (reference_kind != 'real', "
+              f"sólo búsqueda por texto, nunca Yandex reverse con esa referencia).")
 
     if not targets:
         print("No hay imágenes que necesiten búsqueda. Nada que hacer.")

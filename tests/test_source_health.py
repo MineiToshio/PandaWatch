@@ -417,6 +417,78 @@ def test_challenge_detected_classifies_broken_challenge(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Fix 4 (post-mortem 2026-08-24): [STEP_TIMEOUT] clasifica broken_timeout,
+# no cae al default "healthy" con stats vacías.
+# --------------------------------------------------------------------------- #
+
+def test_step_timeout_parsed_not_error_not_candidates(tmp_path):
+    """El marker que escribe scrape_delta.sh/scrape_full.sh cuando `_run_timed`
+    devuelve rc≠0 se parsea como categoría propia ('timeout'), separada de
+    error/candidates — igual que CHALLENGE_DETECTED."""
+    run_dir = tmp_path / "scrape-delta-2026-08-22-183301"
+    run_dir.mkdir()
+    (run_dir / "02t-mangavariant-incremental.log").write_text(
+        "[BOOTSTRAP-WIKI] fuente: mangavariant\n"
+        "[STEP_TIMEOUT] source=wiki:mangavariant rc=124\n",
+        encoding="utf-8",
+    )
+    stats = sh.parse_run_log(run_dir)
+    assert stats["wiki:mangavariant"]["timeout"] == "124"
+    assert stats["wiki:mangavariant"]["error"] is None
+    assert stats["wiki:mangavariant"]["candidates"] is None
+
+
+def test_step_timeout_classifies_broken_timeout_not_healthy(tmp_path):
+    """El bug real: rc=124 sin ningún otro marker (ni [ERROR] ni candidatos)
+    quedaba 'healthy' con runs_seen=1 porque classify() caía al default.
+    Ahora debe salir 'broken_timeout'."""
+    run_dir = tmp_path / "scrape-delta-2026-08-22-183301"
+    run_dir.mkdir()
+    (run_dir / "02t-mangavariant-incremental.log").write_text(
+        "[BOOTSTRAP-WIKI] fuente: mangavariant\n"
+        "[STEP_TIMEOUT] source=wiki:mangavariant rc=124\n",
+        encoding="utf-8",
+    )
+    stats = sh.parse_run_log(run_dir)
+    agg = sh.aggregate_health([(run_dir, stats)], [])
+    assert sh.classify(agg["wiki:mangavariant"]) == "broken_timeout"
+
+
+def test_step_timeout_takes_priority_over_error_and_challenge():
+    """timeout es la señal más confiable (viene del exit code real, no de
+    texto que alcanzó a imprimirse antes de morir) — gana aunque el log
+    también tenga un [ERROR] o un [CHALLENGE_DETECTED] de ese mismo run."""
+    stats = {"candidates": None, "error": "algo", "skipped": None,
+              "challenge": "cloudflare", "timeout": "124"}
+    single = sh._single_run_agg(stats)
+    assert single["runs_with_timeout"] == 1
+    assert single["runs_with_error"] == 0
+    assert single["runs_with_challenge"] == 0
+    assert sh.classify(single) == "broken_timeout"
+
+
+def test_metrics_timeout_excluded_from_yield_history(tmp_path):
+    """append_metrics marca errors=1 para un run con timeout (aunque no haya
+    [ERROR] de texto) — si no, compute_yield_regressions lo cuenta como un 0
+    de yield real y hunde la mediana histórica (#5, 2026-07-08) justo para
+    la fuente que más necesita seguir siendo comparable."""
+    run_dir = tmp_path / "scrape-delta-2026-08-22-183301"
+    run_dir.mkdir()
+    (run_dir / "02t-mangavariant-incremental.log").write_text(
+        "[BOOTSTRAP-WIKI] fuente: mangavariant\n"
+        "[STEP_TIMEOUT] source=wiki:mangavariant rc=124\n",
+        encoding="utf-8",
+    )
+    metrics = tmp_path / "logs" / "metrics.jsonl"
+    appended, _ = sh.append_metrics(metrics, run_dir, sh.parse_run_log(run_dir))
+    assert appended == 1
+    rec = json.loads(metrics.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["source"] == "wiki:mangavariant"
+    assert rec["errors"] == 1
+    assert rec["status"] == "broken_timeout"
+
+
+# --------------------------------------------------------------------------- #
 # #3: _ERROR_RE no trunca nombres de search-template con ':' adentro
 # --------------------------------------------------------------------------- #
 
@@ -482,7 +554,8 @@ def test_unseen_seeded_from_wiki_registry(tmp_path):
     run = _make_run(tmp_path, "scrape-delta-2026-06-04-020000", {"AR - Foo": 200})
     stats = sh.parse_run_log(run)
     agg = sh.aggregate_health([(run, stats)], [])
-    assert sh.classify(agg["wiki:whakoom"]) == "unseen"
+    assert sh.classify(agg["wiki:whakoom"]) == "retired"
+    assert sh.classify(agg["wiki:prhcomics"]) == "unseen"
     assert agg["wiki:whakoom"]["kind"] == "wiki"
 
 

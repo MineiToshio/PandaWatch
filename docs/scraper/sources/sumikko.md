@@ -3,7 +3,8 @@
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Es una fuente **wiki** (módulo propio, sin entrada en `sources.yml`).
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-07.
+> Última revisión: 2026-09-02 (44/47 portadas pendientes son SKUs de Amazon muertos — ver
+> abajo).
 
 ---
 
@@ -166,6 +167,15 @@ Parser: [`scripts/wikis/sumikko.py`](../../../scripts/wikis/sumikko.py).
   fuente, aplica a `generate_slugs.py` en general): el slug ISBN ahora se deriva
   SIEMPRE del ISBN-13 normalizado vía `manga_watch.isbn13()`, idempotente sin importar
   qué variante de ISBN traiga la fila. Ver `docs/web-next/FRD-006-slug-generation.md`.
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 60 items flageados por el
+  skill `/watch-standardize-catalog`, de los cuales **52 eran light novels
+  legítimas** (限定版/特装版 con drama CD, booklet, tarjetas de ilustración) y se
+  conservaron — es el caso testigo de la gotcha #147 (el `prompt-rules.md` del
+  skill decía "Light novels → false", contradiciendo CLAUDE.md). Se expulsaron 8:
+  making-of del anime de Girls und Panzer, un escape-game book de SCRAP, 化物語
+  Premium Item BOX (merch: Nendoroid + pósters), guía visual de historia china,
+  revista infantil de trenes, manual del software Hatsune Miku V3, pouch de One
+  Piece y clear file de Go-Toubun no Hanayome.
 
 ---
 
@@ -237,3 +247,183 @@ de Rakuten, no el nombre del producto. El scraper (`candidate_to_json` →
 no en el grid del catálogo). 221 items afectados en el corpus, casi todos de Sumikko.
 La edición real (特装版/限定版 con figura/booklet) SÍ queda en el título — solo se quita
 el bracket 【…特典…】 del retailer. Ver docs/reference/title-policy.md.
+
+## 2026-08-25 — `[ISBN_ANOMALY]`: los códigos de Sumikko son JAN/EAN-13, no ISBN
+
+Delta diario (`logs/scrape-delta-2026-08-25-110223/04e-backfill-images.log`). El paso
+`backfill_metadata --only image_url` emitió 9 markers `[ISBN_ANOMALY]`, **todos** de
+Sumikko, con códigos del tipo `4538806044790`, `4580142062228`, `4560219324343`.
+
+**No es un bug — es cómo funciona la fuente.** La URL canónica de Sumikko es
+`/item-select/<código>` (§5.1) y para las ediciones especiales con bonus físico ese
+código NO es un ISBN sino un **JAN** (EAN-13 japonés, prefijos `45…`/`49…`), porque el
+producto está registrado como artículo de comercio y no como libro. Un ISBN-13 real
+empieza siempre con `978`/`979`; el validador lo nota y lo reporta.
+
+Comportamiento actual, y es el correcto: el pipeline **conserva** el código
+(`kept='4538806044790'`) porque sigue siendo el identificador estable de esa página. No
+hay pérdida de dato ni de agrupación — el `cluster_key` no usa ISBN pelado desde que se
+eliminó el tier `isbn:` (decisión #4, 2026-07-07), así que un JAN en ese campo no puede
+fusionar ediciones distintas.
+
+**Para el owner (no aplicado — decisión suya):** si el ruido molesta en los logs, la
+opción limpia es que `normalize_isbn()` reconozca el prefijo JAN y clasifique el código
+como `product_code` en vez de emitir la anomalía. Es cosmético: no cambia el corpus.
+
+## 2026-08-28 — la fuente inyectó un juego de mesa (`Overlord Imagine Stories`)
+
+Delta diario (`logs/scrape-delta-2026-08-28-160959/`). Durante la curación de la cola de
+series sin canónica (`/watch-enrich-series-aliases`) apareció la candidata
+`overlord-imagine-stories`, que **no es manga ni material impreso**: es un *juego de mesa
+narrativo* de Kadokawa ambientado en la franquicia Overlord. Entró por esta fuente y pasó
+los gates deterministas del pipeline.
+
+Se dejó **sin catalogar como serie** (Action C del skill de aliases) para no acuñar una
+canónica de una obra fuera de alcance. El item sigue en el corpus: el skill de aliases no
+expulsa nada.
+
+Causa probable: el listado 限定版・特装版 de Sumikko incluye productos de franquicia que no
+son libros, y el término de edición limitada alcanza para pasar el scorer. Es el mismo
+patrón que ya afecta a otras fuentes por-término (gotcha #154): el gate determinista no lo
+matchea, así que se re-ingesta en cada corrida.
+
+**Para el owner (no aplicado):** evaluar un patrón de exclusión por formato para esta
+fuente (`ボードゲーム` / juego de mesa y similares), o sumar el título a
+`data/comics_blacklist.yml`. Retorno: evita que productos de franquicia no impresos sigan
+entrando por el listado de ediciones limitadas.
+
+## 2026-09-02 — 44/47 portadas pendientes del delta de hoy son SKUs de Amazon muertos (1×1)
+
+Backfill post-delta de imágenes (`mirror_images.py`, balance de cierre del delta diario
+`logs/scrape-delta-2026-09-02-110142/`). De las 47 portadas nuevas de Sumikko sin espejo
+local, **44 (94%) descargan un placeholder estructural `tiny:1x1`** — un JPEG de 43 bytes,
+1×1 px — desde `images-na.ssl-images-amazon.com/images/P/<código>.09._SCLZZZZZZZ_.jpg`
+(más 1 entry de galería con el mismo patrón, y el mismo código de este item aparece
+también documentado arriba por una anomalía distinta de `normalize_isbn`, sin relación).
+`mirror_images.py` los detectó correctamente vía `image_store.placeholder_reason()`
+(capacidad #3 de OLA 1, gotcha #158) y NO les asignó `local` — el `url` remoto queda de
+fallback, comportamiento correcto, nada que reparar en el mecanismo.
+
+**Causa confirmada, no es un bug de `normalize_image_url`**: se probaron 5 variantes de la
+misma URL (la capturada tal cual, con `_SY180_`/`_SY500_` insertado, sin ningún sufijo de
+tamaño, y sin el segmento `.09`) contra un SKU muerto real
+(`4538806044790`, item `amakano-2-unknown-fanbook-jp`) — **las 5 devuelven el mismo
+JPEG de 43 bytes / 1×1 px**, sin importar la forma de la URL. El SKU de Amazon
+simplemente no tiene imagen subida (o fue retirada) — Amazon no devuelve 404, devuelve
+sirve ese placeholder fijo con HTTP 200, por eso `_classify_failure` (que sólo mira el
+status code) no lo distingue de un éxito; sólo el chequeo estructural post-descarga lo
+atrapa. Mismo patrón que el 404 persistente de Manga-Sanctuary "(planning)" (ver
+`docs/scraper/sources/manga-sanctuary.md` § 2026-09-01): la URL capturada en el scrape
+apunta a un recurso que dejó de existir del lado de la fuente/CDN, no es recuperable
+reintentando la descarga.
+
+Contraejemplo real (para no generalizar de más): el mismo patrón de URL con un SKU VIVO
+(`4099432416`, no de esta fuente) sí sirve una imagen real de 353×500 cuando se le quita
+el sufijo de tamaño `_SY180_` — el bug es específico del SKU, no del formato de URL.
+
+**Para el owner (no aplicado)**: no hay URL alternativa a reintentar — Sumikko sólo
+expone el link de Amazon en su HTML. Si se quiere portada real para estos 44 items,
+hace falta una fuente de imagen distinta (búsqueda por texto/whakoom no aplica, son
+ediciones JP). Bajo impacto relativo: quedan con 📚 (sin foto) en la UI, mismo estado
+que tenían antes del delta de hoy — el backfill no empeoró nada, sólo confirmó que la
+URL capturada no tiene remedio.
+
+---
+
+## 2026-09-04 — el early-stop cortó la cosecha a la MITAD y el run reportó éxito
+
+`source_health` flaggeó **1153 candidatos vs mediana 2775 (42%)**. No es variación de la
+fuente: es el **heurístico de early-stop cortando por un hueco transitorio**, y el run
+terminó diciendo "terminado" sin ninguna señal de error.
+
+### La evidencia — la última página llena es el tell
+
+| Corrida | Última página CON items | Total |
+|---|---|---|
+| 2026-09-01 | `p=33: 38 items` ← **parcial** | 2813 |
+| 2026-09-02 | `p=33: 40 items` ← **parcial** | 2638 |
+| 2026-09-03 | `p=33: 41 items` ← **parcial** | 2740 |
+| **2026-09-04** | **`p=13: 96 items` ← LLENA** | **1153** |
+
+El catálogo real termina en **p=33 con una página parcial** (~38-41 de 96) — la firma
+normal de un fin de paginación. Hoy la última página fue **p=13 y venía LLENA (96)**, y
+las tres siguientes devolvieron 0:
+
+```
+[sumikko] p=13: 96 items, 96 nuevos (total 1153)
+[sumikko] p=14: 0 items (streak 1/3)
+[sumikko] p=15: 0 items (streak 2/3)
+[sumikko] p=16: 0 items (streak 3/3)
+[sumikko] terminado: 1153 candidates con score>=20
+```
+
+**Una página llena seguida de cero no es un fin de catálogo.** Es un hueco: rate-limit,
+respuesta vacía o hipo del servidor en p=14-16. El log **no registró ningún error, 429 ni
+challenge** — por eso el corte fue invisible.
+
+### Por qué no lo detectó nada
+
+El early-stop trata "3 páginas vacías seguidas" como fin de catálogo, sin mirar **si la
+última página con datos venía llena**. Cuando el sitio devuelve vacío por un motivo
+transitorio, el scraper concluye que terminó, escribe `terminado: N candidates` y el run
+sale con rc=0. `source_health` es lo único que lo nota — y lo reporta como "yield
+regression", que se lee como problema de la fuente y no como corte del scraper.
+
+### Impacto
+
+**Hoy, cero pérdida real**: los reportables fueron 0 (las 13 páginas cosechadas ya eran
+todas conocidas), porque la fuente pagina de más reciente a más antiguo y lo nuevo entra
+por las primeras páginas.
+
+**El riesgo es el caso no observado**: si el hueco cae en p=2 o p=3, el mismo mecanismo
+descarta el 90% del catálogo **y también reporta éxito**. La pérdida sería de items
+recientes — justo los que el delta existe para capturar. Ya pasó una vez en modo benigno;
+no hay nada que impida la versión cara.
+
+### Recomendación (NO aplicada — decisión del owner)
+
+1. **Distinguir "fin de catálogo" de "hueco"**: sólo aceptar el early-stop si la última
+   página con datos vino **parcial** (< tamaño de página). Si venía llena, reintentar esas
+   páginas antes de cortar. Es el fix de MECANISMO y sirve para todos los wikis paginados,
+   no sólo Sumikko.
+2. **Que el corte sospechoso sea ruidoso**: si se corta después de una página llena,
+   emitir WARN y que el step salga con rc≠0 — hoy un corte del 58% del catálogo es
+   indistinguible de una corrida sana en el resumen del delta.
+
+**Nada de esto se aplicó**: la rutina diaria documenta y recomienda; tocar el heurístico
+de paginación es un cambio de mecanismo del scraper y es del owner.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Continuación de auditoría — 2026-09-24
+
+Tope defensivo aumentado a 1000 páginas; alcanzarlo reporta cobertura incompleta. El final normal sigue siendo tres páginas consecutivas sin candidatos.
+
+### Comprobación viva adicional — 2026-09-24
+
+Reingesta completa del listado en staging: 2653 candidatos, 2652 reportables y
+39 URLs primarias adicionales. Se conservan las alertas de códigos de producto
+que no validan como ISBN: no se inventan ni corrigen automáticamente sus dígitos.
+
+La corrida detectó siete referencias ambiguas heredadas; no confirmó checkpoint.
+Cinco se resolvieron al excluir propietarios con ISBN válidos distintos. Las
+otras dos corresponden a extras distintos de `僕とロボコ 11` (llaveros Roboco y
+Roboco Quiz), antes ligados a las fichas Bondo y Motsuo: se separaron tras revisar
+los títulos y códigos de producto de la misma fuente. Un código de tienda que
+no valida como ISBN no sirve para desambiguar automáticamente varias tiendas.
+La recuperación pendiente de publicación asciende a 45 filas de Sumikko.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 28 referencias de `comic.sumikko.info` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.

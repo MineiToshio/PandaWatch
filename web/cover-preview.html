@@ -34,11 +34,13 @@
   .card { background: var(--card); border: 2px solid var(--yellow); border-radius: 10px;
           overflow: hidden; transition: all 0.2s; }
   .card.done { border-color: var(--border); }
-  .card-header { display: flex; justify-content: space-between; align-items: center;
-                 padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); gap: 0.5rem; }
+  .card-header { display: flex; flex-direction: column; align-items: stretch;
+                 padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); gap: 0.4rem; }
   .card.done .card-header { opacity: 0.55; }
-  .card-title { font-size: 0.8rem; font-weight: 600; overflow: hidden;
-                text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .card-header-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .card-title { font-size: 0.8rem; font-weight: 600; display: -webkit-box;
+                -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+                overflow-wrap: break-word; line-height: 1.35; width: 100%; }
   .card-title a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .card-title a:hover { text-decoration: underline; }
   .card-toggle { background: none; border: none; color: var(--muted); cursor: pointer;
@@ -274,29 +276,31 @@
                    :title="(e.title_original || e.title) + ' — ver detalle'"
                    x-text="e.title || e.slug"></a>
               </span>
-              <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
-                    x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
-              <button class="card-toggle" @click="toggleReport(e)"
-                      :disabled="!!reportedSlugs[e.slug]"
-                      style="border:1px solid var(--border); border-radius:4px;
-                             padding:0.1rem 0.45rem; font-size:0.68rem;"
-                      :style="reportedSlugs[e.slug] ? 'color:var(--accent);opacity:0.8;cursor:default' : (reportingSlug === e.slug ? 'color:#fff;background:var(--red);border-color:var(--red)' : 'color:var(--red)')"
-                      :title="reportedSlugs[e.slug] ? 'Ya reportado — pendiente de procesar' : 'Reportar (dislike): lo agrega a feedback.jsonl con tu motivo, igual que en el catálogo'"
-                      x-text="reportedSlugs[e.slug] ? '✓ Reportado' : '👎 Reportar'"></button>
-              <button class="card-toggle" @click="flagIrrelevant(e)"
-                      :disabled="isSaving"
-                      style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
-                             padding:0.1rem 0.45rem; font-size:0.68rem;"
-                      :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
-                      title="Marcar como irrelevante: lo agrega a feedback.jsonl para excluirlo del scraper">Excluir</button>
-              <button class="card-toggle" x-show="pendingInEntry(e) > 0"
-                      @click="rejectEntryPending(e)"
-                      :disabled="isSaving"
-                      style="color:var(--red);"
-                      :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : 'color:var(--red);'"
-                      title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
-              <button class="card-toggle" @click="toggleCollapse(e)"
-                      x-text="isCollapsed(e) ? '▸' : '▾'"></button>
+              <div class="card-header-controls">
+                <span class="card-badge" :class="entryDone(e) ? 'done' : 'pending'"
+                      x-text="entryDone(e) ? 'Decidido' : (pendingInEntry(e) + ' pend.')"></span>
+                <button class="card-toggle" @click="toggleReport(e)"
+                        :disabled="!!reportedSlugs[e.slug]"
+                        style="border:1px solid var(--border); border-radius:4px;
+                               padding:0.1rem 0.45rem; font-size:0.68rem;"
+                        :style="reportedSlugs[e.slug] ? 'color:var(--accent);opacity:0.8;cursor:default' : (reportingSlug === e.slug ? 'color:#fff;background:var(--red);border-color:var(--red)' : 'color:var(--red)')"
+                        :title="reportedSlugs[e.slug] ? 'Ya reportado — pendiente de procesar' : 'Reportar (dislike): lo agrega a feedback.jsonl con tu motivo, igual que en el catálogo'"
+                        x-text="reportedSlugs[e.slug] ? '✓ Reportado' : '👎 Reportar'"></button>
+                <button class="card-toggle" @click="flagIrrelevant(e)"
+                        :disabled="isSaving"
+                        style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
+                               padding:0.1rem 0.45rem; font-size:0.68rem;"
+                        :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                        title="Marcar como irrelevante: lo agrega a feedback.jsonl para excluirlo del scraper">Excluir</button>
+                <button class="card-toggle" x-show="pendingInEntry(e) > 0"
+                        @click="rejectEntryPending(e)"
+                        :disabled="isSaving"
+                        style="color:var(--red);"
+                        :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : 'color:var(--red);'"
+                        title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
+                <button class="card-toggle" style="margin-left:auto;" @click="toggleCollapse(e)"
+                        x-text="isCollapsed(e) ? '▸' : '▾'"></button>
+              </div>
             </div>
 
             <!-- Editor de motivo del 👎 (inline, reemplaza al prompt()) -->
@@ -348,7 +352,7 @@
                            @click="openZoomGallery(e, gi, curSrc(ci))"
                            @error="if(!$event.target.dataset.fb && ci.url){$event.target.dataset.fb=1; $event.target.src=ci.url}else{$event.target.style.opacity=0.3}">
                       <div class="gn-label"
-                           x-text="(gi+1) + '·' + (gi === getSelImgIdx(e) ? 'Ref' : (ci.is_cover ? 'Portada' : (ci.kind === 'extra' ? 'Extra' : 'Galería')))"></div>
+                           x-text="(gi+1) + '·' + (gi === getSelImgIdx(e) ? 'Ref' : (ci.is_cover ? 'Portada' : (ci.kind === 'extra' ? 'Extra' : 'Galería'))) + galleryPairBadge(e, ci)"></div>
                     </div>
                   </template>
                 </div>
@@ -383,11 +387,26 @@
                            :data-new-url="currentCand(e).new_url"
                            @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
                       <div class="px">
-                        <span x-text="formatPx(currentCand(e).new_pixels)"></span>
-                        <span class="gain" x-show="currentCand(e).ref_pixels || e.old_pixels"
+                        <template x-if="currentCand(e).action === 'remove_image'">
+                          <span style="color:var(--red);">🗑 a eliminar</span>
+                        </template>
+                        <template x-if="currentCand(e).action !== 'remove_image'">
+                          <span x-text="formatPx(currentCand(e).new_pixels)"></span>
+                        </template>
+                        <span class="gain" x-show="currentCand(e).action !== 'remove_image' && (currentCand(e).ref_pixels || e.old_pixels)"
                               x-text="'x' + (currentCand(e).new_pixels / (currentCand(e).ref_pixels || e.old_pixels)).toFixed(1)"></span>
                       </div>
                     </div>
+                    <!-- action=remove_image (OLA 2 dudosos): mini-thumb de la
+                         imagen que se CONSERVA, para que el par se vea de un
+                         vistazo sin abrir el modal. -->
+                    <template x-if="currentCand(e).action === 'remove_image' && currentCand(e).keep_url">
+                      <div class="cand-thumb" style="opacity:0.9;">
+                        <img :src="keepSrc(currentCand(e))" alt="Se conserva"
+                             @click="openCompare(e, currentCand(e))">
+                        <div class="px"><span style="color:var(--green);">✓ se conserva</span></div>
+                      </div>
+                    </template>
                     <div class="cand-info">
                       <span class="cand-status"
                             :class="currentCand(e).status === 'approved' ? 'ok' : currentCand(e).status === 'rejected' ? 'bad' : 'pending'"
@@ -396,17 +415,27 @@
                         <span style="font-size:0.65rem; color:var(--accent); display:inline-block; margin-left:0.4rem;"
                               x-text="targetLabel(e, currentCand(e))"></span>
                       </template>
+                      <template x-if="currentCand(e).action === 'remove_image'">
+                        <span class="card-badge"
+                              style="background:var(--red);color:#fff;margin-left:0.4rem;"
+                              title="Casi-duplicada detectada por dedup_carousel_images --redteam-auto (OLA 2); no se auto-eliminó, decisión manual">
+                          Casi-duplicada
+                        </span>
+                      </template>
                       <template x-if="currentCand(e).verified === true">
                         <span class="card-badge"
                               style="background:var(--green);color:#000;margin-left:0.4rem;"
                               title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
                       </template>
-                      <template x-if="isUnverified(currentCand(e))">
+                      <template x-if="isUnverified(currentCand(e)) && currentCand(e).action !== 'remove_image'">
                         <span class="card-badge"
                               style="background:var(--yellow);color:#000;margin-left:0.4rem;"
                               title="No pasó verificación de identidad — revisar con cuidado">⚠ sin verificar</span>
                       </template>
                       <br>
+                      <template x-if="currentCand(e).action === 'remove_image'">
+                        <span style="font-size:0.72rem;" x-text="removeImagePairLabel(currentCand(e))"></span>
+                      </template>
                       <template x-if="currentCand(e).domain">
                         <span>Fuente: <span class="domain" x-text="currentCand(e).domain"></span><br></span>
                       </template>
@@ -416,12 +445,17 @@
                     </div>
                   </div>
                   <div class="cand-controls">
-                    <select x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))"
+                    <select x-show="currentCand(e).action !== 'remove_image'"
+                            x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))"
                             :disabled="isSaving">
                       <template x-for="opt in candidateOptions(e)" :key="opt.value">
                         <option :value="opt.value" x-text="opt.label"></option>
                       </template>
                     </select>
+                    <span x-show="currentCand(e).action === 'remove_image'"
+                          style="font-size:0.72rem; color:var(--muted); flex:1;">
+                      Eliminar de la galería (sin reemplazo)
+                    </span>
                     <button :class="currentCand(e).status === 'approved' ? 'active-approve' : 'outline-approve'"
                             :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'approved')">✓</button>
@@ -527,25 +561,40 @@
                    :style="'max-width:100%; max-height:58vh; object-fit:contain; border-radius:6px; cursor:zoom-in; border:2px solid ' + (currentCand(compareEntry).status === 'approved' ? 'var(--green)' : currentCand(compareEntry).status === 'rejected' ? 'var(--red)' : 'var(--yellow)')"
                    :data-new-url="currentCand(compareEntry).new_url"
                    @error="if(!$event.target.dataset.fb && $event.target.dataset.newUrl){$event.target.dataset.fb=1; $event.target.src=$event.target.dataset.newUrl}else{$event.target.style.opacity=0.3}">
-              <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--green); font-weight:600;">
-                Nueva — <span x-text="formatPx(currentCand(compareEntry).new_pixels)"></span>
-                <span class="gain" x-show="currentCand(compareEntry).ref_pixels || compareEntry.old_pixels"
-                      x-text="'x' + (currentCand(compareEntry).new_pixels / (currentCand(compareEntry).ref_pixels || compareEntry.old_pixels)).toFixed(1)"></span>
+              <div style="margin-top:0.5rem; font-size:0.8rem; font-weight:600;"
+                   :style="'color:' + (currentCand(compareEntry).action === 'remove_image' ? 'var(--red)' : 'var(--green)')">
+                <template x-if="currentCand(compareEntry).action === 'remove_image'">
+                  <span>🗑 A eliminar (sin reemplazo)</span>
+                </template>
+                <template x-if="currentCand(compareEntry).action !== 'remove_image'">
+                  <span>
+                    Nueva — <span x-text="formatPx(currentCand(compareEntry).new_pixels)"></span>
+                    <span class="gain" x-show="currentCand(compareEntry).ref_pixels || compareEntry.old_pixels"
+                          x-text="'x' + (currentCand(compareEntry).new_pixels / (currentCand(compareEntry).ref_pixels || compareEntry.old_pixels)).toFixed(1)"></span>
+                  </span>
+                </template>
               </div>
             </div>
           </div>
 
           <div style="padding:0 1rem 0.6rem; font-size:0.7rem; color:var(--muted);">
-            Fuente: <span style="color:var(--accent);" x-text="currentCand(compareEntry).domain"></span>
-            <template x-if="currentCand(compareEntry).page_title">
-              <span> · <span x-text="currentCand(compareEntry).page_title.substring(0, 80)"></span></span>
+            <template x-if="currentCand(compareEntry).action === 'remove_image'">
+              <span x-text="removeImagePairLabel(currentCand(compareEntry))"></span>
+            </template>
+            <template x-if="currentCand(compareEntry).action !== 'remove_image'">
+              <span>
+                Fuente: <span style="color:var(--accent);" x-text="currentCand(compareEntry).domain"></span>
+                <template x-if="currentCand(compareEntry).page_title">
+                  <span> · <span x-text="currentCand(compareEntry).page_title.substring(0, 80)"></span></span>
+                </template>
+              </span>
             </template>
             <template x-if="currentCand(compareEntry).verified === true">
               <span class="card-badge"
                     style="background:var(--green);color:#000;margin-left:0.5rem;"
                     title="Pasó _same_cover: misma portada que la imagen actual">✓ verificada</span>
             </template>
-            <template x-if="isUnverified(currentCand(compareEntry))">
+            <template x-if="isUnverified(currentCand(compareEntry)) && currentCand(compareEntry).action !== 'remove_image'">
               <span class="card-badge"
                     style="background:var(--yellow);color:#000;margin-left:0.5rem;"
                     title="No pasó verificación de identidad — revisar con cuidado">⚠ sin verificar</span>
@@ -557,13 +606,18 @@
         <div style="flex:0 0 auto; padding:0.8rem 1rem;
                     border-top:1px solid var(--border); background:var(--card);">
           <div class="cand-controls" style="margin-top:0;">
-            <select x-model="currentCand(compareEntry)._choice"
+            <select x-show="currentCand(compareEntry).action !== 'remove_image'"
+                    x-model="currentCand(compareEntry)._choice"
                     @change="applyChoice(compareEntry, currentCand(compareEntry))"
                     :disabled="isSaving">
               <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
                 <option :value="opt.value" x-text="opt.label"></option>
               </template>
             </select>
+            <span x-show="currentCand(compareEntry).action === 'remove_image'"
+                  style="font-size:0.75rem; color:var(--muted);">
+              Eliminar de la galería (sin reemplazo)
+            </span>
             <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
                     :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                     @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
@@ -799,6 +853,13 @@ function previewApp() {
         ...(c.verified !== undefined ? { verified: c.verified } : {}),
         ref_pixels: c.ref_pixels ?? null,
         match_dist: c.match_dist ?? null,
+        // action="remove_image" (OLA 2 dudosos): contexto del PAR — la imagen
+        // que se propone eliminar viaja en new_image/new_url/target (arriba,
+        // reusa el mismo schema); acá el "gemelo" que se conserva + dims de
+        // ambas, para que el dashboard muestre el par sin ir a buscarlo.
+        keep_url: c.keep_url || '', keep_local: c.keep_local || '',
+        remove_dims: c.remove_dims ?? null, keep_dims: c.keep_dims ?? null,
+        same_dims: c.same_dims ?? null,
         // Motivo de rechazo — 100% opcional, null si nunca se tocó el chip.
         // "otros:<texto>" cuando el owner escribe motivo libre.
         reject_reason: c.reject_reason ?? null,
@@ -996,6 +1057,41 @@ function previewApp() {
       if (!ci) return '';
       return ci.local && ci.local !== '[dry-run]'
         ? '../data/images/' + ci.local : ci.url;
+    },
+
+    // action=remove_image (OLA 2 dudosos): src de la imagen "gemela" que se
+    // CONSERVA — local-first, igual criterio que candSrc/curSrc.
+    keepSrc(c) {
+      if (!c) return '';
+      return c.keep_local && c.keep_local !== '[dry-run]'
+        ? '../data/images/' + c.keep_local : c.keep_url;
+    },
+
+    // action=remove_image: sufijo para el label de un thumb de la "Galería
+    // actual" cuando coincide con el target (a eliminar) o el keep_url (se
+    // conserva) de la candidata visible — así el par queda marcado ahí mismo
+    // sin agregar una grilla nueva.
+    galleryPairBadge(e, ci) {
+      const c = this.currentCand(e);
+      if (!c || c.action !== 'remove_image' || !ci) return '';
+      if (ci.url && ci.url === c.target) return ' · 🗑 a eliminar';
+      if (ci.url && ci.url === c.keep_url) return ' · ✓ se queda';
+      return '';
+    },
+
+    // Texto "WxH vs WxH · dHash N" para el par de una candidata remove_image.
+    // dims viene como [w, h] si se pudo leer el archivo al encolar; si no,
+    // cae a formatPx() sobre new_pixels/ref_pixels (siempre presentes).
+    removeImagePairLabel(c) {
+      if (!c) return '';
+      const fmtDims = (d, pxFallback) => (Array.isArray(d) && d.length === 2)
+        ? `${d[0]}×${d[1]}` : this.formatPx(pxFallback);
+      const removeStr = fmtDims(c.remove_dims, c.new_pixels);
+      const keepStr = fmtDims(c.keep_dims, c.ref_pixels);
+      let s = `A eliminar ${removeStr} · se conserva ${keepStr}`;
+      if (c.match_dist != null) s += ` · dHash ${c.match_dist}`;
+      if (c.same_dims) s += ' · mismas dimensiones';
+      return s;
     },
 
     openZoom(src) { if (src) { this.zoomSrc = src; this.zoomCtx = null; } },
@@ -1316,6 +1412,14 @@ function previewApp() {
         const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === candidate.target);
         if (imgIdx >= 1) this.setSelImgIdx(entry, imgIdx);
       }
+      // action=remove_image (OLA 2 dudosos): el panel izquierdo ("actual")
+      // muestra la imagen GEMELA que se CONSERVA — el derecho (candidata) ya
+      // muestra la que se propone eliminar (candSrc resuelve target). Así el
+      // modal existente compara el PAR sin agregar paneles nuevos.
+      if (candidate.action === 'remove_image' && candidate.keep_url) {
+        const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === candidate.keep_url);
+        if (imgIdx >= 0) this.setSelImgIdx(entry, imgIdx);
+      }
       this.compareEntry = entry;
     },
 
@@ -1389,6 +1493,10 @@ function previewApp() {
             if (nc.action === 'replace_image' && nc.target) {
               const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === nc.target);
               if (imgIdx >= 1) this.setSelImgIdx(entry, imgIdx);
+            }
+            if (nc.action === 'remove_image' && nc.keep_url) {
+              const imgIdx = (entry.current_images || []).findIndex(ci => ci.url === nc.keep_url);
+              if (imgIdx >= 0) this.setSelImgIdx(entry, imgIdx);
             }
           }
         }
@@ -1596,6 +1704,9 @@ function previewApp() {
           ...(c.verified !== undefined ? { verified: c.verified } : {}),
           ref_pixels: c.ref_pixels ?? null,
           match_dist: c.match_dist ?? null,
+          keep_url: c.keep_url || '', keep_local: c.keep_local || '',
+          remove_dims: c.remove_dims ?? null, keep_dims: c.keep_dims ?? null,
+          same_dims: c.same_dims ?? null,
           reject_reason: c.reject_reason ?? null,
         })),
       }));

@@ -41,9 +41,17 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import (  # type: ignore
-    FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13, write_lines_atomic,
-)
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
+# patrón que fetch_better_covers.py / backfill_series_aliases.py).
+try:
+    from manga_watch import (  # type: ignore
+        FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13, write_lines_atomic,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import (  # type: ignore
+        FULLWIDTH_DIGITS_TABLE, backup_and_rotate, isbn13, write_lines_atomic,
+    )
 
 
 _SLUG_VALID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')

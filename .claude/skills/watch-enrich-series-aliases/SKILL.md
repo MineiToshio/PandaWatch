@@ -211,31 +211,43 @@ unrelated series across the entire base (regla dura, auditoría post-scrape
 without `--only-keys`; `--all --yes-i-know-collateral` exists only for the rare
 deliberate full pass.
 
-## Step 5 — Truncate the unmapped queue
+## Step 5 — Podar la cola (NUNCA truncarla entera)
 
 **SOLO si el backfill de Step 4 devolvió exit 0.** Si el backfill abortó o falló
-(exit ≠ 0), NO trunques la cola — arreglá lo que falló y re-corré Step 4 primero.
-Truncar con el backfill en rojo perdería la cola sin haber aplicado los mapeos.
+(exit ≠ 0), NO podes la cola — arreglá lo que falló y re-corré Step 4 primero.
+Podar con el backfill en rojo perdería la cola sin haber aplicado los mapeos.
 
-Una vez que el backfill aplicó limpio, limpiá la cola para que la próxima corrida
-arranque fresca:
+> ⚠️ **`unmapped_series.jsonl` son DOS colas en un mismo archivo (gotcha #155).**
+> Las filas SIN `reason` son series sin mapear — las consume este skill y son
+> regenerables por el próximo scrape. Las filas CON `reason`
+> (`llm_non_manga`, `standardize_exhausted`…) son **cola de curación manual**:
+> las escribe el skill de standardize para que un humano las revise una por
+> una, y **el scrape NO las regenera**. Este paso hacía
+> `: > data/unmapped_series.jsonl`, que borraba las dos — por eso la rutina
+> diaria pasó 7 corridas seguidas (2026-08-29 → 09-07) salteándose este skill
+> para no destruir la cola de curación sin revisarla.
+
+Usá el script (fuente única — no reimplementar la lógica acá):
 
 ```bash
 # Solo procede si el backfill anterior salió con exit 0:
-if [ $? -eq 0 ]; then
-  # Backup + truncate (usa backup_and_rotate para respetar la rotación max-3)
-  .venv/bin/python -c "from scripts.manga_watch import backup_and_rotate; from pathlib import Path; backup_and_rotate(Path('data/unmapped_series.jsonl'), 'enrich')"
-  : > data/unmapped_series.jsonl
-fi
+.venv/bin/python scripts/prune_unmapped_queue.py --dry-run   # revisá qué queda
+.venv/bin/python scripts/prune_unmapped_queue.py
 ```
+
+Conserva íntegras las filas de curación, poda las series ya procesadas y
+deduplica (gotcha #157: el appender no deduplicaba entre corridas y el 76-92%
+del archivo eran `series_key` repetidas). Hace su propio `backup_and_rotate`.
 
 (Si corriste otros comandos entre el backfill y este paso, verificá el exit code
 del **backfill** explícitamente en vez de confiar en `$?`.)
 
-(The pipeline will repopulate it on the next scrape if any series remains unmapped.)
+(The pipeline will repopulate the series rows on the next scrape if any series
+remains unmapped.)
 
-> **Note on backups:** the queue (`unmapped_series.jsonl`) is cheap and regenerable —
-> the next scrape rebuilds it. The file actually at risk is `data/items.jsonl`, which
+> **Note on backups:** the *series* rows of the queue are cheap and regenerable —
+> the next scrape rebuilds them; las filas de curación NO. The file actually at
+> risk is `data/items.jsonl`, which
 > Step 4's retrofit already backs up (`backup_and_rotate` label `series-aliases`,
 > **timestamped** — un archivo por corrida, se conserva entre corridas) before its
 > destructive rewrite. So the critical restore point lives with items.jsonl, not the

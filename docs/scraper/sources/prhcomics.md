@@ -47,7 +47,7 @@ por costo de JS — ver `sources.yml`, `enabled: false`). `publisher` = la divis
 
 ## 2. Descripción técnica de la fuente
 
-- **`/manga/`** — una **única página HTML estática** con todo el catálogo. Sin paginación,
+- **`/manga/`** — dos selecciones HTML estáticas (`/manga/` y `/seven-seas/`), sin garantía de catálogo histórico completo. Sin paginación,
   sin JS, sin autenticación. Todos los metadatos del listing están en el HTML directamente;
   no hace falta hitear páginas de detalle.
 - **Estructura del HTML**: cada producto es un `<li class="toast-anchor">` con un bloque
@@ -77,7 +77,7 @@ por costo de JS — ver `sources.yml`, `enabled: false`). `publisher` = la divis
 > PRH Comics es un catálogo plano de una sola página: la lógica de captura es directa, sin
 > las jerarquías de edición de ListadoManga.
 
-1. **Descargar `/manga/`** y recolectar todos los `<li class="toast-anchor">`.
+1. **Descargar `/manga/` y `/seven-seas/`** y recolectar todos los `<li class="toast-anchor">`.
 2. **Por cada producto**, decidir si entra:
    - Se descarta si le falta **título o ISBN** (campos mínimos).
    - Se descarta si **no parece edición especial**: el gate `_is_collectible()` exige que el
@@ -89,8 +89,7 @@ por costo de JS — ver `sources.yml`, `enabled: false`). `publisher` = la divis
      Golden Books, Random House Books for Young Readers, Prestel, Pantheon — aparecen bajo
      `/manga/` por licencias de franquicia, no son manga).
 3. **Deduplicar por ISBN** dentro del run (un tomo puede repetirse en varios carruseles).
-4. **Filtro de fecha opcional** (modo delta): si la fecha de salida es anterior al cutoff
-   `--wiki-from`, se descarta. Si `--wiki-from` es < 2010, no se filtra por fecha.
+4. **Sin filtro por fecha de publicación**: una edición antigua recién listada también entra.
 5. **Umbral de score**: sólo entran los que superan `--min-score` (20 en el pipeline).
 
 **Reglas de producto que nunca se rompen:**
@@ -102,22 +101,16 @@ por costo de JS — ver `sources.yml`, `enabled: false`). `publisher` = la divis
 
 ## 4. Discovery: scrape general (FULL) vs incremental (DELTA)
 
-PRH Comics se invoca con el **mismo módulo** en ambos modos; la única diferencia es el cutoff
-de fecha que se pasa por `--wiki-from`. Como la página es una sola y trae el catálogo
-activo completo, no hay un discovery distinto: el "delta" sólo recorta por fecha de salida.
+FULL y DELTA recorren ambas selecciones completas. El delta compara el contenido
+con el estado persistido, no con la fecha de publicación. El 2026-09-25 devolvieron
+792 y 582 tarjetas (incluyen repeticiones de carruseles), 105 candidatos únicos y
+104 productos admitidos. Una segunda corrida delta produjo 0 nuevos/cambiados.
+Cualquier página fallida o sin tarjetas marca la corrida incompleta y no permite
+crear el recibo inicial. Los productos obtenidos de otras páginas se preservan.
 
-| | FULL (general) | DELTA (incremental) |
-|---|---|---|
-| Script / paso | `scripts/scrape_full.sh` (paso **2l**) | `scripts/scrape_delta.sh` (paso **2k**) |
-| Invocación | `--bootstrap-wiki prhcomics --wiki-from 2010-01 --min-score 20` | `--bootstrap-wiki prhcomics --wiki-from "$LISTADO_CAL_FROM" --min-score 20` |
-| Cutoff de fecha | `2010-01` (efectivamente sin filtro: trae todo el catálogo activo) | `LISTADO_CAL_FROM` = mes actual − 2 meses (sólo salidas recientes) |
-| Request HTTP | una sola, `timeout` corto (`_run_timed 120`) | idéntica |
-| Frecuencia | mensual / trimestral | diaria / semanal |
-| Cuándo | refresh completo del catálogo | novedades recientes |
-
-- El filtro de fecha aplica sobre `release_date` (la "On sale date" parseada). Items sin
-  fecha parseable **no se filtran** (pasan el cutoff).
-- `fetch_details` no se usa: todo el metadato está en el listing, no hay HTTP por ficha.
+La ficha `/titlelist/manga-hardcovers/` respondió 200 pero no expuso tarjetas en
+el HTML estático; no está incorporada como endpoint funcional. PRH complementa
+la cobertura histórica de Seven Seas, no demuestra reemplazo total.
 
 ---
 
@@ -253,3 +246,36 @@ PY
 **Antes de cerrar cualquier cambio en PRH Comics**: validar (`validate_corpus`, 0 duras) →
 tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza esta
 ficha.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Comprobación viva adicional — 2026-09-24
+
+Reingesta en staging del índice público: 87 reportables y 14 URLs primarias
+ausentes del catálogo previo. Esto valida el índice actual `/manga/`, que es una
+selección editorial; pasar `--wiki-from 2000-01` no lo transforma en un archivo
+histórico exhaustivo de PRH.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 2 referencias de `prhcomics.com` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+## Auditoría estratégica — 2026-09-25
+
+Se amplía descubrimiento con el [catálogo oficial Seven Seas en PRH](https://prhcomics.com/seven-seas/).
+Se conserva Seven Seas histórico; su parser directo queda retirado de jobs
+administrados por 403 persistente (HTML y API), no por falta de productos.
+Las novelas ligeras/danmei premium siguen dentro del alcance, confirmado por el owner.
+
+Verificación final 2026-09-25: importación limpia con las nuevas protecciones conserva **104 productos**; delta posterior: **0 nuevos/cambiados**. Se recuperaron las ediciones distintas de Gundam Origin y Vinland Saga que una consolidación previa había fusionado pese a tener ISBN diferentes. El resultado exploratorio de 102 filas se descartó.

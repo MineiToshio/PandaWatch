@@ -236,3 +236,33 @@ PY
 **Antes de cerrar cualquier cambio en Shueisha Books**: validar (`validate_corpus`, 0
 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful,
 actualiza esta ficha.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Auditoría de continuidad — 2026-09-24
+
+Una cadena de volúmenes que alcanza el límite con un siguiente tomo pendiente,
+repite enlaces o cambia su HTML sin poder parsearse ahora reporta incidencia; no
+se confirma un checkpoint de éxito sobre una cadena truncada.
+
+Comprobación viva del recorrido de semillas y libros independientes: 35
+candidatos/reportables, salida 0, con `--wiki-from 2000-01`. La cobertura sigue
+limitada a las semillas declaradas; no equivale a todo el catálogo de Shueisha.
+
+Una ficha enlazada que devuelve 404 tampoco se interpreta como el final normal
+de una serie: se reporta el enlace roto y se conserva el tramo adquirido.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitaron 2 referencias de `www.shueisha.co.jp` asociadas a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.

@@ -55,6 +55,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -410,6 +415,7 @@ def fetch_html(
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as exc:
+        report_issue(session, f"sumikko: fetch failed: {exc}")
         print(f"[sumikko] WARN {url}: {exc}")
         return None
 
@@ -434,7 +440,7 @@ def bootstrap(
     min_score: int = 0,
     fetch_details: bool = False,  # noqa: ARG001 (no detail-fetch — listing tiene todo)
     accept_types: frozenset[str] = _DEFAULT_ACCEPT_TYPES,
-    max_pages: int = 40,
+    max_pages: int = 1000,
     flush_fn: "Callable[[list[Candidate]], None] | None" = None,
     **kwargs: Any,
 ) -> list[Candidate]:
@@ -488,6 +494,9 @@ def bootstrap(
             flush_fn(page_kept)
         if sleep_seconds:
             time.sleep(sleep_seconds)
+
+    else:
+        report_issue(session, f"sumikko: pagination limit reached ({max_pages})")
 
     print(f"[sumikko] terminado: {len(candidates)} candidates con score>={min_score}")
     return candidates

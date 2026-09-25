@@ -184,7 +184,20 @@ def main() -> int:
                     help="También purga placeholders de items aprobados (golden records). "
                          "Por defecto se saltean: purgar quita/reordena entries de images[] "
                          "(images[0], la portada, incluida) de una fila que el owner confirmó.")
+    ap.add_argument("--only-reasons", type=str, default=None,
+                    help="CSV de prefijos de razón a aplicar esta corrida (p.ej. "
+                         "'signature' o 'signature,known'). Las entries cuya razón NO está "
+                         "en la lista se DETECTAN pero se dejan intactas (no se cuentan como "
+                         "dropped). Sirve para aplicar sólo una denylist puntual (p.ej. firmas "
+                         "nuevas recién agregadas) sin arrastrar de paso categorías separadas "
+                         "que el corpus ya venga acumulando (roto/huérfano, cross-series, etc.) "
+                         "y que no fueron parte de la revisión que autorizó esta corrida. "
+                         "Default: todas las razones (comportamiento histórico del script).")
     args = ap.parse_args()
+
+    only_reasons: set[str] | None = None
+    if args.only_reasons:
+        only_reasons = {r.strip() for r in args.only_reasons.split(",") if r.strip()}
 
     items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
     cache: dict[str, str] = {}
@@ -242,6 +255,10 @@ def main() -> int:
                     # búsqueda, p.ej. Star Comics). Quitar la portada destruiría un
                     # cover real; quitar la copia de galería es siempre seguro.
                     reason = url_r
+            if reason and only_reasons is not None and reason.split(":")[0] not in only_reasons:
+                # Detectada pero fuera del alcance de esta corrida (--only-reasons):
+                # se conserva tal cual, no cuenta como dropped ni afecta el GC.
+                reason = ""
             if reason:
                 dropped.append((im, reason))
             else:

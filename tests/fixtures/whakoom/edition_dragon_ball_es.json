@@ -1,0 +1,37 @@
+{
+  "_comment": "Fixture anonimizada — estructura real de la extracción compacta que el skill /watch-whakoom-covers hace con javascript_tool sobre una página https://www.whakoom.com/ediciones/<id>/<slug>, con IDs/hashes de imagen re-generados (no son los reales del sitio). Ver .claude/skills/watch-whakoom-covers/SKILL.md § Step 3.",
+  "edition_id": 700123,
+  "edition_url": "https://www.whakoom.com/ediciones/700123/dragon_ball-rustica_con_sobrecubierta",
+  "title": "Dragon Ball",
+  "publisher": "Planeta Cómic",
+  "language": "Spanish (Spain)",
+  "formato": "Rústica con sobrecubierta",
+  "total_tomos": 34,
+  "other_editions": [
+    {
+      "raw": "English (United States) · Paperback · VIZ Media · 34 volumes",
+      "language": "English (United States)",
+      "publisher": "VIZ Media",
+      "total_tomos": 34
+    },
+    {
+      "raw": "Spanish (Argentina) · Rústica · Ivrea Argentina · 34 tomos",
+      "language": "Spanish (Argentina)",
+      "publisher": "Ivrea Argentina",
+      "total_tomos": 34
+    }
+  ],
+  "volumes": [
+    {"n": "1", "img_url": "https://i1.whakoom.com/small/7a/1c/aa11bb22cc33dd44ee55ff66aa77bb88.jpg"},
+    {"n": "2", "img_url": "https://i1.whakoom.com/small/7a/1c/bb11cc22dd33ee44ff55aa66bb77cc88.jpg"},
+    {"n": "3", "img_url": "https://i1.whakoom.com/small/7a/1c/cc11dd22ee33ff44aa55bb66cc77dd88.jpg"},
+    {"n": "4", "img_url": "https://i1.whakoom.com/small/7a/1c/dd11ee22ff33aa44bb55cc66dd77ee88.jpg"},
+    {"n": "5", "img_url": "https://i1.whakoom.com/small/7a/1c/ee11ff22aa33bb44cc55dd66ee77ff88.jpg"},
+    {"n": "6", "img_url": "https://i1.whakoom.com/small/7a/1c/ff11aa22bb33cc44dd55ee66ff77aa88.jpg"},
+    {"n": "7", "img_url": "https://i1.whakoom.com/small/7a/1c/aa22bb33cc44dd55ee66ff77aa88bb99.jpg"},
+    {"n": "8", "img_url": "https://i1.whakoom.com/small/7a/1c/bb22cc33dd44ee55ff66aa77bb88cc99.jpg"},
+    {"n": "9", "img_url": "https://i1.whakoom.com/small/7a/1c/cc22dd33ee44ff55aa66bb77cc88dd99.jpg"},
+    {"n": "10", "img_url": "https://i1.whakoom.com/small/7a/1c/dd22ee33ff44aa55bb66cc77dd88ee99.jpg"},
+    {"n": "11", "img_url": "https://i1.whakoom.com/small/7a/1c/ee22ff33aa44bb55cc66dd77ee88ff99.jpg"}
+  ]
+}

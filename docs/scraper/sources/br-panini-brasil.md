@@ -72,6 +72,13 @@ del YAML) mediante el **extractor genérico** de listados Magento; **no hay pars
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **Curación LLM non-manga 2026-08-23**: 1 item expulsado — "Tom Strong: Edição
+  Definitiva Vol. 2" (ABC/DC), colado por el search "edicao definitiva".
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
 - **Cobertura acotada**: ~20 items en el corpus. El catálogo `/planet-manga` está limitado
@@ -116,3 +123,74 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-09-05 — read timeout en la búsqueda `edicao colecionador` (+ falso flag de yield)
+
+Delta diario (`logs/scrape-delta-2026-09-05-113236/`). La entrada de búsqueda aparece
+**dos veces** en el reporte de salud, y las dos son el mismo hecho:
+
+```
+[ERROR] BR - Panini Brasil (search) [search: edicao colecionador]: request error
+HTTPSConnectionPool(host='panini.com.br', port=443): Read timed out.
+```
+
+- en `🔴 Broken (HTTP errors)` — la causa real;
+- en `🚨 YIELD REGRESSIONS` como `12 | mediana 42 | 29%` — que es **consecuencia** del
+  timeout, no un hallazgo aparte. El expandido por keyword devolvió menos porque una de
+  las peticiones murió a mitad.
+
+Vale anotarlo porque el reporte de salud presenta las dos listas como si fueran problemas
+independientes: cuando una fuente aparece en ambas, **la de yield suele ser eco de la de
+HTTP** y no merece diagnóstico propio.
+
+Fue uno de los tres timeouts del mismo run (con Pipoca & Nanquim y Planeta Cómic), lo que
+sugiere ventana de saturación antes que un bloqueo de `panini.com.br`. **Nada aplicado.**
+
+## 2026-09-13 — `filter_collectible` descarta TODAS las "Capa Variante" (gotcha #203)
+
+Delta diario (`logs/scrape-delta-2026-09-13-110143/04d-filter-collectible.log`). El gate de
+coleccionables rechaza como `regular_tomo` los **mismos 3 productos en cada corrida**, al
+menos desde el 2026-08-30 (14 deltas seguidos con exactamente 3 descartes "Capa Variante"):
+
+- `Blue Lock Vol. 15 - Capa Variante`
+- `Wotakoi: O Amor é Difícil Para Otakus Vol. 10 - Capa Variante`
+- `Wotakoi: O Amor é Difícil Para Otakus Vol. 11 - Capa Variante`
+
+El corpus tiene **0** items con "capa variante" en el título.
+
+**Verificado en vivo (2026-09-13)**: las 3 fichas de `panini.com.br` responden 200 y su
+`<title>` oficial lleva "Capa Variante". Son productos reales, y una portada variante es
+coleccionable por definición del proyecto.
+
+**Causa — mecanismo, no la fuente:**
+
+```
+detect_signals("Blue Lock Vol. 15 - Capa Variante")   → (0, [], [])
+detect_signals("Blue Lock Vol. 15 - Capa Variant")    → (30, ['variant'], ['variant_cover'])
+detect_signals("Blue Lock Vol. 15 - Portada Variante") → (40, ['portada variante'], ['variant_cover'])
+```
+
+La sección portuguesa de las frases de señal (`manga_watch.py`, bloque "Portugués (PT-BR)")
+sólo trae `edição limitada/especial/de colecionador/definitiva` y `capa dura`; no tiene el
+equivalente de `portada variante` (ES) ni de `couverture variante` (FR). El `variant`
+suelto de la sección inglesa usa límite de palabra y, a propósito, no matchea "variante".
+
+**Consecuencia**: las keywords `variante` y `capa variante` de la búsqueda rinden **0 netos
+por construcción**, porque todo lo que traen muere en el gate. Además es un bucle diario:
+se re-fetchea y se re-expulsa en cada corrida (patrón #154).
+
+**Para el owner (no aplicado):** agregar `capa variante` (y probablemente
+`capa alternativa`) como `variant_cover` en la sección PT-BR, con test. Es una frase de dos
+palabras y específica, así que el riesgo de falso positivo es bajo; además `is_likely_manga`
+(purity `mixed` + comics blacklist) corre ANTES y sigue frenando Marvel/DC con portada
+variante. Retorno: las 3 variantes de hoy y todas las futuras de Panini Brasil.
+
+
+## Revisión de ingestión — 2026-09-24
+
+Se agregaron capa variante y capa alternativa como señales variant_cover. Pruebas con Blue Lock 15/Wotakoi; el gate ya no las rechaza por ausencia de vocabulario PT-BR.
+
+Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+
+La reingesta aislada encontró además 23 cómics occidentales que pasaban desde selectores sin gate non-manga. Corregido gate común pre-spool/sink; se publicaron solamente Wotakoi 10 y 11 Capa Variante. No se ingresaron los descartes occidentales.

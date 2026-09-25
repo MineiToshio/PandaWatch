@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-07.
+> Última revisión: 2026-08-29 (recurrencia del flag no-manga; ver gotcha #155).
 
 ---
 
@@ -123,6 +123,11 @@ vía el **extractor genérico** del YAML. **No tiene parser propio.**
   (≥3 product-cards que enlazan a ≥3 páginas de producto distintas) y las excluye
   del harvest, sin importar en qué carpeta viva la imagen. El purge de este bug
   limpió **29 entradas contaminadas** del corpus. ✅
+- **Curación LLM non-manga 2026-08-23**: 11 items expulsados — variant covers de
+  Valiant (X-O Manowar, Bloodshot, Harbinger, Britannia, Faith) coladas por los
+  searches `?q=variant` y `?q=collector`, más Rabbids, "300", Barnstormers, La
+  Casta dei Meta-Baroni y The Plot Holes. Los searches traen el catálogo NO-manga
+  completo de la editorial, sin filtro adicional en la query.
 
 ---
 
@@ -167,3 +172,162 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar
 (`validate_corpus`, 0 duras) → tests (`pytest tests/test_extraction.py`) → build.
 Si tocaste algo meaningful, actualiza esta ficha.
+
+## 2026-08-28 — la búsqueda `variant` trae cómic occidental (2 items a curación)
+
+Delta diario (`logs/scrape-delta-2026-08-28-160959/`). La query de búsqueda
+`[search: variant]` devolvió 2 items que el LLM del skill de estandarización marcó
+`is_manga=false` y quedaron pendientes en `data/unmapped_series.jsonl`
+(reason `llm_non_manga`):
+
+- `FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER` — cómic italiano, no manga.
+- `300 VARIANT EDITION` — cómic americano (Frank Miller).
+
+Causa: el término `variant` es agnóstico de medio; Star Comics publica también línea
+de cómic occidental y la búsqueda no distingue. Ojo: `data/comics_blacklist.yml` ya
+tiene `"300 di Frank Miller"` y `"Frank Miller's 300"`, pero **no** matchean el título
+pelado `300 VARIANT EDITION` — es el mismo patrón de gotcha #154 (veredicto LLM que no
+expulsa + gate determinista que no matchea = el item vuelve a entrar cada corrida).
+
+**Para el owner (no aplicado):** agregar `"300 VARIANT EDITION"` y `"FAITH"` (o el
+patrón de serie correspondiente) a `data/comics_blacklist.yml`. Retorno: corta la
+re-ingesta diaria de estos 2 y deja de gastar LLM en ellos cada día.
+
+## 2026-08-29 — vuelve a flaggearse, y esta vez el flag se PERDIÓ (gotcha #155)
+
+Delta diario (`logs/scrape-delta-2026-08-29-110244/`). Los 2 items ya documentados en la entrada del 2026-08-28 (`FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER`, de Valiant, y `300 VARIANT EDITION`, de Frank Miller) volvieron a entrar por el search `?q=variant` y volvieron a ser flageados por el LLM como no-manga.
+
+Dos cosas que agrega esta corrida:
+
+1. **La recurrencia está confirmada**: el gate LLM de `/watch-standardize-catalog`
+   vuelve a marcar exactamente el mismo material, y los gates deterministas
+   (`filter_non_manga`/`filter_collectible`) vuelven a no expulsarlo, así que sigue
+   contando como manga en el corpus. El patrón es el de gotcha #154 (veredicto LLM que
+   no expulsa + gate determinista que no lo cubre), estable corrida a corrida.
+2. **El flag se destruyó el mismo día**: el pase de `/watch-enrich-series-aliases` que
+   corrió después trunca `data/unmapped_series.jsonl` entero (gotcha #155), así que las
+   filas `llm_non_manga` de esta corrida desaparecieron de la cola de curación sin que
+   nadie las revisara. Sobreviven sólo en
+   `data/backups/unmapped_series.jsonl/unmapped_series.jsonl.pre-enrich-bak`, que rota.
+
+Consecuencia práctica: mientras las dos etapas corran en ese orden, **este material se
+va a re-flaggear y re-perder todos los días**, y la cola nunca acumula la evidencia que
+haría falta para justificar un fix. No se tocó ninguna configuración de la fuente.
+
+## 2026-08-30 — recurrencia nº4, pero esta vez el flag SOBREVIVIÓ
+
+Delta diario (`logs/scrape-delta-2026-08-30-111729/`). El search `[search: variant]`
+volvió a inyectar cómic occidental al corpus. Dos items nuevos, ambos flageados
+`llm_non_manga` por `/watch-standardize-catalog` y ambos **no expulsados** por los gates
+deterministas (patrón de gotcha #154):
+
+- `FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER` — Valiant (US), 2016-11-16.
+  Quedó en el corpus como `product_type: manga`, `edition: Variant (Star Comics)`,
+  `series_display: Faith Hollywood E La Vigna`.
+- `300 VARIANT EDITION` — Frank Miller / Dark Horse (US), 2023-10-31. Quedó en el corpus
+  como `product_type: manga` y **sin `series_display` ni `edition_display`**.
+
+Causa: el término de búsqueda `variant` es vocabulario de **tipo de edición**, no de
+manga, así que matchea todo el catálogo de licencias occidentales que Star Comics
+distribuye en Italia (Valiant, Dark Horse). La fuente no declara `purity`, así que el
+default `manga_only` no exige STRONG manga hint y nada los filtra.
+
+**Diferencia con el 08-29**: esta corrida NO ejecutó `/watch-enrich-series-aliases`
+(ver el reporte del run), así que las filas `llm_non_manga` **siguen vivas** en
+`data/unmapped_series.jsonl` — por primera vez la cola conserva la evidencia en lugar de
+perderla el mismo día por gotcha #155.
+
+**Para el owner (no aplicado — cambio de configuración):** las opciones siguen siendo
+(a) agregar los términos de estas licencias a `data/comics_blacklist.yml` — barato pero
+incremental, una serie por vez; o (b) acotar el search de esta fuente para que no barra
+el catálogo occidental. Retorno: corta la re-ingesta diaria de material fuera de alcance.
+
+## 2026-08-31 — recurrencia nº5: los mismos dos títulos, quinto día
+
+Delta diario (`logs/scrape-delta-2026-08-31-110202/`). Sin filas nuevas, pero
+`FAITH n. 1 HOLLYWOOD E LA VIGNA - VARIANT COVER` y `300 VARIANT EDITION` **siguen
+vivos en el corpus** desde el 08-28, los dos como `product_type: manga` /
+`edition_display: Variant (Star Comics)`. Ambos son cómic occidental (Valiant y el
+300 de Frank Miller).
+
+El search `variant` de esta fuente aporta además 26 filas huérfanas y 32 vivas a la
+cola de aliases de este run.
+
+Nada aplicado: la vía (acotar el search `variant` o agregar los títulos a la comics
+blacklist) es decisión del owner.
+
+## 2026-09-02 — recurrencia nº6: los mismos dos títulos entran otra vez como items NUEVOS
+
+Delta diario (`logs/scrape-delta-2026-09-02-110142/`). Esta vez `FAITH n. 1 HOLLYWOOD E
+LA VIGNA - VARIANT COVER` y `300 VARIANT EDITION` no sólo siguen vivos: aparecen con
+`detected_at` de ESTE run, o sea vuelven a contarse como descubrimientos del día. Los dos
+quedaron re-flageados `llm_non_manga` / `non_manga_comic` por el skill de estandarización.
+
+Confirma el mecanismo de gotcha #154 en su forma más cara: el veredicto del LLM no
+expulsa (por diseño, desde 2026-07-07), los gates deterministas de la FASE 3 tampoco los
+ven (son `manga_only`, sin STRONG hint exigido), así que cada corrida los re-descubre,
+los re-estandariza gastando LLM y los re-apila en la cola. Seis días seguidos.
+
+Nada aplicado: acotar el search `variant` o sumar los términos a `data/comics_blacklist.yml`
+sigue siendo decisión del owner.
+
+### RESUELTO el mismo día (2026-09-02) — el owner pidió arreglar las fuentes
+
+Los dos títulos quedaron EXPULSADOS del corpus y el mecanismo cerrado. Detalle:
+
+- `300 VARIANT EDITION` → keyword `"300 Variant Edition"` en `data/comics_blacklist.yml`.
+  **Deliberadamente la frase completa, NO "300" pelado**: se midió contra el corpus y
+  `300` a secas mataba dos manga reales (*300 jours avec toi*, FR, y *Ich habe 300 Jahre
+  lang Schleim getötet*, DE). Hay un test permanente
+  (`test_bare_300_is_not_blacklisted`) que frena a quien intente agregarlo pelado.
+- `FAITH n. 1 HOLLYWOOD E LA VIGNA` → por vía NUEVA: `is_comic_not_manga()` ahora también
+  busca franquicias en el **slug de la URL**. El título no delata nada, pero la URL es
+  `/fumetto/valiant-variant-cover-29-faith-1` y Valiant es editorial de cómic
+  estadounidense. Se agregó `"Valiant"` al blacklist; matchea 1 item, 0 por título.
+  Se evitó agregar `"Faith"` (palabra demasiado común). Ver gotchas #189.
+
+**El search `variant` NO se acotó, y fue una decisión con datos, no por omisión**: la
+fuente tiene 129 items en el corpus y son ~98% manga real (Gachiakuta, Kagurabachi, One
+Piece, My Hero Academia, Dr. Stone, Kaiju No. 8…). Acotar el search habría costado mucho
+más de lo que ahorraba. Con ~2% de contaminación por franquicias occidentales concretas,
+el blacklist ES la herramienta proporcionada. Esto **corrige la recomendación del reporte
+matinal del 09-02**, que proponía acotar el search antes de medir la composición real.
+
+---
+
+## 2026-09-03 — ruido en `author`: el selector cae a fragmentos del título
+
+**Hallazgo del delta diario** (secundario al caso grave de Funside, ver
+`it-funside-variant.md` § 2026-09-03). En esta fuente el `author` **mayormente funciona**
+(Mirka Andolfo, Frank Miller, Boichi, Tatsuki Fujimoto, Yukito Ayatsuji… son correctos),
+pero un subconjunto sale mal:
+
+| Valor capturado como "autor" | veces | qué es en realidad |
+|---|---|---|
+| `IT-AL` | 8 | código de región/idioma |
+| `STICKER JANKU VARIANT n` | 2 | fragmento del título |
+| `KAPPA LIMITED n` | 2 | fragmento del título (nombre de colección) |
+| `THEO VALIANT VARIANT COVER n` | 1 | fragmento del título |
+| `Rave` | 2 | nombre de la SERIE, no del autor |
+| `Tanjiro` | 1 | nombre de un PERSONAJE |
+| `TUTTO IL MONDO` | 1 | fragmento del título |
+
+Dos defectos distintos mezclados:
+
+1. **Fallback al documento** — cuando la ficha no tiene autor, el selector agarra lo
+   primero que matchea en la página (misma clase de defecto que la gotcha #187 y que
+   Funside). Ahí salen `IT-AL` y los fragmentos en mayúsculas.
+2. **Confusión serie/personaje ↔ autor** — `Rave`, `Tanjiro`: la fuente pone en ese campo
+   la franquicia, no el autor.
+
+### Impacto
+
+**Muy bajo.** ~17 filas sobre una fuente de ~98% manga sano; `author` no entra en
+`cluster_key`/`edition_key` ni en los gates. Sólo ensucia la ficha de detalle.
+
+### Recomendación (NO aplicada)
+
+Va junto con el fix de Funside: **acotar el selector de autor al contenedor de la ficha**
+en lugar del documento entero. No amerita una intervención propia — si se arregla el
+mecanismo para Funside, esta fuente se cura de arrastre. Un `author` vacío es preferible
+a uno falso.

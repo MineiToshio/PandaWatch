@@ -32,8 +32,17 @@ búsqueda resuelve aliases multilingües (`series_aliases.yml`).
   o sea una adaptación conocida.
 - Figuras/estatuas/peluches/remeras/tazas/trading cards/posts de noticias →
   `false`.
-- Light novels (roman/light-novel/URLs LN) → `false`
-  (`non_manga_reason="light_novel"`).
+- **Light novels / novelas ligeras / danmei / web-novels chinas publicadas por
+  editoriales del ecosistema manga (Seven Seas, J-POP, Kadokawa, Ivrea…) →
+  `true`.** SON parte del catálogo (CLAUDE.md: "light novels con bonus"), su
+  `product_type` es `novel` y el gate determinista `is_likely_manga()` también
+  las acepta. NUNCA emitas `non_manga_reason="light_novel"`.
+  (Regresión 2026-08-23: esta regla decía lo contrario y mandó 83 light novels
+  legítimas a curación manual en una sola corrida — gotcha #146.)
+- Novela LITERARIA general sin vínculo con manga/anime (bestseller, ensayo,
+  biografía, libro de historia/texto, adivinación) → `false`
+  (`non_manga_reason="pure_novel"`). El discriminante NO es "es prosa", es "¿la
+  publica el ecosistema manga / deriva de una obra manga-anime?".
 - **Ante la duda → `true`.**
 
 ## series_key

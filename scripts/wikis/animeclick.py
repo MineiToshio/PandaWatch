@@ -63,6 +63,7 @@ API pubblica (stessa firma degli altri wiki parsers)::
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import re
 import sys
@@ -72,6 +73,11 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -103,8 +109,8 @@ except ImportError:
 BASE_URL = "https://www.animeclick.it"
 CALENDAR_URL = f"{BASE_URL}/calendario-manga"
 
-# Navega massimo ~10 anni di settimanale (safety cap)
-MAX_WEEKS = 520
+# Safety cap: ~38 years; reaching it is an incomplete run, never success.
+MAX_WEEKS = 2000
 
 # Termini che identificano edizioni collector-grade nel titolo
 _COLLECTOR_RE = re.compile(
@@ -292,6 +298,7 @@ def fetch_html(
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as exc:
+        report_issue(session, f"animeclick: fetch failed: {exc}")
         print(f"[animeclick] WARN fetch {url}: {exc}")
         return None
 
@@ -329,22 +336,25 @@ def fetch_week_ajax(
         resp.raise_for_status()
         data = resp.json()
     except (requests.RequestException, ValueError) as exc:
+        report_issue(session, f"animeclick: fetch failed: {exc}")
         print(
             f"[animeclick] WARN AJAX {direction} {year}-{month:02d}-{day:02d}: {exc}"
         )
         return None, day, month, year
 
-    if not data.get("ok"):
+    if not isinstance(data, dict) or not data.get("ok") or not isinstance(data.get("data"), dict):
+        report_issue(session, "animeclick: invalid AJAX response")
         return None, day, month, year
 
-    info = data.get("data") or {}
+    info = data["data"]
     html = info.get("html") or ""
     try:
         new_day = int(info.get("day", day))
         new_month = int(info.get("month", month))
         new_year = int(info.get("year", year))
     except (ValueError, TypeError):
-        new_day, new_month, new_year = day, month, year
+        report_issue(session, "animeclick: invalid calendar date")
+        return None, day, month, year
 
     return html, new_day, new_month, new_year
 
@@ -371,6 +381,7 @@ def bootstrap(
     finché il calendario mostra settimane precedenti a quella data.
     """
     cutoff = dt.date(year_from, month_from, 1)
+    end = dt.date(year_to, month_to, calendar.monthrange(year_to, month_to)[1])
 
     # Sessione iniziale: cookie + stato corrente
     print(f"[animeclick] inizializzazione sessione (cutoff: {cutoff})")
@@ -385,7 +396,11 @@ def bootstrap(
     # Includi la settimana corrente dalla pagina iniziale
     soup0 = BeautifulSoup(initial_html, "html.parser")
     container = soup0.find("div", id="calendario-days-thumbs")
-    weeks_html: list[str] = [str(container) if container else ""]
+    current_date = dt.date(cur_year, cur_month, cur_day)
+    if container is None:
+        report_issue(session, "animeclick: missing calendar container")
+        return []
+    weeks_html: list[str] = [str(container)] if current_date <= end and current_date + dt.timedelta(days=6) >= cutoff else []
 
     # Naviga indietro settimana per settimana
     for _ in range(MAX_WEEKS):
@@ -395,22 +410,34 @@ def bootstrap(
             timeout=timeout,
         )
 
+        if html_frag is None:
+            report_issue(session, "animeclick: interrupted weekly pagination")
+            break
         try:
             new_date = dt.date(new_year, new_month, new_day)
         except ValueError:
-            new_date = dt.date(new_year, new_month, 1)
+            report_issue(session, "animeclick: invalid weekly date")
+            break
+        if new_date >= current_date:
+            report_issue(session, "animeclick: weekly pagination did not move backwards")
+            break
+        current_date = new_date
 
-        if new_date < cutoff:
+        # Include the week straddling the first day of the requested month.
+        if new_date + dt.timedelta(days=6) < cutoff:
             print(f"[animeclick] raggiunto il cutoff ({new_date} < {cutoff}), stop")
             break
 
-        if html_frag:
+        if html_frag and new_date <= end:
             weeks_html.append(html_frag)
 
         cur_day, cur_month, cur_year = new_day, new_month, new_year
 
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
+
+    else:
+        report_issue(session, f"animeclick: pagination limit reached ({MAX_WEEKS} weeks)")
 
     print(f"[animeclick] {len(weeks_html)} settimane recuperate")
 

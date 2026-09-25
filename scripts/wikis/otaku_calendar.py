@@ -43,6 +43,11 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -227,7 +232,8 @@ def fetch_calendar_month(
         if not response.encoding:
             response.encoding = response.apparent_encoding or "utf-8"
         html_text = response.text
-    except (requests.RequestException, Exception):
+    except (requests.RequestException, Exception) as exc:
+        report_issue(session, f"otaku_calendar: fetch failed: {exc}")
         return []
     return parse_calendar_page(html_text, source_url=url, allowed_countries=allowed_countries)
 

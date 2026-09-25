@@ -15,13 +15,12 @@
 # Para descubrir SOLO novedades recientes (mes actual) sin recorrer las
 # 3432 colecciones, usar `scrape_delta.sh` (más rápido, ~30-60 min).
 #
-# El resto de fuentes (Mangavariant, SocialAnime, BBM, Manga-Sanctuary,
-# Whakoom, retailers Shopify/Tiendanube, etc.) corren igual que en
-# scrape_delta por ahora — la diferencia principal entre full y delta
-# es solo el método de discovery de listadomanga.
+# Full sigue las páginas descubiertas de las fuentes YAML (--full-catalog).
+# Mangavariant recorre el sitemap completo; delta usa URLs nuevas y lastmod.
+# Los demás wikis conservan sus estrategias de calendario o catálogo.
 #
 # Encadena las fases:
-#   1. Scrape principal (sources del YAML, --max-pages 5, --enable-js)
+#   1. Scrape principal (sources del YAML, --full-catalog, --enable-js)
 #   2. Wiki bootstraps FULL:
 #      2a. listadomanga-collections via lista.php (~3432 colecciones)
 #      2b. manga-sanctuary (FR)
@@ -196,6 +195,11 @@ _run_timed() {
     fi
 }
 
+# Include already-announced releases in monthly calendars, as delta does.
+LISTADO_CAL_TO="${LISTADO_CAL_TO:-$(date -v+3m '+%Y-%m' 2>/dev/null || date -d '3 months' '+%Y-%m' 2>/dev/null || date '+%Y-%m')}"
+
+export MANGA_WATCH_INGESTION_MODE=full
+
 GLOBAL_START=$(date +%s)
 
 echo "========================================================"
@@ -273,8 +277,8 @@ if [ -s data/items.jsonl ]; then
     if [ -n "$PRESCRAPE_BACKUP" ] && [ -f "$PRESCRAPE_BACKUP" ]; then
         echo "    backup → $PRESCRAPE_BACKUP"
     else
-        echo "    ⚠ backup pre-scrape falló (continúa)"
-        PRESCRAPE_BACKUP=""
+        echo "    ✗ backup pre-scrape falló — abortando antes de modificar el catálogo"
+        exit 1
     fi
     echo
 fi
@@ -298,7 +302,7 @@ if [ "$SKIP_SCRAPE" != "1" ]; then
     _run_timed 10800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --enable-js \
         --fuzzy-keywords \
-        --max-pages 5 \
+        --full-catalog --max-items-per-source 10000 \
         --fetch-details \
         --diagnostic \
         --workers "$SCRAPE_WORKERS" \
@@ -335,7 +339,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         --bootstrap-wiki listadomanga-collections \
         --coleccion-mode lista \
         --sleep-seconds "$COLECCION_SLEEP" \
-        --min-score 30 \
+        --min-score 20 \
         > "$LOG_DIR/02a-listadomanga-collections.log" 2>&1
     record_step "listadomanga-collections" $?
     echo "    duración: $(($(date +%s) - P2A_START))s — items: $(count_lines)"
@@ -364,28 +368,26 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # 2b. manga-sanctuary
     echo ">>> [2b] manga-sanctuary (FR)"
     P2B_START=$(date +%s)
-    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki manga-sanctuary \
+        --wiki-from 2010-01 \
+        --wiki-to "$LISTADO_CAL_TO" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02b-manga-sanctuary.log" 2>&1
     record_step "manga-sanctuary" $?
     echo "    duración: $(($(date +%s) - P2B_START))s — items: $(count_lines)"
 
-    # 2c. otaku-calendar (EN/US — histórico). SIN --wiki-from explícito: el
-    # dispatcher usa su default (2024-01 → mes actual), que ES el piso del
-    # backfill histórico que otakucalendar expone por-path (~31 meses a 2026-07,
-    # crece +1/mes). Desde el fix por-path (2026-07-07) cada mes es UNA página
-    # REAL (1 request/mes, sin detail fetch); costo medido ~0.6-2s/mes → 31 meses
-    # ≈ 60-110s. El default 2024-01 se deja tal cual (no se inventa un piso
-    # histórico distinto). Timeout 600s = ~2-3x sobre el peor caso + headroom
-    # para el crecimiento del rango y posible throttle bajo requests secuenciales
-    # (el full corre mensual/trimestral, un timeout generoso es barato y evita
-    # truncar el backfill).
-    echo ">>> [2c] otaku-calendar (EN/US — histórico, default 2024-01 → mes actual)"
+    # 2c. otaku-calendar (EN/US — histórico desde 2010-01).
+    # La auditoría verificó páginas de 2015 con fechas históricas reales:
+    # el default 2024-01 era una ventana del dispatcher, no el piso del sitio.
+    # Una request por mes; sin detail fetch. Timeout 600s para el archivo.
+    echo ">>> [2c] otaku-calendar (EN/US — histórico, 2010-01 → ${LISTADO_CAL_TO})"
     P2C_START=$(date +%s)
     _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki otaku-calendar \
+        --wiki-from 2010-01 \
+        --wiki-to "$LISTADO_CAL_TO" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02c-otaku-calendar.log" 2>&1
@@ -404,14 +406,29 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     echo "    duración: $(($(date +%s) - P2D_START))s — items: $(count_lines)"
 
     # 2e. mangavariant (sitemap completo — solo FULL, no delta)
-    echo ">>> [2e] mangavariant (~2700 entries del sitemap completo)"
+    # --workers 8 (post-mortem 2026-08-22/24, Fix 3): igual que en scrape_delta.sh,
+    # `args.workers` en el path bootstrap-wiki sólo alimenta `mirror_candidate_images`
+    # (el fetch de detail-pages usa su propio default interno). Sin este flag el
+    # mirror de portadas nuevas corre SERIAL (~3s/imagen) — mismo riesgo de agotar
+    # el timeout que el delta, sólo que acá con hasta ~2700 URLs de sitemap en vez
+    # de un tope de 400. Timeout 3600s (antes 1800s, mismo ajuste que el delta).
+    echo ">>> [2e] mangavariant (~2700 entries del sitemap completo, workers=8)"
     P2E_START=$(date +%s)
-    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    _run_timed 3600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki mangavariant \
+        --workers 8 \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02e-mangavariant.log" 2>&1
-    record_step "mangavariant" $?
+    MV_RC=$?
+    if [ "$MV_RC" -ne 0 ]; then
+        # Fix 4 (post-mortem 2026-08-22/24): ver comentario equivalente en
+        # scrape_delta.sh — sin este marker un rc=124 (timeout) queda invisible
+        # para source_health.py y la fuente sale "healthy" con stats vacías.
+        printf '[STEP_TIMEOUT] source=wiki:mangavariant rc=%s\n' "$MV_RC" \
+            >> "$LOG_DIR/02e-mangavariant.log"
+    fi
+    record_step "mangavariant" "$MV_RC"
     echo "    duración: $(($(date +%s) - P2E_START))s — items: $(count_lines)"
 
     # 2f. socialanime
@@ -503,12 +520,12 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     echo "    duración: $(($(date +%s) - P2M_START))s — items: $(count_lines)"
 
     # 2n. yenpress (EN/US — calendario histórico Yen Press, ediciones especiales).
-    # Catálogo desde 2013-01 (lanzamiento de Yen Press como sello independiente).
-    # ~140 meses × 0.5s sleep = ~70s. Timeout 600s.
+    # Ventana histórica desde 2013-01. Timeout 1200s incluye red y pausas.
     echo ">>> [2n] yenpress calendar (US — catálogo histórico collector's/deluxe/box set)"
     P2N_START=$(date +%s)
-    _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    _run_timed 1200 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki yenpress \
+        --wiki-to "$LISTADO_CAL_TO" \
         --wiki-from 2013-01 \
         --sleep-seconds 0.5 \
         --min-score 20 \
@@ -528,11 +545,12 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     record_step "shueisha" $?
     echo "    duración: $(($(date +%s) - P2O_START))s — items: $(count_lines)"
 
-    # 2p. viz artbooks (US — catálogo completo, chico).
+    # 2p. VIZ special editions (US — calendario histórico y fichas de producto).
     echo ">>> [2p] viz artbooks (US — full catalog)"
     P2P_START=$(date +%s)
-    _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki viz \
+        --wiki-to "$LISTADO_CAL_TO" \
         --wiki-from 2000-01 \
         --sleep-seconds 1.0 \
         --min-score 20 \
@@ -592,6 +610,12 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"
     fi
 
+    echo ">>> Meian (API catálogo completo)"
+    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+        --bootstrap-wiki meian --workers "$SCRAPE_WORKERS" --min-score 20 \
+        --sleep-seconds 0.3 > "$LOG_DIR/02-meian.log" 2>&1
+    record_step "meian" $?
+
     echo " ✓ PHASE 2 wikis FULL done"
 else
     echo "[SKIP] PHASE 2 (wikis) saltada por SKIP_WIKIS=1"
@@ -602,6 +626,17 @@ fi
 # ============================================================
 if [ "$SKIP_CLEANUP" != "1" ]; then
     phase_header 3 "Cleanup retrofits"
+
+    # [4·0] absorb_spool PRIMERO que nada: si la Fase 1/2 murió por timeout/señal
+    # entre el flush por-fuente (spool) y el append_jsonl de cierre, el resto de
+    # esta cadena hace dump-completo (write_items_atomic/write_lines_atomic) y
+    # NUNCA lee el spool — esas filas quedarían huérfanas para siempre. No-op
+    # limpio si no hay spool pendiente (post-mortem 2026-08-22/24: 274 items
+    # varados en data/items.jsonl.spool tras un timeout de mirror_candidate_images).
+    echo ">>> [4·0] absorb_spool (spool huérfano de una corrida interrumpida)"
+    "$VENV_PY" scripts/retrofit/absorb_spool.py > "$LOG_DIR/04-0-absorb-spool.log" 2>&1
+    record_step "absorb_spool" $?
+    echo "    items: $(count_lines)"
 
     echo ">>> [4a] rescore"
     "$VENV_PY" scripts/retrofit/rescore.py > "$LOG_DIR/04a-rescore.log" 2>&1
@@ -956,3 +991,8 @@ echo "  - Para deltas diarios/semanales (más rápido): ./scripts/scrape_delta.s
 echo "  - Siguiente paso recomendado: correr /watch-standardize-catalog si llegaron"
 echo "    items nuevos sin standardized_at (chequear con el snippet del skill)."
 echo
+
+# Partial runs must propagate failure to the caller/scheduler.
+if [ "${#FAILED_STEPS[@]}" -gt 0 ]; then
+    exit 1
+fi

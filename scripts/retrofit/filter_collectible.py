@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from types import SimpleNamespace
 from collections import Counter
 from pathlib import Path
 
@@ -39,6 +40,7 @@ for _p in (str(_SCRIPTS), str(_ROOT)):
 try:
     from scripts.manga_watch import (  # type: ignore  # cuando se importa como paquete
         is_collectible_edition,
+        is_curated_collectible_source,
         derive_product_type,
         detect_signals,
         backup_and_rotate,
@@ -48,6 +50,7 @@ try:
 except ImportError:
     from manga_watch import (  # type: ignore  # cuando se ejecuta directamente
         is_collectible_edition,
+        is_curated_collectible_source,
         derive_product_type,
         detect_signals,
         backup_and_rotate,
@@ -75,6 +78,12 @@ def should_reject(item: dict, is_coll: bool, reason: str) -> bool:
                     "umbrella_magazine", "no_title"}
     if reason in HARD_REASONS:
         return True  # rechazar siempre, estandarizado o no
+
+    # Match the ingestion contract: source-curated variants/artbooks do not
+    # need a keyword in their official title. Otherwise cleanup deletes what
+    # the wiki just ingested (even before standardization gets a chance).
+    if reason == "regular_tomo" and is_curated_collectible_source(SimpleNamespace(**item)):
+        return False
 
     # regular_tomo sobre un item estandarizado: la señal real ya fue validada
     # por el skill; conservar.
@@ -187,7 +196,7 @@ def main() -> int:
         print("\n[DRY-RUN] No se escribió ningún archivo.")
         return 0
 
-    if not rejected_lines:
+    if not rejected_lines and Path(args.kept_output).resolve() == src.resolve():
         print("\n[OK] Nada que filtrar.")
         return 0
 

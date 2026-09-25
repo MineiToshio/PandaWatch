@@ -82,23 +82,37 @@ def _candidate_key(slug: str, cand: dict) -> tuple[str, str, str, str]:
     )
 
 
-def _surviving_candidate_keys(
+def _synced_reference(
     preview: list[dict],
     items_by_slug: dict[str, dict],
     images_dir: Path,
-) -> set[tuple[str, str, str, str]]:
-    """Candidatas que sync_preview() CONSERVARÍA (todo lo demás es moot). Se
-    delega en la función real de sync (sobre una copia; write_ledger=False para
-    no tocar la denylist durante la detección)."""
+) -> tuple[set[tuple[str, str, str, str]], dict[str, dict]]:
+    """Corre `sync_preview()` UNA vez (sobre una copia; `write_ledger=False` para
+    no tocar la denylist durante la detección) y devuelve dos vistas derivadas:
+
+      - Las claves de candidata que sync CONSERVARÍA (todo lo demás es moot).
+      - Un mapa slug→entry sincronizada, cuyo `old_image`/`old_url` sync YA
+        recalculó contra el item REAL (Regla 2 de `sync_preview`, `images[0]`
+        actual) — no el valor CONGELADO que trae el `preview` de entrada.
+
+    Gotcha #167 (2026-09-01): antes esta función sólo exponía las keys y la
+    revalidación seguía leyendo `entry.get("old_image")` del preview crudo, que
+    puede apuntar a un archivo purgado en una ola de limpieza posterior a
+    cuando la candidata se encoló/verificó. `sync_preview()` ya resuelve "cuál
+    es la portada actual del item" en cada pasada — reusar ese resultado (en
+    vez de reimplementar la misma pregunta acá) cierra el hueco sin lógica
+    nueva, mismo patrón de delegación que ya usa este archivo."""
     synced, _ = sync_preview(
         copy.deepcopy(preview), items_by_slug, images_dir, write_ledger=False
     )
     keys: set[tuple[str, str, str, str]] = set()
+    by_slug: dict[str, dict] = {}
     for entry in synced:
         slug = entry.get("slug", "")
+        by_slug[slug] = entry
         for cand in entry.get("candidates", []):
             keys.add(_candidate_key(slug, cand))
-    return keys
+    return keys, by_slug
 
 
 def _pixels_on_disk(local: str | None, images_dir: Path) -> int:
@@ -129,7 +143,16 @@ def revalidate_preview(
       - no_ref:              sin referencia utilizable (old_image ausente/chica).
       - no_candidate:        el archivo de la candidata no está en disco.
       - moot:                sync las podaría → se dejan intactas para sync.
-      - already_verified:    pending ya procesadas (tienen `verified`) → intactas.
+      - already_verified:    pending ya procesadas (tienen `verified`) y la
+                              evidencia sigue vigente → intactas.
+      - stale_evidence_recomputed: pending con `verified` calculado contra un
+                              `old_image` que ya no existe en disco o que el
+                              item cambió desde entonces (gotcha #167) → se
+                              limpia y se re-valida contra la portada ACTUAL.
+      - skipped_by_action:    candidatas cuya `action` no trae una imagen NUEVA
+                              externa (remove_image/replace_cover_demote, ver
+                              `fbc.NEW_EXTERNAL_IMAGE_ACTIONS`) → intactas, el
+                              gate de identidad/calidad no aplica (gotcha #167).
       - decided:             candidatas approved/rejected → intactas.
     """
     stats: dict[str, Any] = {
@@ -141,16 +164,34 @@ def revalidate_preview(
         "no_candidate": 0,
         "moot": 0,
         "already_verified": 0,
+        "stale_evidence_recomputed": 0,
+        "skipped_by_action": 0,
         "decided": 0,
     }
 
-    surviving = _surviving_candidate_keys(preview, items_by_slug, images_dir)
+    surviving, synced_by_slug = _synced_reference(preview, items_by_slug, images_dir)
 
     result: list[dict] = []
     for entry in preview:
         slug = entry.get("slug", "")
-        old_image = entry.get("old_image", "")
-        # Referencia (portada congelada de la entry) — se lee una vez por entry.
+        raw_old_image = entry.get("old_image", "")
+        # Gotcha #167: usar la portada ACTUAL recalculada por sync_preview()
+        # (item.images[0], ver `_synced_reference`) en vez del valor congelado
+        # que trae `preview` — si el item no aparece en `synced_by_slug` (regla
+        # 1 de sync: item borrado del catálogo) se cae al valor crudo, mismo
+        # comportamiento que antes para ese caso (no es lo que esta gotcha ataca).
+        fresh_entry = synced_by_slug.get(slug)
+        old_image = (fresh_entry.get("old_image", "") if fresh_entry is not None
+                     else raw_old_image)
+        # "Evidencia stale" = lo que una corrida PREVIA de este script pudo
+        # haber usado para calcular `verified`/`match_dist` (el `old_image`
+        # crudo del preview de entrada) ya no es válido: el archivo se purgó
+        # del espejo, o el item cambió de portada desde entonces.
+        stale_reference = bool(raw_old_image) and raw_old_image != "[dry-run]" and (
+            raw_old_image != old_image
+            or not (images_dir / raw_old_image).exists()
+        )
+        # Referencia (portada ACTUAL del item) — se lee una vez por entry.
         ref_px = _pixels_on_disk(old_image, images_dir)
         ref_bytes: bytes | None = None
         ref_usable = bool(old_image) and old_image != "[dry-run]" and ref_px >= REF_MIN_PIXELS
@@ -170,12 +211,29 @@ def revalidate_preview(
                 stats["decided"] += 1
                 new_cands.append(cand)
                 continue
-            # Pending ya procesada (por una corrida previa o por el skill nuevo,
-            # que ya escribe `verified`) → no reprocesar (idempotencia).
-            if "verified" in cand:
-                stats["already_verified"] += 1
+            # Gotcha #167: sólo acciones con imagen NUEVA externa (fuente
+            # única en fbc.NEW_EXTERNAL_IMAGE_ACTIONS) pasan por el gate de
+            # identidad/calidad. remove_image (new_image = la que se propone
+            # ELIMINAR) y replace_cover_demote (new_image puede ser una foto
+            # YA existente en la propia galería) quedan intactas.
+            action = cand.get("action", "replace_cover")
+            if action not in fbc.NEW_EXTERNAL_IMAGE_ACTIONS:
+                stats["skipped_by_action"] += 1
                 new_cands.append(cand)
                 continue
+            # Pending ya procesada (por una corrida previa o por el skill nuevo,
+            # que ya escribe `verified`) → no reprocesar, SALVO que la
+            # evidencia contra la que se calculó haya quedado stale (gotcha
+            # #167): en ese caso se limpia y cae al flujo normal de abajo, que
+            # re-valida contra la portada ACTUAL (ya resuelta arriba).
+            if "verified" in cand:
+                if not stale_reference:
+                    stats["already_verified"] += 1
+                    new_cands.append(cand)
+                    continue
+                stats["stale_evidence_recomputed"] += 1
+                cand = {k: v for k, v in cand.items()
+                        if k not in ("verified", "match_dist", "ref_pixels")}
             # Moot: lo que sync podaría se deja intacto (sync lo limpia después).
             if _candidate_key(slug, cand) not in surviving:
                 stats["moot"] += 1
@@ -263,6 +321,10 @@ def _print_report(stats: dict[str, Any]) -> None:
     print(f"  Sin archivo de candidata   : {stats['no_candidate']}  (verified=false)")
     print(f"  Moot (las poda sync)       : {stats['moot']}")
     print(f"  Ya procesadas (verified)   : {stats['already_verified']}")
+    print(f"  Evidencia stale recomputada: {stats['stale_evidence_recomputed']}"
+          f"  (old_image purgado/cambiado, gotcha #167)")
+    print(f"  Saltadas por action        : {stats['skipped_by_action']}"
+          f"  (remove_image/replace_cover_demote)")
     print(f"  Decididas (approved/reject): {stats['decided']}")
 
 

@@ -1,0 +1,22 @@
+{
+  "_comment": "Fixture anonimizada — edición ES 'deluxe' con una hermana ES del MISMO publisher (regular, distinto total_tomos). Usada para probar desambiguación por total_tomos cuando hay más de una edición Español-España del mismo publisher (caso real: 3 de 5 series ES del reconocimiento 2026-09-02 tienen regular vs kanzenban/deluxe del mismo publisher). IDs/hashes re-generados, no son los reales del sitio.",
+  "edition_id": 700456,
+  "edition_url": "https://www.whakoom.com/ediciones/700456/berserk_deluxe-cartone",
+  "title": "Berserk Deluxe",
+  "publisher": "Editorial Ivrea España",
+  "language": "Spanish (Spain)",
+  "formato": "Cartoné, sobrecubierta",
+  "total_tomos": 13,
+  "other_editions": [
+    {
+      "raw": "Spanish (Spain) · Rústica · Editorial Ivrea España · 42 tomos",
+      "language": "Spanish (Spain)",
+      "publisher": "Editorial Ivrea España",
+      "total_tomos": 42
+    }
+  ],
+  "volumes": [
+    {"n": "1", "img_url": "https://i1.whakoom.com/small/9f/2e/11aa22bb33cc44dd55ee66ff77aabb99.jpg"},
+    {"n": "2", "img_url": "https://i1.whakoom.com/small/9f/2e/22bb33cc44dd55ee66ff77aabb99cc11.jpg"}
+  ]
+}

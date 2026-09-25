@@ -220,3 +220,25 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`,
 0 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo
 meaningful, actualiza esta ficha.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Comprobación viva adicional — 2026-09-24
+
+Reingesta del catálogo completada en staging: 23 reportables, sin incidencias
+registradas. No aparecieron URLs primarias adicionales al catálogo.
+
+## Auditoría estratégica — 2026-09-25
+
+Se deshabilita la entrada HTML genérica de la portada Blogger. La ingestión sigue
+por el parser wiki manga-mexico, que lee las páginas editoriales del catálogo. No
+retiramos el catálogo por vivir en un blog: sus listas confirmadas difieren de
+noticias/rumores. Se conservan los históricos de ambas vías.

@@ -80,11 +80,13 @@ if str(_SCRIPTS) not in __import__("sys").path:
 # (no expone estos símbolos) → fallback al módulo real, como sync_cover_images.
 try:
     from manga_watch import (  # noqa: E402
-        IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved, write_items_atomic,
+        IMAGE_URL_BAD_PATTERNS, _img_stem, backup_and_rotate, is_approved,
+        write_items_atomic,
     )
 except ImportError:
     from scripts.manga_watch import (  # noqa: E402
-        IMAGE_URL_BAD_PATTERNS, backup_and_rotate, is_approved, write_items_atomic,
+        IMAGE_URL_BAD_PATTERNS, _img_stem, backup_and_rotate, is_approved,
+        write_items_atomic,
     )
 import image_store  # noqa: E402
 _ITEMS_PATH = _HERE / "data" / "items.jsonl"
@@ -103,6 +105,42 @@ _ATTEMPTS_PATH = _HERE / "data" / "cover_search_attempts.jsonl"
 # que sync podaba al instante), por eso el valor quedó unificado en 90k.
 LOW_QUALITY_PX = 90_000
 DEFAULT_MIN_PIXELS = LOW_QUALITY_PX   # imágenes por debajo de este umbral son candidatas
+
+# ── Factor de reescalado en card — criterio de "se ve mal" validado con visión ──
+# (Etapa 1 del triage de imágenes, 2026-09-02, ver docs/reference/images.md §
+# "Etapa 1 — resultados" y gotchas #170-#172.) El ÁREA (LOW_QUALITY_PX de arriba)
+# NO predice si una portada se ve mal en el catálogo: de 579 portadas < 90 000 px
+# juzgadas por un juez de visión (miniaturas renderizadas a tamaño real de card),
+# el 91,2% (528) se ven BIEN — el 84% son `static.listadomanga.com` a ~210×300 px,
+# que en la card sólo se estira 1.4×. Lo que sí separa lo bueno de lo malo es
+# cuánto hay que ESTIRAR la imagen para llenar la card real del catálogo
+# (~300×420 px, CSS `object-fit: contain`). La distribución es BIMODAL, no
+# continua: 528 ítems con factor <=1.6 se ven bien, 51 con factor >=2.0 se ven
+# mal o son placeholder/imagen equivocada, con sólo 2 casos en el hueco
+# intermedio — el corte en 1.6 no es arbitrario. `sc_plan.py` (Step 1 del skill
+# /watch-search-covers) usa esta función/constante para decidir qué PORTADAS
+# necesitan búsqueda web (target_rule == "scale", default desde 2026-09-02).
+# NO reemplaza LOW_QUALITY_PX, que sigue siendo el umbral de "pixelada" del
+# panel de calidad (`data_quality.py`) y de `sync_cover_preview`/
+# `promote_hires_cover` — esos consumidores no cambian en esta tarea.
+UPSCALE_TARGET_MIN = 1.6
+
+
+def cover_upscale_factor(w: int, h: int, card_w: int = 300, card_h: int = 420) -> float:
+    """Factor de reescalado que sufre una imagen `w`×`h` al mostrarse en una
+    card de `card_w`×`card_h` con `object-fit: contain` (el catálogo real usa
+    ~300×420 px): `min(card_w/w, card_h/h)`. >1.0 = la imagen se ESTIRA (se ve
+    blanda/pixelada, peor cuanto más grande el factor); <=1.0 = entra sin
+    estirarse (se ve nítida). Apaisadas con recorte destruido (p.ej. `cover150/`
+    de Aladin, 150×76 px) dan el factor más alto — son las peores.
+
+    `w` o `h` <= 0 (dimensiones no computables, típico de una referencia
+    degenerada/placeholder 1×1) devuelve `float("inf")`: se trata como el peor
+    caso posible, igual que "sin imagen".
+    """
+    if w <= 0 or h <= 0:
+        return float("inf")
+    return min(card_w / w, card_h / h)
 
 # ── Dos umbrales de REFERENCIA, distintos y ambos nombrados (SC-9) ──────────────
 # Son conceptos LEGÍTIMAMENTE distintos; antes vivían como literales pelados
@@ -594,6 +632,15 @@ _VOL_EXPLICIT_RE = re.compile(
 # Patrones "bare" SOLO en el filename: -1-, _01_, -02. (1-2 dígitos delimitados).
 # Se usan únicamente si NO hay marcador explícito (son más ambiguos).
 _VOL_BARE_RE = re.compile(r"[-_]0*(\d{1,2})(?=[-_.])")
+# gotcha #177: sufijo de ÍNDICE DE FOTO de un CDN de producto (Aladin:
+# `k622831461_1.jpg` = portada/foto 1, `_2` = contratapa/foto 2… — NO es
+# el tomo). El token que antecede al separador es un ID de catálogo (ISBN/SKU:
+# numérico largo, a lo sumo con 1 letra de prefijo), no un slug de título con
+# letras. Sólo aplica cuando el sufijo bare queda INMEDIATAMENTE antes de la
+# extensión (si hay más filename después, como en `akira-norma_01_cover.jpg`,
+# es un marcador real, se deja intacto).
+_CDN_PHOTO_INDEX_ID_RE = re.compile(r"^[A-Za-z]?\d{6,}$")
+_EXT_TAIL_RE = re.compile(r"^\.[A-Za-z0-9]{2,5}(?:[^A-Za-z0-9]|$)")
 # Dimensiones tipo 600x800 — los números que las componen NO son volúmenes.
 _DIMENSION_RE = re.compile(r"\d+\s*[x×]\s*\d+", re.IGNORECASE)
 # ISBN-13 (con o sin guiones/espacios internos) e ISBN-10.
@@ -616,6 +663,19 @@ def _norm_isbn13(raw: str) -> Optional[str]:
     return None
 
 
+def _is_cdn_photo_index_suffix(filename: str, match: "re.Match") -> bool:
+    """True si `match` (un hit de `_VOL_BARE_RE`) es el sufijo de ÍNDICE DE FOTO
+    de un CDN de producto (gotcha #177) en vez de un marcador de volumen: queda
+    pegado a la extensión Y el token que lo precede es un ID de catálogo
+    (numérico largo, ISBN/SKU-like) sin letras de slug."""
+    tail = filename[match.end():]
+    if not _EXT_TAIL_RE.match(tail):
+        return False  # no está inmediatamente antes de la extensión
+    prefix = filename[: match.start()]
+    token = re.split(r"[-_/]", prefix)[-1] if prefix else ""
+    return bool(_CDN_PHOTO_INDEX_ID_RE.match(token))
+
+
 def _extract_candidate_volumes(text: str) -> tuple[set, set]:
     """Devuelve (vols_explícitos, vols_bare) declarados en el texto."""
     text = _DIMENSION_RE.sub(" ", text)
@@ -623,8 +683,10 @@ def _extract_candidate_volumes(text: str) -> tuple[set, set]:
     # Bare: solo en el último segmento del path (filename), valores chicos.
     bare: set = set()
     filename = text.rsplit("/", 1)[-1]
-    for m in _VOL_BARE_RE.findall(filename):
-        v = int(m)
+    for m in _VOL_BARE_RE.finditer(filename):
+        if _is_cdn_photo_index_suffix(filename, m):
+            continue
+        v = int(m.group(1))
         if 0 < v <= 60:
             bare.add(v)
     return explicit, bare
@@ -2074,22 +2136,78 @@ def preview_write_lock(path: Optional[Path] = None, timeout: float = _PREVIEW_LO
         _PREVIEW_LOCK_RLOCK.release()
 
 
+def _candidate_identity(c: dict) -> tuple:
+    """Clave de identidad de una candidata para merge/dedup (gotcha #168,
+    2026-09-01). NO alcanza con `new_url`: en `remove_image`, `new_url`
+    apunta a la imagen que se propone ELIMINAR (== `target`); en el resto de
+    las acciones (`replace_cover`, `replace_cover_demote`, `replace_and_add`,
+    `add_gallery`, `add_extra`, `replace_image`), `new_url` es la imagen
+    NUEVA propuesta y `target` es lo que reemplaza/demuele. Dos candidatas de
+    ACCIONES DISTINTAS pueden compartir el mismo valor de `new_url` por pura
+    coincidencia de URLs — el caso real que destapó el bug: para un mismo par
+    de fotos, `enqueue_wave2_dudosos_removal.py` propone `remove_image` con
+    `new_url=X` (la foto floja del par) mientras `enqueue_wave2_dudosos_
+    promotion.py` propone `replace_cover_demote` con `new_url=X` para ESA
+    MISMA foto en otro par del mismo item (ahí es la promovida, no la
+    eliminada). Matchear sólo por `new_url` fundía ambas candidatas como "la
+    misma" y el merge descartaba la de disco. La identidad real incluye
+    `action` + `target`, no sólo `new_url`."""
+    return (
+        c.get("action", "replace_cover"),
+        c.get("target", "") or "",
+        c.get("new_url", "") or "",
+    )
+
+
+def _dedupe_candidates(candidates: list[dict]) -> list[dict]:
+    """Colapsa candidatas con la MISMA identidad (`_candidate_identity`) que
+    quedaron duplicadas en una entry — nunca debería pasar tras el fix de
+    `_merge_preview_entries`, pero es una red de seguridad barata (y la usa
+    también la reparación one-off de datos). Gana la primera con status
+    ≠ pending (una decisión del owner) sobre cualquier duplicado pending;
+    entre duplicados del mismo status, gana el primero (orden estable)."""
+    by_key: dict[tuple, dict] = {}
+    order: list[tuple] = []
+    for c in candidates:
+        key = _candidate_identity(c)
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = c
+            order.append(key)
+            continue
+        existing_decided = existing.get("status", "pending") != "pending"
+        candidate_decided = c.get("status", "pending") != "pending"
+        if candidate_decided and not existing_decided:
+            by_key[key] = c
+    return [by_key[k] for k in order]
+
+
 def _merge_preview_entries(
     memory_entries: list[dict], disk_entries: list[dict]
 ) -> list[dict]:
     """Merge anti-carrera (F19): funde las entries en memoria del motor con las
     que están en disco (que la UI/skill pudieron modificar durante la corrida).
 
-      (a) para cada candidata en memoria que exista en disco (mismo slug+new_url)
-          con status ≠ pending en disco → conservar el status, reject_reason y
-          reviewed_at de disco (NUNCA resucitarla como pending — clause (c)),
+      (a) para cada candidata en memoria que exista en disco (misma identidad
+          — `action`+`target`+`new_url`, gotcha #168) con status ≠ pending en
+          disco → conservar el status, reject_reason y reviewed_at de disco
+          (NUNCA resucitarla como pending — clause (c)),
       (b) candidatas de disco que memoria no tiene (mismo slug) → conservarlas, y
           entries de disco de slugs que memoria no tiene → conservarlas tal cual
           (son trabajo del skill/UI durante la corrida),
       (c) implícito en (a): una candidata decidida en disco jamás vuelve a pending.
 
+    Gotcha #168 (2026-09-01): el matching de (a)/(b) usaba SÓLO `new_url`
+    como clave. `new_url` significa cosas DISTINTAS según la acción (la
+    imagen a ELIMINAR en `remove_image`, la imagen NUEVA en el resto) — dos
+    candidatas de acciones distintas pueden compartir el mismo `new_url` por
+    coincidencia y el merge las trataba como "la misma candidata", perdiendo
+    la de disco. La clave ahora es `_candidate_identity()` (`action`+`target`+
+    `new_url`). Además de la queja, dedupea (`_dedupe_candidates`) por si el
+    merge produjo candidatas idénticas.
+
     Misma semántica de preservación de decisiones que sc_flush.py (dedup por
-    new_url, rescate de approved/rejected); acá aplicada al rewrite del motor.
+    identidad, rescate de approved/rejected); acá aplicada al rewrite del motor.
     """
     disk_by_slug: dict[str, dict] = {}
     for e in disk_entries:
@@ -2105,14 +2223,14 @@ def _merge_preview_entries(
         disk_e = disk_by_slug.get(slug) if slug else None
         if disk_e:
             disk_cands = {
-                c.get("new_url"): c
+                _candidate_identity(c): c
                 for c in disk_e.get("candidates", [])
-                if c.get("new_url")
             }
-            mem_urls: set = set()
+            mem_keys: set = set()
             for c in e.get("candidates", []):
-                mem_urls.add(c.get("new_url"))
-                dc = disk_cands.get(c.get("new_url"))
+                key = _candidate_identity(c)
+                mem_keys.add(key)
+                dc = disk_cands.get(key)
                 if dc and dc.get("status", "pending") != "pending":
                     # (a)/(c) — conservar la decisión de disco; nunca resucitar pending.
                     c["status"] = dc.get("status")
@@ -2121,9 +2239,10 @@ def _merge_preview_entries(
                     if "reviewed_at" in dc:
                         c["reviewed_at"] = dc.get("reviewed_at")
             # (b) intra-slug — candidatas de disco que memoria no tiene.
-            for cu, dc in disk_cands.items():
-                if cu not in mem_urls:
+            for key, dc in disk_cands.items():
+                if key not in mem_keys:
                     e["candidates"].append(dc)
+            e["candidates"] = _dedupe_candidates(e["candidates"])
         out.append(e)
 
     # (b) — entries de disco de slugs que memoria no tiene.
@@ -2170,12 +2289,108 @@ def _write_preview(entries: list[dict], merge: bool = True) -> None:
         tmp.replace(_PREVIEW_PATH)
 
 
+def _no_gain_at_apply(targets: list[dict], images_dir: Path, new_local: str) -> bool:
+    """True si aplicar `new_local` como portada NO sería una mejora real de
+    píxeles para NINGÚN item de `targets`, comparado con la portada ACTUAL
+    releída de disco al momento de aplicar (gotcha #182, Cierre Etapas 1-2,
+    2026-09-02).
+
+    El gate de ganancia histórico corre en `sc_validate`/aprobación — sobre el
+    `old_pixels` congelado en `cover_preview.json` al momento de PLANEAR/
+    aprobar la candidata. `--apply-preview` puede correr mucho después: si
+    OTRO proceso (típicamente `upgrade_image_resolution.py`) mejoró la
+    portada ACTUAL del item entre medio, esa referencia congelada queda
+    stale y `apply_preview` reemplazaba a ciegas — caso real:
+    `travidebla-unknown-artbook-jp`, un candidate `approved` de 600×847
+    (508 200 px) pisó una portada nativa que mientras tanto había subido a
+    850×1200 (1 020 000 px) vía el patrón r10s.jp de Rakuten (gotcha #180) —
+    downgrade real del 50%, revertido a mano porque este guard no existía
+    todavía. Re-validar contra el archivo ACTUAL (no el `old_pixels`
+    congelado) en el momento mismo de aplicar cierra el mecanismo.
+
+    Excepción (no bloquea, aplica igual): la portada ACTUAL de un target es
+    un placeholder (`image_store.placeholder_reason`) o no tiene portada —
+    ahí cualquier imagen real es mejora sin importar píxeles. Con múltiples
+    `targets` (mismo slug, varias filas físicas) el criterio es conservador:
+    basta que UN target no gane para bloquear TODA la candidata — mismo
+    patrón "todo o nada" que usa el guard `would_remove_cover` de
+    `remove_image` un poco más abajo en `apply_preview`.
+
+    Sin archivo `new_local` legible (candidata dry-run `"[dry-run]"`, o el
+    archivo todavía no existe) el guard NO bloquea — no es su responsabilidad
+    validar la existencia del archivo (eso ya lo hace el self-heal de
+    re-descarga más arriba en `apply_preview`).
+    """
+    if not targets or not new_local or new_local == "[dry-run]":
+        return False
+    try:
+        new_bytes = (images_dir / new_local).read_bytes()
+    except OSError:
+        return False
+    new_px = _get_pixels_from_bytes(new_bytes) or 0
+    for item in targets:
+        current_bytes = _get_current_bytes(item, images_dir)
+        if not current_bytes:
+            continue  # sin portada actual: nada que degradar
+        if image_store.placeholder_reason(current_bytes):
+            continue  # portada actual es placeholder: cualquier imagen real mejora
+        current_px = _get_pixels_from_bytes(current_bytes) or 0
+        if new_px > current_px:
+            continue  # este target sí mejora
+        return True  # este target NO mejora y su portada actual es real
+    return False
+
+
 def _apply_improvement(item: dict, new_url: str, new_local: str) -> None:
-    """Reemplaza la PORTADA del item (images[0] = única fuente de verdad)."""
+    """Reemplaza la PORTADA del item (images[0] = única fuente de verdad).
+
+    Gotcha #164 (2026-09-01): si la imagen promovida YA vivía en la galería del
+    propio item (`images[1:]`) — el patrón "cola de promoción local", donde la
+    candidata es otra foto local ≥90 000 px que el item ya tenía — `set_cover()`
+    sólo escribe `images[0]`, nunca toca el resto del array, así que la imagen
+    quedaba duplicada: una vez en `images[0]` (portada nueva) y otra vez en su
+    posición ORIGINAL de galería (mismo `url`/`local`). Fix de fondo (una sola
+    vez acá, no en cada action-handler): tras promover, se busca en `images[1:]`
+    una entry que matchee la nueva por la MISMA clave canónica de dedup que usa
+    el resto del pipeline (`manga_watch._img_stem` sobre la url, con fallback a
+    comparar `local` para el caso dry-run/dedup por archivo). Si hay match, sus
+    campos `kind`/`description` (más específicos de esa foto puntual que los que
+    trae la portada vieja recién pisada) se trasladan al entry sobreviviente en
+    `images[0]` cuando éste no los tenía, y la copia duplicada se elimina de la
+    galería. Cubre las tres acciones que llaman a esta función (`replace_cover`,
+    `replace_and_add`, `replace_cover_demote`) con un único mecanismo. Idempotente:
+    una segunda pasada con los mismos argumentos ya no encuentra duplicado (fue
+    removido en la primera) y no cambia nada más.
+    """
     # En dry-run el local es un placeholder: preserva el local actual en vez
     # de persistir "[dry-run]" como filename del espejo.
     local = image_store.cover_local(item) if new_local == "[dry-run]" else new_local
+
+    images = item.get("images")
+    dup_idx = None
+    if isinstance(images, list) and len(images) > 1:
+        new_stem = _img_stem(new_url)
+        # Fallback por `local`: usa el `new_local` CRUDO (no el `local` ya
+        # sustituido arriba) — en dry-run ese `local` es el de la portada
+        # VIEJA, comparar contra eso daría falsos matches incidentales.
+        real_new_local = new_local if new_local and new_local != "[dry-run]" else ""
+        for i, img in enumerate(images[1:], start=1):
+            img_url = img.get("url", "")
+            same_url = bool(new_stem) and _img_stem(img_url) == new_stem
+            same_local = bool(real_new_local) and img.get("local") == real_new_local
+            if same_url or same_local:
+                dup_idx = i
+                break
+    dup_entry = images[dup_idx] if dup_idx is not None else None
+
     image_store.set_cover(item, new_url, local)
+
+    if dup_entry is not None:
+        cover = item["images"][0]
+        for f in ("kind", "description"):
+            if not cover.get(f) and dup_entry.get(f):
+                cover[f] = dup_entry[f]
+        del item["images"][dup_idx]
 
 
 def _ensure_cover_slot(item: dict) -> None:
@@ -2282,6 +2497,17 @@ def _normalize_preview_entry(entry: dict) -> dict:
             c.setdefault("verified", False)
             c.setdefault("match_dist", None)
             c.setdefault("ref_pixels", None)
+            # action="remove_image" (OLA 2 dudosos, 2026-09-01): quita `target`
+            # de la galería SIN reemplazo — no hay new_image/new_url "nuevo" en
+            # el sentido de las demás acciones (new_image/new_url apuntan a la
+            # imagen QUE SE PROPONE ELIMINAR, para que candSrc() la muestre tal
+            # cual el resto de las candidatas). Contexto extra del PAR para que
+            # el dashboard muestre "se va" vs "se queda" sin ir a buscarlo:
+            c.setdefault("keep_url", "")
+            c.setdefault("keep_local", "")
+            c.setdefault("remove_dims", None)
+            c.setdefault("keep_dims", None)
+            c.setdefault("same_dims", None)
         if not isinstance(entry.get("current_images"), list) or not entry["current_images"]:
             entry["current_images"] = _fallback_current(entry)
         # Identidad secundaria (hallazgo #7): preservar la url canónica si ya está;
@@ -2668,6 +2894,29 @@ def run(
         print(f"  Después:    .venv/bin/python scripts/retrofit/fetch_better_covers.py --apply-preview")
 
 
+# Acciones cuyo `new_image`/`new_url` es una imagen NUEVA fetcheada de una
+# fuente EXTERNA (búsqueda web) — las únicas para las que tiene sentido correr
+# los gates de identidad/calidad (_same_cover, _is_soft_image) contra la
+# referencia (portada actual). Derivado del elif de arriba (gotcha #167,
+# 2026-09-01): quedan afuera a propósito
+#   - remove_image: `new_image` es la imagen que se propone ELIMINAR de la
+#     galería, no una candidata — no es "mejor o peor" que nada, es la que ya
+#     está. Evaluarla con _is_soft_image la marcaría "blanda" y la rechazaría
+#     por un motivo que no tiene nada que ver con por qué se propuso remover.
+#   - replace_cover_demote: `new_image` puede ser una foto que YA vive en la
+#     galería del propio item (cola de promoción local, `enqueue_wave2_
+#     dudosos_promotion.py` / OLA 3 "segunda tanda" — ver docs/reference/
+#     images.md), no algo recién descargado de la web. Ya pasó los gates
+#     cuando entró a la galería la primera vez; re-aplicarlos ahora sólo
+#     produce rechazos espurios sin relación con la premisa real de la
+#     candidata (que es "gemela de mayor resolución", ver gotcha #166).
+# Scripts que consumen esta constante (fuente única, no reimplementar el
+# criterio): `prune_soft_cover_candidates.py`, `revalidate_cover_preview.py`.
+NEW_EXTERNAL_IMAGE_ACTIONS = frozenset({
+    "replace_cover", "replace_image", "replace_and_add", "add_gallery", "add_extra",
+})
+
+
 def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool = False,
                   dry_run: bool = False) -> None:
     """
@@ -2751,6 +3000,9 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
     skipped_missing_file = 0
     redownloaded = 0
     skipped_approved = 0  # items aprobados excluidos de `targets` (golden records)
+    removed_no_replacement = 0     # action=remove_image aplicadas (OLA 2 dudosos)
+    skipped_invalid_removal = 0    # remove_image que hubiera dejado el item sin portada
+    skipped_no_gain_at_apply = 0   # replace_*: candidata YA no mejora la portada ACTUAL (gotcha #182)
     _redl_session = None   # sesión lazy para re-descargas del guard self-healing
     # Archivos candidatos a borrar tras aplicar (se filtran por orphan-check).
     old_to_drop: set = set()   # portadas viejas reemplazadas
@@ -2790,7 +3042,13 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                 # una copia stale de la UI resucitó la entry), intentar RE-DESCARGAR
                 # desde new_url antes de rendirse. Solo si la descarga falla se omite
                 # (la entry se conserva en el preview y se reporta en el summary).
-                if new_local and new_local != "[dry-run]" and not (images_dir / new_local).exists():
+                # remove_image no necesita el archivo local para operar (sólo
+                # borra la entry de images[] por url) — el self-heal de
+                # re-descarga es para candidatas que SÍ aplican una imagen
+                # nueva; acá new_local/new_url identifican la imagen que se
+                # está por ELIMINAR, no algo para traer de la red.
+                if (action != "remove_image" and new_local and new_local != "[dry-run]"
+                        and not (images_dir / new_local).exists()):
                     if dry_run:
                         # F1 — dry-run real: no contactamos la red ni escribimos
                         # un archivo nuevo. Se reporta como si la re-descarga no
@@ -2824,6 +3082,11 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                         continue
             if status == "approved":
                 if action == "replace_cover":
+                    if _no_gain_at_apply(targets, images_dir, new_local):
+                        cand["status"] = "pending"
+                        cand["invalid_reason"] = "no_gain_at_apply"
+                        skipped_no_gain_at_apply += 1
+                        continue
                     for item in targets:
                         _apply_improvement(item, new_url, new_local)
                     replaced += 1
@@ -2855,6 +3118,11 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     # La nueva pasa a portada y la portada ACTUAL se conserva en
                     # la galería como extra (no se descarta). Es lo que el owner
                     # suele querer: "promové esta, pero guardame la vieja".
+                    if _no_gain_at_apply(targets, images_dir, new_local):
+                        cand["status"] = "pending"
+                        cand["invalid_reason"] = "no_gain_at_apply"
+                        skipped_no_gain_at_apply += 1
+                        continue
                     for item in targets:
                         _ensure_cover_slot(item)
                         prev_url = image_store.cover_url(item)
@@ -2866,6 +3134,11 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     galleried += 1
                     # NO borramos la portada vieja: ahora vive en la galería.
                 elif action == "replace_and_add":
+                    if _no_gain_at_apply(targets, images_dir, new_local):
+                        cand["status"] = "pending"
+                        cand["invalid_reason"] = "no_gain_at_apply"
+                        skipped_no_gain_at_apply += 1
+                        continue
                     for item in targets:
                         _apply_improvement(item, new_url, new_local)
                         _add_gallery_image(item, new_url, new_local,
@@ -2874,6 +3147,32 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     galleried += 1
                     if old_image and old_image != new_local:
                         old_to_drop.add(old_image)
+                elif action == "remove_image":
+                    # OLA 2 dudosos (2026-09-01): quita `target` de la galería
+                    # SIN reemplazo — ninguna imagen se descarga ni se agrega.
+                    # Regla dura: remover JAMÁS puede dejar al item sin
+                    # portada. `_remove_gallery_image` ya sólo opera sobre
+                    # images[1:] (nunca toca images[0]), pero acá lo
+                    # detectamos EXPLÍCITAMENTE para no reportar un "removed"
+                    # fantasma: si target ya ES la portada vigente (la galería
+                    # cambió desde que se armó la candidata — no debería
+                    # ocurrir, pero es la vía de entrada del guard), la
+                    # candidata vuelve a pending en vez de aplicarse.
+                    would_remove_cover = any(
+                        (it.get("images") or []) and it["images"][0].get("url") == target
+                        for it in targets
+                    )
+                    if would_remove_cover or not target:
+                        cand["status"] = "pending"
+                        cand["invalid_reason"] = "would_remove_cover"
+                        skipped_invalid_removal += 1
+                        continue
+                    removed_local = cur_local_by_url.get(target, "")
+                    for item in targets:
+                        _remove_gallery_image(item, target)
+                    removed_no_replacement += 1
+                    if removed_local:
+                        old_to_drop.add(removed_local)
             elif status == "rejected":
                 # ITEM 1 — registrar el rechazo en el ledger ANTES del bucle de
                 # unlink (acá el archivo todavía existe → podemos leer su aHash).
@@ -2921,7 +3220,21 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
                     for item in targets:
                         _remove_gallery_image(item, new_url)
                     reverted += 1
-                if new_local and new_local != old_image and new_local != "[dry-run]":
+                elif action == "remove_image":
+                    # Rechazar una candidata remove_image = conservar AMBAS
+                    # imágenes tal cual están; no se aplicó nada al aprobar
+                    # así que no hay nada que revertir (new_local es el
+                    # archivo de la imagen que se PROPUSO eliminar y sigue
+                    # viva en la galería — nunca se marca para borrado, ver
+                    # el guard de abajo).
+                    pass
+                # new_local es un archivo "nuevo" candidato a limpiar SOLO para
+                # las acciones que de verdad descargan/agregan una imagen; para
+                # remove_image, new_local referencia una imagen YA existente en
+                # la galería del item (rechazada = se queda), nunca un archivo
+                # a eliminar por esta vía.
+                if (action != "remove_image" and new_local
+                        and new_local != old_image and new_local != "[dry-run]"):
                     new_to_drop.add(new_local)
             # pending: nada
 
@@ -2960,10 +3273,16 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
     print(f"  Reemplazos (portada/galería): {replaced} (imagen vieja eliminada: {cleaned_old})")
     print(f"  Agregadas a galería:          {galleried}")
     print(f"  Revertidas (rechazadas):      {reverted} (imagen nueva eliminada: {cleaned_new})")
+    if removed_no_replacement:
+        print(f"  Eliminadas sin reemplazo:     {removed_no_replacement} (action=remove_image)")
     if redownloaded:
         print(f"  Re-descargadas (self-heal):   {redownloaded} (archivo faltante recuperado desde new_url)")
     if skipped_missing_file:
         print(f"  Omitidas (archivo faltante):  {skipped_missing_file} (re-descarga falló; siguen en preview)")
+    if skipped_invalid_removal:
+        print(f"  Inválidas (removerían la portada): {skipped_invalid_removal} (vueltas a pendiente)")
+    if skipped_no_gain_at_apply:
+        print(f"  Sin ganancia al aplicar (gotcha #182): {skipped_no_gain_at_apply} (vueltas a pendiente)")
     if skipped_approved:
         print(f"  Items aprobados excluidos (usar --include-approved): {skipped_approved}")
 
@@ -2979,11 +3298,17 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
     for e in preview:
         e_slug = e.get("slug", "")
         # Candidatas a conservar: pending + approved-con-archivo-faltante (tratadas como pending).
+        # remove_image queda afuera de esta 2ª cláusula a propósito: un
+        # "removed" exitoso hace que new_image (el archivo de la imagen
+        # eliminada) YA NO exista en disco por diseño (se limpió como
+        # huérfano más arriba) — tratar eso como "archivo faltante,
+        # candidata pendiente" resucitaría una candidata ya aplicada.
         pend = [
             c for c in e["candidates"]
             if c.get("status", "pending") == "pending"
             or (
                 c.get("status") == "approved"
+                and c.get("action") != "remove_image"
                 and c.get("new_image", "")
                 and c.get("new_image") != "[dry-run]"
                 and not (images_dir / c["new_image"]).exists()
@@ -3043,6 +3368,9 @@ def apply_preview(items_path: Path, images_dir: Path, *, include_approved: bool 
         "skipped_missing_file": skipped_missing_file,
         "redownloaded": redownloaded,
         "skipped_approved": skipped_approved,
+        "removed_no_replacement": removed_no_replacement,
+        "skipped_invalid_removal": skipped_invalid_removal,
+        "skipped_no_gain_at_apply": skipped_no_gain_at_apply,
     }
 
 

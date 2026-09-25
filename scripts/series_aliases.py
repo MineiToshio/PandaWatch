@@ -368,6 +368,14 @@ def log_unmapped_series(
         return
 
     with _UNMAPPED_LOCK:
+        target = _unmapped_target()
+        # Dedup CROSS-RUN (gotcha #157): sin esto cada corrida re-apila las
+        # mismas series y la cola crece por duplicación, no por descubrimiento
+        # (76-92% del archivo eran `series_key` repetidas). El efecto colateral
+        # era que la condición "¿creció la cola?" del PASO 4 de la rutina diaria
+        # se disparaba SIEMPRE. Se siembra el set con lo que ya está en disco,
+        # una sola vez por archivo destino.
+        _seed_logged_from_disk(target)
         if series_key in _UNMAPPED_LOGGED_THIS_RUN:
             return
         _UNMAPPED_LOGGED_THIS_RUN.add(series_key)
@@ -380,10 +388,43 @@ def log_unmapped_series(
             "source": source or "",
             "detected_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         }
-        target = _unmapped_target()
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# Archivos ya sembrados en `_UNMAPPED_LOGGED_THIS_RUN` (evita releer el jsonl
+# en cada llamada). Se limpia junto con el set en `reset_unmapped_run_state`.
+_UNMAPPED_SEEDED_TARGETS: set[str] = set()
+
+
+def _seed_logged_from_disk(target: Path) -> None:
+    """Carga las `series_key` YA presentes en la cola, una vez por archivo.
+
+    Debe llamarse con `_UNMAPPED_LOCK` tomado.
+    """
+    key = str(target)
+    if key in _UNMAPPED_SEEDED_TARGETS:
+        return
+    _UNMAPPED_SEEDED_TARGETS.add(key)
+    try:
+        with target.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    existing = json.loads(line).get("series_key") or ""
+                except json.JSONDecodeError:
+                    continue
+                if existing:
+                    _UNMAPPED_LOGGED_THIS_RUN.add(existing)
+    except FileNotFoundError:
+        return
+    except OSError:
+        # Cola ilegible: se sigue con dedup sólo intra-corrida (comportamiento
+        # anterior), nunca se rompe el scrape por esto.
+        return
 
 
 def reset_unmapped_run_state() -> None:
@@ -392,3 +433,4 @@ def reset_unmapped_run_state() -> None:
     """
     with _UNMAPPED_LOCK:
         _UNMAPPED_LOGGED_THIS_RUN.clear()
+        _UNMAPPED_SEEDED_TARGETS.clear()

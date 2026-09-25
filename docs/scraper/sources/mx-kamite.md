@@ -106,3 +106,9 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## Auditoría estratégica — 2026-09-25
+
+Se detectaron seis ediciones del cómic Spawn. Se conserva Kamite por su manga;
+se excluye Spawn y se exceptúa el manga japonés Shadows of Spawn. No confundir
+la edición metalizada del cómic occidental con manga premium.

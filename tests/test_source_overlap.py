@@ -26,6 +26,7 @@ Casos cubiertos:
 from __future__ import annotations
 
 import json
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -97,7 +98,7 @@ def test_load_corpus_missing_file_is_empty(tmp_path):
     assert corpus.country_counts == {}
 
 
-def test_load_corpus_skips_corrupt_lines(tmp_path):
+def test_load_corpus_rejects_corrupt_lines(tmp_path):
     path = tmp_path / "items.jsonl"
     path.write_text(
         json.dumps(_item(isbn=ISBN_A)) + "\n"
@@ -105,9 +106,8 @@ def test_load_corpus_skips_corrupt_lines(tmp_path):
         + json.dumps(_item(isbn=ISBN_B)) + "\n",
         encoding="utf-8",
     )
-    corpus = so.load_corpus(path)
-    assert corpus.total_items == 2
-    assert corpus.isbns == {ISBN_A, ISBN_B}
+    with pytest.raises(ValueError, match="input preserved"):
+        so.load_corpus(path)
 
 
 # --------------------------------------------------------------------------- #
@@ -119,8 +119,8 @@ def test_classification_buckets():
     assert so.overlap_classification(29.9) == "nuevo"
     assert so.overlap_classification(30.0) == "parcial"
     assert so.overlap_classification(70.0) == "parcial"
-    assert so.overlap_classification(70.1) == "redundante"
-    assert so.overlap_classification(100.0) == "redundante"
+    assert so.overlap_classification(70.1) == "overlap_alto"
+    assert so.overlap_classification(100.0) == "overlap_alto"
 
 
 def test_classification_no_data_when_none():
@@ -257,7 +257,7 @@ def test_main_with_eval_file(tmp_path, monkeypatch, capsys):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["isbn_overlap"]["matched"] == 1
-    assert payload["isbn_overlap"]["classification"] == "redundante"
+    assert payload["isbn_overlap"]["classification"] == "overlap_alto"
 
 
 def test_main_no_input_reports_sin_datos_exit_zero(tmp_path, monkeypatch, capsys):

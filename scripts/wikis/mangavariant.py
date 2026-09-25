@@ -75,6 +75,11 @@ from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree as ET
 
+try:
+    from .health import report_issue
+except ImportError:
+    from health import report_issue
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -108,6 +113,24 @@ VARIANT_SITEMAPS = (
     f"{BASE_URL}/variant-sitemap2.xml",
     f"{BASE_URL}/variant-sitemap3.xml",
 )
+
+
+class MangavariantSitemapError(RuntimeError):
+    """Los 3 sitemaps de variants no produjeron NINGUNA entrada utilizable.
+
+    Post-mortem 2026-08-24 (delta 08-22/08-24): el challenge sgcaptcha
+    "resuelto" con 0 cookies dejaba la session sin autenticar; los 3
+    sitemaps devolvían la página HTML del challenge en vez de XML,
+    `ET.ParseError` se tragaba cada fallo con sólo un WARN, y
+    `fetch_variant_url_entries` devolvía `[]` en silencio — el bootstrap
+    terminaba con exit 0 y 0 candidatos, clasificado `healthy` en
+    source_health (gotcha #107: "muro que devuelve 200"). Levantar esta
+    excepción hace que `bootstrap()`/`run()` terminen con exit≠0 y un
+    mensaje claro en vez de una fuente rota invisible.
+    """
+
+
+
 
 # Corpus por defecto para el diff incremental (repo_root/data/items.jsonl).
 _DEFAULT_ITEMS_PATH = _SCRIPTS_DIR.parent / "data" / "items.jsonl"
@@ -213,19 +236,28 @@ def _solve_challenge_into_session(session: requests.Session) -> bool:
     return exported > 0
 
 
-def _resolve_challenge(session: requests.Session, seen_generation: int) -> None:
+def _resolve_challenge(session: requests.Session, seen_generation: int) -> bool:
     """Re-resuelve el challenge salvo que otro thread ya lo haya hecho.
 
     `seen_generation` es la generación que el caller vio ANTES de su request
     fallida; si al tomar el lock la generación ya avanzó, las cookies frescas
     de otro worker ya están en la session y no hay nada que hacer.
+
+    Devuelve True si la session queda con cookies válidas del challenge
+    (ya sea porque este thread lo resolvió o porque otro ya lo había hecho),
+    False si el solve falló o exportó 0 cookies (Fix post-mortem 2026-08-24,
+    parte (b)): antes el caller ignoraba el resultado y reintentaba el
+    request igual con la session SIN resolver, que devolvía el HTML del
+    challenge — eso se parseaba como XML y tiraba `ET.ParseError`.
     """
     global _challenge_generation
     with _CHALLENGE_LOCK:
         if _challenge_generation > seen_generation:
-            return
+            return True
         if _solve_challenge_into_session(session):
             _challenge_generation += 1
+            return True
+        return False
 
 
 def _virtual_source() -> Source:
@@ -528,23 +560,44 @@ def fetch_variant_url_entries(
     """
     entries: list[tuple[str, str]] = []
     seen: set[str] = set()
+    failures: list[str] = []
     ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     for sm_url in sitemaps:
         try:
             gen = _challenge_generation
             resp = session.get(sm_url, timeout=timeout)
             if _looks_like_challenge(resp):
-                _resolve_challenge(session, gen)
+                # Fix (b), post-mortem 2026-08-24: si el solve no exportó
+                # cookies, la session sigue SIN autenticar — reintentar el
+                # request igual sólo iba a devolver el HTML del challenge de
+                # nuevo, que `ET.fromstring` no puede parsear (ParseError
+                # tragado más abajo con un WARN genérico y críptico). Cortamos
+                # acá con un mensaje explícito y contamos el sitemap como
+                # fallido, sin gastar el segundo request.
+                if not _resolve_challenge(session, gen):
+                    msg = f"challenge sgcaptcha no resuelto (0 cookies exportadas) en {sm_url}"
+                    print(f"[WARN] {msg}")
+                    failures.append(msg)
+                    continue
                 resp = session.get(sm_url, timeout=timeout)
+                if _looks_like_challenge(resp):
+                    msg = f"challenge sgcaptcha persiste tras resolver en {sm_url}"
+                    print(f"[WARN] {msg}")
+                    failures.append(msg)
+                    continue
             resp.raise_for_status()
             xml_text = resp.text
         except requests.RequestException as exc:
-            print(f"[WARN] No pude bajar {sm_url}: {exc}")
+            msg = f"No pude bajar {sm_url}: {exc}"
+            print(f"[WARN] {msg}")
+            failures.append(msg)
             continue
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
-            print(f"[WARN] XML malformado en {sm_url}: {exc}")
+            msg = f"XML malformado en {sm_url}: {exc}"
+            print(f"[WARN] {msg}")
+            failures.append(msg)
             continue
         for url_el in root.findall("sm:url", ns):
             loc_el = url_el.find("sm:loc", ns)
@@ -558,6 +611,21 @@ def fetch_variant_url_entries(
             lastmod = (lm_el.text or "").strip() if lm_el is not None else ""
             seen.add(loc)
             entries.append((loc, lastmod))
+    # Fix (a), post-mortem 2026-08-24 (el más grave — la fuente está rota y no
+    # se entera nadie): si TODOS los sitemaps fallaron (challenge/red/parse) o
+    # los 3 respondieron pero ninguno produjo una sola entrada utilizable,
+    # devolver [] en silencio hacía que bootstrap() terminara con exit 0 y 0
+    # candidatos, clasificado "healthy" — el patrón "muro que devuelve 200"
+    # (gotcha #107). Abortamos con una excepción propagable en vez de degradar
+    # silenciosamente; el caller (bootstrap()/manga_watch.py) no la atrapa, así
+    # que sube hasta `raise SystemExit(run(...))` con traceback + exit≠0.
+    if not entries:
+        detail = "; ".join(failures) if failures else "los 3 sitemaps respondieron vacíos (0 <url> entries)"
+        raise MangavariantSitemapError(
+            f"mangavariant: 0 entradas utilizables de {len(sitemaps)} sitemap(s) — {detail}"
+        )
+    for failure in failures:
+        report_issue(session, failure)
     return entries
 
 
@@ -607,7 +675,7 @@ def _select_incremental_urls(
     updated_pairs.sort(key=lambda p: p[1], reverse=True)
     new_urls = [loc for loc, _ in new_pairs]
     updated_urls = [loc for loc, _ in updated_pairs]
-    selected = new_urls + updated_urls
+    selected = [url for url, _ in sorted(new_pairs + updated_pairs, key=lambda p: p[1], reverse=True)]
     candidates_before_cap = len(selected)
     capped = False
     if max_new and max_new > 0 and len(selected) > max_new:
@@ -636,11 +704,13 @@ def _fetch_one(
             _resolve_challenge(session, gen)
             resp = session.get(url, timeout=timeout)
         if resp.status_code != 200:
+            report_issue(session, f"mangavariant HTTP {resp.status_code}: {url}")
             return None
         if not resp.encoding:
             resp.encoding = resp.apparent_encoding or "utf-8"
         return parse_variant_detail(resp.text, url)
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        report_issue(session, f"mangavariant {url}: {exc}")
         return None
 
 
@@ -708,6 +778,7 @@ def bootstrap(
         if since:
             print(f"[mangavariant] filtro lastmod activo (since={since})")
         if stats["capped"]:
+            report_issue(session, f"mangavariant coverage capped: {stats['selected']}/{stats['candidates_before_cap']}")
             print(f"[mangavariant][WARN] TOPE alcanzado: {stats['candidates_before_cap']} "
                   f"candidatas > max_new={max_new}; se procesan las primeras "
                   f"{stats['selected']}. Correr de nuevo (o scrape_full) para el resto.")

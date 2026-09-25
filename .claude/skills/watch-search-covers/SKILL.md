@@ -1,7 +1,7 @@
 ---
 name: watch-search-covers
-description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Google Imágenes (udm=2). "Baja calidad" usa el mismo umbral que el panel de calidad de datos (90 000 px). Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() (misma imagen) y _is_soft_image() (descarta escaneos chicos y blandos que se verían pixelados) para quedarse SOLO con la MISMA portada en mejor resolución y buena calidad. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Por defecto solo procesa portadas (img_idx 0). Args opcionales: --limit N, --slug SLUG, --include-no-image, --include-gallery, --gallery-only, --retry-failed, --query-extra "texto", --serper-fallback (paso final opcional que invoca el motor de producción para reverse-image via Google Lens en los targets que quedaron en 0 matches).
-argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-gallery] [--gallery-only] [--retry-failed] [--query-extra \"texto\"] [--serper-fallback]"
+description: Busca imágenes en alta resolución para items con portada o foto de galería de baja calidad o ausente usando Chrome. Combina Yandex búsqueda-por-foto (reverse image, usando la imagen actual como consulta) + queries de texto con contexto en Bing Imágenes (motor de texto primario desde 2026-07-11; Google udm=2 quedó como fallback de emergencia por riesgo de cuenta). Nunca hace reverse-image contra una referencia placeholder conocida (gotcha #171/#179: la detecta sc_plan.py y la trata como "sin imagen", sólo texto) ni valida contra una referencia que driftó desde el plan (gotcha #178/#179: sc_validate.py corta el target si la imagen de referencia cambió/desapareció a mitad de la corrida). "Baja calidad" en PORTADAS (img_idx 0) usa por defecto el factor de reescalado en card (fetch_better_covers.cover_upscale_factor >= UPSCALE_TARGET_MIN = 1.6, apaisadas primero — validado con visión sobre 579 casos reales, Etapa 1 2026-09-02, gotcha #172); --target-rule area restaura el criterio viejo (90 000 px, el mismo del panel de calidad) por compatibilidad. La galería (img_idx >= 1) sigue usando siempre el criterio de 90 000 px. Por cada imagen objetivo itera fuentes hasta juntar matches; valida cada candidata con fetch_better_covers._same_cover() (misma imagen) y _is_soft_image() (descarta escaneos chicos y blandos que se verían pixelados) para quedarse SOLO con la MISMA portada en mejor resolución y buena calidad. Escribe a data/cover_preview.json para aprobación manual. NUNCA modifica items.jsonl. Sin --limit procesa el 100% de los targets pendientes. Por defecto procesa portadas Y fotos de galería (img_idx 0 y >= 1). Args opcionales: --limit N, --slug SLUG, --include-no-image, --only-covers, --gallery-only, --target-rule {scale,area}, --retry-failed, --query-extra "texto", --serper-fallback (paso final opcional que invoca el motor de producción para reverse-image via Google Lens en los targets que quedaron en 0 matches).
+argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--only-covers] [--gallery-only] [--target-rule scale|area] [--retry-failed] [--query-extra \"texto\"] [--serper-fallback]"
 ---
 
 # search-covers — Búsqueda de portadas hi-res con Chrome
@@ -9,62 +9,106 @@ argument-hint: "[--limit N] [--slug SLUG] [--include-no-image] [--include-galler
 Usa Chrome para buscar portadas en alta resolución para items con **imagen de baja calidad**
 (según el mismo criterio del panel de calidad de datos) o sin imagen. Para cada item combina
 dos motores: (1) **Yandex búsqueda por foto** (reverse image, usando la imagen actual como
-consulta) y (2) **varias queries de texto con contexto** en **Google Imágenes** (`udm=2`).
-Extrae URLs candidatas del HTML y las valida con Python exigiendo que sean **la misma portada
-en mejor resolución**. Las aprobadas se escriben a `data/cover_preview.json` para revisión
-manual en `http://localhost:8000/web/cover-preview.html`.
+consulta) y (2) **varias queries de texto con contexto** en **Bing Imágenes** (motor de texto
+primario). Extrae URLs candidatas del HTML y las valida con Python exigiendo que sean **la misma
+portada en mejor resolución**. Las aprobadas se escriben a `data/cover_preview.json` para
+revisión manual en `http://localhost:8000/web/cover-preview.html`.
 
-> **Cómo se extraen las URLs de Google (importante)**: en la vista nueva de Google Imágenes
-> (`&udm=2`) los `img.src` son thumbnails **base64** y el patrón viejo `"ou":"..."` da vacío
-> (por eso versiones anteriores de este skill creían que Google "no funcionaba" y usaban Bing).
-> PERO las URLs full-res de cada resultado SÍ están en el **HTML crudo** (`innerHTML`) y se
-> extraen con un regex de URLs de imagen externas (ver Step 3b). Eso **no** dispara el bloqueo
-> del MCP porque el regex corta antes de cualquier `?` (sin query strings). Verificado en vivo
-> 2026-06-06: ~70-75 candidatas full-res por query, consistente.
+> **Motor de texto primario = Bing (decisión 2026-07-11 — investigación web + red team).**
+> Antes el canal de texto era Google udm=2 y Bing era solo fallback de consent-wall. Se
+> INVIRTIÓ. La razón principal NO es velocidad sino **RIESGO DE CUENTA**: el scraping corre con
+> `credentials:include` (las cookies de sesión del owner). Con Google, el bloqueo (`429` →
+> `/sorry`) queda atado a la **cuenta Google real del owner** y puede escalar de captcha a
+> **suspensión de cuenta** (Gmail/Ads colaterales) — no solo un IP-ban temporal. Bing es, por
+> consenso de la comunidad de scraping, el motor más tolerante de los tres grandes, con umbrales
+> mucho más altos, patrón `murl` estable (lo usan herramientas comerciales desde hace años sin
+> cambios) y sin historial de suspensión de cuenta. Y —crítico— **Bing HONRA `site:`**
+> (verificado en vivo 2026-07-11: `site:whakoom.com` devolvió covers de whakoom `/large/`), así
+> que la vía whakoom (100% de los matches ES del piloto) se conserva intacta. El plan
+> (`sc_plan.py`) ahora emite las variantes de texto como **Bing** (campo `engine: "bing"`).
 >
-> **Motores de búsqueda — qué funciona y qué no (todo probado en vivo 2026-06-06)**:
-> - **Yandex reverse image (USADO, primaria)**: `https://yandex.com/images/search?rpt=imageview&url=<old_url>`.
->   Sin captcha, accesible, y devuelve **portadas del tomo/edición correctos** (mucho mejor que
->   Lens). Se extrae con el mismo regex sobre `innerHTML`. Es la mejor "búsqueda por foto" gratis.
-> - **Google texto `udm=2` (USADO, complemento)**: las queries con contexto pegan la edición
->   exacta cuando existe (Frieren 14 → dist 7, que Yandex no logró). Por eso van juntas.
-> - **Google Lens vía Chrome (NO usado)**: accesible (regex sobre `innerHTML`, NO leas
->   `location.href` que dispara `[BLOCKED: Cookie/query string data]`), pero el widget web sube
->   un THUMBNAIL de 150×150 y cae en matching "a nivel franquicia" → fan art, wikis, merch,
->   Mercari, tomos equivocados. 0 matches. **No confundir con Serper Lens** (siguiente ítem):
->   ese manda la URL completa de la imagen (no un thumbnail chico) y el matching corre
->   server-side en Google — mucha mejor precisión. Por eso Serper Lens es el fallback
->   recomendado (Step 5) y este NO.
-> - **Bing Visual Search (NO usable)**: el ícono de cámara / reverse-image de Bing redirige a
->   una búsqueda web de entidad genérica y se bloquea. (Ojo: distinto de la Bing Visual Search
->   **API**, que Microsoft discontinuó en agosto 2025 — nunca se usó esa API acá, esto es
->   scraping del sitio vía Chrome; el "Fallback a Bing texto" de abajo también es scraping del
->   sitio, no una API.)
+> **Cómo se extraen las URLs de Bing**: en `https://www.bing.com/images/search?q=<query>&first=1`
+> el metadato de cada resultado va como JSON en el atributo `m` de cada card, con `murl`
+> (full-res), `turl` (thumb), `purl` (source). El patrón `murl&quot;:&quot;<URL>&quot;` sobre el
+> HTML crudo (`innerHTML`) devuelve las URLs full-res directas — más limpio que Google (cuyo
+> `img.src` eran thumbnails base64). El regex genérico de URLs de imagen (cortando antes de `&`)
+> también funciona. Ver Step 3b.
+>
+> **Motores de búsqueda — qué funciona y qué no**:
+> - **Bing Imágenes texto (USADO, PRIMARIO)**: `https://www.bing.com/images/search?q=<query>&first=1`.
+>   Extracción por `murl`. Tolerante al scraping, honra `site:whakoom.com`. Corrida en vivo
+>   2026-07-11: 366 fetches con delay de 500ms, cero bloqueos. Es el motor de texto por defecto.
+> - **Yandex reverse image (USADO, primaria por-foto)**: `https://yandex.com/images/search?rpt=imageview&url=<old_url>`.
+>   Sin captcha, accesible, devuelve **portadas del tomo/edición correctos**. Se extrae con el
+>   regex genérico sobre `innerHTML`. Es la mejor "búsqueda por foto" gratis. No se bloqueó.
+> - **Google texto `udm=2` (FALLBACK DE EMERGENCIA, ya NO primario)**: las URLs full-res están en
+>   el `innerHTML` (los `img.src` son thumbnails base64). Se conserva SOLO como escape si Bing se
+>   degrada/bloquea, y con **fuertes cautelas** (ver "Fallback a Google" abajo). **Preferí Serper
+>   Lens (Step 5) antes que Google texto** para exprimir residuales: Lens corre server-side, sin
+>   las cookies del owner.
+> - **Google Lens vía Chrome (NO usado)**: sube un THUMBNAIL de 150×150 y cae en matching "a nivel
+>   franquicia" → fan art, wikis, merch, tomos equivocados. 0 matches. **No confundir con Serper
+>   Lens**: ese manda la URL completa de la imagen y el matching corre server-side — mucha mejor
+>   precisión (Step 5).
 > - **Serper Lens (de pago, ACTIVA)**: la reversa real de mejor calidad vive en producción
 >   (`fetch_better_covers._search_serper_lens`, endpoint `/lens` de Serper — Google Lens
->   server-side, sin necesitar que la imagen esté indexada por nadie) y requiere
->   `SERPER_API_KEY`. **La key está configurada y ACTIVA en `.env`** (línea 20 al momento de
->   escribir esto; la línea 19 comentada es una key vieja/residual, no la vigente — no
->   confundir "hay una línea comentada" con "la key está deshabilitada"). Este skill (100%
->   Chrome) no la llama directo, pero el motor de producción SÍ, y es la vía de fallback
->   documentada en el **Step 5** — en particular para targets cuya imagen actual es un
->   thumbnail de `static.listadomanga.com`: Yandex los omite (no indexados), pero Lens no
->   necesita indexación — recibe la URL de la imagen y Google hace el matching visual él mismo.
+>   server-side, **sin necesitar cookies del owner** ni que la imagen esté indexada) y requiere
+>   `SERPER_API_KEY` (configurada y ACTIVA en `.env`). Este skill (100% Chrome) no la llama
+>   directo, pero es la vía de fallback del **Step 5** — en particular para targets cuya imagen
+>   actual es un thumbnail de `static.listadomanga.com`: Yandex los omite, pero Lens no necesita
+>   indexación.
+>
+> **Throttling + jitter (obligatorio, todos los motores).** El bloqueo de Google en el piloto lo
+> gatilló hacer fetches rápidos SIN pausa, no el motor per se. Regla de ritmo: **delay entre
+> requests con jitter aleatorio** (nunca fijo — el timing regular es en sí una firma de bot).
+> Bing: ~500ms-1s + jitter. Yandex: similar. Si un motor devuelve `429`/captcha: **backoff y
+> stop** (no reintentar en caliente). Con el método navigate 1×1 del Step 3 el ritmo ya es lento
+> por naturaleza; si se acelera con `fetch()` en lote, el throttle+jitter es imprescindible.
 >
 > **Ojo (limitación de fondo)**: el catálogo son **ediciones especiales**, y tanto el texto como
 > la reversa tienden a devolver la edición **regular/hermana**, cuyo arte difiere → `_same_cover`
 > la rechaza (correctamente). Por eso para varios items no habrá candidata: el hi-res del scan
 > especial exacto simplemente no está indexado. Es esperado, no un bug.
 >
-> **Fallback a Bing texto**: si Google muestra consent wall (muy pocas URLs externas, `< 3` en
-> varias variantes de texto seguidas), cambiá la `url` a
-> `https://www.bing.com/images/search?q=<query>&first=1` y extraé con `a.iusc[m].murl`
-> (filtrando URLs con `?`). El resto del pipeline (validación, flush) es igual.
+> **Fallback a Google texto (emergencia, con cautelas)**: SOLO si Bing se degrada (muy pocas URLs,
+> `< 3` en varias variantes seguidas) o se bloquea. **Sin la sesión del owner (obligatorio)**: NO
+> navegues a Google (una navegación normal va logueada y ata cualquier bloqueo a su cuenta, que
+> puede escalar a suspensión — gotcha #145). En su lugar, navegá **una sola vez** a
+> `https://www.google.com/` y desde esa página dispará los fetches same-origin con
+> **`credentials: 'omit'`** (la Fetch API no adjunta cookies a ese request → sale anónimo; NO
+> desloguea al owner, solo desacopla ESE pedido de su identidad):
+>
+> ```javascript
+> // Estando en una página google.com (navegar 1 vez a https://www.google.com/ primero):
+> const r = await fetch('https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=2',
+>                       {credentials: 'omit'});           // ← anónimo, no usa la sesión del owner
+> const html = await r.text();
+> const ext = [...new Set((html.match(/https?:\/\/[^"\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
+>   .filter(u => !/google|gstatic/.test(u)))];
+> ```
+>
+> **Cautelas duras** (la IP sigue siendo la del owner, así que el volumen igual se acota): delay
+> 3-5s + jitter fuerte, tope bajo por sesión (≤40 requests), **stop al primer `429`/`/sorry`** (el
+> cooldown es largo). Es un recurso escaso, no el camino por defecto — para exprimir residuales
+> preferí `--serper-fallback` (Step 5), que corre server-side y ni siquiera toca el navegador del
+> owner. El resto del pipeline (validación, flush) es igual.
 
-**"Baja calidad"** = imagen con menos de **90 000 px** (ancho × alto). Es el mismo umbral
-que usa `scripts/audit/data_quality.py` para marcar imágenes como "pixelada" en el panel.
-No es un parámetro configurable — si el panel de calidad lo marca como problema, este skill
-lo intenta resolver.
+**"Baja calidad" en PORTADAS (img_idx 0)** = factor de reescalado en la card del catálogo
+(`fetch_better_covers.cover_upscale_factor(w, h)` = `min(300/w, 420/h)`, la card real es
+~300×420 px con `object-fit: contain`) **>= `fetch_better_covers.UPSCALE_TARGET_MIN`
+(1.6)**, con las **apaisadas** (`w > h`, recorte destruido — p.ej. `cover150/` de
+image.aladin.co.kr) priorizadas primero (default desde 2026-09-02, `--target-rule scale`).
+El ÁREA sola (< 90 000 px, criterio viejo, mismo umbral de `scripts/audit/data_quality.py`
+para "pixelada" en el panel) **NO predice si una portada se ve mal**: un triage con visión
+sobre 579 portadas < 90 000 px del corpus real (Etapa 1, `docs/reference/images.md` §
+"Etapa 1 — resultados", gotcha #172) encontró que el 91,2% se ven BIEN — el 84% son
+`static.listadomanga.com` a ~210×300 px, que en la card sólo se estira 1.4×. El factor de
+reescalado separa correctamente lo bueno (528 casos <=1.6×) de lo malo (51 casos >=2.0×,
+distribución bimodal). `--target-rule area` restaura el criterio viejo por compatibilidad.
+La **galería** (img_idx >= 1) sigue usando siempre el criterio de 90 000 px — la Etapa 1
+sólo evaluó portadas. Ninguno de los dos criterios es configurable por número; si hace
+falta cambiar el umbral, se cambia la constante en `fetch_better_covers.py`
+(`UPSCALE_TARGET_MIN` o `LOW_QUALITY_PX`), no este documento.
 
 **Referencia degenerada (`< MIN_REF_PX`, 2 500 px)**: una imagen actual por debajo de ese
 mínimo (típicamente un GIF de 1×1 px = placeholder "imagen no disponible" de Amazon) NO sirve
@@ -119,19 +163,22 @@ etiquetar es opcional y nunca bloquea el flujo de aprobar/rechazar.
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--limit N` | `0` (todas) | Máximo de targets (imágenes) a procesar. **Por defecto se procesan TODAS** las que falten; pasá `--limit N` solo si querés acotar a N en esta corrida. |
+| `--limit N` | `0` (todas) | Máximo de targets (imágenes) a procesar. **Por defecto se procesan TODAS** las que falten (100%); pasá `--limit N` solo si querés acotar a N en esta corrida. |
 | `--slug SLUG` | — | Procesa solo el item con ese slug exacto. |
-| `--gallery-only` | off | Salta las portadas (img_idx 0) y procesa solo imágenes de galería (img_idx ≥ 1). Útil para buscar mejoras de galería sin mezclar con portadas ya encoladas. |
-| `--include-gallery` | off | Procesa tanto portadas como imágenes de galería (img_idx 0 y ≥ 1). Sin este flag ni `--gallery-only`, solo se procesan portadas. |
+| `--only-covers` | off | Salta la galería (img_idx ≥ 1) y procesa solo portadas (img_idx 0). Útil para acotar a portadas sin mezclar con fotos de galería. |
+| `--gallery-only` | off | Salta las portadas (img_idx 0) y procesa solo imágenes de galería (img_idx ≥ 1). |
+| `--target-rule {scale,area}` | `scale` | Criterio de "baja calidad" para PORTADAS (img_idx 0; la galería siempre usa área). `scale` (default, 2026-09-02): factor de reescalado en card >= 1.6, apaisadas primero — ver más arriba y gotcha #172. `area` = criterio viejo (< 90 000 px), conservado por compatibilidad. |
+| `--include-gallery` | off | **DEPRECADO / no-op**: la galería ya se procesa por defecto. Se sigue aceptando para no romper invocaciones viejas, pero no cambia nada. |
 | `--include-no-image` | off | Por defecto se saltan items sin imagen (no hay portada actual con qué verificar `_same_cover`). Con este flag se incluyen, pero sus candidatas quedan **sin verificar** (`verified: false`). |
 | `--retry-failed` | off | Por defecto se omiten targets cuyo último intento (en `data/cover_search_attempts.jsonl`) tuvo 0 matches y fue hace menos de 30 días. Con este flag se procesan igual. |
-| `--query-extra "texto"` | — | Texto adicional al final de cada variante de query en Google. |
+| `--query-extra "texto"` | — | Texto adicional al final de cada variante de query de texto (Bing). |
 | `--serper-fallback` | off | Paso FINAL opcional (Step 5): tras terminar el loop de Chrome, invoca el motor de producción (`fetch_better_covers.py`, ya con `SERPER_API_KEY` activa) para reverse-image vía Google Lens en los targets que terminaron en 0 matches. De pago (~US$0.30-1.00 / 1000 búsquedas Lens) — solo se corre si el owner lo pide explícitamente con este flag. |
 
-> **Por defecto solo se procesan portadas** (`img_idx == 0`). Las fotos de galería interior
-> (extras/bonus) son irrecuperables en la mayoría de casos — no existe copia externa de esa
-> foto específica. En una corrida real, 12 de 25 targets eran fotos de galería con 0 matches.
-> Usar `--include-gallery` para procesar ambas, o `--gallery-only` para exclusivamente galería.
+> **Por defecto se procesan portadas Y fotos de galería** (`img_idx 0` y `>= 1`). Ojo: las fotos
+> de galería interior (extras/bonus) son irrecuperables en la mayoría de casos — no existe copia
+> externa de esa foto específica (en una corrida real, 12 de 25 targets de galería dieron 0
+> matches), así que es esperable que la galería aporte pocas candidatas. Usar `--only-covers`
+> para acotar a portadas, o `--gallery-only` para exclusivamente galería.
 
 **Tier de modelo recomendado (auditoría Fable 2026-07-08, hallazgo F10)**: el skill
 corre en el hilo principal, no fan-out. El loop es mecánico (navegar Chrome +
@@ -174,7 +221,7 @@ los parámetros del skill):
 ```bash
 .venv/bin/python scripts/retrofit/sc_plan.py \
     [--limit N] [--slug SLUG] [--include-no-image] \
-    [--gallery-only] [--include-gallery] [--retry-failed] \
+    [--only-covers] [--gallery-only] [--target-rule scale|area] [--retry-failed] \
     [--query-extra "texto"]
 ```
 
@@ -186,10 +233,24 @@ actuales, cantidad de queries). Si no hay imágenes que necesiten búsqueda, imp
 caso el skill reporta y para, sin entrar al Step 2/3.
 
 Qué hace el script (para contexto, no para reimplementar):
-- Umbral de "baja calidad" = `fetch_better_covers.LOW_QUALITY_PX` (90 000, importado
-  para que no pueda driftear del motor de producción).
+- Umbral de "baja calidad" en PORTADAS = `fetch_better_covers.cover_upscale_factor(w, h)
+  >= fetch_better_covers.UPSCALE_TARGET_MIN` (1.6, default, `--target-rule scale`), con
+  apaisadas primero; `--target-rule area` usa el criterio viejo,
+  `fetch_better_covers.LOW_QUALITY_PX` (90 000 px). Ambos se importan del motor para que
+  no puedan driftear de producción. La galería (img_idx ≥ 1) siempre usa `LOW_QUALITY_PX`.
 - Referencia degenerada (< `MIN_REF_PX` = 2 500 px, típico placeholder 1×1 de Amazon)
   se trata como "sin imagen": se salta salvo `--include-no-image`.
+- **Referencia PLACEHOLDER (gotcha #179, 2026-09-02)**: aunque tenga tamaño de canvas
+  real (no cae en el guard de arriba), una referencia detectada por
+  `image_store.known_placeholder_url_reason(url)` (por URL — p.ej. la "tarjeta de
+  título" `.gif` de Rakuten, gotcha #171) o `image_store.placeholder_reason(bytes)`
+  (por contenido/firma) se trata IGUAL que "sin imagen": se salta DURO por defecto (con
+  contador y motivo en el resumen impreso), y con `--include-no-image` entra con
+  referencia blanqueada. Motivo: reverse-image contra un placeholder devuelve basura
+  sistemática (hallazgo del juez: 9/9 candidatas de la Etapa 2 usando la tarjeta de
+  Rakuten como consulta fueron slides/logos/cabeceras sin relación). Cada target trae
+  un campo **`reference_kind`** (`"real"` / `"placeholder"` / `"none"`) — el Step 3 lo
+  lee para decidir la vía de búsqueda (ver abajo).
 - Salta `(slug, action, target)` que YA tienen una candidata del skill (campo
   `match_dist`) en cualquier estado — pending/approved/rejected — en
   `data/cover_preview.json`.
@@ -197,7 +258,14 @@ Qué hace el script (para contexto, no para reimplementar):
   salvo `--retry-failed`.
 - Arma las variantes de query por idioma: whakoom primero para Español, luego
   yandex-reverse; yandex-reverse primero para el resto de idiomas (sin whakoom); las
-  de texto (serie+vol+edición+editorial+"portada") van después, en Google `udm=2`.
+  de texto (serie+vol+edición+editorial+"portada") van después, en **Bing Imágenes**
+  (motor de texto primario). Cada variante trae un campo `engine` (`bing` para texto y
+  whakoom, `yandex` para reverse) que el loop del Step 3 registra en el ledger de intentos.
+  Con `reference_kind != "real"` la variante `yandex-reverse` NUNCA se genera (no hay
+  `ref_url` utilizable) — estructural, no depende de que el Step 3 la filtre.
+- Cada target trae **`reference_sha256`** (sha256 del archivo local de referencia al
+  momento del plan; `""` si `reference_kind != "real"`) — guard ANTI-DRIFT que consume
+  `sc_validate.py` en el Step 3b (ver gotcha #178/#179).
 
 ---
 
@@ -241,17 +309,27 @@ import json
 from pathlib import Path
 
 plan = json.loads(Path('.tmp_sc_plan.json').read_text(encoding='utf-8'))
-target           = plan[i]
-slug             = target['slug']
-curr_px          = target['pixels']
-img_idx          = target.get('img_idx', 0)
-image_ref_local  = target.get('image_ref_local', '')
-candidate_action = target.get('candidate_action', 'replace_cover')
-candidate_target = target.get('candidate_target', '')
-target_label     = target.get('target_label', 'portada')
-variants         = target['variants']
+target             = plan[i]
+slug               = target['slug']
+curr_px            = target['pixels']
+img_idx            = target.get('img_idx', 0)
+image_ref_local    = target.get('image_ref_local', '')
+reference_kind     = target.get('reference_kind', 'real')     # "real"/"placeholder"/"none"
+reference_sha256   = target.get('reference_sha256', '')       # guard anti-drift (gotcha #178/#179)
+candidate_action   = target.get('candidate_action', 'replace_cover')
+candidate_target   = target.get('candidate_target', '')
+target_label       = target.get('target_label', 'portada')
+variants           = target['variants']
+# Defensiva (el plan YA nunca genera 'reverse' sin referencia real —
+# build_variants necesita un ref_url http utilizable — pero un plan viejo de
+# antes de este fix, o un futuro drift del planificador, no debería poder
+# disparar un reverse-image contra una referencia placeholder/ausente):
+if reference_kind != 'real':
+    variants = [v for v in variants if v.get('kind') != 'reverse']
 
-# item completo desde items.jsonl
+# item completo desde items.jsonl — SIEMPRE releído fresco (no el snapshot del
+# plan): si desapareció del corpus entre el Step 1 y este target (purga/expulsión
+# concurrente, gotcha #178), no tiene sentido buscarle portada.
 item = None
 for l in open('data/items.jsonl'):
     if not l.strip():
@@ -260,11 +338,21 @@ for l in open('data/items.jsonl'):
     if o.get('slug') == slug:
         item = o; break
 
+if item is None:
+    print(f"\n[{i+1}/{len(plan)}] {slug} — DRIFT: el item ya no está en items.jsonl "
+          f"(expulsado/re-slugueado entre el plan y esta corrida). Salteado, 0 navegaciones.")
+    continue   # siguiente target del plan; no hay con qué construir el input de sc_validate
+
 TARGET_MATCHES  = 3
 item_candidates = []   # acumulador verificado de ESTE target (una imagen)
+engines_used    = set()   # motores realmente consultados (para el ledger de intentos)
+drift_detected  = ''      # motivo de drift (gotcha #178/#179), si `sc_validate.py` lo marca en 3b
 
 print(f"\n[{i+1}/{len(plan)}] {item.get('title','')} [{target_label}]")
 print(f"  Imagen actual: {curr_px:,} px" if curr_px > 0 else "  Sin imagen")
+if reference_kind != 'real':
+    print(f"  reference_kind={reference_kind}: sin referencia utilizable — sólo variantes de "
+          f"TEXTO (nunca yandex-reverse con esta referencia).")
 ```
 
 ### 3b. Por cada variante: navegar + extraer + validar (parar al juntar matches)
@@ -272,7 +360,8 @@ print(f"  Imagen actual: {curr_px:,} px" if curr_px > 0 else "  Sin imagen")
 Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >= TARGET_MATCHES`:
 
 1. **Navegar + extraer en un solo `browser_batch`** (navigate a `variant['url']` +
-   javascript_tool). Imprimí `variant['label']` y `variant['query']` antes.
+   javascript_tool). Imprimí `variant['label']` y `variant['query']` antes, y registrá el
+   motor consultado: `engines_used.add(variant.get('engine', ''))`.
 
    > **Nota MCP**: dentro de `browser_batch`, los items van con el nombre CORTO de la
    > tool (`"name": "navigate"`, `"name": "javascript_tool"`), NUNCA el nombre MCP
@@ -306,16 +395,15 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    > Si `captcha == true` → Yandex está pidiendo verificación; saltá esta variante (seguí con
    > las de texto). No intentes resolver el captcha.
 
-   **Si `variant['kind'] == 'text'` (Google udm=2)**:
+   **Si `variant['kind'] == 'text'` (Bing Imágenes — `variant['engine'] == 'bing'`)**:
 
    ```javascript
-   // Google Imágenes (udm=2): las URLs full-res NO están en img.src (son base64) sino en el
-   // HTML crudo. Regex de URLs de imagen externas (no google/gstatic). El patrón corta antes
-   // de cualquier "?" → sin query strings → no dispara el bloqueo del MCP.
-   // Regex: un backslash antes de s (\s) — NO doble.
+   // Bing Imágenes: las URLs full-res están en el atributo `m` (JSON) de cada card, como
+   // murl&quot;:&quot;<URL>&quot;. Extraé por ese patrón; el regex genérico (cortando antes de
+   // "&") también funciona. Filtrá dominios de Bing/Microsoft. Regex: un backslash antes de s.
    const html = document.documentElement.innerHTML;
-   const ext = [...new Set((html.match(/https?:\/\/[^"\s]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
-     .filter(u => !u.includes('google') && !u.includes('gstatic')))];
+   const ext = [...new Set((html.match(/https?:\/\/[^"\s&]+?\.(?:jpg|jpeg|png|webp)/gi) || [])
+     .filter(u => !/bing|microsoft|gstatic|google|yandex/.test(u)))];
    JSON.stringify(ext.slice(0, 25))
    ```
 
@@ -324,13 +412,19 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    > truncado — con `_same_cover` filtrando, alcanza con que la portada correcta aparezca entre
    > las que sí llegaron.
    >
-   > **Consent wall de Google**: si `ext` viene casi vacío (`< 3`) en varias variantes de texto
-   > seguidas, Google muestra consent wall → fallback a Bing (ver nota al inicio):
-   > `https://www.bing.com/images/search?q=<query>&first=1`, extraé con `a.iusc[m].murl`
-   > (filtrando URLs con `?`).
+   > **Si Bing se degrada** (`ext` casi vacío, `< 3`, en varias variantes seguidas) o devuelve
+   > captcha/429 → recién ahí el **fallback de emergencia a Google** (ver "Fallback a Google
+   > texto" en la nota inicial): `https://www.google.com/search?q=<query>&udm=2`, extraé con el
+   > regex genérico filtrando `google`/`gstatic`, con **delay 3-5s + jitter, tope ≤40/sesión y
+   > stop al primer `/sorry`**. Preferí `--serper-fallback` (Step 5) antes que esto.
 
    En ambos casos: tomá la lista de URLs (`urls` para reverse, `ext` para texto). Si viene
    vacía → esa variante no dio resultados; pasá a la siguiente.
+
+   > **Ritmo (throttling + jitter)**: entre variantes/targets mantené un delay con jitter
+   > aleatorio (Bing ~500ms-1s). No dispares navegaciones sin pausa: el timing regular y el
+   > volumen sin freno son lo que gatilla los bloqueos (fue la causa del 429 de Google en el
+   > piloto, no el motor).
 
 2. **Validar las URLs de esa variante** (mismo patrón que antes, vía el validador):
 
@@ -348,13 +442,27 @@ Repetir para cada `variant` en `variants` **hasta** que `len(item_candidates) >=
    tmp_in = Path(f'.tmp_sc_input_{uuid.uuid4().hex[:8]}.json')
    tmp_in.write_text(json.dumps({'item': item, 'candidate_urls': candidate_urls,
                                  'curr_px': curr_px,
-                                 'ref_image_local': image_ref_local}, ensure_ascii=False), encoding='utf-8')
+                                 'ref_image_local': image_ref_local,
+                                 'reference_sha256': reference_sha256}, ensure_ascii=False), encoding='utf-8')
    result = subprocess.run(['.venv/bin/python', 'scripts/retrofit/sc_validate.py', str(tmp_in)],
                            capture_output=True, text=True)
    tmp_in.unlink(missing_ok=True)
-   got = json.loads(result.stdout).get('validated', []) if result.returncode == 0 else []
+   out = json.loads(result.stdout) if result.returncode == 0 else {}
+   got = out.get('validated', []) if result.returncode == 0 else []
    if result.returncode != 0:
        print(f"    ERROR validación: {result.stderr[:200]}")
+
+   # Guard anti-drift (gotcha #178/#179): la referencia con la que se armó el
+   # plan ya no es la actual (purga/reemplazo concurrente a mitad de la
+   # corrida) — sc_validate.py lo detecta comparando reference_sha256 contra
+   # el archivo actual y devuelve [] SIN tocar la red. Cortar el resto de las
+   # variantes de ESTE target (todas darían el mismo drift) en vez de seguir
+   # gastando navegaciones para una referencia obsoleta.
+   if out.get('drift'):
+       drift_detected = out['drift']
+       print(f"    DRIFT ({drift_detected}): la referencia cambió desde que se armó el "
+             f"plan — cortando variantes restantes de este target, 0 candidatas.")
+       break
 
    # Acumular dedup por new_url
    for c in got:
@@ -392,10 +500,26 @@ attempt_entry = {
     'target'      : candidate_target,
     'attempted_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00'),
     'matches'     : len(item_candidates),
+    'engines'     : sorted(e for e in engines_used if e),   # trazabilidad del motor (2026-07-11)
 }
+if drift_detected:
+    attempt_entry['drift'] = drift_detected   # gotcha #178/#179: no confundir con 0-match real
 with attempts_path.open('a', encoding='utf-8') as f:
     f.write(json.dumps(attempt_entry, ensure_ascii=False) + '\n')
 ```
+
+> **`drift` vs. 0-match real**: un target con `drift` se registra igual que cualquier
+> otro 0-match a los efectos del skip de 30 días (`--retry-failed` lo ignora), pero el
+> campo lo distingue en el log de un 0-match genuino (`_same_cover` rechazando
+> ediciones distintas) — útil para diagnosticar si una corrida sufrió una purga
+> concurrente (gotcha #178) sin tener que releer el snapshot del plan a mano.
+
+> **Por qué se registra `engines`** (red team 2026-07-11): sin saber QUÉ motor produjo cada
+> intento, el skip de 30 días del Step 1 cierra el reintento de un target aunque el 0-match
+> haya venido de un motor degradado (ej. Bing flojo para un idioma nicho). Registrar el motor
+> deja el rastro para diagnosticar match-rate por motor/idioma y decidir reintentos con criterio.
+> (El motor de producción `fetch_better_covers` ya apendea su propio campo `engines` — mismo
+> nombre, formato coherente.)
 
 ### 3e. Si no hubo matches, no inventar
 
@@ -408,6 +532,19 @@ El flush es un script PERMANENTE (`scripts/retrofit/sc_flush.py`) — nunca rees
 lógica inline. Una corrida anterior reconstruyó los dicts a mano y perdió el campo `new_image`,
 rompiendo la cola completa; el script ahora lo rechaza con exit 1 antes de escribir nada.
 Las candidatas se pasan EXACTAMENTE como las devolvió `sc_validate.py`, sin modificarlas.
+
+**Guard de URL compartida (gotcha #173/#174, 2026-09-02):** en cada flush, `sc_flush.py`
+re-evalúa TODO el acumulador de la corrida (`.tmp_sc_acc.json`) buscando la MISMA `new_url`
+propuesta a ≥2 slugs distintos — el caso medido en la Etapa 2 tanda 1: para items **sin
+imagen de referencia** (`--include-no-image`), `sc_validate.py` no puede correr
+`_same_cover` y whakoom a veces devuelve la miniatura de la SERIE o de OTRO tomo (36/50
+items de esa tanda tenían la misma `new_url` propuesta a otro tomo de la misma serie). Si el
+`page_title`/`new_url` declara el tomo de un solo slug del grupo, esa se conserva y el resto
+queda `rejected`/`otro_tomo`; si no hay forma de desambiguar, todas quedan `pending` pero con
+`shared_with`/`confidence:"low"`/`needs_visual_review:true` — **nunca se auto-aprueban**. El
+stdout del flush trae el resumen (`shared_url_guard`). No requiere ninguna acción del skill:
+es automático dentro de `sc_flush.py`. Detalle en `docs/reference/images.md` § "Validación
+sin referencia — guard de URL compartida".
 
 ```python
 import json, subprocess, uuid
@@ -482,9 +619,12 @@ b`). Se aplica ADEMÁS de los filtros de candidatura: un slug pedido que no es c
 buenos, signal de skip, o inexistente) se reporta en el output y se saltea (no se fuerza su
 búsqueda). Esto cierra el gap anterior — para el fallback dirigido a los targets que este skill
 dejó en 0 matches, pasá exactamente esos slugs. (`--limit N` sigue disponible como filtro de
-alcance por cantidad; `--slugs` es el filtro por identidad exacta.) El motor usa el MISMO umbral
-de baja calidad que este skill (`fetch_better_covers.LOW_QUALITY_PX` == `LOW_QUALITY_PX` del
-Step 1, 90 000 px) y el mismo criterio de "necesita mejora".
+alcance por cantidad; `--slugs` es el filtro por identidad exacta.) El motor (invocado
+directo, sin pasar por `sc_plan.py`) sigue gateando con `fetch_better_covers.LOW_QUALITY_PX`
+(90 000 px, sin cambios — este script no adoptó el criterio nuevo de `--target-rule scale` del
+Step 1). En el 100% de los casos reales las dos cosas coinciden (un target apaisado/blando de
+baja resolución también tiene área < 90 000 px), pero si algún día `--slugs` reporta como "no
+candidato" un slug que el Step 1 sí marcó, es por esta diferencia de criterio, no un bug.
 
 Invocación exacta (verificada contra el `argparse` real del motor — `--preview` es el
 comportamiento POR DEFECTO sin `--apply`):
@@ -536,7 +676,10 @@ Al terminar, reportar cuántas candidatas nuevas aportó este paso (comparar `to
 5. Una candidata con imagen actual SOLO se acepta si pasa `_same_cover()` (AND-gate: misma
    portada) Y no tiene conflicto de metadata (`candidate_metadata_conflict()`: otro volumen /
    otro ISBN declarado en la URL/título → hard reject). Sin imagen actual
-   (`--include-no-image`) queda `verified: false` para revisión más estricta.
+   (`--include-no-image`) queda `verified: false` para revisión más estricta — y además pasa
+   por el guard de URL compartida entre slugs de `sc_flush.py` (gotcha #173/#174): si la
+   misma `new_url` termina propuesta a ≥2 slugs de la corrida sin poder desambiguar por
+   tomo, ninguna se auto-aprueba (quedan `pending` con `needs_visual_review:true`).
 6. Máximo 10 candidatas por item; máx 3 matches dispara el corte de iteración
 7. El skill es incremental: un (slug, action, target) con candidata DEL SKILL (campo
    `match_dist`) en CUALQUIER estado — pending, approved o rejected — se salta
@@ -549,3 +692,25 @@ Al terminar, reportar cuántas candidatas nuevas aportó este paso (comparar `to
    skill.
 10. El Step 5 (`--serper-fallback`, de pago) solo corre si el owner lo pide explícitamente con
     ese flag — nunca por defecto, y nunca con `--apply`/`--apply-preview`.
+11. **Motor de texto = Bing por defecto** (riesgo de cuenta: scrapear Google con las cookies del
+    owner puede escalar a suspensión de su cuenta Google). Google udm=2 es SOLO fallback de
+    emergencia si Bing se degrada, y SIEMPRE **anónimo** — fetch con `credentials: 'omit'` desde
+    una página `google.com` (no navegar logueado; no desloguea al owner, solo desacopla el
+    request de su cuenta), con throttle fuerte (3-5s+jitter), tope ≤40/sesión y stop al primer
+    `/sorry`. Ritmo con jitter en todos los motores; nunca ráfagas sin pausa. Para exprimir
+    residuales, preferí `--serper-fallback` (server-side, ni toca el navegador del owner) antes
+    que el fallback de Google.
+12. **NUNCA** reverse-image (Yandex) contra una referencia placeholder (gotcha #171/#179):
+    `sc_plan.py` detecta y saltea DURO cualquier referencia que matchee
+    `image_store.known_placeholder_url_reason()` o `image_store.placeholder_reason()` — con
+    `--include-no-image` entra con `reference_kind: "placeholder"` y SOLO variantes de texto
+    (nunca se genera la variante `yandex-reverse` para esa referencia). Reverse-image contra un
+    placeholder produce basura sistemática (hallazgo del juez: 9/9 candidatas sin relación).
+13. **Guard anti-drift (gotcha #178/#179)**: si la referencia con la que se armó el plan cambió
+    o desapareció a mitad de la corrida (purga/reemplazo concurrente), `sc_validate.py`
+    (`reference_drift_reason`, comparando `reference_sha256` del plan contra el archivo actual)
+    devuelve `drift` y el target se corta SIN generar candidatas sobre una referencia obsoleta —
+    nunca cae al gate débil sin-referencia por un item que en realidad sí tenía referencia al
+    momento del plan. Recomendación de proceso, no reemplazada por este guard: no correr este
+    skill en paralelo con `purge_placeholder_images.py`/`mirror_images.py --gc` sobre el mismo
+    corpus.

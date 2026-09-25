@@ -63,9 +63,9 @@ except ImportError:
 # Reusa la MISMA señal de folleto gratuito que el parser canónico de
 # colecciones (gotcha #103) — nunca copiar el pattern, importarlo.
 try:
-    from scripts.wikis.listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[import-not-found]
+    from wikis.listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[import-not-found]
 except ImportError:
-    from listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[no-redef]
+    from scripts.wikis.listadomanga_collections import FREE_PRICE_PATTERN  # type: ignore[no-redef]
 
 
 BASE_URL = "https://www.listadomanga.es/"

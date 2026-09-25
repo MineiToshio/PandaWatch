@@ -100,10 +100,10 @@ sources:
     country: "México"
     language: "Español"
     publisher: "Varias editoriales"
-    source_class: "trusted_media"
+    source_class: "trusted_catalog"
     kind: "html"
     url: "https://mangamexico.blogspot.com/"
-    enabled: true
+    enabled: false  # 2026-09-25: ingest through the dedicated manga-mexico wiki parser only.
     tags: ["wiki", "catalog", "manga", "mexico", "manga-mexico"]
     notes: "Catálogo wiki community-maintained de Panini México, Kamite, Vid. Usado via --bootstrap-wiki manga-mexico."
 
@@ -160,7 +160,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://mangaline.com.mx/tienda/"
-    enabled: true
+    enabled: false  # disabled 2026-08-23 (host caído): timeout de conexión puro desde al menos 2026-07-07 (DNS resuelve, hosting Arsys, re-confirmado 2026-08-22 y 2026-08-23). MangaLine México sigue activa (redes sociales, Instagram @mangalinemx con posts recientes) — el sitio propio está caído, la editorial no. Reactivar si vuelve a responder. Ver docs/scraper/sources/mx-mangaline-mexico.md.
     tags: ["manga", "official", "store", "variant", "new-source"]
     selectors:
       item_selector: "li.product:not(.product-category)"
@@ -384,7 +384,15 @@ sources:
     source_class: "trusted_media"
     kind: "wiki"
     url: "https://www.listadomanga.es/coleccion.php"
-    enabled: true
+    enabled: false   # 2026-08-24: fila DOCUMENTAL, no ejecutable — kind: "wiki"
+                     # no está manejado en el loop principal (sólo "html"), así
+                     # que esta fila pega 404 crónico contra coleccion.php SIN
+                     # id todas las corridas (ver logs/scrape-delta-*/01-scrape.log).
+                     # La ingestión real va por
+                     # `--bootstrap-wiki listadomanga-collections` (invocada
+                     # aparte en scrape_delta.sh/scrape_full.sh). Se deja
+                     # `enabled: false` igual que sus hermanas de arriba —
+                     # queda sólo como referencia de qué comando correr.
     tags: ["wiki", "manga", "spain", "listadomanga-collections"]
     notes: |
       Parser por colección individual (coleccion.php?id=N). Fase 1 ingiere
@@ -482,7 +490,7 @@ sources:
     publisher: "Panini Manga España"
     source_class: "official"
     kind: "html"
-    url: "https://www.panini.es/shp_esp_es/novedades-panini-comics-marvel-manga"
+    url: "https://www.panini.es/shp_esp_es/comics/manga.html?skip_default_filters=true"
     enabled: true
     tags: ["manga", "official"]
 
@@ -556,11 +564,11 @@ sources:
     country: "España"
     language: "Español"
     publisher: "Pika Ediciones"
-    source_class: "official"
+    source_class: "community"
     kind: "html"
     url: "https://hablamosdelibros.es/editorial/pika-ediciones/"
-    enabled: true
-    tags: ["manga", "official"]
+    enabled: false  # 2026-09-25: third-party book news, not an official product catalog.
+    tags: ["manga", "news"]
     selectors:
       item_selector: "div.ae-bg-gallery-type-default.e-con.e-con-boxed"
 
@@ -593,7 +601,7 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://mangaline.es/shop/"
-    enabled: true
+    enabled: false  # disabled 2026-08-23 (host caído): timeout de conexión puro desde al menos 2026-07-07 (DNS resuelve, hosting Arsys, re-confirmado 2026-08-22 y 2026-08-23). MangaLine España sigue activa bajo nueva dirección (Rafael, desde inicio de 2026) con relanzamiento en curso — el sitio propio está caído, la editorial no. Las ediciones ES ya se cubren vía ListadoManga (colecciones). Reactivar si vuelve a responder. Ver docs/scraper/sources/es-mangaline-espana.md.
     tags: ["manga", "official", "store", "variant", "new-source"]
     selectors:
       item_selector: "li.product:not(.product-category)"
@@ -616,7 +624,14 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://otakucalendar.com/Calendar"
-    enabled: true
+    enabled: false   # 2026-08-24: sin selectors, el autodetect genérico no
+                     # resuelve el layout del calendario — 0 candidatos en el
+                     # loop en los deltas recientes (logs/metrics.jsonl:
+                     # scrape-delta-2026-08-22/24, "EN - Otaku Calendar":
+                     # candidates 0; sólo 2 en 2026-07-07). La ingestión real
+                     # (67/57 candidatos, healthy) va por
+                     # `--bootstrap-wiki otaku-calendar`. Misma causa que las
+                     # filas de ListadoManga arriba ("autodetect falla").
     tags: ["wiki", "calendar", "manga", "english", "otakucalendar"]
     notes: "Calendar releases by date for the English manga/LN market. Used via --bootstrap-wiki otaku-calendar."
 
@@ -1047,11 +1062,16 @@ sources:
     publisher: "Delcourt / Tonkam"
     source_class: "official"
     kind: "html"
-    url: "https://www.editions-delcourt.fr/mangas"
+    url: "https://www.editions-delcourt.fr/mangas/liste-mangas"
     enabled: true
     tags: ["manga", "official", "prestige"]
 
-    max_pages: 15
+    max_pages: 1000
+    selectors:
+      item_selector: ".album-thumbnail:has(.album-thumbnail__title a[href^='/mangas/'][href*='/album-'])"
+      title_selector: ".album-thumbnail__title a"
+      link_selector: ".album-thumbnail__title a"
+    notes: "2026-09-25: full manga product catalog; landing /mangas was only news/highlights. Exclude /bd/ recommendations."
   - name: "FR - Kurokawa"
     country: "Francia"
     language: "Francés"
@@ -1070,8 +1090,25 @@ sources:
     source_class: "official"
     kind: "js"
     url: "https://www.meian-editions.fr/meian/accueil-meian"
-    enabled: true
+    enabled: false  # 2026-09-07: reemplazada por el wiki `--bootstrap-wiki meian`
     tags: ["manga", "official"]
+    notes: |
+      DESHABILITADA 2026-09-07 tras 4 corridas seguidas en 0 candidatos.
+      El sitio es una app Angular que NO renderiza nada sin JS: el HTML servido
+      pesa 64 KB (CSS crítico inlineado) pero el texto útil del <body> son 60
+      caracteres ("Please enable JavaScript…") y CERO enlaces. Tampoco hay
+      sitemap — cualquier ruta devuelve el mismo shell. Ni siquiera con
+      kind: js rendía.
+
+      La ingesta real vive ahora en `scripts/wikis/meian.py`, que consume el
+      API JSON que alimenta a la app (descubierto capturando el tráfico de red
+      del navegador el 2026-09-07):
+        GET www.anime-store.fr/api-meian/v5/licences/?cat=0&q=
+        GET www.anime-store.fr/api-meian/v5/produits/licence/?id_serie=<id>&ref=0
+        GET www.anime-store.fr/api-meian/v5/produit/?ref=<ref>
+      Exige el header `Origin: https://www.meian-editions.fr` (sin él: 403) y
+      la respuesta lleva prefijo anti-XSSI `)]}',`. Detalle en
+      docs/scraper/sources/fr-meian.md.
 
   - name: "FR - Meian Plus Boutique"
     country: "Francia"
@@ -1145,7 +1182,7 @@ sources:
     publisher: "Panini / Planet Manga"
     source_class: "official"
     kind: "html"
-    url: "https://www.panini.it/shp_ita_it/planet-manga.html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga.html?skip_default_filters=true"
     enabled: true
     tags: ["manga", "official", "italy"]
 
@@ -1155,13 +1192,13 @@ sources:
     publisher: "Panini / Planet Manga"
     source_class: "official"
     kind: "html"
-    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/variant-ed-esclusive.html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/variant-ed-esclusive.html?skip_default_filters=true"
     enabled: true
     # search:-tag = contexto de señal para el gate (manga_watch.py inyecta el
     # keyword en detect_signals): la categoría lista títulos "bare" sin señal
     # ("Sakamoto Days 25") que sin contexto puntúan 0 y se descartan. La
     # categoría entera YA es variant/esclusiva, así que el contexto es legítimo.
-    tags: ["manga", "variant", "exclusive", "official", "search:variant esclusiva"]
+    tags: ["manga", "variant", "exclusive", "official", "collector-catalog", "search:variant esclusiva"]
 
   - name: "IT - Panini Edizioni da Collezione e Cofanetti"
     country: "Italia"
@@ -1169,12 +1206,12 @@ sources:
     publisher: "Panini / Planet Manga"
     source_class: "official"
     kind: "html"
-    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/edizioni-da-collezione-e-cofanetti.html"
+    url: "https://www.panini.it/shp_ita_it/planet-manga/tipologia/edizioni-da-collezione-e-cofanetti.html?skip_default_filters=true"
     enabled: true
     # search:-tag = contexto de señal para el gate (igual que Variant ed
     # Esclusive arriba): la categoría entera son edizioni da collezione y
     # cofanetti, los títulos bare puntúan 0 sin este contexto.
-    tags: ["manga", "collector", "boxset", "official", "search:edizione da collezione cofanetto"]
+    tags: ["manga", "collector", "boxset", "official", "collector-catalog", "search:edizione da collezione cofanetto"]
 
   - name: "IT - Star Comics Manga"
     country: "Italia"
@@ -1234,7 +1271,12 @@ sources:
     tags: ["manga", "official"]
     selectors:
       item_selector: "div.sc_extended_products_content"
-      title_selector: ".woocommerce-loop-product__title, h2, h3, a"
+      # OJO (2026-09-02): una lista separada por comas NO es una lista de
+      # prioridad — CSS matchea por orden en el DOCUMENTO. El valor anterior
+      # (".woocommerce-loop-product__title, h2, h3, a") devolvía "Sconto 10%"
+      # porque el <span class="onsale"> vive dentro de un <a> que aparece
+      # ANTES del <h2>. Mismo bug que Funside 2026-08-24. Selector único.
+      title_selector: ".woocommerce-loop-product__title"
 
   - name: "IT - Magic Press"
     country: "Italia"
@@ -1522,7 +1564,7 @@ sources:
     enabled: true
     tags: ["manga", "official", "store"]
     purity: "mixed"  # catálogo trae cromos LIGA ESTE, Eurocopa, corbatas, etc.
-    search_template: "https://www.panini.es/shp_esp_es/catalogsearch/result/?q={query}"
+    search_template: "https://www.panini.es/shp_esp_es/catalogsearch/result/?q={query}&skip_default_filters=true"
     selectors:
       item_selector: "li.product-item"
       title_selector: "a.product-item-link"
@@ -1892,7 +1934,13 @@ sources:
     source_class: "trusted_media"
     kind: "html"
     url: "https://mangavariant.com/variant/"
-    enabled: true
+    # Deshabilitada 2026-09-02: la home /variant/ pasó a ser JS-rendered y
+    # devuelve 176 chars, así que source_health la marcaba 🟠 Broken todos los
+    # días. Es un FALSO POSITIVO operativo: la vía real de ingesta es el módulo
+    # wiki (`[2t] mangavariant incremental` en scrape_delta/full, que corre
+    # sano), no esta entrada HTML — quedó redundante. Ver
+    # docs/scraper/sources/mangavariant.md.
+    enabled: false
     tags: ["manga", "variant", "reference", "wiki", "global", "new-source"]
     purity: "manga_only"   # base 100% curada de variants/ediciones especiales
     selectors:
@@ -1921,7 +1969,7 @@ sources:
   - name: "IT - Funside Variant"
     country: "Italia"
     language: "Italiano"
-    publisher: "Funside"
+    publisher: ""  # Retailer, not the publishing imprint.
     source_class: "retailer"
     kind: "html"
     url: "https://funside.it/collections/a-caccia-di-variant"
@@ -1930,7 +1978,7 @@ sources:
     tags: ["manga", "retailer", "italy", "variant", "new-source"]
     selectors:
       item_selector: ".product-card"
-      title_selector: "a[href*='/products/']"
+      title_selector: ".product-card__title a"
     max_pages: 5
     notes: |
       Shopify italiano enfocado en variant covers de manga ("a caccia di
@@ -1941,6 +1989,15 @@ sources:
       - "Ai Tempi di Bocchan Perfect Edition vol 3 Variant"
       - "Vita da Slime - A Spasso per Tempest Vol 5 Variant"
       Slugs siempre terminan en `-variant`.
+
+      Gotcha (2026-08-24): `title_selector` original `a[href*='/products/']`
+      capturaba el <a> que envuelve la IMAGEN del card (incluye el badge de
+      preventa/descuento), no el título — 48 items quedaron con title
+      "USCITA: dd/mm/yy" y 7 con "Sconto". Fix: `.product-card__title a`
+      (verificado 45/45 títulos resueltos en vivo el 2026-08-24). Retrofit
+      de los 19 items ya congelados (`standardized_at`) en
+      `scripts/retrofit/fix_funside_frozen_titles_20260824.py`. Ver
+      docs/scraper/sources/it-funside-variant.md.
 
   - name: "IT - Manga Dreams"
     country: "Italia"
@@ -2081,6 +2138,12 @@ sources:
     tags: ["manga", "retailer", "korea", "new-source"]
     selectors:
       item_selector: "div.ss_book_box"
+      # OBLIGATORIO (2026-09-07): sin esto el título salía del texto del
+      # contenedor entero — número de puesto + banner promocional + "[국내도서]"
+      # pegados delante del nombre real (130 de 438 items del corpus, 30%).
+      # `a.bo3` es el ancla del título, verificada en vivo dentro de cada
+      # div.ss_book_box (8/8). Misma familia que gotchas #187/#188/#193.
+      title_selector: "a.bo3"
     max_pages: 18
     notes: |
       Búsqueda 만화 한정판 (~428 resultados, 26/pág, &page=N). Las 한정판
@@ -2201,7 +2264,15 @@ sources:
     source_class: "official"
     kind: "html"
     url: "https://www.carlsen.de/manga/monatsuebersicht"
-    enabled: true
+    enabled: false  # disabled 2026-08-24 (ban de IP del host): 429 persistente en TODO
+                    # el host (home Y /robots.txt, sin Retry-After, con UAs distintos —
+                    # firma de bloqueo perimetral, no rate-limit; gotcha #150). Dos
+                    # deltas consecutivos afectados (2026-08-22, 2026-08-24). Cobertura
+                    # DE de LEs ya la aporta Manga-Passion Sonderausgaben (wiki) +
+                    # altraverse/Egmont/TOKYOPOP. Reactivar cuando el host deje de
+                    # devolver 429 en /robots.txt (chequeo: `curl -sI
+                    # https://www.carlsen.de/robots.txt`). Ver
+                    # docs/scraper/sources/de-direct-publishers.md.
     tags: ["manga", "official", "germany", "new-source"]
     selectors:
       # El card es <a class="pondus-product__link"> con el título dentro
@@ -2234,6 +2305,7 @@ sources:
     publisher: "Kadokawa Taiwan"
     source_class: "official"
     kind: "html"
+    throttle_group: "kadokawa-tw"  # full pagination hit 429 with parallel searches; serialize + delay
     enabled: true
     tags: ["manga", "official", "taiwan", "new-source"]
     search_template: "https://www.kadokawa.com.tw/products?query={query}&page=1"
@@ -2302,3 +2374,25 @@ sources:
       NO scrapear /arama/özel (todo Batman/Marvel) ni /kategori/manga
       (8714 regulares). Evaluación 2026-06-12: borderline-add (micro-
       fuente, abre Turquía de 0 a costo de ~14 requests).
+
+  - name: "TW - Kingstone (SPP Manga)"
+    country: "Taiwán"
+    language: "Chino tradicional"
+    publisher: "尖端"
+    source_class: "retailer"
+    kind: "html"
+    url: "https://www.kingstone.com.tw/bookpublish/publist/14395/?classname=new&dis=pic&format=0&page=1&sort=sa_desc&subkind=all"
+    enabled: true
+    purity: "manga_only"
+    tags: ["manga", "retailer", "taiwan"]
+    max_pages: 1000
+    selectors:
+      item_selector: ".mod_prod_card"
+      title_selector: "h3.pdnamebox a"
+      link_selector: "h3.pdnamebox a"
+    notes: |
+      Verified 2026-09-25: public publisher-specific physical manga catalog,
+      498 pages, product URLs /basic/. Alternative discovery for blocked SPP;
+      retailer stock is not proof of complete SPP historical coverage.
+      Full scan before delta. Revisit all listing pages to detect restocks and
+      late additions; publication date is not an update timestamp.

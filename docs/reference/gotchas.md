@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 143 known gotchas
+## The 223 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -1750,3 +1750,2642 @@ Cada gotcha es la regla durable + la referencia de código. El detalle históric
     incorrectamente con Ice Guy. La causa raíz (por qué el standardize asignó ese series_key a esos
     3 volúmenes específicos) no se investigó — queda pendiente un fix de parser/standardize aparte
     si el owner lo prioriza (fuera de alcance de este skill).
+
+145. **Scrapear Google Imágenes con las cookies del owner ata el bloqueo a su CUENTA, no a la IP
+     (2026-07-11 — investigación web + red team).** El skill `/watch-search-covers` busca vía
+     Chrome con `credentials:include` (la sesión logueada del owner). En una corrida piloto,
+     ~140 fetches rápidos a Google udm=2 dispararon `429` → `/sorry/index` (captcha), y el
+     bloqueo **persistió atado a la cuenta** (no se limpió con espera corta). La comunidad de
+     scraping documenta que, logueado, el escalado de Google puede llegar a **suspensión de la
+     cuenta** (Gmail/Ads colaterales), no solo un IP-ban temporal; los umbrales de detección son
+     bajos (~15-30 req/h con sospecha) y la vista de imágenes es más agresiva. Dos aprendizajes:
+     (a) **el 429 lo gatilló el MÉTODO (ráfaga sin pausa), no el motor** — el fix transversal es
+     throttling con **jitter** (timing regular = firma de bot) + backoff-and-stop ante 429;
+     (b) por el riesgo de cuenta, **el motor de texto primario pasó a Bing** (más tolerante,
+     patrón `murl` estable, honra `site:whakoom.com`, sin historial de suspensión), y Google
+     udm=2 quedó como **fallback de emergencia** acotado y SIEMPRE anónimo (fetch con
+     `credentials: 'omit'` desde una página google.com — no navegar logueado; no desloguea al
+     owner, solo desacopla el request de su cuenta; la IP sigue siendo la suya, por eso además
+     delay 3-5s+jitter, tope ≤40/sesión, stop al primer `/sorry`). El reverse-by-photo sigue Yandex → Serper
+     Lens (server-side, sin cookies del owner). El plan (`sc_plan.py`) emite las variantes de
+     texto con `engine: "bing"`; el ledger `cover_search_attempts.jsonl` ahora registra `engines`
+     por intento (sin eso, un 0-match de un motor degradado cierra el reintento 30 días sin
+     rastro). Ver `.claude/skills/watch-search-covers/SKILL.md` § nota de motores + Step 3b/3d.
+
+146. **`upscale_images.py` fallaba el 100% de las corridas desde la migración a AVIF
+     (2026-06-15) sin ninguna excepción visible (2026-08-23).** waifu2x-ncnn-vulkan/
+     realesrgan-ncnn-vulkan sólo aceptan `jpg/png/webp` como `-i` (lo dice su propio
+     `--help`); el script le pasaba el archivo del espejo DIRECTO a `subprocess.run`, y
+     el espejo es 100% AVIF desde `image_store.normalize_image` — el binario no podía
+     decodificar nada, devolvía returncode≠0, y `_upscale_file` lo reportaba como
+     "FALLÓ" silencioso (sin traceback, sin log de causa). Detectado en la corrida
+     post-scrape 2026-08-23: 3159/3159 candidatos fallando de punta a punta. Fix:
+     `_decodable_upscaler_input()` detecta por magic bytes si el archivo NO es
+     jpg/png/webp y, en ese caso, lo decodifica con PIL (mismo patrón lazy-import que
+     `_pixels_from_bytes`, gotcha #124) a un PNG temporal en `images_dir` que se le pasa
+     al binario en su lugar; el temporal se borra después de cada intento. Re-corrida
+     post-fix: 3145/3145 upscaleadas, 0 errores. Si se agrega un nuevo entry point que
+     invoque un binario EXTERNO (no Python) sobre un archivo del espejo, verificar
+     primero qué formatos acepta ese binario — el espejo ya no es JPEG/PNG "genérico",
+     es AVIF por decisión de diseño (2026-06-15).
+
+147. **El prompt del skill `/watch-standardize-catalog` declaraba "Light novels → `false`"
+     — contradecía CLAUDE.md y mandó 83 light novels legítimas a curación manual en UNA
+     corrida (2026-08-23).** `prompt-rules.md` § is_manga tenía la regla
+     `Light novels (roman/light-novel/URLs LN) → false (non_manga_reason="light_novel")`,
+     mientras que CLAUDE.md define el catálogo como "ediciones especiales de manga…
+     **light novels con bonus**", `is_likely_manga()` las acepta explícitamente
+     ("novela ligera" es manga-related, ver el comentario de `format_keywords` en
+     `comics_blacklist.yml`) y `VALID_PRODUCT_TYPES` incluye `novel` (61 items ya
+     estandarizados así). Resultado: de los 265 `is_manga=false` de esa corrida, **83
+     eran LN válidas** (Sumikko 限定版/特装版, Manga-Passion 2-in-1 Limited, Sanyodo,
+     Rakuten グッズ付き特装版, danmei de Seven Seas vía Otaku Calendar/Manga-Sanctuary).
+     Como el LLM no expulsa (gotcha #122), no se perdió nada — pero se quemó una
+     revisión manual entera. Fix: la regla ahora dice lo contrario (LN/danmei/web-novel
+     de editorial del ecosistema manga → `true`; sólo la novela LITERARIA general sin
+     vínculo manga/anime → `false` con `non_manga_reason="pure_novel"`) + test
+     anti-drift `test_prompt_rules_no_declara_light_novel_como_no_manga`. Regla general:
+     **el prompt de un skill es código de producto** — si contradice a CLAUDE.md o a un
+     gate determinista, es un bug, no una preferencia del LLM.
+
+148. **IT - Funside Variant: el `title` de ~50 items es una FECHA ("USCITA: 28/10/26") o
+     "Sconto", y la colección `a-caccia-di-variant` es ~50% cómic occidental
+     (2026-08-23).** Dos problemas de la misma fuente, encontrados curando los 265
+     `llm_non_manga`. (a) **Título fantasma**: el `title_selector` de la ficha
+     (`a[href*='/products/']`) toma el PRIMER link a producto de la card, y cuando la
+     card lleva badge de preventa/descuento ese primer link es el de la fecha de salida
+     ("USCITA: dd/mm/yy") o el de la promo ("Sconto 10%") — el título real queda en el
+     slug de la URL y en la `description` ("… Vai alla pagina Confrontare **TÍTULO**
+     Prezzo …"). 50 items del corpus quedaron con fecha por título (12 de ellos ya
+     estandarizados, con `series_key` correcto derivado de la descripción). Sin título
+     no hay filtro posible: esos items sólo se pueden curar por URL. (b) **Pureza**: la
+     colección mezcla manga con Bonelli (Zagor, Dragonero, Senzanima), Disney IT
+     (Topolino, Paperino), Marvel/DC de Panini IT, Image/IDW y webcómic italiano
+     (Scottecs) — y la fuente está declarada sin `purity` (= `manga_only`), así que
+     ningún gate la tocaba. La curación 2026-08-23 expulsó 93 de sus 98 flagged. Fix
+     parcial aplicado: ~25 cabeceras italianas/US al `comics_blacklist.yml`. Pendiente
+     (decisión del owner): arreglar el `title_selector` y/o declarar `purity: mixed`.
+
+149. **Un post del blog de Shopify entra como producto (2026-08-23).** Milky Way publica
+     novedades en `/blogs/news/<slug>`; el scraper lo tomó como item, con el titular de
+     la noticia por `title` ("Nuevas licencias: …"). `_BLOG_URL_PATTERNS` cubría
+     `listadomanga.es/blog/`, `viz.com/blog/`, `/news/YYYY/`… pero no la forma de
+     Shopify. Fix: `|/blogs/[^/]+/` — en Shopify los productos viven SIEMPRE en
+     `/products/` y las listas en `/collections/`, así que `/blogs/<handle>/` es
+     inequívocamente editorial. Mismo síndrome, distinta forma: la home de una editorial
+     (`pika.fr`) también entró como producto con un párrafo de noticia por título; para
+     esa no hay patrón de URL — se curó por lista.
+
+150. **Un 429 persistente en TODO el host (home + `/robots.txt`, sin `Retry-After`, con
+     UAs distintos) es ban de IP, no rate-limit — bajar la velocidad del scraper no lo
+     arregla (DE - Carlsen, 2026-08-24).** Dos deltas consecutivos (2026-08-22 y
+     2026-08-24) devolvieron `429 Too Many Requests` en
+     `carlsen.de/manga/monatsuebersicht`. La hipótesis original era rate-limit del lado
+     de Carlsen por el resto de fuentes DE pegándole en la misma ventana. Refutada: con
+     `curl` directo (fuera del scraper) tanto la home (`carlsen.de/`) como
+     `/robots.txt` — que ninguna app real rate-limita — devolvieron 429 también, con
+     User-Agents distintos entre sí (Chrome UA vs `curl/8.0`) y **sin** header
+     `Retry-After` en ninguna respuesta (un 429 "cortés" de rate-limit casi siempre lo
+     trae). Eso es la firma de un bloqueo perimetral por IP de origen (WAF/CDN), no de
+     una cola de rate-limiting de la aplicación. Agravante: `--sleep-seconds` es un
+     no-op con `--workers` > 1 (el throttling secuencial no aplica en modo concurrente),
+     así que "bajar la velocidad" no tenía forma de surtir efecto aunque la causa fuera
+     rate-limit real. Test reusable para cualquier fuente con 429 persistente: pegarle
+     con curl a la home y a `/robots.txt` con UAs distintos — si ambos caen en 429 sin
+     `Retry-After`, es ban de IP (esperar a que expire o cambiar de IP de salida; NO es
+     un fix de código en este repo). Detalle en
+     `docs/scraper/sources/de-direct-publishers.md` § 8.
+
+151. **El fallback genérico de autor escanea `soup.body.get_text()[:3000]` SIN excluir
+     header/nav — una preposición genérica ("di" en italiano) puede matchear texto de
+     un mega-menú site-wide y devolver un "autor" inventado (IT - Funside Variant, 142
+     items con `author` == "Batman ELDEN RING ARTBOOK", investigado 2026-08-24, sin fix
+     aplicado).** En `fetch_metadata_from_detail` (manga_watch.py, ~línea 2944), cuando
+     JSON-LD/metatags/links `/autor/` no traen autor, el último recurso toma los
+     primeros 3000 caracteres del texto visible de TODA la página
+     (`soup.body.get_text(" ", strip=True)`) y le corre `AUTHOR_BY_PATTERN`
+     (`(?:^|\s)(?:by|par|di|du)\s+...`). En Funside ese tramo inicial es el mega-menú de
+     navegación (aparece antes que el contenido del producto en el DOM), con dos
+     tarjetas promo adyacentes: "Scopri i Comics di **Batman**" (link de categoría) +
+     "**ELDEN RING ARTBOOK** - (VOL.1-2)" (producto destacado, sin separador fuerte
+     entre ambas en el texto plano). "di" (== "of/by" en italiano) matchea como prefijo
+     de autoría y el regex captura "Batman ELDEN RING ARTBOOK" completo — pasa
+     `_validate_author_candidate` porque empieza con mayúscula latina y "Batman" no está
+     en `AUTHOR_FIRST_WORD_BLACKLIST`. Fix propuesto (NO aplicado — pendiente de
+     decisión del owner, puede afectar a otras fuentes con el mismo fallback): acotar el
+     fallback a un contenedor de contenido real (`soup.find("main")` o equivalente) en
+     vez de `soup.body` completo, y/o sacar "di"/"du" de `AUTHOR_BY_PATTERN` (son
+     preposiciones genéricas IT/FR, mucho más propensas a falso positivo que "by"/"par").
+     Detalle en `docs/scraper/sources/it-funside-variant.md` § 9.
+
+152. **Un `ET.ParseError` tragado con sólo un WARN puede dejar una fuente entera rota
+     con exit 0 — y si además el paso muere por timeout (rc=124), `source_health.py`
+     lo clasifica "healthy" porque no conoce el exit code del wrapper del shell
+     (post-mortem delta 2026-08-22/24, Mangavariant).** Dos fallos compuestos:
+     (a) `fetch_variant_url_entries` (`scripts/wikis/mangavariant.py`) descargaba los 3
+     sitemaps de variants; si el challenge sgcaptcha "se resolvía" pero exportaba 0
+     cookies (`_solve_challenge_into_session` devolvía False, valor que el caller
+     ignoraba), la session seguía sin autenticar y el reintento devolvía el HTML del
+     challenge disfrazado de 200 — `ET.fromstring` tiraba `ET.ParseError`, atrapado con
+     sólo un `[WARN] XML malformado` y `continue`. Con los 3 sitemaps fallando así,
+     `entries` quedaba `[]` en silencio: `bootstrap()` terminaba con 0 candidatos y
+     **exit 0**, el patrón "muro que devuelve 200" (gotcha #107) pero a nivel de fuente
+     completa, no de un solo request. Fix: `_resolve_challenge()` ahora devuelve
+     `bool` (¿la session quedó autenticada?); si es False el caller NO reintenta —
+     cuenta el sitemap como fallido directo — y si los 3 sitemaps terminan sin ninguna
+     entrada utilizable, `fetch_variant_url_entries` levanta
+     `MangavariantSitemapError` (propaga hasta `raise SystemExit(run(...))`, exit≠0 con
+     traceback). (b) Aparte, el delta real murió por **timeout** (rc=124) en
+     `_run_timed` a mitad del mirror de portadas — serial porque `--workers` no se
+     pasaba a esa invocación (en el path `--bootstrap-wiki`, `args.workers` sólo
+     alimenta `mirror_candidate_images`, el fetch de detail-pages usa su propio default
+     interno de `bootstrap()`; ~3s/imagen serial con tope `MAX_NEW=400` agota
+     fácilmente un timeout de 1200s). `source_health.py::parse_run_log` es puramente
+     texto-de-log — no conoce el rc del wrapper — así que un paso muerto sin
+     `[ERROR]`/`[CHALLENGE_DETECTED]`/candidatos caía al default de `classify()`:
+     "healthy" con `runs_seen=1` y stats vacías. Fix: `scrape_delta.sh`/
+     `scrape_full.sh` ahora suben `--workers 8` a esa invocación + timeout 3600s
+     (antes 1200s/1800s), y si `_run_timed` devuelve rc≠0 escriben
+     `[STEP_TIMEOUT] source=<key> rc=<n>` en el log del paso — `source_health.py`
+     lo parsea con prioridad MÁXIMA (por encima de challenge/error) y clasifica
+     `broken_timeout`; `append_metrics` también lo cuenta como `errors=1` para que
+     `compute_yield_regressions` (#5, 2026-07-08) no lo tome como un 0 de yield real
+     al armar la mediana histórica. Además: `data/items.jsonl.spool` (flush
+     incremental por-fuente) puede quedar huérfano si el proceso muere ENTRE el flush
+     y el `append_jsonl` de cierre — los retrofits de dump-completo nunca lo leen; el
+     nuevo `scripts/retrofit/absorb_spool.py` (`append_jsonl(items_path, [])`) corre
+     como primer paso de la Fase 3 en ambos scripts para absorberlo antes de que el
+     resto de la cadena trabaje sobre el corpus. Detalle en
+     `docs/scraper/sources/mangavariant.md`.
+
+153. **`pytest -q` (modo default) aborta la colección completa porque `import
+     manga_watch` bare puede resolver al WRAPPER de la raíz en vez de
+     `scripts/manga_watch.py` — la regla es que TODO módulo de `scripts/`
+     importable por tests use el fallback try/except (auditoría suite completa,
+     2026-08-24).** Mecanismo: `tests/__init__.py` existe (hace de `tests` un
+     paquete), así que pytest en modo "prepend" inserta la RAÍZ del repo
+     (`/…/manga-watch`) en `sys.path[0]` para poder importar `tests.test_x`. La
+     raíz tiene su propio `manga_watch.py` (wrapper CLI de 14 líneas que sólo
+     reexporta `parse_args`/`run`, ver `scripts/manga_watch.py` como el módulo
+     real de 10k líneas). Si ALGÚN módulo, durante la sesión de pytest, hace
+     `import manga_watch` (bare) ANTES de que `scripts/` gane la carrera en
+     `sys.path`, Python cachea `sys.modules["manga_watch"]` apuntando al
+     wrapper — y ese cache es GLOBAL al proceso: todo `from manga_watch import
+     X` posterior (sin importar qué archivo lo dispare, ni el orden de
+     `sys.path.insert` que haga) reusa el módulo cacheado y explota con
+     `ImportError: cannot import name 'X' from 'manga_watch'` si X no está en
+     el wrapper. Un `import manga_watch as mw` bare (sin `from … import`) es
+     PEOR: no tira ImportError al importar — `mw` queda apuntando al wrapper en
+     silencio y el error sólo aparece más tarde, en el primer acceso a un
+     atributo real (`AttributeError: module 'manga_watch' has no attribute
+     '_COUNTRY_SLUG_MAP'`), lejos de la línea del import.
+
+     Regla dura: todo módulo de `scripts/` (top-level, `scripts/retrofit/`,
+     `scripts/audit/`, `scripts/wikis/`) que un test importa — directo o
+     transitivo — DEBE envolver su import de `manga_watch` así:
+     ```python
+     try:
+         from manga_watch import (X, Y, Z)  # type: ignore
+     except ImportError:  # pragma: no cover
+         from scripts.manga_watch import (X, Y, Z)  # type: ignore
+     ```
+     (patrón ya establecido en `fetch_better_covers.py` /
+     `backfill_series_aliases.py` / `apply_rarity_verdicts.py`). Para el caso
+     `import manga_watch as mw` (sin `from…import`, no tira ImportError), el
+     guard es por `hasattr` de un símbolo REAL sobre `mw`, no por excepción —
+     ver `scripts/build_web.py::_mw()` y `scripts/validate_corpus.py` (chequea
+     `hasattr(mw, "_COUNTRY_SLUG_MAP")`) / `scripts/retrofit/
+     unify_coleccion_edition.py` (`except (ImportError, AttributeError)` tras
+     acceder al atributo a propósito). Auditoría 2026-08-24 (suite completa
+     0→2349 tests corriendo en modo default) parcheó 11 módulos que le
+     faltaba el guard: `scripts/standardize_apply.py`,
+     `scripts/standardize_audit.py`, `scripts/validate_corpus.py`,
+     `scripts/retrofit/generate_slugs.py`, `scripts/retrofit/
+     curate_llm_non_manga_20260823.py`, `scripts/retrofit/
+     translate_descriptions.py`, `scripts/retrofit/fix_product_types.py`,
+     `scripts/retrofit/purge_false_artbook_residuals.py`, `scripts/retrofit/
+     normalize_languages.py`, `scripts/retrofit/purge_op_import_foreign.py`,
+     `scripts/retrofit/queue_regular_shielded.py`.
+
+     Fallout relacionado (misma familia — múltiples paths de import para el
+     MISMO archivo crean módulos DISTINTOS en `sys.modules`, no sólo con
+     `manga_watch`): `scripts/wikis/listadomanga.py` importaba
+     `FREE_PRICE_PATTERN` como `scripts.wikis.listadomanga_collections`
+     (fallback `listadomanga_collections` bare, sin prefijo `wikis.`), mientras
+     el resto del código (`validate_corpus.py`,
+     `unify_coleccion_edition.py`, y el test
+     `test_listadomanga_calendar_free_price_pattern_reused_not_copied`) lo
+     importa como `wikis.listadomanga_collections`. Dos keys de `sys.modules`
+     distintas para el mismo archivo → dos objetos regex COMPILADOS por
+     separado (iguales en estructura, pero `is` falla). Fix: se invirtió el
+     orden a `try: from wikis.listadomanga_collections import
+     FREE_PRICE_PATTERN / except ImportError: from
+     scripts.wikis.listadomanga_collections import …` (mismo orden que
+     `unify_coleccion_edition.py`, que ya era el correcto). Regla derivada:
+     cuando dos módulos comparten una constante/objeto por "fuente única"
+     (gotcha #103), el import debe usar la MISMA key de `sys.modules` en TODOS
+     los que la consumen — no alcanza con que cada uno tenga *algún* fallback,
+     tienen que coincidir en el path primario.
+
+154. **Un veredicto LLM que NO expulsa + un gate determinista que SÍ expulsa
+     *después* del scrape = bucle infinito: los mismos items se re-ingestan cada
+     corrida, pagando LLM caro, sin converger nunca (delta 2026-08-26, IT -
+     Funside Variant).** Las dos mitades del diseño son correctas por separado y
+     el bug sólo aparece al componerlas. (a) Desde 2026-07-07 un
+     `is_manga=false` del LLM **no borra la fila**: la deja PENDIENTE (sin
+     `standardized_at`) y la registra en `unmapped_series.jsonl` con reason
+     `llm_non_manga` — decisión deliberada para que un falso negativo del LLM en
+     un título ambiguo/CJK no pueda destruir un item real (gotchas #147-#149).
+     (b) El que expulsa de verdad es el gate determinista `filter_non_manga` de
+     la Fase 3. El problema es el ORDEN: la Fase 1 scrapea ANTES que la Fase 3
+     filtre, así que si la fuente re-lista el mismo catálogo cada día, el ciclo
+     es: entra → LLM lo marca (no expulsa) → corrida siguiente el filtro lo
+     expulsa → pero la Fase 1 de esa MISMA corrida ya lo re-ingestó → repetir.
+     **Síntoma diagnóstico** (barato y concluyente): contar los items de la
+     fuente por fecha de detección. Si el TOTAL se mantiene constante pero no hay
+     items de las fechas intermedias, no son hallazgos nuevos — es la misma
+     tanda rotando con `detected_at` fresco. En el caso real: 128 items de
+     Funside constantes, 0 con fecha 08-25, y los mismos 15 títulos "nuevos" el
+     08-25 y el 08-26. **Costos**: estandarización Tier 3 (la cara) sobre los
+     mismos items cada día, ruido diario en la cola de curación, y un
+     `detected_at` que MIENTE — contamina cualquier reporte de "novedades del
+     día", que suele ser la salida de más valor del pipeline.
+     **Fix aplicado (2026-08-26)**: cortar el ciclo en el INGRESO vía
+     `data/comics_blacklist.yml` (se evalúa siempre, no sólo en `mixed` —
+     decisión #3), que es sólo datos y no toca la purity de la fuente. **Regla
+     al blacklistear: verificá cada término contra el corpus ANTES de agregarlo**
+     — "Stray Dogs" (el cómic de Tony Fleecs) habría borrado los 12 items de
+     "Bungo Stray Dogs", que SÍ es manga, y "Diablo" habría matado "Jiraishin
+     Diablo Artbook". La salida es usar el título LOCAL inequívoco ("Cani
+     Randagi", "Giorni da Cani", "L'Alba dell'Odio") en vez del genérico.
+     Detalle en `docs/scraper/sources/it-funside-variant.md`.
+
+155. **`data/unmapped_series.jsonl` es DOS colas en un solo archivo, y el Step 5 de
+     `/watch-enrich-series-aliases` trunca las dos.** El archivo mezcla (a) candidatas
+     de serie sin canónica —el insumo real del skill de aliases— y (b) filas con
+     `reason: llm_non_manga` que `/watch-standardize-catalog` escribe para **curación
+     manual** (gotcha #122: el veredicto del LLM ya no expulsa, deja el item pendiente
+     y lo anota acá). El Step 5 del skill de aliases hace `: > data/unmapped_series.jsonl`
+     —trunca el archivo ENTERO— porque asume que todo lo que hay son candidatas suyas
+     que ya resolvió. **Resultado: correr aliases después de standardize borra la cola
+     de curación `llm_non_manga` sin haberla mirado nadie.** Detectado el 2026-08-29 en
+     el delta diario: standardize escribió 9 filas `llm_non_manga`, el pase de aliases
+     que corrió después las eliminó junto con las 487 candidatas legítimas.
+     **No es pérdida total** —`backup_and_rotate` deja
+     `data/backups/unmapped_series.jsonl/unmapped_series.jsonl.pre-enrich-bak`— pero
+     ese backup **rota (max-3)**, así que la cola se pierde de verdad tras un par de
+     corridas. Y el daño es silencioso: nadie se entera de que había 9 items esperando
+     revisión, porque el skill de aliases sólo reporta lo que él procesó.
+     **Agravante de secuencia**: el orden canónico del delta diario es standardize →
+     aliases, así que la pérdida ocurre **cada vez que las dos etapas corren juntas** y
+     el LLM flageó algo — es decir, casi siempre.
+     **Regla mientras no se arregle**: si corriste standardize y después aliases,
+     recuperá las filas del backup ANTES de la próxima corrida:
+     `grep llm_non_manga data/backups/unmapped_series.jsonl/unmapped_series.jsonl.pre-enrich-bak >> data/unmapped_series.jsonl`.
+     **La vía de fondo (no aplicada — es decisión del owner)**: que el Step 5 filtre en
+     vez de truncar, preservando lo que no sea candidata de alias
+     (`reason in {llm_non_manga, standardize_exhausted}`), o separar las colas en dos
+     archivos. Lo segundo choca con la regla dura de "unmapped = un solo archivo"
+     (nunca crear `review_X.jsonl` paralelos), así que **el filtro en el Step 5 es la
+     opción compatible con la convención vigente**.
+     **RESUELTO 2026-09-07** por esa vía: el Step 5 ya no trunca — invoca
+     `scripts/prune_unmapped_queue.py` (fuente única; el skill no embebe la lógica). El
+     script conserva TODA fila con `reason` —incluido un `reason` desconocido: ante la
+     duda no se borra dato que el scrape no sabe regenerar—, poda las filas de series ya
+     procesadas y de paso deduplica (#157). Ver también #198, que registra el costo real
+     del bug: bloqueó las DOS colas durante 7 corridas, porque la rutina diaria dejó de
+     correr aliases para no destruir la curación.
+
+156. **La cola `unmapped_series.jsonl` se escribe en la FASE 1, antes de los gates
+     deterministas de la FASE 3 — casi la mitad de sus filas son huérfanas.** El scrape
+     registra una fila por cada serie sin canónica **mientras scrapea** (FASE 1), pero
+     los filtros que deciden si el item se queda en el corpus (`filter_non_manga`,
+     `filter_collectible`) corren después, en la FASE 3 del pipeline. Consecuencia: la
+     cola acumula filas de candidatos que el pipeline expulsó minutos más tarde, y nadie
+     las limpia. Medido en el delta del 2026-08-30: **223 de 485 filas (46%) tienen una
+     `sample_url` que ya no existe en `items.jsonl`**. La distribución no es uniforme —
+     las fuentes de tipo `search` con términos de *formato de edición* (no de manga)
+     tienen **100% de filas huérfanas**: `ES - Panini España [deluxe]` 31/31,
+     `BR - Panini Brasil [box]` 9/9, `US - Dark Horse Direct [hardcover]` 9/9. Son
+     búsquedas que barren catálogo occidental (Marvel Deluxe, DC…), se filtran bien en
+     FASE 3, pero dejan su rastro en la cola igual.
+     **Por qué importa**: `/watch-enrich-series-aliases` consume esa cola y gasta LLM
+     resolviendo series que ya no existen, con riesgo de acuñar canónicas de cómic
+     occidental en `data/series_aliases.yml` — que después contaminan la búsqueda. El
+     costo crece corrida a corrida porque las filas con `item_count = 1` no las levanta
+     ningún pase acotado por `--min-count ≥ 2` (ver la ficha de BR - Pipoca & Nanquim).
+     **Vía de fondo (no aplicada — decisión del owner)**: reconciliar la cola al final
+     del pipeline (después de FASE 3), descartando las filas cuya `sample_url` ya no esté
+     en el corpus. Es idempotente, barato y no choca con la regla de "unmapped = un solo
+     archivo". Alternativa más quirúrgica: mover la escritura de la cola a después de los
+     gates. Relacionado: #154 (veredicto LLM que no expulsa) y #155 (el Step 5 de aliases
+     trunca la cola entera).
+
+157. **`unmapped_series.jsonl` no deduplica: cada corrida RE-APILA las mismas series, así
+     que la cola crece por duplicación, no por descubrimiento.** La escritura de la cola
+     es un append por serie-sin-canónica vista en la FASE 1, sin consultar si esa
+     `series_key` ya estaba en el archivo. Como el delta vuelve a scrapear las mismas
+     fuentes todos los días, los mismos items sin canónica se vuelven a registrar corrida
+     tras corrida. Medido en el delta del 2026-08-31 (corrida que sumó **+26 items netos**
+     al corpus): se escribieron **501 filas nuevas**, de las cuales sólo **8 corresponden
+     a items nuevos**; 262 apuntan a items que YA estaban en el corpus desde antes
+     (re-flageados) y 231 son huérfanas (#156). En el archivo completo, **454 `series_key`
+     aparecen repetidas y representan 908 de las 987 filas — el 92% de la cola es
+     duplicado**. Por eso la cola pasó de 495 a 987 filas en un solo día: es, en la
+     práctica, una segunda copia de la cola del día anterior.
+     **Por qué importa**: hace que el tamaño de la cola sea inútil como señal ("creció"
+     no significa "hay series nuevas por resolver"), y multiplica el costo de
+     `/watch-enrich-series-aliases`, que gasta LLM resolviendo N veces la misma serie. La
+     rutina diaria usa "¿creció la cola?" como condición para correr aliases (PASO 4),
+     así que esa condición se dispara SIEMPRE aunque no haya nada nuevo.
+     **RESUELTO 2026-09-07** por la vía de fondo: `log_unmapped_series()` ahora **siembra
+     su set de dedup desde el archivo en disco** (`_seed_logged_from_disk`, una vez por
+     archivo destino), así que una `series_key` ya encolada no se re-apila entre corridas
+     —antes el dedup era sólo intra-corrida—. Y `scripts/prune_unmapped_queue.py`
+     deduplica lo ya acumulado: aplicado sobre la cola del día, **4528 filas → 1064**
+     (76% eran duplicados), conservando intactas las 31 filas de curación. El test
+     `test_log_unmapped_series_appends_only_non_canonical` se actualizó: antes afirmaba
+     el comportamiento viejo ("tras el reset, la corrida siguiente PUEDE re-loguear"),
+     ahora afirma el nuevo, más un caso que comprueba que una `series_key` nueva sí entra.
+     Queda pendiente la reconciliación de huérfanas de #156, que es un problema distinto.
+     **Vía de fondo original (ya aplicada)**: deduplicar por `series_key` al
+     escribir (o un pase idempotente al final del pipeline que colapse duplicados
+     conservando la fila más reciente), combinado con la reconciliación de huérfanas de
+     #156. Con las dos, la cola real de hoy serían ~289 series vivas distintas en vez de
+     987 filas. Relacionado: #155 (el Step 5 trunca la cola entera, incluida la de
+     curación) y #156 (filas huérfanas por orden FASE 1 vs FASE 3).
+     **Re-medido 2026-09-03** (4 días después, misma dinámica y peor): la cola pasó de
+     **2086 a 2579 filas** en una corrida de +14 items netos — **+493 filas**. De las 489
+     `series_key` distintas en esas filas nuevas, **472 ya estaban en la cola** y sólo
+     **17 son series realmente nuevas** (96.5% duplicación). En el archivo completo hay
+     **2579 filas para 672 `series_key` distintas**: la cola pesa ~3.8× lo que representa.
+     Confirma que el crecimiento es casi puro re-apilado y que la condición "¿creció?" del
+     PASO 4 de la rutina diaria es, en la práctica, siempre verdadera.
+
+158. **OLA 1 de depuración de imágenes (2026-09-01): esquema `local` inconsistente +
+     tres hallazgos por-fuente durante el backfill de portadas.** Auditoría de
+     `images[0]` (la portada) encontró 307 items con `url` remota viva pero sin espejo
+     local, y de ellos 259 tenían la key `local` **ausente** en vez de `local: ""` (las
+     otras 13598/13857 portadas del corpus ya tenían `""` explícito) — inconsistencia de
+     ESQUEMA, no de comportamiento (`not im.get("local")` trata ambos casos igual, por
+     eso nunca se notó). `mirror_images.py::_normalize_missing_local_keys()` uniforma
+     las 1531 entries del corpus entero (portada + galería) que tenían la key ausente a
+     `local: ""` explícito, corre siempre antes del backfill. Aparte, tres hallazgos
+     nuevos por-fuente durante el backfill real (67 portadas + 439 galería fuera de
+     mangavariant intentadas, 425 mirroreadas con éxito):
+     (a) **Mangavariant bloquea también las imágenes, no sólo las páginas HTML** (extiende
+     gotcha #152). `GET /wp-content/uploads/...jpg` devuelve `202` + el shell del
+     challenge sgcaptcha, igual que las páginas de producto — las imágenes del
+     WordPress self-hosteado están detrás del MISMO challenge que el resto del dominio.
+     `mangavariant.py::_solve_challenge_into_session()` (fuente única, reusada sin
+     reimplementar) exportó **0 cookies en 5/5 intentos** durante esta auditoría — el
+     mismo síntoma de #152, reproducido para el flujo de imágenes. Con la session sin
+     autenticar, cualquier descarga masiva de portadas de Mangavariant golpea la misma
+     pared; **240/307 portadas pendientes (78%) son de este host y quedaron fuera de
+     esta ola** (`mirror_images.py --skip-hosts mangavariant.com`), documentado también
+     en `docs/scraper/sources/mangavariant.md`. No aplicado (bloqueado, no decisión del
+     owner): re-habilitar requiere que el challenge solver exporte cookies de verdad,
+     mismo prerequisito que #152.
+     (b) **`normalize_image_url` rompe el CDN de Yen Press al pelar los params de
+     resize.** El patrón "pelar `w`/`h` para pedir el full-res" (pensado para CDNs tipo
+     Magento) asume que el recurso existe SIN esos params; el resize-proxy de Yen Press
+     (`images.yenpress.com/imgs/<isbn>.jpg?w=…&h=…&type=books`) devuelve **500** si se
+     piden sin `w`/`h` — no tiene un "original" servible en esa ruta. Confirmado
+     manualmente: `?w=285&h=422&type=books` → 200 imagen real; `?type=books` (tras
+     `normalize_image_url`) → 500 en las 5/5 URLs de Yen Press probadas. Consecuencia:
+     esas 5 portadas nunca se pueden mirrorear mientras `normalize_image_url` siga
+     pelando `w`/`h` para este host — no es un fallo transitorio de red, es estructural.
+     Detalle en `docs/scraper/sources/yenpress.md`. **No aplicado** (cambiar
+     `normalize_image_url`/`_CDN_RESIZE_PARAMS` es una función compartida por TODO el
+     pipeline de imágenes — upgrade_image_resolution, download_image, fetch_better_covers
+     — así que excluir Yen Press de ese patrón es decisión de una corrida separada, no de
+     esta ola de sólo-backfill).
+     (c) **Aladin (búsqueda `만화 한정판`) extrajo un ícono de UI como portada de un
+     item**, no una foto de producto: `image.aladin.co.kr/img/search/icon_arrow.jpg`
+     (una flecha de 8×9 px). El backfill lo descargó, `image_store.placeholder_reason()`
+     lo detectó como `tiny:8x9` (regla estructural existente, sin necesidad de firma
+     nueva) y el script NO lo asignó como `local` — el guard nuevo del punto 2 del
+     encargo (`_run_backfill` re-chequea `placeholder_reason` sobre el archivo recién
+     descargado) hizo exactamente lo que tenía que hacer. El bug real está upstream, en
+     el parser de Aladin, que sigue emitiendo esa URL como `images[0].url` del item —
+     fuera del alcance de esta ola (sólo backfill), fichado en `docs/scraper/sources/
+     kr-aladin.md` para que el parser lo excluya.
+     Referencia de código: `scripts/retrofit/mirror_images.py`
+     (`_normalize_missing_local_keys`, `_run_backfill`, `_classify_failure`,
+     `_pixels_of`) y `scripts/image_store.py` (`known_placeholder_url_reason`,
+     `placeholder_reason`, sin cambios — sólo reusados). Prueba de idempotencia:
+     2ª y 3ª corrida sobre el mismo corpus con los mismos flags dan `items.jsonl`
+     con hash byte-idéntico (`sha256` igual) — los 81 targets restantes (mangavariant
+     aparte) fallan de forma determinística por las mismas razones estructurales (a)/(b)/
+     (c) arriba, no por flakiness de red.
+
+159. **OLA 2 de depuración de imágenes (2026-09-01): regla de dedup AUTO validada
+     por red-team + backup slot-fijo pisado al verificar idempotencia con una 2ª
+     corrida REAL.** Dos hallazgos, uno de la regla de negocio y uno del proceso de
+     verificación:
+     (a) **La heurística vieja de `dedup_carousel_images.py` (aHash Hamming≤6,
+     aspect±12%) no exige dimensiones DISTINTAS entre el par** — el falso positivo
+     típico que encontró el red-team visual (37 casos) son DOS FOTOS DISTINTAS del
+     mismo producto con dimensiones EXACTAMENTE iguales (shikishi de colores
+     distintos, caja llena vs vacía). La regla nueva (`--redteam-auto`, modo aislado
+     en el mismo script) exige SHA-256 idéntico, o dHash Hamming≤2 **y** dimensiones
+     distintas **y** aspect≤2% — "dimensiones distintas" es la condición que cierra
+     el hueco: dos fotos DISTINTAS del mismo producto casi siempre comparten
+     resolución (misma cámara/escaneo), la MISMA foto en dos resoluciones por
+     definición no. Corrida real sobre el corpus (14305 items, post-ola-1): 321
+     items con auto-dup, 471 imágenes auto-eliminadas, 0 portadas involucradas (0
+     re-promociones), 327 pares DUDOSOS (dims iguales, o dHash 3-8) reportados sin
+     tocar en `data/diagnostics/dedup-wave2-dudosos.json` — evidencia para el owner,
+     NUNCA una cola de aprobación paralela (`cover_preview.json`/`apply_preview()`
+     hoy sólo soportan acciones de reemplazo/agregado, ninguna "eliminar sin
+     reemplazo"; agregarla es scope aparte). Detalle completo en
+     `docs/reference/images.md` § "--redteam-auto".
+     (b) **Verificar idempotencia con una 2ª corrida REAL (no `--dry-run`) sobre
+     CUALQUIER retrofit que use `backup_and_rotate` en modo slot-fijo (el default
+     en todo el dominio de imágenes) pisa el propio backup pre-cambio con el estado
+     YA aplicado.** `backup_and_rotate(path, label)` sin `timestamped=True` copia el
+     `items.jsonl` ACTUAL al slot fijo `.pre-<label>-bak` ANTES de procesar, cada vez
+     que se llama — en la 2ª corrida (idempotente, 0 cambios) el "actual" ya es el
+     post-cambio, así que el slot que se suponía "pre-cambio" termina siendo
+     idéntico al post-cambio. Pasó en esta misma ola:
+     `items.jsonl.pre-wave2-dedup-bak` quedó con el mismo `sha256` que
+     `items.jsonl` post-dedup en vez de conservar el estado pre-dedup (verificado:
+     ambos hashean a `5a96f19f6af127…`). No es un bug del script — es una
+     propiedad general de `backup_and_rotate` slot-fijo (documentada en
+     `docs/reference/conventions.md` § "Backups") que cualquier verificación de
+     idempotencia con una corrida real repite. **Backstop para el futuro**: verificar
+     idempotencia con una 2ª pasada `--dry-run` (reporta 0 cambios sin tocar nada en
+     disco) o comparar el `sha256` de `items.jsonl` ANTES de lanzar la 2ª corrida
+     real. En esta ola el restore point más cercano a "justo antes de ola 2" quedó
+     en `items.jsonl.pre-wave1-cover-mirror-bak`/`items.jsonl.pre-mirror-bak`
+     (ambos pre-ola-1, así que restaurar desde ahí también deshace el espejado de
+     portadas de la ola 1) — no bloqueante para esta ola (nada se necesitó revertir;
+     el corpus post-ola-2 está validado y es el estado correcto), pero documentado
+     para que la próxima verificación de idempotencia no repita el mismo error.
+
+160. **OLA 3 de depuración de imágenes (2026-09-01): recalcular el criterio C3b
+     (SHA-256 compartido ≥5 items) sobre un corpus que cambió por ola 1/2 saca a
+     la luz grupos NUEVOS que el red-team nunca vio — y no todos son
+     placeholders.** El veredicto C3b (auto-purga SEGURA) del red-team fue sobre
+     3 grupos ESPECÍFICOS (`68fe751d…`×15 Berserk Deluxe/Dark Horse,
+     `981f9d0d…`×6 logo Mangavariant, `f62d3e1f…`×6 banner Square Enix) — no sobre
+     "cualquier grupo sha≥5 futuro". Al recalcular sobre el corpus post-ola-2
+     aparecieron 3 grupos nuevos con el mismo umbral: los 3 esperados reaparecieron
+     intactos (mismos prefijos, mismos conteos, confirmados visualmente de nuevo),
+     pero 2 de los 3 nuevos resultaron ser FALSOS POSITIVOS del criterio —
+     portadas REALES de tomos DISTINTOS del mismo box de Mangarden.pl
+     (`battle-angel-alita-last-order-tom-unknown-deluxe-p…`) que aparecen
+     duplicadas entre sí porque la galería de cada tomo incluye por error las
+     portadas de sus tomos hermanos (ver `docs/scraper/sources/pl-mangarden.md`),
+     no porque sean un placeholder genérico — purgarlas habría borrado covers
+     legítimas. El 3er grupo nuevo (banner de meian-editions.fr en 7 items de 3
+     series distintas) SÍ encaja con el patrón placeholder pero quedó sin validar
+     visualmente por el red-team (ver `docs/scraper/sources/fr-meian.md`). Regla
+     dura confirmada: **un grupo sha≥5 nuevo NUNCA se purga automáticamente,
+     aunque el mecanismo (C3b) ya esté "avalado" en general** — cada grupo
+     necesita su propia validación visual, porque el motivo por el que dos items
+     distintos comparten un archivo byte-idéntico puede ser un placeholder
+     genérico O un bug de scope de extracción de galería (contenido real, mal
+     atribuido) — y ambos producen la MISMA señal estructural. Detalle completo
+     en `docs/reference/images.md` § "Purga de placeholders".
+
+161. **`purge_placeholder_images.py` sin `--dry-run` barre TODO el corpus, no sólo
+     la denylist que se acaba de aprobar — 912 entries `broken` preexistentes
+     colgaban de un backlog no relacionado.** Al aplicar la denylist de 4 firmas
+     nuevas de la ola 3 (icónicos PRH/Funside/Rakuten/Livriz, 9 filas), el
+     `--dry-run` SIN acotar reportó `items afectados: 279 | entries quitadas: 933
+     | por razón: {'signature': 9, 'known': 12, 'broken': 912}` — de las 933
+     entries del plan, sólo 9 eran las aprobadas; las otras 924 son categorías
+     preexistentes que el script SIEMPRE re-detecta en cada corrida (no algo que
+     mis firmas nuevas causaran): 912 refs `local` que apuntan a un archivo que
+     ya NO existe en `data/images/` (`classify_local()` trata `OSError` de
+     `Path.stat()` como `"broken"`, igual que un archivo de 0 bytes) + 12 `known`
+     (fragmentos de URL ya registrados, p.ej. `funside:logo`) sin relación con la
+     denylist de esta ola. Confirmado que NO es un artefacto de concurrencia
+     (archivos "recién movidos por otro proceso mientras yo leía"): la ausencia es
+     persistente, no transitoria. **Riesgo**: correr el script tal cual habría
+     purgado 279 items (933 entries) cuando el owner sólo aprobó 9 filas/4
+     familias — un review de 28 candidatas clasificadas a mano habría terminado
+     aplicando ~30× más cambios sin revisión visual de ese resto. **Fix**: se
+     agregó `--only-reasons` (CSV de prefijos de razón, p.ej. `signature` o
+     `signature,known`) a `purge_placeholder_images.py` — filtra qué categorías
+     se aplican esta corrida; las detectadas fuera de la lista se dejan intactas
+     (no cuentan como dropped, no entran al GC de huérfanos). Default sin el
+     flag = comportamiento histórico (todas las razones), backward-compatible.
+     Con `--only-reasons signature` la corrida quedó en `items afectados: 9 |
+     entries quitadas: 9 | por razón: {'signature': 9}`, exactamente las 9 filas
+     revisadas. Test de cobertura:
+     `test_only_reasons_scopes_purge_to_given_category` en
+     `tests/test_purge_placeholder_images.py`. **Pendiente para el owner** (no
+     aplicado, fuera de alcance de esta ola): el backlog de 912 refs `local`
+     rotas es un problema de datos aparte — investigar su origen (¿huérfanos
+     movidos a `_orphans/` por una corrida vieja sin limpiar `images[].local`?
+     ¿backfills que nunca llegaron a descargar?) antes de correr el script sin
+     `--only-reasons` sobre el corpus completo.
+
+162. **Espejar portadas de mangavariant.com vía navegador real (2026-09-01): el
+     challenge sgcaptcha SÍ se pasa sin captcha interactivo, pero sacar los bytes del
+     navegador hacia un receptor local choca con una pared de seguridad de RED
+     distinta — en AMBOS navegadores probados.** Intento de resolver las 240
+     portadas pendientes de la OLA 1 de imágenes (#158) usando un navegador real
+     (Browser pane de Claude Code y Chrome real del owner vía `claude-in-chrome`) en
+     vez de requests+Playwright, para evitar el fallo de exportación de cookies
+     (#152/#158, 5/5 y luego 5/5 más). **Confirmado: el challenge se resuelve solo**
+     — `navigate()` a una página de producto + ~6s de espera basta, sin ningún clic
+     humano, en ambas vías (accesibilidad/texto de la página confirma contenido
+     real, no el shell "Robot Challenge Screen"). El bloqueo real apareció al
+     intentar sacar los bytes de la imagen del navegador hacia un receptor HTTP
+     local en `127.0.0.1` (diseño obligatorio para que las imágenes nunca pasen por
+     el contexto del agente): (a) el **Browser pane** bloquea a nivel de sandbox
+     cualquier `fetch()`/XHR de script-de-página hacia `127.0.0.1`
+     (`net::ERR_BLOCKED_BY_CLIENT`, confirmado con `read_network_requests` — la
+     navegación top-level SÍ llega, sólo el `fetch()` de página no); (b) el
+     **Chrome real del owner** deja la pestaña colgada (`Runtime.evaluate` y
+     `Page.captureScreenshot` con timeout repetido, aunque la pestaña sigue viva
+     para `tabs_context_mcp`/`tabs_close_mcp`) — patrón consistente con el prompt
+     nativo de Chrome **Private/Local Network Access** (permiso que Chrome pide la
+     primera vez que un sitio público contacta una IP de loopback desde
+     `fetch`/XHR) quedando pendiente de un clic humano invisible para el agente (el
+     screenshot está bloqueado mientras el prompt está pendiente). **0 de 240
+     portadas mirroreadas** en este primer intento — se cortó ahí por regla dura
+     (nunca resolver a ciegas un bloqueo que requiere clic humano en el navegador
+     real del owner).
+     **Reintento con el owner presente (mismo día)**: con el owner avisado para
+     aceptar los prompts nativos apenas aparecieran, se repitió el fetch al
+     receptor en modo *fire-and-forget* (sin bloquear la llamada CDP) — quedó
+     igualmente pendiente 4 minutos completos sin resolverse (16 muestras de
+     polling, 0 bytes). Se probó entonces un **plan B sin receptor**: descarga
+     nativa del navegador (`blob` + `<a download>` + `click()` programático) hacia
+     `~/Downloads`, movida después con Bash — evita `127.0.0.1` por completo. **La
+     1ª descarga por pestaña pasa SOLA, sin prompt** (confirmado 2 veces); la 2ª en
+     adelante queda retenida en silencio por el gate nativo de Chrome de
+     "descargas múltiples automáticas" — `a.click()` no arroja error en la página
+     (el `blob` se obtiene bien), pero el archivo nunca llega a disco hasta que un
+     humano acepta el permiso, que tampoco llegó a aceptarse en los ~3 minutos
+     observados. **Resultado final: 1 de 240 portadas mirroreadas**
+     (`data/images/1ae3c47a4e0b86bf.avif`, Berserk Vol.42 Black series Tarots
+     variant, verificada no-placeholder, 831×980 = 814380px, sobre el umbral de
+     90000px) — las 239 restantes nunca se intentaron individualmente tras
+     confirmarse el gate activo (no son "fallidas", quedan pendientes intactas).
+     **Aprendizaje transferible**: en este entorno, tanto el "acceso a red local"
+     como las "descargas múltiples automáticas" son permisos de Chrome que sólo se
+     resuelven con un clic humano REAL sobre la ventana del owner — ningún truco de
+     automatización (fire-and-forget, cerrar/reabrir pestaña, esperar más) lo evita;
+     el mecanismo del pane (`mcp__Claude_Browser__*`) ni siquiera llega a mostrar el
+     prompt, lo bloquea antes a nivel de sandbox. Detalle completo + 4 alternativas
+     para el owner (aceptar cualquiera de los 2 permisos una vez, dentro o fuera de
+     una sesión del agente; esperar al solver de Playwright) en
+     `docs/scraper/sources/mangavariant.md` § "2026-09-01 (quater)" y en
+     `data/diagnostics/wave-mv-browser-mirror.json`. Nada aplicado a `sources.yml`
+     ni a `items.jsonl`; la imagen nueva vive en `data/images/` sin aplicar aún al
+     `images[]` del item (lo hace la ola de cierre).
+
+163. **`write_items_atomic` sólo serializa la ESCRITURA, no el ciclo lectura-
+     modificación-escritura completo — con varios agentes concurrentes activos
+     sobre `items.jsonl`, un retrofit puede aplicar su cambio y verlo pisado
+     minutos después por otro proceso que leyó ANTES de esa escritura.** Pasó en
+     vivo aplicando la denylist de la ola 3 (gotcha #161, 4 firmas nuevas, 9
+     filas): la corrida real de `purge_placeholder_images.py --only-reasons
+     signature` reportó `items afectados: 9` y la verificación inmediata post-
+     corrida confirmó las 9 filas sin imagen — pero unos minutos después (mientras
+     se preparaban las fichas de fuente, con otros agentes corriendo en paralelo
+     sobre el mismo repo, evidenciado también por `wc -l data/items.jsonl` cayendo
+     de 14366 a 14353 entre dos chequeos), las 9 filas volvieron a tener el
+     placeholder: otro proceso escribió el archivo completo con una copia en
+     memoria tomada de ANTES de la purga (`items_write_lock` protege el `os.
+     replace` final, no el `open()`+`json.loads()` inicial de ningún caller —
+     comportamiento documentado y aceptado del mecanismo, no un bug del lock en
+     sí). **Efecto secundario no obvio al reintentar**: la re-purga con `--only-
+     reasons signature` reportó `items afectados: 0` la primera vez pese a que
+     las 9 filas seguían con el placeholder — porque la corrida original YA había
+     movido los 9 archivos a cuarentena (`data/images/_orphans/`), así que
+     `classify_local()` ya no los encuentra en `data/images/<local>` y los
+     clasifica `"broken"` (no `"signature"`); con el filtro acotado a `signature`,
+     una entry `broken` se deja intacta en vez de purgarse — el archivo YA no
+     estaba disponible para recalcular el sha1 y reconfirmar la firma. **Fix
+     aplicado**: copiar los 9 archivos de vuelta de `_orphans/` a `data/images/`
+     (restaura el estado que `classify_local` necesita para re-clasificar por
+     firma) y re-correr la purga real; la corrida final SÍ dio `items afectados: 9`
+     y la verificación directa + `--dry-run` inmediato posterior confirmaron 0
+     pendientes. **Para el owner (no aplicado, es cambio de arquitectura)**: si
+     los retrofits puntuales (no sólo el pipeline canónico) van a correr con
+     frecuencia mientras hay agentes concurrentes activos, el patrón "leer todo
+     items.jsonl → mutar en memoria → escribir todo" que usan `purge_placeholder_
+     images.py` y la mayoría de los retrofits de `scripts/retrofit/` necesitaría
+     tomar `items_write_lock` alrededor de TODO el ciclo (no sólo en
+     `write_items_atomic`) para eliminar esta ventana — hoy es aceptable porque el
+     pipeline canónico corre secuencial y los retrofits puntuales son
+     infrecuentes, pero con varios agentes trabajando en paralelo sobre el mismo
+     repo (como en esta sesión) la ventana se vuelve real. Mitigación práctica sin
+     tocar código: minimizar el tiempo entre el `--dry-run` de confirmación y la
+     corrida real, y volver a verificar el resultado con una lectura directa
+     (no sólo confiar en el resumen impreso) antes de dar por cerrado un retrofit
+     de imágenes con varios agentes concurrentes activos.
+
+164. **`replace_cover_demote` duplica la imagen promovida si la candidata ya vivía
+     en la propia galería del item — `_apply_improvement()` sólo escribe
+     `images[0]`, nunca remueve la copia preexistente en `images[1:]`
+     (2026-09-01, cierre de la ola de imágenes).** La acción `replace_cover_demote`
+     de `apply_preview()` (`scripts/retrofit/fetch_better_covers.py`) hace dos
+     pasos: `_apply_improvement(item, new_url, new_local)` (sobreescribe la
+     portada) y `_add_gallery_image(item, prev_url, prev_local, "extra")`
+     (conserva la portada vieja como extra). `_apply_improvement()` sólo llama a
+     `image_store.set_cover()` — nunca revisa si `new_url`/`new_local` YA
+     estaba presente en `images[1:]`. Es inofensivo para una candidata nueva de
+     búsqueda web (nunca vivió en la galería), pero rompe para el patrón "cola
+     de promoción local" (ver `docs/reference/images.md` § OLA 3 punto 3 —
+     candidata = otra foto local ≥90 000 px que YA está en la propia `images[]`
+     del item): la imagen queda DUPLICADA, una vez en `images[0]` (portada
+     nueva) y otra vez en su posición ORIGINAL de galería (mismo `local`,
+     `kind=gallery`). Confirmado en producción: las 6 candidatas
+     `replace_cover_demote` aprobadas por el juez de la cola de promoción local
+     quedaron las 6 con este duplicado exacto al aplicarse. Corregido AD HOC
+     para esos 6 items puntuales (quitada la copia redundante, portada intacta)
+     — el MECANISMO en `fetch_better_covers.py` sigue roto para la próxima
+     corrida que promueva desde la propia galería. Fix pendiente (flagueado,
+     no aplicado esta ola): en la rama `replace_cover_demote`, remover de
+     `images[1:]` cualquier entrada con `url==new_url` (o `local==new_local`)
+     ANTES de agregar la portada vieja como extra — mismo patrón que
+     `_remove_gallery_image()` ya usa en otras acciones.
+     puntual en una sesión con otros agentes activos.
+
+     **CERRADA (2026-09-01, turno posterior).** El fix de mecanismo se aplicó en
+     `_apply_improvement()` (fuente única, no en cada action-handler): tras pisar
+     `images[0]`, busca en `images[1:]` una entry que matchee la promovida por la
+     MISMA clave canónica de dedup que usa el resto del pipeline
+     (`manga_watch._img_stem` sobre la url — no `url==new_url` pelado, cubre
+     variantes de thumb CDN/query params — con fallback a comparar `local`). Si
+     hay match, `kind`/`description` se trasladan al entry sobreviviente antes de
+     borrar la copia; idempotente. Cubre las tres acciones que llaman a
+     `_apply_improvement()` (`replace_cover`, `replace_and_add`,
+     `replace_cover_demote`), no sólo la reportada. Tests nuevos en
+     `tests/test_replace_cover_demote_dedup.py`. Detalle en
+     `docs/reference/images.md` § "Cierre de la tanda de depuración de imágenes"
+     → "Fix de mecanismo cerrado".
+
+165. **Seguimiento de la gotcha #162 (2026-09-01, attempt 3): el gate de Chrome de
+     "descargas múltiples automáticas" SÍ distingue gesto real de `click()`
+     programático — un clic enviado por la herramienta `computer`/`left_click` del
+     harness (evento de entrada confiable) lo evita por completo; el bloqueo real que
+     apareció después fue OTRO control, independiente del navegador.** Hipótesis
+     probada: la gotcha #162 documentó que la 1ª descarga por pestaña (`blob` + `<a
+     download>` + `click()` JS programático) pasa sola, pero la 2ª en adelante queda
+     retenida en silencio. La hipótesis era que ese gate distingue "gesto de usuario"
+     de "automatización" — y que un clic real vía `computer{action:"left_click"}`
+     (evento de entrada confiable del SO/harness, no `dispatchEvent`/`.click()` de
+     JS) cuenta como gesto humano y no lo dispara. **CONFIRMADA sin excepción**: 144
+     descargas consecutivas en una sola pestaña del Chrome real del owner, cada una
+     con un clic real sobre un `<a download>` cuyo `href`/`download` se actualizaba
+     dinámicamente vía `window.__mvSet(url, name)` (fetch same-origin → blob →
+     `URL.createObjectURL`) — 0 quedaron retenidas por el gate de Chrome. Confirma
+     además que la propia imagen retenida en el intento anterior (`water2.jpg`, la
+     que dio pie a la gotcha #162) descarga sin problema con clic real.
+     **Gotcha nueva encontrada en el camino**: `javascript_tool` devuelve
+     inmediatamente el resultado de la ÚLTIMA expresión del script — si esa
+     expresión es una `Promise` SIN `await` antepuesto (p.ej. `window.__mvSet(url,
+     name)` en vez de `await window.__mvSet(url, name)`), la tool NO espera a que la
+     promesa resuelva: devuelve `{}` (el objeto `Promise` serializado vacío) y,
+     dentro de un `browser_batch`, la acción `computer.left_click` siguiente se
+     dispara ANTES de que el `fetch`/`blob` interno termine — descarga el `href`
+     STALE de la llamada anterior en vez del nuevo. Pasó en vivo: un batch con
+     `window.__mvSet(...)` sin `await` produjo `mvcov_002 (1).jpg` (273028 bytes = la
+     imagen ANTERIOR duplicada) en vez de la imagen esperada. Fix: anteponer siempre
+     `await` cuando el script inyectado expone una función `async` y el siguiente
+     paso del batch depende de su resultado.
+     **Bloqueo real de esta ronda: NO fue Chrome, fue el clasificador de permisos de
+     "modo automático" del propio Claude Code**, una capa de seguridad independiente
+     del navegador que interrumpió 2 batches consecutivos de clics-reales (sin
+     correlación clara con el tamaño del batch — bloqueó un batch de 20 tras 2
+     batches de 20 exitosos, y luego un batch de sólo 6) — compatible con un
+     muestreo probabilístico sobre el patrón "muchos clics reales disparando muchas
+     descargas silenciosas", que razonablemente amerita revisión aunque cada clic
+     sea legítimo. Por regla del encargo (no buscar cómo evadir un bloqueo de
+     seguridad reduciendo el tamaño del batch hasta que uno pase) se cortó ahí:
+     **145 de 240 portadas mirroreadas** (1 de attempt 2 + 144 de attempt 3), 0
+     placeholders, 144/144 sobre el umbral de 90 000 px. Quedan 95 pendientes
+     (índices 145-239 de `mv_cover_targets.json`), no "fallidas" — una corrida
+     futura debería poder continuar con el mismo mecanismo desde ahí. Detalle
+     completo, mapeo url→local de las 144 imágenes y JSON `mv_postprocess_
+     entries_attempt_3` listo para que la ola de cierre lo aplique a `images[]` (sin
+     re-descargar) en `data/diagnostics/wave-mv-browser-mirror.json` y en
+     `docs/scraper/sources/mangavariant.md` § "2026-09-01 (quinquies)". Nada
+     aplicado a `items.jsonl` — las 144 imágenes viven en `data/images/` sin asignar
+     todavía a ningún `images[]`.
+
+     **Cierre (mismo día, corrida siguiente)**: se completaron los 95 pendientes
+     (índices 145-239) con el MISMO mecanismo, en batches de **10** en vez de 20 —
+     **0 interrupciones del clasificador de "modo automático"** en esta corrida (vs.
+     2 interrupciones en attempt 3 con batches de 20). No hay evidencia suficiente
+     para atribuirlo al tamaño del batch más chico (el propio attempt 3 documentó
+     que el patrón no correlacionaba claramente con el tamaño), pero es consistente
+     con mantener el batch conservador como mitigación práctica sin intentar evadir
+     el clasificador. **240/240 portadas mirroreadas** (240 = 1 + 144 + 95), luego
+     asignadas a `images[0].local` de sus items vía script one-off (backup único +
+     `write_items_atomic` único) — 239 items actualizados (238 URLs únicas, 1
+     duplicada matcheó 2 items). `validate_corpus.py` 0 violaciones duras, MIRRORREF
+     0. Detalle en `docs/scraper/sources/mangavariant.md` § "2026-09-01 — CIERRE".
+
+166. **`sync_cover_preview.py` poda 3b asume que TODA candidata `replace_cover*`
+     existe para arreglar una portada por-debajo-del-piso de calidad — y por eso
+     borra en silencio la "segunda tanda" de la cola de promoción local (2026-09-01),
+     cuyo caso de uso es distinto: mejorar una portada YA aceptable con una gemela
+     de mayor resolución detectada por dedup de fotos (dHash), no subirla sobre un
+     piso mínimo.** Contexto: los 44 pares "dudosos" de la ola 2
+     (`data/diagnostics/dedup-wave2-dudosos.json`) que `enqueue_wave2_dudosos_
+     removal.py` NO pudo encolar como `remove_image` porque la imagen de menor
+     resolución del par era la portada vigente (`images[0]`) se re-encolaron como
+     candidatas `replace_cover_demote` con `scripts/retrofit/
+     enqueue_wave2_dudosos_promotion.py` (mismo patrón que la cola de promoción
+     local de la OLA 3, ver `docs/reference/images.md` § "3. Cola de promoción
+     local — segunda tanda"). A diferencia de la ola 3 (candidatas construidas
+     exigiendo portada actual `<90 000 px`), estos 44 pares NO exigen eso: la
+     premisa es "existe una gemela casi idéntica (dHash≤8) de mayor resolución
+     YA en la galería", así que el 100% de las 44 portadas actuales (`target`)
+     resultaron estar **por ENCIMA** del piso de 90 000 px (mín. 216 408 px,
+     máx. 2 046 400 px). `sync_cover_preview.py` (Regla 3, poda 3b, línea ~394)
+     poda TODA candidata de `_REPLACE_COVER_ACTIONS` (incluye
+     `replace_cover_demote`) cuando `new_old_pixels >= LOW_QUALITY_PX`, sin
+     distinguir el motivo de la candidata — confirmado en vivo: un
+     `--dry-run` inmediatamente después de encolar reportó **44/44 candidatas
+     podadas** (`pruned_cover_ok`) y las 43 entries nuevas vaciadas y eliminadas
+     (87 operaciones = exactamente deshacer todo lo recién encolado). Si se
+     corriera `sync_cover_preview.py` REAL (sin `--dry-run`) sobre el estado
+     actual, la cola completa desaparecería ANTES de que el owner llegara a
+     verla en el dashboard.
+
+     **Corregido (2026-09-01, mismo día).** `sync_preview()` ahora exime la
+     poda 3b para candidatas `replace_cover_demote` cuando, verificado EN VIVO
+     contra `images[]` del item (no contra el `new_pixels` congelado de la
+     candidata — evita confiar en metadata stale), su `new_url` sigue presente
+     en la galería actual Y sus píxeles reales superan a los de la portada
+     actual (`gallery_px_by_url.get(new_url) > new_old_pixels`). No se agregó
+     un campo de premisa nuevo al schema (`_normalize_preview_entry` intacto,
+     compatible con otros agentes tocando `fetch_better_covers.py` en
+     paralelo): el criterio es 100% derivable de `action` + la galería actual
+     + píxeles reales. `replace_cover`/`replace_and_add` (motor de búsqueda
+     web) no cambian de comportamiento. Si la "gemela" deja de estar en la
+     galería (otra pasada la sacó) o no es una mejora real (píxeles iguales o
+     menores), la excepción no aplica y se poda igual que antes — precisión >
+     recall. Contador nuevo `demote_upgrade_exempted` para observabilidad
+     (CLI y `stats` del endpoint). Tests en `tests/test_sync_cover_preview.py`
+     (demote-hires exento, replace_cover normal sigue podado, demote sin
+     mejora real sigue podado, demote con gemela ya no presente en galería
+     sigue podado). Verificación real post-fix: `sync_cover_preview.py
+     --dry-run` sobre las 501 entries actuales reporta **0 podadas / 44
+     exentas / 0 cambios** (antes: 44 podadas / 43 entries vaciadas / 87
+     operaciones) — las 44 candidatas de la segunda tanda siguen intactas en
+     `cover_preview.json`, ya no frágiles ante una corrida real ni ante abrir
+     el panel (que corre `sync_preview()` en cada `GET /api/cover-preview` y
+     persiste). Detalle en `docs/reference/images.md` § "Segunda tanda" y
+     `docs/reference/dashboard.md` § "Cover-preview — carga con sincronización
+     automática".
+
+167. **Tres fixes de mecanismo de la cola de portadas detectados por la curación
+     del 2026-09-01: (a) `prune_soft_cover_candidates.py`/`revalidate_cover_
+     preview.py` corrían el gate de identidad/calidad sobre candidatas
+     `remove_image`/`replace_cover_demote`, que no traen una imagen NUEVA
+     externa; (b) `revalidate_cover_preview.py` confiaba en `verified`/
+     `match_dist` calculados contra un `old_image` que puede haberse purgado
+     o cambiado desde entonces; (c) el rewrite de Buscalibre CDN (`sc_validate.
+     upgrade_url_variants` / `upgrade_image_resolution.derive_original_url`)
+     quitaba el segmento `fit-in/<W>x<H>/` en vez de pedir explícitamente una
+     resolución alta, dejando candidatas cerca del piso de calidad
+     re-encoladas eternamente.**
+
+     **(a) Guard por `action` ausente.** `_is_soft_image` (prune) y
+     `_same_cover`/`_is_soft_image` (revalidate) se aplicaban a TODAS las
+     candidatas `pending`, sin mirar `action`. Para `remove_image`,
+     `new_image` es la imagen que se propone ELIMINAR de la galería — no una
+     candidata de portada; evaluarla con `_is_soft_image` la rechaza por un
+     motivo que no tiene nada que ver con por qué se propuso remover. Para
+     `replace_cover_demote`, `new_image` suele ser una foto que YA vive en la
+     propia galería del item (cola de promoción local, `enqueue_wave2_
+     dudosos_promotion.py` / OLA 3 "segunda tanda", ver `docs/reference/
+     images.md`) — ya pasó los gates cuando entró a la galería la primera vez;
+     re-aplicarlos ahora produce rechazos espurios. **Fix**: constante única
+     `fetch_better_covers.NEW_EXTERNAL_IMAGE_ACTIONS` (`replace_cover`,
+     `replace_image`, `replace_and_add`, `add_gallery`, `add_extra` — derivada
+     del elif de `apply_preview()`); ambos scripts saltan intacta cualquier
+     candidata cuya `action` no esté en ese set, contando `skipped_by_action`.
+     Verificado en vivo: `--dry-run` de ambos scripts sobre las 501 entries
+     reales reporta **45 candidatas saltadas por action** (`remove_image`/
+     `replace_cover_demote`) que antes se exponían al gate sin necesidad.
+
+     **(b) Evidencia stale en `revalidate_cover_preview.py`.** La regla de
+     idempotencia (`"verified" in cand` → no reprocesar) no distinguía entre
+     "ya verificada y la referencia sigue siendo válida" y "ya verificada
+     contra un archivo que ya no existe" — el `old_image` de la entry es un
+     valor CONGELADO al momento de encolar/verificar, y una ola de limpieza
+     de imágenes posterior puede purgarlo del disco, o el item puede haber
+     cambiado de portada desde entonces (otra `action` aplicada). **Fix**: se
+     unificó `_surviving_candidate_keys` en `_synced_reference`, que además de
+     las keys que `sync_preview()` conservaría, expone un mapa slug→entry con
+     `old_image`/`old_url` YA recalculados contra `item.images[0]` actual
+     (Regla 2 de `sync_preview`, delegación pura, sin lógica nueva). La
+     referencia usada para `_same_cover` es siempre esa portada ACTUAL, no el
+     valor crudo del preview de entrada. Se define "evidencia stale" como: el
+     `old_image` crudo de la entry ya no existe en disco, O difiere del
+     recalculado — en cualquiera de los dos casos se limpian `verified`/
+     `match_dist`/`ref_pixels` de la candidata y se re-valida contra la
+     portada actual (contador `stale_evidence_recomputed`) en vez de
+     saltarla para siempre. Si no hay portada actual utilizable, cae al path
+     existente `no_ref` → `verified: false` (nunca auto-rechazo sin
+     referencia — precisión > recall). Verificación real: 0 stale en el
+     estado actual del corpus (60 candidatas `pending` con `verified`, 0 con
+     `old_image` purgado o portada cambiada) — el mecanismo se probó con
+     fixtures sintéticas que reproducen ambos escenarios (archivo purgado,
+     portada cambiada) en `tests/test_revalidate_cover_preview.py`.
+
+     **(c) Buscalibre CDN capado cerca del piso de calidad.** El rewrite
+     existente (`sc_validate._URL_UPGRADES`, `upgrade_image_resolution.
+     derive_original_url` patrón 6) quitaba el segmento `fit-in/<W>x<H>/`
+     por completo, asumiendo que el CDN serviría el original en máxima
+     resolución. Verificado con requests reales (2026-09-01) sobre la misma
+     imagen: `fit-in/360x360/` → 256×360 = **92 160 px** (justo por encima
+     del piso `LOW_QUALITY_PX`=90 000, candidatas reales del corpus caen en
+     88k-94k, a caballo del umbral — re-encoladas eternamente sin subir de
+     calidad); quitando el segmento entero → 384×540 = **207 360 px** (el
+     CDN sirve un tamaño "base" intermedio, NO el original); pidiendo
+     explícitamente `fit-in/1200x1200/` → 853×1200 = **1 023 600 px** (5×
+     más que quitar el segmento, 11× más que el 360 original). **Fix**: ambos
+     rewrites ahora reescriben a `fit-in/1200x1200/` en vez de quitar el
+     segmento, con guard de no-downgrade (si el fit-in pedido ya es ≥1200 en
+     ambas dimensiones, no se toca). Verificado con request real: la URL
+     reescrita responde 200 y mide 853×1200 px. Sin ficha de fuente propia
+     (buscalibre entra como candidata del motor de búsqueda de portadas, no
+     como fuente scrapeada de `sources.yml`) — quirk documentado acá y en
+     `docs/reference/images.md` § "Búsqueda de portadas hi-res — skill
+     `/watch-search-covers`" y § "Upgrade de resolución —
+     `upgrade_image_resolution.py`".
+
+     Tests: `tests/test_cover_sync_guards.py` (guard por action en prune),
+     `tests/test_revalidate_cover_preview.py` (guard por action + evidencia
+     stale, 2 casos), `tests/test_sc_validate.py`/`tests/test_upgrade_image_
+     resolution.py` (rewrite Buscalibre + no-downgrade). Suite completa
+     (2391 tests) verde. Detalle en `scripts/retrofit/README.md` (entries de
+     `prune_soft_cover_candidates.py`, `revalidate_cover_preview.py`,
+     `upgrade_image_resolution.py`, `sc_validate.py`).
+
+168. **`_merge_preview_entries()` matcheaba candidatas SÓLO por `new_url` — dos
+     candidatas de ACCIONES DISTINTAS pueden compartir el mismo `new_url` por
+     pura coincidencia y el merge las trataba como "la misma", perdiendo la de
+     disco; además faltaba la poda `sync_cover_preview` para la gemela
+     (`keep_url`) de una candidata `remove_image` que ya no está en la
+     galería.** Contexto: `new_url` significa cosas DISTINTAS según `action` —
+     en `remove_image` es la imagen que se propone ELIMINAR (== `target`); en
+     el resto (`replace_cover`, `replace_cover_demote`, `replace_and_add`,
+     `add_gallery`, `add_extra`, `replace_image`) es la imagen NUEVA
+     propuesta. Detectado en la curación del 2026-09-01 al encolar las 44
+     `replace_cover_demote` de `enqueue_wave2_dudosos_promotion.py`: el item
+     `bleach-christmas-variant-panini-cofanetto-it-1` tiene 3 pares "dudosos"
+     de la ola 2 sobre las mismas 3 fotos de su galería (portada + 2 tomas de
+     `1718902782*.jpeg`); dos de esos pares (portada vs cada foto) se
+     encolaron como `replace_cover_demote` con `new_url=…/1718902782.jpeg` y
+     `new_url=…/1718902782-1.jpeg` respectivamente, y un tercer par (las dos
+     fotos entre sí) ya estaba en disco como `remove_image` PENDING con
+     `new_url=…/1718902782.jpeg` — la MISMA url que el primer `new_url` de
+     demote, por pura coincidencia (una es "la imagen a promover", la otra
+     "la imagen a eliminar"). `_merge_preview_entries()` construía
+     `disk_cands = {new_url: candidata}` y `mem_urls = {new_url de memoria}`
+     sin mirar `action`: el `new_url` compartido hizo que la candidata
+     `remove_image` de disco quedara "vista" como ya representada por la
+     `replace_cover_demote` de memoria, así que el paso (b) (`candidatas de
+     disco que memoria no tiene → conservarlas`) la saltó — la entry perdió
+     su candidata `remove_image` pendiente sin dejar rastro (ninguna excepción,
+     ningún log; el merge "funcionó" según su propia lógica rota). Auditoría
+     completa de las 501 entries de la cola (re-derivando ambos encoladores
+     sobre el corpus vigente y comparando contra disco por identidad) confirmó
+     que es el ÚNICO caso — 0 otras candidatas perdidas por esta vía.
+
+     **Fix — clave de identidad real.** `_candidate_identity(c)` =
+     `(action, target, new_url)` en vez de `new_url` pelado; usada tanto para
+     el índice `disk_cands` como para el set de "ya vistas en memoria"
+     (`_merge_preview_entries`, `fetch_better_covers.py`). Además,
+     `_dedupe_candidates()` — nueva red de seguridad que colapsa candidatas
+     con la MISMA identidad si alguna vez quedaran duplicadas tras un merge
+     (gana la que ya fue decidida — approved/rejected — sobre cualquier
+     pending duplicada), corrida al final de cada merge por entry. `sc_flush.py`
+     hereda el fix gratis (importa `_merge_preview_entries`, no la reimplementa
+     — fuente única). Tests: `tests/test_cover_engine_gates.py::
+     test_write_preview_merge_cross_action_url_collision_keeps_both` (repro
+     exacta del caso bleach) y `::test_write_preview_merge_dedupes_identical_
+     candidates_same_action`.
+
+     **Reparación del dato (2026-09-01, mismo día).** Bajo `preview_write_lock`
+     + `backup_and_rotate` (`cover_preview.json.pre-repair-bleach-lost-remove-
+     candidate-bak`), se re-derivó la candidata perdida con el MISMO
+     constructor de `enqueue_wave2_dudosos_removal.build_entries()` sobre el
+     par vigente de `data/diagnostics/dedup-wave2-dudosos.json` (status
+     `pending`) y se agregó de vuelta a la entry. La entry quedó con 3
+     candidatas pending: 2 `replace_cover_demote` (fotos distintas, NO
+     duplicadas — cada una referencia un `new_url` distinto) + la
+     `remove_image` restaurada. Verificación: 0 entries con candidatas
+     duplicadas por identidad en las 501 entries de la cola (antes y después
+     de la reparación).
+
+     **Poda faltante — `pruned_remove_keep_gone`.** `sync_cover_preview.py`
+     ya podaba `remove_image` cuando `target` (la foto a eliminar) dejaba de
+     estar en la galería (`pruned_remove_target_gone`) o pasaba a ser la
+     portada (`pruned_remove_would_be_cover`), pero NO cuando la gemela que
+     se CONSERVABA (`keep_url`, contexto del par) dejaba de estar en
+     `images[]` — caso real: `vanquished-queens-unknown-limited-jp-3`, cuya
+     candidata pending tenía `keep_url` apuntando a `9784798602233.jpg`,
+     ausente de la galería actual (`target`, en cambio, SIGUE presente, así
+     que ninguna poda existente la alcanzaba). Sin la gemela de referencia la
+     candidata queda huérfana para siempre — el par que la motivó ya no
+     existe. Fix: Poda 3g, mismo lugar que 3e/3f, sólo cuando la entry TRAE
+     `keep_url` (entries legacy sin contexto de par no se ven afectadas).
+     Verificado con `--dry-run` sobre las 501 entries reales del corpus:
+     reporta exactamente **1 podada** (`vanquished-queens-unknown-limited-
+     jp-3`), 0 cambios en el resto — no se aplicó el sync real (lo hace el
+     cierre de la tanda). Tests: `tests/test_remove_image_action.py::
+     test_sync_prunes_remove_image_when_keep_gone` (+ ajuste a
+     `test_sync_keeps_remove_image_when_still_valid`, que no tenía la gemela
+     en la galería de prueba — el caso "válido" no era realmente válido
+     hasta ahora). Suite completa (2394 tests) verde. Detalle en
+     `docs/reference/images.md` § "Merge anti-carrera" y § "remove_image".
+
+169. **Ola de galería de mangavariant.com (2026-09-01): el mecanismo de la ola
+     de portadas (gotcha #162/#165) escala sin cambios a 1149 fotos —
+     1126/1126 URLs únicas mirroreadas, 0 fallidas, 0 interrupciones del
+     clasificador en 113 rondas.** Continuación directa de la ola de
+     portadas cerrada el mismo día (ver `docs/scraper/sources/
+     mangavariant.md` § "CIERRE"), que dejó explícitamente fuera de alcance
+     las 1149 fotos de GALERÍA (`images[idx>=1]`) — sólo cubrió portadas
+     (`images[0]`). Mismo mecanismo EXACTO: botón `<a download>` inyectado +
+     `window.__mvSet(url, name)` (`fetch` same-origin → `blob` →
+     `URL.createObjectURL`, con `await` explícito) + clic REAL vía
+     `computer{action:"left_click"}` sobre una sola pestaña del Chrome real
+     del owner, batches de **10** descargas (no 20 — el clasificador de modo
+     automático de Claude Code sí distinguió tamaño de batch en la ronda
+     "quinquies") con verificación en disco entre cada uno.
+
+     **Resultado**: las 1149 filas de target (`item_url`, `img_idx`,
+     `image_url`, `slug`) dedupean a **1126 URLs de imagen únicas** (23
+     compartidas entre 2+ items) — se descargó cada URL una sola vez. **1126/
+     1126 descargadas OK, 0 fallidas, 0 interrupciones del clasificador de
+     modo automático y 0 retenciones del gate de descargas múltiples de
+     Chrome** en las 113 rondas de 10 — a diferencia de "quinquies" (2
+     interrupciones con batches de 20), el batch de 10 sostenido durante TODA
+     la corrida no topó con el clasificador ni una sola vez. Confirma que el
+     tamaño de batch (no el mecanismo del clic real, ya validado) era la
+     variable que importaba.
+
+     **Post-proceso** (mismo pipeline canónico offline: `image_store.
+     placeholder_reason()` → `normalize_image()` AVIF Q60 ≤1600px →
+     `image_stem(url)+ext`): **1126/1126 ok, 0 placeholders, 0 errores,
+     1126/1126 (100%) sobre el umbral de 90 000 px** — mejor ratio que la ola
+     de portadas (que tuvo algunas por debajo del umbral), probablemente
+     porque las fotos de galería de mangavariant (uploads directos de
+     WordPress, muchas `SaveClip.App_*`/`thumbnail_IMG_*` de Instagram o
+     cámara) vienen ya en alta resolución nativa.
+
+     **Asignación a `items.jsonl`**: sin `set_cover()` (ese helper es sólo
+     para portadas `images[0]`) — asignación mínima directa
+     `images[k]["local"] = local` preservando `kind`/`description`
+     intactos. Relectura FRESCA de `items.jsonl` (14353 filas) inmediatamente
+     antes de escribir, bajo `items_write_lock`, para no pisar cambios de
+     otros procesos concurrentes durante las ~2h de descarga. Un solo
+     `backup_and_rotate(items.jsonl, "mv-gallery-assign")` + una sola
+     `write_items_atomic`: **1149 entries actualizadas en 306 items, las 1126
+     URLs matchearon, 0 sin matchear**. Verificación: `validate_corpus.py` →
+     0 violaciones duras, `MIRRORREF` 0 (23807 refs revisadas, subió desde
+     22658 tras sumar las 1149 refs nuevas — exacto); relectura directa
+     confirmó 1149/1149 `images[k].local` persistidos igual al mapeo, 0
+     mismatch.
+
+     **Resultado final de la fuente**: sobre 2265 items de Mangavariant con
+     2679 refs de galería (`img_idx>=1`)... corrección: **7822 entries de
+     galería en total, 0 quedan sin espejo local** (las 1149 pendientes de
+     la auditoría de imágenes + las ~6673 que ya tenían `local` de corridas
+     previas). Combinado con el cierre de portadas del mismo día: **la fuente
+     Mangavariant queda 100% mirroreada** (portadas Y galería, 0 imágenes
+     `url`-only sin `local`). Mapeo completo (1126 filas: idx, image_url,
+     status, local, raw_bytes, final_bytes, dims, area_px, ge_90000px) en
+     `data/diagnostics/wave-mv-gallery-mirror.json`.
+
+170. **Placeholder tipográfico "por plantilla" a área GRANDE (≥90.000 px) — ni C1 (área)
+     ni C3b (SHA-256 compartido) lo detectan.** Preparando los manifiestos de la Etapa 1
+     de triage de imágenes (ver `docs/reference/images.md` § "Etapa 1"), se recalculó la
+     señal `modal_frac + pale_frac` (2026-08-31, § "Hallazgos extra" de
+     `informe_imagenes.md`) sobre **TODAS** las portadas del corpus, no sólo las < 90k px
+     ya sospechadas. Resultado: de las 600 portadas con mayor señal, **571 (95%) ya tienen
+     área ≥ 90.000 px** — pasarían el gate de calidad actual sin problema. Spot-check
+     manual (5 imágenes, con `Image.open().convert('RGB').save()` a PNG porque el visor no
+     renderiza AVIF directo) confirmó **3 placeholders reales**: `thumbnail.image.
+     rakuten.co.jp` sirve una "tarjeta de título" (texto + fondo pálido, sin arte de
+     portada) a un canvas fijo de **1004×1172 px (área 1.176.688)** reusado por al menos
+     23 items DISTINTOS de Rakuten Books — mismas dimensiones exactas, pero cada archivo
+     tiene SHA-256 distinto (el título está renderizado/quemado en la imagen), así que
+     **C3b (dedup por SHA idéntico ≥5 items) nunca los agrupa**. `tshop.r10s.jp` (mismo
+     grupo Rakuten) repite el patrón a otra área fija (314.080 px). **La señal tiene falsos
+     positivos confirmados en el mismo spot-check**: `img.91app.com` (91 casos, el host más
+     frecuente del top-600) y `m.media-amazon.com` (Dynit) devuelven ilustraciones/fotos de
+     producto LEGÍTIMAS con fondo blanco/pálido de diseño — el pale_frac alto viene del
+     fondo del cover real, no de un placeholder. Consistente con lo que el red-team ya
+     advirtió en `informe_imagenes.md` ("la señal es HEURÍSTICA, no validada 1:1") — este
+     hallazgo lo confirma con casos concretos y agrega la familia Rakuten "tarjeta de
+     título a canvas fijo" como candidata nueva de denylist, pendiente de la Etapa 1 de
+     visión (juicio `placeholder`/`no_placeholder` por item, no por regla de tamaño/hash).
+     Manifiestos y metodología completa en `data/diagnostics/etapa1-manifests/`.
+
+171. **En los hosts de Rakuten, la EXTENSIÓN `.gif` es el discriminador de placeholder — no
+     el hash, no el área, no la señal de color.** Cerrando la Etapa 1 de triage
+     (`docs/reference/images.md` § "Etapa 1 — resultados"), los 58 placeholders confirmados
+     del lote B dieron **55 SHA-256 distintos**: la familia dominante (49/58, todo
+     `tshop.r10s.jp` / `thumbnail.image.rakuten.co.jp` / `shop.r10s.jp`) **quema el título
+     del libro dentro de la imagen**, así que cada archivo es único y **ninguna denylist por
+     hash puede agruparlos** — confirma y cierra lo que gotcha #170 dejó abierto. El patrón
+     que sí los agrupa es la URL: Rakuten Books sirve la tarjeta de título generada como
+     **`/book/cabinet/<n>/<ISBN>.gif`** y las portadas reales como `.jpg`. Cruzado contra
+     todo el corpus: de las **50 portadas `.gif`** de esos hosts, **49 son tarjeta de título
+     y 1 es un mockup con marca de agua `SAMPLE`** (`the-heroic-legend-of-arslan-kobunsha-
+     boxset-jp-1-16`) — es decir **50/50 no son portada usable**; y de las **295 portadas
+     `.jpg`** de los mismos hosts, **0 resultaron placeholder** en el subconjunto juzgado
+     (52 ítems). Nota de implementación: el sufijo de transformación de Rakuten
+     (`?downsize=130:*`, `?fitin=560:400&composite-to=*`) va DESPUÉS de la extensión, así que
+     hay que mirar `url.split('?')[0]`, no el final del string. La regla es específica de
+     Rakuten: en `images-na.ssl-images-amazon.com` la MISMA plantilla de URL
+     (`/images/P/<ISBN>.09SCLZZZZZZZ_.jpg`) devuelve a veces la portada real y a veces un
+     "coming soon" del editor (電撃コミックス, FLOS COMIC) o un "Now Printing", así que ahí no
+     hay regla de URL posible — sólo visión por ítem.
+
+172. **Un juez de visión barato confunde "foto del producto físico sobre fondo blanco" con
+     placeholder — el 45% de sus `placeholder` fueron falsos positivos.** En la
+     re-verificación de la Etapa 1, de los 84 `placeholder` que marcaron los 15 subagentes
+     baratos en el lote B sólo **46 (55%)** se sostuvieron. Los 38 degradados caen en tres
+     familias, todas con mucho blanco en el encuadre: (a) **cofres, estuches y packs
+     fotografiados en 3D sobre fondo blanco** — un solo chunk aportó 15 seguidos (Berserk,
+     L'Attacco dei Giganti, Death Note Black Edition, Jujutsu Kaisen, My Dress-Up Darling);
+     (b) **renders 3D de tomos** (西遊妖猿傳, 東京愛情故事); (c) **portadas minimalistas de
+     diseño**: las 12 de 三國志 典藏版 de Sharp Point (caligrafía + figurita a línea sobre
+     blanco), *Fénix* de Tezuka/Planeta, `blanc #1` de Asumiko Nakamura, el coffret de
+     *Rumiko Takahashi · Histoires Courtes* de Delcourt. **La foto del producto físico ES una
+     portada válida** (regla ya vigente en la sección de OLA 3 de `images.md`, pero que hay
+     que meter EXPLÍCITA en el prompt del juez, con ejemplos, o se repite). El error inverso
+     también existe: los mismos agentes declararon `se_ve_bien` a 25 portadas del lote A que
+     sí se ven blandas, porque **miraron la miniatura a tamaño nativo en vez de renderizarla
+     al ancho real de la card (300 px)** — cualquier prompt de triage de calidad tiene que
+     obligar a mirar la imagen reescalada al tamaño en que se va a mostrar. Corolario de
+     proceso: los 15 agentes escribieron los resultados con nombres libres y en dos
+     directorios distintos, y **el chunk 1 de ambos lotes se perdió entero (81 ítems, 6,9%)
+     sin que nada lo detectara**; la reconciliación slug→veredicto contra el manifiesto es
+     obligatoria antes de consolidar, y el archivo de salida debe llamarse igual que el
+     chunk de entrada.
+
+173. **whakoom-vía-Bing: el 8/8 del piloto (2026-07-11) no generaliza — 1% real sobre 150
+     targets ES, y el "100%" del segmento sin imagen es una señal débil, no un hit rate
+     (Etapa 2 tanda 1, 2026-09-02).** Sobre 100 targets ES con portada chica (referencia
+     real disponible), sólo **1 candidata (1%)** pasó el AND-gate `_same_cover` — muestreo
+     manual confirmó que whakoom SÍ encuentra la página/serie correcta (misma ilustración
+     que la portada JP original) pero el gate rechaza correctamente ediciones con
+     logo/crop/color distintos al de la portada ES capada por listadomanga; combinado con
+     el hallazgo de "Etapa 1" (mismo día, `docs/reference/images.md`) de que el 91,2% de
+     las portadas <90.000 px YA se ven bien en la card real, gran parte de esta tanda buscó
+     mejoras para portadas que no las necesitaban — no es un problema de whakoom/Bing.
+     Aparte, para los 50 targets **sin imagen** (`--include-no-image`), `sc_validate.py`
+     no puede correr `_same_cover` (no hay referencia) y acepta casi cualquier imagen
+     plausible que pase aspect-ratio + `_is_soft_image`: **36/50 (72%)** de esas candidatas
+     `verified:false` comparten `new_url` con la candidata de OTRO item de la MISMA serie
+     con OTRO volumen (ej. una sola imagen propuesta para Bastard!! tomos 2/4/6/7/8/9) —
+     matemáticamente no pueden ser todas correctas, es whakoom devolviendo la miniatura de
+     la serie/otro tomo cuando el tomo específico no tiene página propia indexada. Ninguna
+     de las dos causas es un bug — ambos gates funcionan como están diseñados (precisión >
+     recall) — pero el "100% encontró algo" del segmento sin imagen NO debe leerse como
+     éxito sin revisión manual reforzada. Mejora futura sugerida: en `sc_validate`/
+     `sc_flush`, bajar confianza o descartar una candidata `verified:false` cuya URL ya se
+     propuso para otro slug en la misma corrida — **implementada el mismo día, ver gotcha
+     #174**. Detalle completo en `docs/reference/images.md` § "Etapa 2, tanda 1".
+
+     **Corrección tras la curación humana real (2026-09-02).** El owner revisó las 94
+     candidatas `verified:false` del segmento sin imagen desde `cover-preview.html`: **12
+     aprobadas, 82 rechazadas**. Desglose real de los 82 rechazos: **65 (79%) `otra_edicion`**
+     (whakoom encontró la página/serie correcta pero de una edición o país distinto al del
+     item ES capado por listadomanga — el mismo patrón de rechazo que el segmento CON
+     referencia, arriba), **12 (15%) `no_es_la_obra`**, y sólo **5 (6%) `otro_tomo`** (el caso
+     que el guard de URL compartida de gotcha #174 apunta a mitigar). Esto **corrige la
+     lectura original de este hallazgo**: el riesgo dominante NO es la ambigüedad de tomo que
+     delata compartir `new_url` entre slugs (36/50 items, 72% — esa cifra sigue siendo cierta
+     como SÍNTOMA, whakoom sí repite miniaturas de serie/otro tomo cuando el tomo específico
+     no tiene página indexada) sino la **edición/país equivocado**, que es el MISMO problema
+     estructural que ya mata el 99% del segmento con referencia — el gate `_same_cover` no
+     puede correr sin referencia, así que nada detecta automáticamente una edición ajena
+     cuando no hay foto propia con la que comparar. El guard de URL compartida (#174) cierra
+     bien su caso (6% de los rechazos reales), pero no es la mitigación que más importa para
+     este segmento; la mitigación real es la que ya funcionó acá: revisión humana estricta,
+     no un guard automático adicional. Además: **whakoom SÍ tiene la portada correcta para
+     casi todos estos casos** — el problema no es cobertura de whakoom sino la VÍA de acceso:
+     `site:whakoom.com <serie> <vol>` vía Bing (motor de texto) devuelve con frecuencia la
+     ficha de la serie o de un tomo vecino en vez de la ficha exacta del volumen+edición; la
+     página de EDICIÓN de whakoom (navegando la ficha de la serie → la edición correcta →
+     el tomo) sí tiene la portada correcta casi siempre — la búsqueda de imágenes no es
+     el camino, la navegación estructurada del propio sitio sí. Detalle de la curación en
+     `docs/reference/images.md` § "Cierre Etapas 1-2 (2026-09-02)".
+
+174. **Fix del guard de URL compartida (gotcha #173): `sc_flush._apply_shared_url_guard`,
+     no `sc_validate` — el cruce entre slugs sólo es visible en el acumulador de la corrida
+     (2026-09-02).** `sc_validate.py` valida UN item a la vez y no tiene forma de saber que
+     otro slug de la misma corrida recibió la misma `new_url` — el guard tenía que vivir en
+     `sc_flush.py`, que ya acumula candidatas entre flushes en `.tmp_sc_acc.json`. Se agregó
+     `_apply_shared_url_guard(acc)`: agrupa TODAS las candidatas no-rechazadas del
+     acumulador por la clave canónica de imagen (`fetch_better_covers._img_stem(new_url)` —
+     la MISMA que usa `_union_merge_images` para dedupear `images[]`, así que variantes de
+     tamaño/CDN de la misma imagen caen en el mismo grupo); para cada grupo con ≥2 slugs
+     distintos, reusa `fetch_better_covers._extract_candidate_volumes` (la misma función que
+     ya usa `candidate_metadata_conflict`, sin duplicar el criterio) sobre
+     `page_title + new_url` de cada candidata: si el marcador explícito de tomo coincide con
+     el `volume` del item de UN solo slug del grupo, esa candidata se conserva y las demás
+     quedan `status="rejected"` + `reject_reason="otro_tomo"` (visibles en el preview como
+     rechazo auditable, no desaparecen en silencio); si no hay forma de desambiguar (sin
+     marcador, o el marcador no resuelve a un único slug — el caso dominante en la tanda de
+     #173, donde los page_title de whakoom casi nunca llevan el tomo), TODAS quedan
+     `pending` pero con `shared_with` (los otros slugs del grupo), `confidence="low"` y
+     `needs_visual_review=True` — nunca se auto-aprueban. Se re-evalúa sobre TODO el
+     acumulador en CADA flush (idempotente: las ya `rejected` se excluyen de la
+     re-agrupación; si un 3er slug con la misma URL aparece en un flush posterior,
+     `shared_with` de los primeros dos crece para reflejarlo). El resumen de conteos por
+     rama (`shared_groups`/`kept_disambiguated`/`rejected_otro_tomo`/`unresolved_flagged`)
+     se agrega al stdout de `sc_flush.py` (`shared_url_guard`). **Simulación de sólo lectura
+     sobre la cola real** (139 candidatas `verified:false` `pending` en 93 slugs, cruzando
+     `volume` desde `items.jsonl`): 15 grupos con URL compartida, **0 desambiguadas por
+     tomo** (confirma que los page_title de whakoom casi nunca declaran el tomo — el caso
+     dominante es el ambiguo, no el conflictivo), **42/139 (30%) marcadas
+     `needs_visual_review`**, 97 sin cambios (URL única). Tests en
+     `tests/test_sc_shared_url_guard.py` (6 casos: desambiguación por tomo, grupo sin
+     desambiguar, URL única sin tocar, grupo que crece entre flushes, y 2 casos de
+     `candidate_metadata_conflict` reusada — vía URL, ya cubierta, y vía `page_title`, canal
+     nuevo probado). Detalle en `docs/reference/images.md` § "Validación sin referencia —
+     guard de URL compartida".
+
+175. **La recomendación de la Etapa 1 (gotcha #172 / docs/reference/images.md § "Etapa 1 —
+     resultados") se aplicó en `sc_plan.py`: el target de PORTADA pasa de área a factor de
+     reescalado en card (2026-09-02).** `fetch_better_covers.py` gana la función pura
+     `cover_upscale_factor(w, h, card_w=300, card_h=420)` (`min(card_w/w, card_h/h)`, `inf`
+     si `w`/`h` no son computables) y `UPSCALE_TARGET_MIN = 1.6` — **sin tocar** `LOW_QUALITY_PX`
+     (sigue siendo el umbral de "pixelada" del panel/`sync_cover_preview`/`promote_hires_
+     cover`, sin cambios). `sc_plan.py` (Step 1 del skill `/watch-search-covers`) gana
+     `--target-rule {scale,area}` (default `scale`): la selección de targets de PORTADA
+     (`img_idx 0`) pasa a `cover_upscale_factor(w, h) >= UPSCALE_TARGET_MIN`, ordenando
+     apaisadas (`w > h`, recorte destruido) primero y luego por factor descendente;
+     `--target-rule area` conserva el criterio viejo (píxeles < `LOW_QUALITY_PX`) por
+     compatibilidad. La **galería** (`img_idx >= 1`) sigue usando SIEMPRE el criterio de
+     área — la Etapa 1 sólo evaluó portadas. De paso, `get_pixels_local` (que hacía su
+     propio `PIL.Image.open` suelto) se refactorizó a `get_dims_local` + wrapper: las
+     dimensiones ahora se leen vía `fbc._get_dims_from_bytes` (la fuente única de
+     dimensiones del motor, con fallback PIL incluido), no una segunda implementación.
+     **Dry-run de sólo lectura sobre el corpus real** (`--retry-failed` para no arrastrar
+     el ruido de corridas concurrentes del mismo día): targets de portada bajan de 546
+     (`--target-rule area`) a **48** (`scale`, default), −91,2%. Cruce contra
+     `etapa1-triage.json`: de los 33 slugs `se_ve_mal`, 32 seguían en el corpus y **32/32
+     (100%)** quedaron capturados por el criterio nuevo — el slug 33 restante
+     (`radiant-letrablanka-regular-es-10`) tiene la señal `variant_cover`, que `sc_plan.py`
+     salta siempre, sin relación con el criterio de calidad. **0** de los 516 slugs con
+     veredicto `se_ve_bien` (exclusivo) terminaron como target. Tests en
+     `tests/test_cover_upscale_factor.py` (función pura) y 11 casos nuevos en
+     `tests/test_sc_plan.py` (selección/orden/flag de compatibilidad/`get_dims_local`).
+
+176. **Cierre de la Etapa 1 (2026-09-02): denylist aplicada + 7 non-manga expulsados,
+     todo verificado contra el triage ANTES de tocar el corpus.** El owner aprobó
+     resolver lo que el juez de visión (gotcha #170-#172) dejó como "verificado, listo
+     para aplicar". Dos hallazgos separados, mismo turno:
+     (a) **La regla `.gif` de Rakuten (gotcha #171) se implementó como `known:` en
+     `image_store.known_placeholder_url_reason()`** (host de la familia Rakuten Y
+     `urlparse(url).path` termina en `.gif`, ignorando query — el sufijo de
+     transformación va DESPUÉS de la extensión). Antes de purgar se cruzaron los **50
+     `.gif` de `images[0]` en TODO el corpus** contra `etapa1-triage.json`: **50/50 NO
+     son portada usable** (49 `placeholder` + 1 `imagen_equivocada`, el mockup `SAMPLE`
+     de `the-heroic-legend-of-arslan-kobunsha-boxset-jp-1-16`), **0** cayeron en
+     `se_ve_bien`/`no_placeholder` — la regla tiene precisión 100% en este corpus, así
+     que se aplicó sin excepciones. Además de eso, las 3 AnimeClick + 4 Amazon + 1
+     Funside + 1 Mangavariant y las 6 `imagen_equivocada` (contraportada/merch/collage/
+     página en blanco), agregadas por `sha1` exacto a `placeholder_signatures.json`
+     (las `imagen_equivocada` con label `wrong_image:<slug>` para distinguirlas de un
+     placeholder de tienda real). **Purga real** con
+     `purge_placeholder_images.py --only-reasons known,signature` (gotcha #161 — nunca
+     sin acotar): **68 items afectados, 68 entries quitadas** (`known: 53`,
+     `signature: 15` — 53 > 49 porque la regla `.gif` corre en CUALQUIER posición, no
+     sólo portada: 4 entries de galería adicionales cayeron; 3 más quedaron protegidas
+     porque el propio item las lista como `kind: extra` de su colección — el guard de
+     "dueño legítimo" de `url_owner` protege también reglas `known:`, no sólo
+     `cross-series`, comportamiento tal cual lo prueba
+     `test_purge_known_placeholder_url_keeps_owner`; no se tocó, es semántica existente
+     y con test propio, fuera del alcance de este cierre). **56 items quedaron sin
+     ninguna foto** (candidatos naturales a `/watch-search-covers` o re-fetch). Backup
+     explícito `data/backups/items.jsonl/items.jsonl.pre-etapa1-denylist-bak` antes de
+     tocar nada (además del backup fijo `pre-purge-placeholder` que el script hace
+     solo). `--dry-run` posterior con el mismo `--only-reasons`: 0 pendientes de esas
+     dos razones — releído el archivo (gotcha #163), no quedó ningún placeholder de la
+     denylist aplicada.
+     (b) **6 non-manga colados por searches amplios, detectados de paso por la IA de
+     visión mirando portadas** (no por el filtro de texto — nadie los había mirado):
+     2 almanaques de adivinación de Getters Iida (`ゲッターズ飯田`), 1 artbook de
+     historia natural francesa (`博物画集`, distinto de `画集` a secas que sí es
+     manga-artbook), 1 guía de viaje temática (`地球の歩き方`, franquicia real desde
+     1979, el título menciona "Dr.STONE" pero es una guía, no el manga), 1 recopilación
+     de tanka/ensayo ilustrado sobre gatos (`猫のいる家に…`, verificado por búsqueda
+     web: es poesía corta + prosa de 仁尾智/小泉さよ, no viñetas), y 1 enciclopedia de
+     videoconsolas (`gran enciclopedia de las videoconsolas`) que colaba desde
+     listadomanga.es. Los 9 sospechosos originales del triage eran en realidad 7 slugs
+     únicos (2 se repetían entre lote A y B) + **2 falsos positivos del juez de visión**
+     que SÍ son manga real, verificados por búsqueda web antes de tocar nada: el corgi
+     `하루 한 코기` es un manhwa publicado por Daewon C.I. (su propio catálogo lo
+     categoriza `만화`/cómic), y los 2 `dudoso` del triage (`goodnight-punpun-...`,
+     `aposimz-...`) directamente no se tocaron — la visión sólo ve la portada, no el
+     contenido, así que "parece foto/ensayo" no es evidencia suficiente de non-manga
+     sin cruzar la fuente real. Los 5 términos nuevos van a `_NON_MANGA_HARD` en
+     `manga_watch.py` (no a `data/comics_blacklist.yml`: ese archivo es específicamente
+     para franquicias de cómic occidental vía `is_comic_not_manga`, estos son libros
+     generales sin relación al cómic). Cada término se verificó contra el corpus
+     completo ANTES de agregarlo (gotcha #154): conteos de 1-2 hits, sin colisión con
+     manga real. `filter_non_manga.py --dry-run` confirmó **exactamente 7 rechazos**,
+     ninguno de más — aplicado. Tests: `test_is_likely_manga_rejects_non_manga_
+     general_books_etapa1` (los 7 casos reales) + `test_is_likely_manga_general_book_
+     patterns_dont_overmatch` (画集 genérico y el corgi manhwa siguen pasando).
+
+177. **`candidate_metadata_conflict` confunde el ÍNDICE DE FOTO (`_1`/`_2` = portada/
+     contratapa) con un marcador de VOLUMEN cuando la candidata viene del mismo CDN de
+     Aladin (Etapa 2 tanda 2, 2026-09-02).** `_VOL_BARE_RE = r"[-_]0*(\d{1,2})(?=[-_.])"`
+     (`fetch_better_covers.py`) extrae "volúmenes bare" del ÚLTIMO segmento del path
+     (el filename) cuando no hay marcador explícito (vol/tomo/#). Aladin nombra sus
+     archivos `<isbn>_<índice-de-foto>.jpg` (`k622831461_1.jpg` = foto 1/portada,
+     `_2.jpg` = contratapa, etc. — **no** es el volumen del manga). Caso real: para
+     `return-of-the-mount-hua-sect-unknown-limited-kr-21` (`item.volume = "21"`), la
+     candidata `image.aladin.co.kr/product/30792/4/cover500/k622831461_1.jpg` es
+     **el mismo archivo que la referencia actual** (`cover150/k622831461_1.jpg`,
+     mismo `id/subcarpeta/nombre`, sólo cambia el tamaño) — `_same_cover` la valida
+     `True` con distancia Hamming **0**, pero `_extract_candidate_volumes` lee el `_1`
+     del filename como `bare = {1}`, `21 not in {1}` → `candidate_metadata_conflict`
+     devuelve `True` → hard-reject de una candidata que es LITERALMENTE la misma
+     imagen en 16× más píxeles (150×100 → 600×400, confirmado con request real y
+     verificación visual). Mismo mecanismo bloqueó `d-gray-man-unknown-limited-kr-6`.
+     No es un problema de `_same_cover` (funciona perfecto) ni de la fuente (Aladin sí
+     tiene el tamaño grande) — es el heurístico "bare" de volumen, pensado para
+     filenames tipo `serie-03.jpg` o `vol_12.jpg`, sobre-generalizando a CUALQUIER CDN
+     que use un sufijo `_N` para "foto N de la ficha" en vez de "tomo N". Detalle y
+     verificación en `docs/scraper/sources/kr-aladin.md` § "CONFIRMADO: `cover500/`
+     existe…".
+
+     **CERRADA (2026-09-02).** Dos fixes independientes, ambos en la fuente única
+     (`fetch_better_covers.py`), sin tocar el schema ni el motor batch:
+
+     **(a) Fix de mecanismo — `_extract_candidate_volumes`/`candidate_metadata_conflict`
+     ya no confunde el índice de foto con el tomo.** Nueva regla `_is_cdn_photo_index_
+     suffix`: un match "bare" de `_VOL_BARE_RE` sólo se descarta como volumen si (1) queda
+     INMEDIATAMENTE antes de la extensión (`_EXT_TAIL_RE`, sin más filename después — así
+     `akira-norma_01_cover.jpg` sigue tratándose como marcador real) Y (2) el token que lo
+     precede es un ID de catálogo — numérico largo (≥6 dígitos), a lo sumo con 1 letra de
+     prefijo (`_CDN_PHOTO_INDEX_ID_RE = r"^[A-Za-z]?\d{6,}$"`, matchea `k622831461` y
+     `8925290057`) — no un slug de título con letras. Es general (cualquier CDN con esa
+     convención id+índice), no un check de host Aladin hardcodeado. Tests nuevos en
+     `tests/test_same_cover.py` (`TestAladinCover`… 4 casos: sufijo de foto no es
+     conflicto, ISBN real en la misma URL SIGUE detectándose, marcador de página con vol
+     explícito sigue funcionando, el caso bare-no-al-final existente no se rompe).
+
+     **(b) Upgrade determinista** (`upgrade_image_resolution.py`, patrón 10): `image.
+     aladin.co.kr/.../cover<N>/<archivo>` con `N<500` → `cover500` en la misma ruta —
+     mismo archivo, no candidata externa, no pasa por `candidate_metadata_conflict` en
+     absoluto (cierra el problema de raíz para el pipeline batch, tal como sugería la
+     mitigación original). Verificado en vivo antes de aplicar: `cover800`/`1000`/`1200`
+     dan 404 (cover500 es el techo real), `coversum`/`letslook` son variantes chicas o de
+     archivo DISTINTO (no se usan como target). Corrida real sobre el corpus
+     (`--host aladin.co.kr`, backup `pre-aladin-upgrade`): **371 URLs candidatas → 297
+     mejoradas** (mediana ×6.25 píxeles, rango ×1.77–×16), **54 sin mejora real** (ya en
+     el techo del CDN, o portada previamente algoritmo-upscaleada — `upscaled: true` —
+     con más píxeles sintéticos que el cover500 real; el gate `--min-gain` correctamente
+     no downgradea). De los 4 items de `cover150` con recorte apaisado destruido
+     documentados en `kr-aladin.md` § "cover150/ no es baja resolución…": **2 quedaron
+     resueltos** (`return-of-the-mount-hua-sect-unknown-limited-kr-21` 15k→240k px ×16,
+     `frieren-unknown-limited-kr-10` 11.4k→182k px ×16, ambos ya sobre el piso de 90k px)
+     y **2 siguen bajo el piso** porque el archivo fuente en Aladin es chico incluso en
+     `cover500` (`hayate-no-gotoku-unknown-limited-kr-1` 20k→36k px,
+     `d-gray-man-unknown-limited-kr-6` 12k→29k px — nada que el CDN pueda dar, confirma
+     la nota de la ficha de fuente sobre `d-gray-man`).
+
+     **Nota operativa**: el candidate `approved` de `return-of-the-mount-hua-sect-…-kr-21`
+     en `data/cover_preview.json` (URL externa `ae04.alicdn.com`, mismos 240 000 px) queda
+     ahora redundante contra la portada nativa de Aladin ya aplicada — `sync_cover_
+     preview.py --dry-run` no lo poda porque las candidatas `approved` son intocables por
+     diseño (decisión del owner, no una premisa caída). No se tocó `cover_preview.json` en
+     este cierre.
+
+     Suite completa (2432 tests) verde, `validate_corpus.py` 0 violaciones duras,
+     segunda corrida real (idempotencia) → 0 mejoradas adicionales. Detalle y números en
+     `docs/scraper/sources/kr-aladin.md` § "Upgrade determinista aplicado" y
+     `docs/reference/images.md` § "Upgrade de resolución — `upgrade_image_resolution.py`".
+
+178. **Correr `/watch-search-covers` en simultáneo con una purga de imágenes
+     (`purge_placeholder_images.py`) invalida el snapshot de `sc_plan.py` a mitad de
+     corrida — 20/48 targets de la Etapa 2 tanda 2 quedaron obsoletos (2026-09-02).**
+     `sc_plan.py` lee `items.jsonl` UNA vez al arrancar y escribe `.tmp_sc_plan.json`;
+     el loop del skill (Step 3) tarda decenas de minutos en Chrome, y en esa ventana
+     otra sesión corrió el cierre de la Etapa 1 (gotcha #176a: regla `.gif` de Rakuten,
+     68 items purgados, `images[]` vaciado + archivo movido a `data/images/_orphans/`)
+     — **exactamente** sobre 15 de los targets de esta tanda (todos con referencia
+     `tshop.r10s.jp/.../<isbn>.gif?downsize=130:*`, el patrón que gotcha #171 identifica
+     como placeholder). Efecto en cadena: `sc_validate.py` resuelve
+     `ref_image_local` vía `(images_dir / ref_local).exists()` — con el archivo movido a
+     `_orphans/` esa comprobación da `False` y cae a `fbc._get_current_bytes(item, ...)`,
+     que TAMBIÉN falla (`images: []` tras la purga) → `curr_bytes = b''` → el gate fuerte
+     `_same_cover` NUNCA corre, se usa el gate débil sin-referencia (aspect + metadata +
+     `_is_soft_image`, sin comparación de identidad) — de los 8 items ya tocados por el
+     loop en ese momento, los 8 terminaron con **1-2 candidatas `verified:false` de
+     dudosa relación real** (dominios sueltos como `slideserve.com`, `mangaread.org`,
+     `argo-bdp.com` — nada verificado contra la imagen real). Se detectó comparando el
+     snapshot del plan contra una relectura de `items.jsonl` a mitad de corrida
+     (mismatch en `image_ref_local` / `images[]` vacío / item desaparecido —
+     4 items fueron expulsados del corpus en la misma ventana por el cierre non-manga
+     de gotcha #176b). **Mitigación aplicada en esta corrida (no un fix de código)**:
+     los 8 items ya con búsqueda parcial se cerraron con lo que tenían (candidatas
+     `verified:false`, marcadas para escepticismo reforzado en el reporte); los 12
+     restantes (aún no tocados por Chrome) se saltearon sin gastar navegaciones — no
+     tiene sentido buscar hi-res para una referencia que ya no es la portada real del
+     item. **Recomendación de proceso** (no de código): `/watch-search-covers` y
+     cualquier script de purga/GC de `data/images/` (`purge_placeholder_images.py`,
+     `mirror_images.py --gc`, `sync_cover_preview.py`) no deberían correr en paralelo
+     sobre el mismo corpus — el lock `flock` (decisión #6) protege la ESCRITURA de
+     `items.jsonl`, pero no evita que un LECTOR de larga duración (este skill) trabaje
+     sobre un snapshot que la otra corrida vuelve obsoleto a mitad de camino. Si se
+     necesita correr ambos el mismo día, secuenciarlos (purga primero, search-covers
+     después) evita el desperdicio de navegaciones observado acá.
+
+179. **Fix de mecanismo para #171/#178: guard de referencia placeholder + anti-drift por
+     hash en `sc_plan.py`/`sc_validate.py` (2026-09-02).** Hallazgo del juez sobre una
+     tanda de Etapa 2: **9/9 candidatas** de Yandex reverse-image que usaron como
+     CONSULTA una referencia placeholder (la "tarjeta de título" `.gif` de Rakuten,
+     gotcha #171 — texto quemado sobre fondo pálido, canvas de tamaño REAL, no cae en
+     el guard `MIN_REF_PX` por tamaño) fueron basura sistemática (slides, cabeceras de
+     blog, logos) — reverse-image de un placeholder encuentra imágenes parecidas AL
+     PLACEHOLDER, no a la portada real. Dos fixes, mismo turno:
+     (a) **Guard de referencia placeholder** (`sc_plan.py.reference_placeholder_reason`):
+     reusa las DOS fuentes únicas de `image_store` sin reimplementar —
+     `known_placeholder_url_reason(url)` (por URL, sin tocar disco) y
+     `placeholder_reason(bytes)` (por contenido del archivo local: estructural +
+     firma sha1). Se evalúa ANTES del criterio de calidad (scale/área) — un placeholder
+     nunca es referencia válida sin importar su tamaño. Con referencia placeholder: skip
+     DURO por defecto (contador `placeholder_reference` en el resumen de
+     `sc_plan.py`); con `--include-no-image` entra con `reference_kind: "placeholder"`
+     y la referencia de búsqueda/verificación blanqueada — pero para GALERÍA
+     (`img_idx >= 1`) `candidate_target` (la URL que identifica QUÉ foto se reemplaza)
+     se conserva sin tocar, sólo se blanquea la referencia de búsqueda; confirmado con
+     gotcha #176a: la regla `.gif` corre en cualquier posición, no sólo portada. Como
+     la variante `yandex-reverse` de `build_variants()` sólo se genera con un `ref_url`
+     http utilizable, blanquear la referencia YA impide estructuralmente el reverse
+     contra el placeholder — sin depender de que el Step 3 del skill lo filtre (aunque
+     igual se agregó un filtro defensivo ahí, por planes viejos sin el campo). Cada
+     target nuevo trae `reference_kind` (`"real"`/`"placeholder"`/`"none"`).
+     (b) **Guard anti-drift por hash** (gotcha #178): `sc_plan.py` persiste
+     `reference_sha256` (sha256 del archivo local de referencia AL MOMENTO DEL PLAN) en
+     cada target con `reference_kind == "real"`. `sc_validate.reference_drift_reason(data,
+     images_dir)` lo recalcula contra el archivo actual (misma resolución que usa
+     `validate()` para `curr_bytes`, factorizada a `_resolve_reference_bytes` — fuente
+     única dentro del script) ANTES de tocar la red: si el archivo ya no existe
+     (`"reference_missing"`) o cambió de contenido (`"reference_changed"`), `validate()`
+     devuelve `[]` sin descargar ninguna candidata — nunca cae al gate débil
+     sin-referencia sobre un item que sí tenía referencia real al momento del plan (el
+     caso medido en gotcha #178: 8 items con candidatas `verified:false` de dudosa
+     relación por una purga concurrente). El campo es puramente ADITIVO — ausente
+     (plan viejo, o target sin referencia real) el guard es no-op, `""` siempre. El
+     Step 3 del skill (SKILL.md) corta el resto de las variantes de un target apenas
+     `sc_validate.py` reporta `drift` (no tiene sentido seguir gastando navegaciones
+     para una referencia que ya no es la actual) y lo registra en
+     `cover_search_attempts.jsonl` con un campo `drift` para distinguirlo de un
+     0-match genuino. Tests: `tests/test_sc_plan.py` (skip por URL/.gif Rakuten, skip
+     por firma de contenido, `reference_kind`/`reference_sha256` correctos para
+     referencia real, galería preserva `candidate_target` pero blanquea la referencia
+     de búsqueda) y `tests/test_sc_validate.py` (sin `reference_sha256` no bloquea,
+     detecta `reference_changed`/`reference_missing`, `validate()` corta ANTES de la
+     red con drift, camino feliz sin drift no se rompe). **Dry-run de sólo lectura
+     sobre el corpus real** (`sc_plan.py --retry-failed`, criterio `scale` default,
+     portada+galería): **3 targets** saltados DURO por referencia placeholder de un
+     total de 569 candidatos — la mayoría de los ~50 `.gif` de Rakuten identificados
+     en gotcha #171 ya habían sido purgados del corpus por el cierre de gotcha #176a
+     antes de esta tarea; estos 3 son casos nuevos/remanentes. Suite completa
+     verde (2443 tests) tras el cambio.
+
+180. **`tshop.r10s.jp`/`shop.r10s.jp` (Rakuten Books) sirven la portada nativa
+     quitando la query ENTERA, no un `downsize=N` mágico más grande (2026-09-02).**
+     El patrón `?downsize=130:*` de la familia `.r10s.jp` (177 portadas/galería del
+     corpus) es el CDN de resize propio de Rakuten, DISTINTO del host
+     `thumbnail.image.rakuten.co.jp` (`?_ex=NxN`, ya cubierto por el patrón #5 de
+     `upgrade_image_resolution.py` desde antes). Verificado con requests reales:
+     `downsize=130:*` → 130×184; `downsize=1000:*` → 844×1200 (igual a la nativa,
+     no upscala); sin query (sigue el 302 `tshop`→`shop`) → 844×1200 (misma imagen,
+     mismo mecanismo que el patrón #5); `downsize=9999:*` → HTTP 400 (el param SÍ
+     tiene techo, pero no hace falta buscarlo — quitar la query entera da la nativa
+     directo, sin el riesgo de pegarle a ese límite). Agregado como patrón #11 en
+     `derive_original_url()` (`_RAKUTEN_R10S_HOSTS = {tshop.r10s.jp, shop.r10s.jp}`,
+     params `downsize`/`fitin`/`composite-to`), con guard anti-`.gif` reusando
+     `image_store.known_placeholder_url_reason()` (gotcha #171/#176: esos hosts
+     sirven una tarjeta de título `.gif` sin portada real — no tiene sentido
+     "mejorar" su resolución). Corrida real acotada (`--host r10s.jp`, backup
+     `items.jsonl.pre-rakuten-upgrade-bak`): 176 candidatas (84 aprobados
+     salteados), **145 mejoradas** (ganancia mediana ×5.34, rango ×1.16–×85.21),
+     22 sin mejora — verificado caso por caso: son items cuyo espejo local YA
+     tenía una imagen mejor que la nativa de Rakuten (upgrade previo vía
+     `watch-search-covers`/upscaler), así que el gate `--min-gain` los rechaza
+     correctamente en vez de degradarlos; NO son items sin intentar. Segunda
+     pasada `--dry-run` con esos 22 URLs sigue listándolos como "candidatas"
+     (el patrón matchea la URL aunque el min-gain la rechace — el "0 pendientes"
+     sólo aplica a las URLs que sí mejoraron, cuya query ya no existe). Corrida
+     real repetida (idempotencia): 0 mejoradas, 0 errores, hash de `items.jsonl`
+     sin cambios. Tests en `tests/test_upgrade_image_resolution.py` (clase
+     `TestRakutenR10s`, 8 casos: downsize, fitin+composite-to, host ajeno sin
+     tocar, ya limpio sin tocar, sin param de resize sin tocar, host thumbnail
+     no lo cubre este patrón, guard `.gif` vía monkeypatch, no requiere
+     `needs_same_cover_validation`). Suite completa verde (2451 tests).
+
+181. **`upgrade_image_resolution.py` reescribe cada entry de `images[]` de forma
+     AISLADA — si dos entries del MISMO item colapsan a la misma URL final tras
+     el upgrade, quedan duplicadas literalmente (2026-09-02, cierra el hallazgo
+     "no corregido" de "Cierre Etapas 1-2").** Causa raíz confirmada con datos
+     reales (`data/backups/items.jsonl/items.jsonl.pre-aladin-upgrade-bak`, el
+     backup del patrón #10 de gotcha #177): 151 items KR-Aladin tenían, ANTES
+     del upgrade, `images[0]` (la portada) YA en `cover500/<archivo>` — llegó
+     así por un camino previo (JSON-LD/og:image, que Aladin ya sirve en
+     cover500) — Y otra entry de galería más adelante apuntando al MISMO
+     `<id>/<subcarpeta>/<archivo>` pero bajo `cover150/` o `cover200/` (el
+     selector genérico de galería capturó la miniatura). Antes del upgrade las
+     URLs eran textualmente DISTINTAS, así que ningún dedup existente las veía
+     como duplicado. `_collect_targets`/`_apply_upgrade` procesan cada
+     `(item, campo, url)` de forma independiente, sin mirar el resto de
+     `images[]` del mismo item — al normalizar `cover150/`→`cover500/` (o
+     `cover200/`→`cover500/`), la entry de galería queda con la MISMA url/local
+     que la portada. Ejemplo real (`fullmetal-alchemist-universe-limited-kr`):
+     `images[0]` y `images[3]` idénticas tras el upgrade
+     (`cover500/k882930586_1.jpg` en ambas). Confirmado también por el panel:
+     `data_quality.py` ya lo reportaba como "Foto repetida en el carrusel".
+
+     **Fix de mecanismo**: `dedupe_item_images(item, images_dir)` (nueva,
+     `upgrade_image_resolution.py`) — corre por-item apenas `_apply_upgrade` lo
+     toca, ANTES de cualquier flush parcial (así ningún flush a mitad de
+     camino persiste un duplicado). Clave canónica de "misma foto" = cualquiera
+     de: (a) `manga_watch._img_stem(url)` idéntico (misma normalización que
+     usa el resto del pipeline — fuente única, no reimplementada), (b) `local`
+     idéntico, (c) sha256 de los bytes del archivo `local` idéntico (fallback
+     de CONTENIDO para el caso general en que dos URLs con stem/local
+     distintos terminan siendo la misma imagen en disco — costoso sólo cuando
+     stem/local no deciden, cacheado por `local` dentro de la llamada). Nunca
+     reordena `images[0]` ni vacía `images[]`; el duplicado eliminado dona
+     `kind`/`description` al sobreviviente cuando éste no los tenía (mismo
+     patrón sticky que `_apply_improvement`, gotcha #164). Wireado al loop
+     principal de `run()`: cada vez que `_apply_upgrade` toca un item, se
+     dedupea inmediatamente.
+
+     **Reparación del dato** (one-off puntual, sin tocar el mecanismo batch):
+     backup `items.jsonl.pre-aladin-dedup-repair-bak` + `dedupe_item_images`
+     aplicado a TODO el corpus (no sólo Aladin — la verificación pedida era
+     "0 duplicados por url canónica y por sha en TODO el corpus", y el mismo
+     mecanismo general encontró 5 casos MÁS fuera de Aladin: 3 en Global -
+     Mangavariant, 1 en IT - Star Comics, 1 en JP - Rakuten Books — todos
+     sha256 idéntico bajo nombres de archivo totalmente distintos, verificado
+     a mano que son genuinamente el mismo contenido, no falsos positivos).
+     **156 items / 161 entradas** duplicadas eliminadas (151 items Aladin +
+     5 no-Aladin; algunos items Aladin tenían 2 pares duplicados, de ahí
+     161>156). *(Nota: el diagnóstico inicial de "Cierre Etapas 1-2" hablaba
+     de "109 items / 151 entradas" — no se pudo reconciliar exactamente esa
+     cifra con el estado actual del corpus; el conteo verificado en esta
+     tarea, re-derivado con datos reales del corpus vigente y confirmado por
+     `data_quality.py`'s propio detector `carrusel_dup`, es 151 items
+     Aladin.)* Verificado releyendo: 0 items con imagen duplicada por url
+     canónica y 0 por sha256 de archivo en TODO el corpus post-reparación; 0
+     portadas perdidas (comparación campo-a-campo contra el backup); 0 items
+     `approved_at` tocados (golden records fuera del alcance por diseño, igual
+     que `_collect_targets`). `dedup_carousel_images.py --redteam-auto` (que
+     YA cubre sha256 idéntico) se probó primero como candidato a "la
+     herramienta que ya alcanza" — pero además del sha256 detecta pares
+     `dhash_rescale` (misma foto en dos resoluciones NO byte-idénticas) en
+     MUCHOS más items ajenos a este bug (303 items totales, vs. los 156 de
+     este mecanismo), así que no "resuelve exactamente estos casos sin tocar
+     otros" — de ahí el one-off con la clave canónica más angosta (stem/local/
+     sha exactos, sin hash perceptual), tal como preveía el encargo.
+
+     Tests en `tests/test_upgrade_image_resolution.py::TestDedupeItemImages`
+     (7 casos: duplicado por url canónica, duplicado por sha de contenido con
+     stem/local totalmente distintos, sin duplicado no toca nada, sticky
+     kind/description, <2 imágenes no-op, sin campo `images` no-op, guard
+     nunca vacía `images[]`). Suite completa verde (2464 tests).
+
+182. **`apply_preview()` aplicaba una candidata `approved` de reemplazo de
+     portada sin re-validar ganancia de píxeles contra la portada ACTUAL del
+     item al momento de aplicar — sólo confiaba en `old_pixels`, congelado en
+     `cover_preview.json` al momento de aprobar (2026-09-02, Cierre Etapas
+     1-2).** El gate de ganancia histórico corre en `sc_validate`/aprobación,
+     sobre una referencia congelada en el momento de PLANEAR. Si otro proceso
+     mejora la portada ACTUAL del item entre la aprobación y el `--apply-
+     preview` (típicamente `upgrade_image_resolution.py`, que puede correr el
+     mismo día), esa referencia congelada queda stale y `apply_preview`
+     reemplazaba a ciegas. Caso real confirmado: `travidebla-unknown-artbook-
+     jp` — una candidata `approved` (`animate.shop`, 600×847=508 200 px,
+     match_dist=0) había sido aprobada legítimamente contra la portada de
+     entonces, pero ENTRE la aprobación y el apply el patrón #11 de gotcha
+     #180 (familia r10s.jp de Rakuten) ya había subido la portada nativa a
+     850×1200=1 020 000 px — la candidata aprobada pisó esa mejora con un
+     downgrade real del 50%. Revertido a mano en el cierre porque este guard
+     no existía todavía (ver `docs/reference/images.md` § "Cierre Etapas 1-2"
+     → "Bug encontrado: downgrade real...").
+
+     **Fix de mecanismo**: `_no_gain_at_apply(targets, images_dir, new_local)`
+     (nueva, `fetch_better_covers.py`) — re-lee la portada ACTUAL de disco
+     (`_get_current_bytes`, no el `old_pixels` congelado) en el momento MISMO
+     de aplicar, para las 3 acciones que llaman a `_apply_improvement`
+     (`replace_cover`, `replace_cover_demote`, `replace_and_add` — el choke
+     point único, mismo patrón que el fix de gotcha #164). Si
+     `new_pixels <= current_pixels`, la candidata NO se aplica: vuelve a
+     `status="pending"` con `invalid_reason="no_gain_at_apply"` — mismo patrón
+     que ya usa el guard `would_remove_cover` de `remove_image` (gotcha #168):
+     se cuenta en el resumen (`skipped_no_gain_at_apply`) y la entry se
+     conserva en el preview para que el owner decida. **Excepción**: si la
+     portada ACTUAL del target es un placeholder
+     (`image_store.placeholder_reason(...) != ""`) o no existe, el guard NO
+     bloquea — cualquier imagen real es mejora sin importar píxeles. Con
+     múltiples `targets` (mismo slug, varias filas físicas) el criterio es
+     conservador ("todo o nada"): basta que UN target no gane para bloquear
+     TODA la candidata.
+
+     `replace_image` (reemplaza una imagen puntual de la galería por su url,
+     no necesariamente la portada) queda FUERA del alcance de este guard a
+     propósito — no tiene una única "imagen actual del item" bien definida
+     como sí la tiene `images[0]`; si se detecta el mismo patrón de downgrade
+     ahí, es una extensión futura del mismo mecanismo, no de este cierre.
+
+     Tests en `tests/test_apply_gain_guard.py` (6 casos: ganancia real aplica,
+     sin ganancia vuelve a pending con `invalid_reason`, portada actual
+     placeholder aplica igual pese a tener más píxeles nominales, sin portada
+     previa aplica igual, y el guard cubre también `replace_cover_demote` y
+     `replace_and_add`). Suite completa verde (2464 tests).
+
+183. **Whakoom público expone como máximo ~11 tomos por edición sin login; `/comics/`
+     está en `Disallow:` de `robots.txt` y `<edición>/todos` exige cuenta (owner,
+     2026-09-02).** La página `/ediciones/<id>/<slug>` es pública y trae editorial,
+     idioma, formato, total de tomos y los primeros ~11 tomos con su cover — suficiente
+     para resolver la mayoría de items ES sin login (508/670 del pool real de
+     `docs/reference/images.md` § "Búsqueda de portadas hi-res — skill
+     `/watch-whakoom-covers`"). El resto de los tomos de una edición larga vive en
+     `<edición>/todos` o en `/comics/<hash>/…` — ambas exigen sesión autenticada, y
+     `/comics/` además está explícitamente bloqueada por `robots.txt`. El skill
+     `watch-whakoom-covers` (`scripts/retrofit/we_plan.py`) trata esto como un límite
+     ESTRUCTURAL, no una config: `volume_resolvable()` excluye DURO cualquier item con
+     `volume > 11` (o volumen no numérico, conservador) del universo de targets — nunca
+     se navega a `/comics/`/`/todos` para intentar completar el resto, y nunca se
+     resuelve un captcha/challenge de Cloudflare si aparece en `/ediciones/`. Conseguir
+     una cuenta Whakoom del owner para cubrir el resto del pool (162/670 items,
+     `volume > 11`) queda como decisión pendiente del owner — implica evaluar los
+     Términos de Servicio del sitio antes de automatizar acceso autenticado, fuera del
+     alcance de esta implementación. Tests: `tests/test_we_plan.py::test_volume_over_11_excluded`,
+     `test_volume_resolvable_helper`.
+
+184. **`listadomanga_collections.Candidate.volume` es un atributo DINÁMICO, no un
+     campo declarado del dataclass `Candidate` (`scripts/manga_watch.py`) —
+     `parse_collection_page()` sólo hace `cand.volume = parsed["volume"]` cuando el
+     parser detectó un nº en el tomo (ver el comentario "Propagar volumen al
+     candidato..." junto a esa asignación); en un candidate SIN volumen (oneshot,
+     box-level, o "libro/artbook") el atributo nunca se asigna, y `c.volume` explota
+     con `AttributeError: 'Candidate' object has no attribute 'volume'` en vez de
+     devolver `""` (2026-09-02, implementando `listadomanga_meta.py` — endurecimiento
+     #1 de `/watch-whakoom-covers` tanda 3). Cualquier código NUEVO que reuse
+     `parse_collection_page()` y necesite leer `.volume` de los candidates que emite
+     debe usar `getattr(c, "volume", "")`, nunca `c.volume` directo — el propio
+     `listadomanga_collections.py` nunca lee `.volume` desde afuera del parser (sólo
+     lo escribe), así que este bug no se había manifestado hasta el primer consumidor
+     externo. Fix + test en `scripts/retrofit/listadomanga_meta.py::parse_meta_from_html`
+     (usa `getattr`) y `tests/test_listadomanga_meta.py::test_paginas_captured_for_oneshot_in_special_section`
+     (regresión: oneshot sin volumen, antes del fix explotaba al calcular `total_tomos`).
+
+185. **`sync_cover_images.py::_compute_junk_local` clasificaba junk cualquier archivo local
+     `< 6000 bytes` (`_TINY_BYTES`) SIN mirar dimensión/contenido — un umbral de bytes crudo,
+     no un detector estructural (2026-09-02, reparación de imágenes).** Los thumbnails REALES
+     de listadomanga (96-124×150-160px) comprimen en AVIF a 2.6-6KB y caían en esa
+     clasificación; `_fix_bad_cover`, al no encontrar reemplazo en la galería, hacía
+     `item["images"] = imgs[1:]` — vaciando la ÚNICA portada de ediciones sin galería de
+     respaldo. La corrida real (única, 2026-08-23 21:31) afectó 111 items del corpus
+     (verificados: los 111 archivos en `_orphans/`/disco pesaban 2577-5992 bytes, dims tipo
+     208×300/234×320, 0/111 marcados placeholder por `image_store.placeholder_reason`, 0
+     compartidos entre >=4 obras — todos falsos positivos del umbral de bytes). Universo
+     acotado a listadomanga (`static.listadomanga.com`) porque es la fuente cuyos thumbnails
+     son sistemáticamente chicos; otras fuentes con imágenes <6KB perdidas por la misma
+     corrida (116 items del diagnóstico, no-listadomanga) quedan fuera del alcance de esta
+     reparación puntual — decisión del owner si se ataca después.
+
+     **Fix de mecanismo**: `_compute_junk_local` ahora delega en
+     `image_store.placeholder_reason()` (MISMO detector estructural que usa
+     `purge_placeholder_images.py`: dims ≤8px, casi-sólido std<3, firma de contenido
+     conocida, roto) para archivos ≤ `_EVAL_MAX_BYTES` (200 000 bytes, mismo bound de
+     performance/seguridad que ese script — nunca un criterio de basura). El tamaño en bytes
+     DEJÓ de decidir nada; sólo queda la señal independiente "mismo archivo compartido por
+     ≥4 obras distintas" (reuso de placeholder, no tamaño). `_is_junk(url)` también gana
+     `image_store.known_placeholder_url_reason()` (antes sólo miraba `IMAGE_URL_BAD_PATTERNS`
+     — sustrings genéricos; un placeholder fichado por hash exacto/fragmento/regla
+     host+extensión Rakuten sin esos sustrings pasaba como "no junk"). Tests en
+     `tests/test_sync_cover_images.py` (16 casos: thumbnail chico-pero-real conservado,
+     placeholder estructural purgado con/sin reemplazo de galería, compartido-entre-obras
+     purgado, roto/firma/rakuten/known-url detectados, archivo grande nunca evaluado con
+     PIL). Un test preexistente (`tests/test_extraction.py::test_compute_junk_local_flags_tiny_zero_and_shared`)
+     usaba bytes garbage con un magic-number falso como stand-in de "imagen real" — válido
+     bajo el criterio viejo (sólo miraba tamaño), inválido bajo el nuevo (el garbage no
+     decodifica con PIL → `placeholder_reason` lo marca "broken"); se actualizó para usar
+     una imagen PNG real generada con PIL.
+
+     **Reparación del dato** (separada del fix de mecanismo, mismo turno):
+     `scripts/retrofit/restore_lm_thumbnails_20260902.py` — one-off (no forma parte del
+     pipeline canónico, no está en el registry). Compara `items.jsonl` contra el backup
+     tomado ANTES de la corrida del bug
+     (`data/backups/items.jsonl/items.jsonl.pre-sync-cover-images-bak`, 2026-08-23 21:31):
+     para cada item con `images == []` hoy cuyo backup tenía `images[0].url` de
+     `static.listadomanga.com` y NO era un placeholder conocido, reconstruye
+     `images[0] = {url, local, kind: "gallery", description: ""}` — el archivo se recupera
+     de `data/images/` directo o se MUEVE de vuelta desde `_orphans/` (re-verificado con
+     `placeholder_reason` antes de mover — defensa en profundidad, nunca reintroduce un
+     placeholder que un GC posterior haya puesto en cuarentena por otra razón); si no
+     aparece en ningún lado, queda `local=""` para que `mirror_images.py --slugs` lo
+     re-descargue. Corrida real: 111/111 restaurados (17 vía disco, 94 vía `_orphans/`, 0
+     faltantes — no hizo falta re-descargar nada). Backup de items.jsonl con label
+     `restore-lm-covers`. Verificado: `validate_corpus.py` → 0 violaciones duras, MIRRORREF 0
+     (de 23683 refs); `sync_cover_preview.py --dry-run` → 0 cambios (la restauración no
+     provoca podas indebidas de la cola de portadas — 57/111 restaurados tienen además una
+     candidata whakoom pendiente en `data/cover_preview.json`, que mejorará la portada
+     cuando se apruebe). Tests en `tests/test_restore_lm_thumbnails.py` (9 casos: disco,
+     orphans-con-move, missing-queda-solo-url, nunca reintroduce placeholder conocido ni uno
+     detectado recién al re-verificar, no toca items con portada ya presente, fuera de
+     alcance si el backup no es de listadomanga, dry-run no mueve archivos, idempotente).
+
+     De paso, `mirror_images.py` ganó `--slugs SLUG1,SLUG2` (útil en general, no sólo para
+     esta reparación): acota el BACKFILL a items puntuales. Cuidado de diseño: el filtro
+     vive DENTRO de `_run_backfill` sobre la selección de TARGETS, nunca achicando la lista
+     `items` que el caller pasa — esa lista es la que el flush periódico/final escribe
+     completa; si `--slugs` hubiera filtrado `items` en el caller, un flush a mitad de una
+     descarga acotada habría truncado `items.jsonl` al subconjunto pedido. Tests en
+     `tests/test_mirror_images_slugs.py` (incluye una regresión end-to-end de `main()` que
+     confirma que el corpus completo sobrevive intacto tras una corrida con `--slugs`).
+
+186. **`we_plan.py` arma la query de Bing con `series_display` (nombre internacional,
+     a menudo en inglés) — pero Whakoom indexa por el título de la edición ESPAÑOLA, que
+     puede diferir por completo (2026-09-02, tanda 3 del skill `/watch-whakoom-covers`).**
+     Caso real verificado en vivo: item `a-man-and-his-cat-norma-special-es-1`
+     (`series_display = "A Man and His Cat"`, editorial Norma) — la query documentada
+     `site:whakoom.com "A Man and His Cat" Norma` no devolvió ninguna candidata
+     relevante, pero la edición SÍ existe en Whakoom bajo
+     `https://www.whakoom.com/ediciones/597708/el_hombre_y_el_gato-rustica_con_sobrecubierta`
+     ("El hombre y el gato", Norma Editorial, Spanish (Spain), 12 tomos — coincide en
+     editorial+idioma+total de tomos con el item). El gap es de DESCUBRIMIENTO (la
+     búsqueda Bing nunca encuentra la página), no de resolución (`we_resolve.py` la
+     hubiera aceptado si se hubiera abierto). No se forzó la resolución de este caso
+     puntual para no desviarse del algoritmo documentado del skill — queda como mejora
+     pendiente: `we_plan.py` podría intentar una query alternativa con `title_original`/
+     el título del tomo local cuando la query por `series_display` no devuelve
+     candidatas, antes de rendirse con `not_found`. Sin fix de mecanismo todavía —
+     detalle completo en `docs/reference/images.md` § "Whakoom tanda 3" y
+     `docs/scraper/sources/whakoom.md` § 6.
+
+187. **Una lista de selectores CSS separada por comas NO es una lista de prioridad —
+     matchea por orden en el DOCUMENTO (2026-09-02, IT - Dynit).** El
+     `title_selector` era `".woocommerce-loop-product__title, h2, h3, a"` con la
+     intención de "usá el título del producto; si no, el h2; si no, cualquier `<a>`".
+     Pero `select_one()` con una lista devuelve el primer elemento que aparezca en el
+     DOM que matchee CUALQUIERA de las alternativas — y en la card de WooCommerce el
+     `<span class="onsale">Sconto 10%</span>` vive dentro de un `<a>` que precede al
+     `<h2>`. Resultado: los títulos capturados fueron `"Sconto 5%"` / `"Sconto 10%"`.
+     Es EL MISMO bug que Funside 2026-08-24 (gotcha del `a[href*='/products/']` que
+     agarraba el `<a>` de la imagen con el badge de preventa) — o sea reincidente, y la
+     lección general es: **un fallback en una lista CSS no es un fallback, es un
+     competidor con ventaja posicional**. Si querés prioridad real, usá un selector
+     único y verificalo en vivo. Fix: `title_selector: ".woocommerce-loop-product__title"`
+     (verificado contra la home). Retrofit de los items ya congelados en
+     `scripts/retrofit/fix_dynit_badge_titles_20260902.py` — ojo que el item afectado
+     era un artbook REAL de *Your Name* con el título pisado, no basura: había que
+     reparar el título, no expulsar el item.
+
+188. **Un `+` INMEDIATAMENTE DESPUÉS de un token de home video enumera el CONTENIDO de
+     la caja, no un bonus — el rescate de `_bonus_context_near` estaba invertido
+     (2026-09-02, IT - Dynit).** `_NON_MANGA_HARD_UNLESS_BONUS` rechaza DVD/Blu-ray
+     salvo que el contexto lo marque como extra incluido en una edición de manga. Uno de
+     los marcadores era `[+＋]` de `_BONUS_ROMANCE_RE`, aplicado tanto ANTES como DESPUÉS
+     del match. El `+` ANTES sí marca bonus ("Yomi No Tsugai Variant + FMA Variant
+     Bundle" = dos obras unidas). El `+` DESPUÉS es lo contrario: en
+     `"Manie Manie (Box Set Limited Edition) (Blu-Ray+Dvd+Booklet+Settei Book)"` la lista
+     `Blu-Ray+Dvd+Booklet+…` es el CONTENIDO de un box de home video, y el primer
+     elemento enumerado ES el producto principal. O sea el título decía literalmente "soy
+     un Blu-ray" y el filtro lo leía como "soy un manga con Blu-ray de regalo". Fix:
+     `_BONUS_ROMANCE_AFTER_RE` (idéntico pero sin `[+＋]`) para la ventana posterior; los
+     marcadores léxicos reales (`con`/`with`/`avec`…) y el japonés `付`/`同梱` quedan
+     intactos.
+
+189. **Si el blacklist de cómics matchea contra la URL, las `title_exceptions` TAMBIÉN
+     tienen que evaluarse contra la URL — si no, la asimetría destruye manga real
+     (2026-09-02).** Se extendió `is_comic_not_manga()` para buscar franquicias en el
+     slug de la URL (el slug suele nombrar el sello que el título omite: el título
+     `FAITH n. 1 HOLLYWOOD E LA VIGNA` no dice nada, pero la URL es
+     `/fumetto/valiant-variant-cover-29-faith-1` y Valiant es editorial de cómic US).
+     La primera versión comprobaba las excepciones sólo contra el TÍTULO, y el dry-run
+     mostró que iba a expulsar 3 manga reales — *The Case Study of Vanitas* vol. 4 y
+     *Akame ga Kill!* vols. 8 y 10 — porque sus URLs de Mangavariant terminan en
+     `vol-N-gangan-joker/`: matchean la keyword `Joker` mientras que la excepción
+     `"Gangan Joker"` (revista de manga de Square Enix) vive en la URL, nunca en el
+     título. **Regla general: la excepción se evalúa contra el MISMO blob del que salió
+     el match.** Fijado con test (`test_url_franchise_respects_exceptions_found_in_the_url`).
+     Corolario de proceso: esto sólo apareció por correr `filter_non_manga.py --dry-run`
+     y LEER la lista completa de rechazos antes de aplicar; el conteo agregado no lo
+     mostraba.
+
+190. **`source_health --baseline-alert` da un falso positivo de "yield regression"
+     garantizado a principio de mes en las fuentes con forma de CALENDARIO (2026-09-02,
+     BR - Editora JBC).** El delta del 09-02 marcó 🚨 a JBC con 20 candidatos contra una
+     mediana histórica de 99 (20%). No había nada roto: `editorajbc.com.br/checklist/atual/`
+     es el checklist del MES en curso y el 2 de septiembre sólo tenía 20 entradas
+     publicadas (verificado en vivo: encabezado "Checklist – 3º trimestre de 2026",
+     mes "Setembro de 2026", 20 cards, sin paginación, y los 20 títulos parsean
+     perfecto). La mediana se calcula contra corridas de meses ya llenos, así que la
+     comparación es entre un mes a medio publicar y meses completos. **Antes de tocar
+     selectores por una alerta de yield en una fuente de calendario, verificá en vivo
+     cuántos items tiene la página HOY**; la métrica sana sería comparar contra el mismo
+     día-del-mes, no contra la mediana global.
+
+191. **El veredicto `is_manga=false` del LLM deja el item PENDIENTE pero NO incrementa
+     `standardize_attempts` — así que el escape hatch `standardize_exhausted` nunca se
+     dispara y el item vuelve a gastar Tier 3 en CADA corrida, para siempre.** En
+     `scripts/standardize_apply.py` todas las ramas que dejan un item pendiente
+     contabilizan el intento (result faltante, `series_key` vacía, `edition_key` vacía:
+     `it["standardize_attempts"] += 1`) — todas menos la de `if not r.get("is_manga",
+     True)`, que hace `append_unmapped_from_item(..., "llm_non_manga")` y `continue` sin
+     tocar el contador. Como `standardize_audit.py` sólo excluye de las proyecciones a los
+     items con `attempts >= MAX_STANDARDIZE_ATTEMPTS`, un item flageado no-manga se
+     re-proyecta a Tier 3 (≈1200 tokens, la ruta MÁS cara) en cada corrida hasta que un
+     gate determinista lo expulse — lo que puede no pasar nunca si ningún patrón de
+     `filter_non_manga`/`filter_collectible` lo cubre. Es el patrón de la gotcha #154
+     (veredicto LLM que no expulsa + gate determinista que no lo alcanza = bucle), pero
+     una capa más adentro: acá el bucle no es de re-ingesta sino de re-inferencia, y no se
+     ve en el conteo de items porque el corpus no cambia. **Evidencia (2026-09-05)**: dos
+     productos de merchandising de KADOKAWA Store (`g302606000402` clear-sheet BOX,
+     `g302604002169` chapas) detectados el 2026-09-03 seguían pendientes con
+     `standardize_attempts = None` tras las corridas del 09-04 y 09-05, y el journal del
+     workflow de hoy confirma que ambos volvieron a mandarse a un subagente Tier 3. Efecto
+     colateral: cada corrida re-apila su fila en `unmapped_series.jsonl` (que tampoco
+     deduplica, #157), inflando la cola de curación. **Al leer el reporte del skill, el
+     conteo "LLM non-manga" no son items nuevos: es el acumulado que se re-procesa.** Fix
+     de una línea (incrementar el contador también en esa rama); ver la ficha
+     `docs/scraper/sources/jp-kadokawa.md`.
+
+     **RESUELTO 2026-09-07**, tras 6 corridas de evidencia y con el pool ya
+     duplicado (3 → 6 items). Dos partes: (a) `standardize_apply.py` incrementa
+     `standardize_attempts` también en la rama `is_manga=false`, así que el
+     escape hatch `standardize_exhausted` por fin se dispara; (b) un gate
+     determinista de merchandising japonés (`_NON_MANGA_MERCH_JP`), porque el
+     día del fix quedó demostrado que **el veredicto por-item del LLM no es
+     reproducible**: de tres artículos del MISMO evento y tipo de KADOKAWA
+     rechazó dos y aprobó el tercero, un diorama de acrílico que quedó publicado
+     como `product_type = manga`. Depender del LLM como único guardián deja
+     entrar items fuera de alcance de a uno. El bucle bajó de 6 a 2 items.
+
+192. **Un parámetro de tracking POSICIONAL en la URL (`?l-id=search-c-item-img-NN` de
+     Rakuten) pisa `detected_at` y disfraza items viejos de novedades.** El `NN` codifica
+     el puesto que ocupó el producto en la página de resultados ESA corrida: la misma
+     ficha vuelve con una URL literalmente distinta cuando su ranking cambia. El dedup por
+     `cluster_key` hace bien su trabajo (no se duplica la fila), pero el merge refresca
+     `detected_at` con la fecha de hoy. Consecuencia: **cualquier consumidor que defina
+     "novedades del día" como `detected_at >= inicio del run` sobre-cuenta** — la rutina
+     diaria incluida. Verificado 2026-09-06: de 10 items con `detected_at` de hoy, 3 ya
+     estaban en el corpus previo (el fotolibro de Rakuten pasó del puesto 20 al 23 sin
+     cambiar de producto). Para contar novedades de verdad hay que comparar la URL
+     **normalizada** (sin query ni fragmento) contra el backup `pre-scrape-delta` del
+     propio run, no confiar en `detected_at`. Aplica a toda fuente de tipo `search` que
+     lleve parámetros de tracking; ver `docs/scraper/sources/jp-rakuten-books.md`.
+
+193. **El fallback de autor lee los primeros 3000 caracteres del `<body>` entero, así que
+     en un sitio con mega-menú gigante extrae el MENÚ como autor.** Es el último recurso
+     de `fetch_metadata_from_detail()` (`scripts/manga_watch.py:2946`): si Schema.org, los
+     pares LABEL/VALUE, los `<meta>` y los links `/autore/` no dieron autor, se llama a
+     `extract_author(body_text[:3000], soup)`. Ese recorte NO está acotado a la región del
+     producto — en una plantilla Shopify con navegación desplegable, los primeros 3000
+     caracteres del body son **el menú**. **Evidencia (2026-09-07, IT - Funside Variant)**:
+     las 174 fichas fetcheadas en la corrida devolvieron el MISMO autor, la cadena
+     constante `"Batman ELDEN RING ARTBOOK"`; reproducido en vivo sobre
+     `funside.it/products/non-tormentarmi-nagatoro-1-variant-games-academy-funside`, donde
+     el texto del `div.mega-menu__promotions` ("… Comics di Batman … ELDEN RING ARTBOOK -
+     (VOL.1-2) …") cae dentro de la ventana y el patrón `di <Nombre>` de `extract_author()`
+     lo captura a caballo de dos ítems de menú. La página no tiene autor en JSON-LD ni en
+     ficha técnica, así que SIEMPRE llega al fallback. **Diagnóstico**: 102 de los 122
+     items de Funside en el corpus llevan ese autor falso. **Alcance del daño acotado**:
+     `author` es campo de PRESENTACIÓN — no alimenta scoring, filtros ni agrupación
+     (verificado), así que no corrompe el corpus, sólo lo que se muestra. **Señal de que
+     el fallback falló, no de que acertó**: si N fichas distintas de una fuente devuelven
+     la misma cadena de autor, es el menú. Ver `docs/scraper/sources/it-funside-variant.md`.
+
+194. **`series_key` es un homónimo: dos obras distintas de autores distintos pueden colapsar
+     bajo la misma clave si comparten el título romanizado.** Caso real detectado el
+     2026-09-07 con `series_key = "uzumaki"`, que hoy agrupa **cuatro items de dos obras sin
+     relación**:
+
+     | Item | Autor | Tipo | Obra real |
+     |---|---|---|---|
+     | Uzumaki Deluxe 3 (Viz, US) | — | manga | *Uzumaki* de Junji Ito (horror) |
+     | Uzumaki (Planeta, ES) | Junji Ito | manga | *Uzumaki* de Junji Ito |
+     | Uzumaki (Glénat, ES) | Masashi Kishimoto | artbook | *NARUTO イラスト集 うずまき* |
+     | UZUMAKI 岸本斉史画集 (JP, nuevo hoy) | 岸本斉史 | artbook | *NARUTO イラスト集 うずまき* |
+
+     El artbook de Naruto se llama `うずまき` ("Uzumaki") por el apellido del protagonista;
+     nada tiene que ver con el manga de terror. La colisión **no la introdujo el item nuevo**:
+     el de Glénat ya estaba mal agrupado y el de hoy simplemente se le sumó — o sea que la
+     clave viene contaminada desde antes y va a seguir capturando todo `うずまき` que entre.
+     **Consecuencia**: en la UI la ficha de serie mezcla dos obras, y cualquier retrofit que
+     razone "todos los items de esta serie" (rareza, aliases, portadas) opera sobre un
+     conjunto que no es una serie.
+     **La señal para separarlas ya está en el corpus**: `author` (Junji Ito vs Masashi
+     Kishimoto) y `product_type` (manga vs artbook) discriminan los 4 items sin ambigüedad.
+     El `series_key` derivado sólo del título no puede, por construcción, distinguir
+     homónimos — necesita al menos autor como desempate. Ver también #70 (variantes
+     MECÁNICAS del `series_key`): esto es el problema inverso — allá se separaba lo que era
+     lo mismo, acá se junta lo que no lo es.
+     **RESUELTO (este caso) 2026-09-07**: `scripts/retrofit/fix_uzumaki_homonym_20260907.py`
+     movió los dos artbooks de Kishimoto a `series_key = naruto` (denylist explícita de 2
+     slugs — la diferencia NO es deducible del título, que es idéntico; la evidencia es la
+     `description` de cada uno). Tras el enforcer quedaron agrupados con un tercer artbook
+     del mismo libro que YA estaba correctamente bajo `naruto` (la edición vietnamita
+     "Tuyển tập tranh Masashi Kishimoto - UZUMAKI"), lo que confirma que la reasignación es
+     la correcta. **El mecanismo general sigue abierto**: `series_key` se deriva del título
+     y no puede distinguir homónimos por construcción. Un desempate automático por autor +
+     `product_type` es una decisión de diseño de la agrupación, no un parche — se documenta
+     acá para cuando aparezca el siguiente caso.
+
+     **RESUELTO 2026-09-07 (mismo día).** El último recurso ahora corre en dos
+     pasos separados: (a) selectores estructurados sobre el documento entero
+     —inequívocos, se aceptan tal cual—, y (b) el regex sobre texto plano, que
+     lee sólo la región del producto (`main`/`[role=main]`/`#MainContent`/
+     `article`/`.product`) **con el cromo decompuesto** (`nav`, `header`,
+     `footer`, breadcrumbs, mega-menús) y exige que el candidato tenga forma de
+     nombre propio (`_looks_like_person_name`) y no sea un trozo del propio
+     título. La separación en dos pasos es esencial: el primer intento aplicaba
+     el guard de forma a TODO el resultado y mataba `"Autori: Tsutomu Nihei"`
+     (real, de Panini IT, con el label pegado). Y el guard de forma no puede
+     endurecerse a lo bruto: se midió que la rama `di|du` de
+     `AUTHOR_BY_PATTERN` —la sospechosa obvia— aporta **24 autores reales** del
+     corpus (Tsutomu Nihei, Kohta Hirano, Shotaro Ishinomori…), así que sacarla
+     habría sido peor que el bug. Retrofit de limpieza:
+     `scripts/retrofit/fix_chrome_authors_20260907.py` (102 items).
+
+195. **`item_selector` sin `title_selector` = el título se lleva puesto el cromo
+     de la lista.** Cuando una fuente declara sólo el contenedor de la card, el
+     título sale del texto del contenedor ENTERO. En una página de resultados eso
+     incluye el número de puesto, el banner promocional del bloque y la etiqueta
+     de categoría, todo pegado delante del nombre real. **Evidencia
+     (2026-09-07, KR - Aladin)**: la fuente declaraba `item_selector:
+     div.ss_book_box` y ningún selector de título → **130 de sus 438 items (30%)**
+     con títulos como `"144. [국내도서] 뱀파이어 기사 한정판 박스 세트"` o
+     `"책과 함께 무료배송 - … 총집합 [국내도서] 블루 록 30 (한정판)"`. Viola la
+     política dura de títulos y contamina `series_display`, que se deriva de ahí.
+     El elemento correcto existía y estaba a mano (`a.bo3`, verificado en vivo
+     dentro de cada `div.ss_book_box`). **Regla**: una fuente de tipo listado sin
+     `title_selector` explícito es un bug esperando a pasar, no una omisión
+     inocente. Es la misma familia que #187/#188 (selector demasiado ancho) y
+     #193 (extractor demasiado ancho). Resuelto el mismo día: selector +
+     `scripts/retrofit/fix_aladin_list_chrome_titles_20260907.py`.
+
+196. **Un `<a href="…jpg">` alrededor de la miniatura secuestra la URL del
+     producto.** El extractor tomaba el PRIMER `<a>` de la card, y las plantillas
+     con lightbox (WordPress) envuelven la imagen en un enlace al archivo a
+     tamaño completo que va ANTES del enlace real en el DOM. **Evidencia
+     (2026-09-07, AR - Ivrea Argentina)**: 19 de las 20 entradas `sources[]` de
+     la fuente apuntaban a un JPG suelto — enlace que no lleva a ninguna ficha,
+     y por lo tanto tampoco ISBN, ni fecha, ni descripción que leer (se ve en que
+     los 5 items del día entraron con `release_date` vacía y uno quedó
+     clasificado "Artbook" siendo un tomo regular). Era la ÚNICA fuente del
+     corpus con el problema: **0 casos en las otras ~56**, lo que confirma que la
+     regla general no tenía costo en ningún lado. **Fix**: `_product_anchor()`
+     prefiere el primer ancla cuyo `href` no sea un archivo de imagen (una URL de
+     producto nunca lo es), y si todas lo fueran conserva la primera para no
+     perder el item. Retrofit:
+     `scripts/retrofit/fix_ivrea_image_urls_20260907.py`, que resuelve el slug
+     contra el índice REAL del catálogo del sitio y **verifica cada URL en vivo**
+     antes de escribirla. **Trampa de la reparación** (costó una pasada): el item
+     guarda la URL en DOS lugares —`sources[].url` y una `url` de nivel superior,
+     que es la que leen `standardize_audit.py` y varios retrofits—. Arreglar sólo
+     `sources[]` deja el bug medio vivo y no se nota hasta que algo aguas abajo
+     lee la primaria; se descubrió al ver el `.jpg` reaparecer en las
+     proyecciones Tier 2 de la corrida siguiente. Cualquier retrofit que toque
+     URLs tiene que cubrir los dos campos. Detalle de WordPress aprendido ahí: los apóstrofes se
+     COMEN al generar el slug (`JoJo's` → `jojos`), no se convierten en guión.
+
+197. **Una app que no renderiza sin JS no se arregla con `kind: js`: se cambia de
+     puerta de entrada.** `meian-editions.fr` (Angular) sirve 64 KB de HTML —CSS
+     crítico inlineado más preloads— con **60 caracteres de texto útil**
+     ("Please enable JavaScript to continue using this application.") y **cero
+     enlaces**; y no hay sitemap, porque la app es catch-all y cualquier ruta
+     devuelve el mismo shell. La fuente estuvo declarada `kind: js` y aun así
+     rindió 0 candidatos **4 corridas seguidas** (2026-08-30 → 09-07), sin error
+     en el log: un 0 silencioso que el reporte de salud marcaba en rojo mientras
+     la tabla "Healthy" del mismo reporte la listaba como sana. La salida fue
+     **capturar el tráfico de red del navegador** y consumir el API JSON que
+     alimenta a la app. Dos detalles que hacen fallar el acceso ingenuo y que
+     costaron un 403 cada uno: **(a)** el API exige el header
+     `Origin: https://www.meian-editions.fr` — un `Referer` NO alcanza; **(b)** la
+     respuesta lleva prefijo anti-XSSI `)]}',\n` antes del JSON. Y el host es
+     `www.anime-store.fr` **con `www.`**: sin el prefijo da 403/404 y parece que
+     el API no existiera (por eso una sonda previa concluyó, equivocadamente, que
+     la ruta "no era deducible"). Resultado: `scripts/wikis/meian.py`, con ISBN,
+     fecha de salida, autor, portada y el contenido de la caja (`info_sup`) —
+     datos que la fuente NUNCA había entregado. **Regla general: cuando el HTML
+     de una SPA no trae contenido, buscar el API antes de invertir en Playwright.**
+
+198. **Una cola de "registros inciertos" que se trunca entera pierde la mitad que
+     nadie puede regenerar.** `data/unmapped_series.jsonl` son DOS colas en un
+     archivo: las filas SIN `reason` son series sin mapear —las consume
+     `/watch-enrich-series-aliases` y el próximo scrape las regenera— y las filas
+     CON `reason` (`llm_non_manga`, `standardize_exhausted`) son **curación
+     manual**, que el scrape NO regenera. El Step 5 del skill hacía
+     `: > data/unmapped_series.jsonl`, que borraba las dos (#155). Consecuencia
+     medida: la rutina diaria pasó **7 corridas seguidas** (2026-08-29 → 09-07)
+     salteándose el skill para no destruir la curación, así que la cola de series
+     nunca se procesó tampoco — el bug bloqueó las DOS colas, no una.
+     **RESUELTO 2026-09-07**: `scripts/prune_unmapped_queue.py` (fuente única, el
+     skill lo invoca en vez de embeber el truncado) conserva íntegras las filas
+     con `reason`, poda las de series y deduplica. Ante un `reason` desconocido
+     también conserva: ante la duda no se borra dato que el scrape no sabe
+     regenerar.
+
+
+199. **El reporte de salud pierde los skips de toda fuente cuyo nombre lleva dos
+     puntos — o sea, de las 94 fuentes de búsqueda.** `_SKIP_RE` y
+     `_ERROR_RE_LEGACY` (`scripts/audit/source_health.py:105,111`) capturan el
+     nombre de la fuente con `([^:]+)`, que corta en el PRIMER `:`. Las fuentes
+     virtuales que produce `_expand_search_template()` se llaman
+     `<fuente> [search: <keyword>]`, así que el nombre queda truncado en
+     `<fuente> [search` y el resto se cuela dentro del mensaje de error. Efectos
+     encadenados: **(a)** los skips se contabilizan contra una fuente FANTASMA que
+     no existe en `sources.yml`; **(b)** esa fantasma sale con `Enabled ✗` (el
+     nombre truncado no matchea el YAML) sugiriendo, al revés de la realidad, que
+     la fuente está deshabilitada; **(c)** las fuentes REALES, sin skips
+     atribuidos, caen en 🟢 **Healthy** con 0 runs. Es decir: la fuente se rompe y
+     el reporte la da por sana — la MISMA familia que los fixes #1/#2/#4 anotados
+     en ese archivo. Medido en el delta 2026-09-08: **94 de 140** fuentes corridas
+     tienen `:` en el nombre; Edizioni BD saltó sus 5 searches y figuró Healthy.
+     Latente hasta entonces sólo porque los skips son raros (8 líneas en 10
+     corridas), pero enmascara justo el modo de fallo más común de las fuentes de
+     búsqueda. `_CHALLENGE_RE` y `_STEP_TIMEOUT_RE` NO están afectados: delimitan
+     el nombre con `type=` / `rc=` en vez de con `:`. **Regla general: un separador
+     que también aparece DENTRO del campo no delimita nada** — anclá contra el
+     conjunto conocido de nombres, o usá un delimitador que el valor no pueda
+     contener.
+
+
+200. **ListadoManga movió el nombre de la colección a `<h1>` y el parser sigue
+     leyendo el primer `<h2>`, que ahora es el encabezado de sección.**
+     `_extract_collection_title()` (`scripts/wikis/listadomanga_collections.py:578`)
+     devuelve "el primer `<h2>` de la página"; hoy la página trae
+     `<h1>Rin-ne</h1><h2>Números editados</h2>…` (verificado en vivo 2026-09-11 en
+     una colección vieja, id=1326, y en una nueva, id=6740). El `collection_title`
+     queda en "Números editados" / "Números en preparación" para TODA colección, y
+     ese valor alimenta tres cosas: **(a)** `edition_display` (#49 — nombre oficial
+     de la edición): **231 items / 113 ediciones** del corpus muestran "Números
+     editados"; es el **100% de lo detectado desde julio** (jul 16/25, ago 36/36,
+     sep 19/19) y ya afectaba al 10% de junio, así que el cambio del sitio es de
+     mediados de 2026. El enforcer no lo repara: recupera el nombre desde
+     `description`, que empieza con el mismo título contaminado. **(b)** el
+     fallback de título de los cofres sin serie propia
+     (`base_alt_fallback=collection_title`): 7 items titulados
+     `Números en preparación — Cofre (Ivrea)`, que el LLM de standardize aceptó
+     como una serie nueva `numeros-en-preparacion-cofre`. **(c)** la detección de
+     ediciones premium POR TÍTULO (`_detect_edition_title_signals`,
+     `_detect_collection_type_signals` — Kanzenban, Maximum, Integral, Artbook,
+     Edición Especial…): nunca matchea, así que las colecciones cuyo único rasgo
+     premium es el nombre se descartan enteras por el gate "regular sin premium".
+     Medido con un A/B en memoria sobre las 29 colecciones del `[ZERO-YIELD]` del
+     delta 2026-09-11: título actual → **0 candidatos**; título desde `<h1>` →
+     **38** en 4 colecciones (Berserk Maximum Català 20, Ranma ½ Kanzenban Català
+     10, The Walking Dead Nueva Edición Integral 7, Mientras Yubooh duerme Edición
+     Especial 1). El log `[ZERO-YIELD]` venía mostrando la pista a la vista desde
+     al menos el 08-28: las 27-29 colecciones listadas figuraban TODAS con el
+     nombre "Números editados". **NO RESUELTO** (decisión del owner): el fix de
+     mecanismo es leer `<h1>` con fallback al primer `<h2>` + test con el HTML
+     actual; la limpieza exige re-fetchear las 113 colecciones (sin red no hay de
+     dónde sacar el nombre) y re-evaluar las colecciones premium-por-título que se
+     perdieron. Regla general: **cuando un campo se deriva de "el primer X de la
+     página", un rediseño que antepone otro X lo corrompe en silencio** — anclá
+     contra un rasgo semántico (etiqueta, clase, posición relativa al contenido) y
+     testeá con HTML capturado reciente, no sólo con fixtures viejos.
+
+
+201. **El traductor guarda la PÁGINA DE ERROR de Google como si fuera la
+     traducción, y la marca como hecha.** `_translate_google()`
+     (`scripts/retrofit/translate_descriptions.py:275`) sólo lanza
+     `TranslationError` ante una excepción o un resultado vacío; cuando Google
+     responde con su página de error, `deep_translator` la devuelve como texto
+     NO vacío y el item queda con `description_es` = `"Error 500 (Server
+     Error)!!1500.That’s an error.There was an error. Please try again
+     later.That’s all we know."` y con `description_es_src_hash` seteado — o sea,
+     el retrofit lo considera traducido y **nunca lo reintenta**. Medido
+     2026-09-11: **289 de 12 370** descripciones traducidas (2,3%) son esa página;
+     hay casos desde mayo (10) pero se concentra en agosto (98) y septiembre (168),
+     y aparece en casi todas las corridas (26 sólo el 09-11, 61 el 09-07 con la
+     tanda de Meian). Fuentes más afectadas: Meian (60), Manga-Passion
+     (24), Sumikko (21), Aladin (18), Manga-Sanctuary (18). Se ve en la UI: el
+     detalle de item muestra el texto del error como descripción en español.
+     **NO RESUELTO** (decisión del owner): el fix de mecanismo es validar la salida
+     (rechazar como `TranslationError` un resultado que matchee la firma de la
+     página de error, o que no contenga nada del input) + test; la limpieza es
+     borrar `description_es`/`description_es_src_hash` de esos 289 items para que
+     la próxima pasada los re-traduzca. Regla general: **"no vacío" no es "válido"**
+     — un cliente HTTP que devuelve el cuerpo de un error como string exitoso
+     necesita una validación de forma del resultado, no sólo de presencia.
+
+
+202. **Cada re-scrape le borra `standardize_attempts` a un item crudo, así que el
+     escape a curación de #191 nunca se dispara.** El upsert de `manga_watch.py`
+     sólo preserva `_CURATED_FIELDS` (línea 5947) cuando la fila vieja ya tiene
+     `standardized_at` (rama `elif old and old.get("standardized_at")`, línea
+     6085). Un item que el LLM rechazó (`is_manga=false`) sigue crudo por diseño,
+     y el contador que `standardize_apply.py` le suma no está en ninguna lista de
+     campos a preservar — ni siquiera se menciona en `manga_watch.py`. Si la
+     fuente lo vuelve a listar al día siguiente, la fila nueva del scrape
+     reemplaza a la vieja y el contador vuelve a `None`. Rastreado en backups
+     `pre-scrape-delta` sobre los dos casos que el 09-07 "iban a escalar solos":
+     `コーヒーが冷めないうちに(特装版…)` pasó por `standardize_attempts` 1 (09-08) → 2
+     (09-09, antes del scrape) → `None` (tras el scrape del 09-09) → 1 (09-11); el
+     fotolibro `特別限定版 中務裕太…` quedó clavado en 1. Resultado: **el fix de #191
+     (2026-09-07) es inefectivo para toda fuente que re-lista sus productos**
+     (búsquedas de retailer, portadas rotativas), que es justo donde viven estos
+     falsos negativos; cada corrida vuelve a gastar Tier 3 en ellos. Rakuten lo
+     agrava porque además cambia la URL (#192), pero no hace falta: basta con que
+     el item reaparezca. **NO RESUELTO** (decisión del owner): preservar
+     `standardize_attempts` en el upsert también para filas crudas (y test de
+     regresión que haga re-scrape de un item con intentos). Regla general: **un
+     contador de reintentos que vive en la misma fila que el upsert reescribe
+     tiene que estar en la lista de campos que el upsert preserva**, o el límite
+     nunca se alcanza.
+
+     **Ampliación 2026-09-16 — medido con el efecto perverso completo.** En el delta
+     de ese día, 10 items de `IT - Funside Variant` que YA estaban en el corpus antes
+     del run (mismo `slug` en el snapshot pre-scrape) volvieron con `detected_at` de
+     hoy y `standardize_attempts = 1`, es decir el contador zerado, y con URL
+     IDÉNTICA (`funside.it/products/<slug>` es estable) — así que **el cambio de URL
+     de #192 no es necesario: alcanza con que la fuente re-liste el producto**.
+     Consecuencia que da vuelta el diseño: el escape a curación sólo se dispara para
+     los items que la fuente DEJÓ de listar, que son precisamente los que ya no
+     molestan; los que reaparecen todos los días —los caros— quedan exentos del
+     límite para siempre. Ese día Funside fue el 42% de la cola de curación (26 de
+     62 filas) y 17 de los 21 items que quedaron pendientes, todos cómic occidental.
+     Ficha: `docs/scraper/sources/it-funside-variant.md`.
+
+
+203. **Las portadas variantes de Panini Brasil ("Capa Variante") no generan ninguna
+     señal, así que `filter_collectible` las descarta todas como tomo regular.** La
+     sección PT-BR de las frases de señal de `manga_watch.py` sólo trae
+     `edição limitada/especial/de colecionador/definitiva` y `capa dura`; falta el
+     equivalente de `portada variante` (ES) y `couverture variante` (FR). El
+     `variant` suelto de la sección inglesa usa límite de palabra y, a propósito, no
+     matchea "variante". Medido: `detect_signals("Blue Lock Vol. 15 - Capa
+     Variante")` → `(0, [], [])`, contra `variant_cover` para "Capa Variant" (30) y
+     "Portada Variante" (40). Efecto: el mismo trío de productos reales (Blue Lock 15,
+     Wotakoi 10 y 11, verificados en vivo con 200) se re-scrapea y se re-expulsa en
+     cada delta desde al menos el 2026-08-30 (14 corridas), y el corpus tiene 0 items
+     "capa variante". Las keywords `variante` y `capa variante` de la búsqueda de
+     Panini Brasil rinden 0 netos por construcción. **NO RESUELTO** (decisión del
+     owner): agregar `capa variante` (y probablemente `capa alternativa`) como
+     `variant_cover` en la sección PT-BR, con test. Regla general: **cada idioma
+     que tiene una búsqueda configurada por un tipo de edición necesita la frase de
+     señal de ese tipo en su propio idioma**; si no, la búsqueda alimenta al gate
+     que la mata. Ficha: `docs/scraper/sources/br-panini-brasil.md`.
+
+
+204. **`state.json` y `items.jsonl` pueden divergir, y entonces un item que nunca
+     llegó al corpus queda bloqueado para siempre.** Los bootstraps de wiki
+     dedupean con `process_state()` contra `state.json` (mismo `content_hash` ⇒
+     `seen` ⇒ fuera de `reportable` sin `--include-seen` ⇒ 0 filas a
+     `append_jsonl`), mientras que el incremental de Mangavariant
+     (`_select_incremental_urls`) diffea contra `items.jsonl`. Si una URL está en
+     el state pero no en el corpus, el incremental la re-fetchea cada día y
+     `process_state` la descarta cada día. Medido 2026-09-13: 309 URLs del sitemap
+     con `first_seen_at` 2026-05-21 en `state.json`, ausentes del corpus, del backup
+     más antiguo disponible y de la blacklist. 149 tienen score ≥ 20 (134
+     `variant_cover`; ej. los 5 tomos de Akira Graphitti limited, score 222). El log
+     del paso 2t es idéntico en 10 de 12 corridas (`nuevas=309` → `149 candidates`
+     → `reportables 0`). El contador `ya conocidos (seen)` marca 0 porque cuenta
+     sobre `reportable`, que ya excluyó a los seen: el síntoma se esconde en su
+     propio resumen. Es el residuo del modo de fallo que A3 (Fable 2026-07-08,
+     `save_state` después de `append_jsonl`) cerró para corridas nuevas sin
+     reparar lo que ya estaba desalineado. **NO RESUELTO** (decisión del owner):
+     tratar como `new` a un `seen` cuya URL no esté en el corpus, y excluir del
+     incremental las URLs del state bajo `min_score`. Regla general: **dos
+     componentes que responden "¿ya lo tengo?" tienen que consultar la misma fuente
+     de verdad**, o un dato perdido en uno queda invisible en el otro. Ficha:
+     `docs/scraper/sources/mangavariant.md`.
+
+
+205. **Registrar un wiki en `WIKI_BOOTSTRAP_IDS` no lo agrega al pipeline.** El id
+     sólo habilita el flag `--bootstrap-wiki <id>`; cada wiki necesita además su
+     paso explícito en `scrape_delta.sh` y/o `scrape_full.sh`. El módulo API de
+     Meian (2026-09-07) se registró, se corrió a mano y se deshabilitó la entrada
+     HTML el mismo día, pero nunca se cableó a ningún script: `grep meian
+     scripts/scrape_*.sh` → 0. Resultado: la fuente quedó sin ninguna vía de
+     ingesta automática. El reporte de salud lo muestra, pero sólo como `⚪ Not seen
+     in recent runs`, sin severidad. **NO RESUELTO** (decisión del owner): agregar
+     el paso a ambos scripts. Mecanismo sugerido: un test que exija que cada id
+     habilitado de `WIKI_BOOTSTRAP_IDS` aparezca en al menos un script canónico, o
+     esté en una allowlist explícita de "sólo manual" (`listadomanga`,
+     `listadomanga-blog`, `whakoom`). Ficha: `docs/scraper/sources/fr-meian.md`.
+
+
+206. **`extract_release_date` no reconoce fechas con año de 2 dígitos, y Panini
+     Italia sólo publica ese formato.** El patrón numérico de
+     `RELEASE_DATE_PATTERNS` es `\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4}`. El listado de
+     Panini Italia dice `Fumetti 17/09/26`, así que `extract_release_date` devuelve
+     `''`, y `normalize_release_date("17/09/26")` devuelve la cadena sin convertir
+     a ISO. Medido 2026-09-13: de 183 items `IT - Panini*`, 158 no tienen
+     `release_date` y **150** traen la fecha en la descripción; 2 son preventas
+     (salen el 2026-09-17) que el catálogo no muestra como tales. El dato está
+     capturado desde siempre, sólo que ningún patrón lo lee. **NO RESUELTO**
+     (decisión del owner): reconocer `dd/mm/yy` anclado a la etiqueta de la fuente
+     (`Fumetti\s+…`) o a países con día primero, nunca como patrón suelto (en US
+     sería `mm/dd/yy`), con test y re-extracción acotada. Regla general: **un
+     extractor de fechas que exige el formato largo pierde en silencio al retail
+     europeo, que abrevia el año**; el síntoma no es una fecha mal parseada sino
+     una ausencia, y las ausencias no disparan ninguna alarma. Ficha:
+     `docs/scraper/sources/it-panini-planet-manga.md`.
+
+
+207. **`backfill_series_aliases --only-keys` realinea el prefijo del `edition_key`
+     sólo de las filas en alcance, así que puede PARTIR una edición cuyos hermanos
+     ya estaban en la canónica.** Caso del 2026-09-13: `MARS 30th Anniversary Edition
+     1` ya tenía `series_key = mars`, pero con `edition_key =
+     mars-30th-anniversary-unknown-anniversary-us` (prefijo viejo), y el tomo 2 de la
+     misma fuente (Otaku Calendar) compartía esa key bajo la serie candidata
+     `mars-30th-anniversary`. Al mergear el alias, el backfill remapeó sólo el tomo 2
+     (estaba en `--only-keys`) y le realineó el prefijo a `mars-unknown-anniversary-us`.
+     El tomo 1 no estaba en alcance, conservó el prefijo viejo, y la edición quedó
+     partida. Verificado contra el backup `pre-series-aliases` del run. No dispara
+     ninguna invariante dura (`DUPVOL` compara dentro de una misma `edition_key`);
+     sólo queda como warning `EKPREFIX` en el tomo que no se tocó. La idempotencia de
+     la 2ª pasada da 0 cambios, así que el gate de convergencia del skill no lo ve.
+     **NO RESUELTO** (decisión del owner): que el backfill incluya en el realineo a
+     toda fila que comparta `edition_key` con una fila en alcance (la edición es la
+     unidad, no la serie), o correr el enforcer de agrupación después del backfill.
+     Regla general: **un retrofit acotado por `series_key` que reescribe
+     `edition_key` tiene que acotar por edición, no por serie**; si no, el alcance
+     corta grupos por la mitad. Ficha del skill:
+     `.claude/skills/watch-enrich-series-aliases/SKILL.md`.
+
+
+208. **Panini (.es y .it) activó una sala de espera Queue-it, y el scraper la
+     diagnostica como "probablemente JS-rendered".** Detectado 2026-09-16: 17
+     source-runs de Panini se saltaron con `[SKIP-empty] … HTML muy corto (23xx
+     chars). Probablemente JS-rendered o vacío.` — las 16 searches de
+     `ES - Panini España (search)` y `IT - Panini Edizioni da Collezione e
+     Cofanetti`. Verificado en vivo: la petición devuelve **302 → `https://
+     panini.queue-it.net/?c=panini&e=paninies|paniniitaly&…&t=<url original>`**, y
+     esos 2 287-2 354 chars son la página de la sala de espera, no un shell de SPA.
+     Reproducible 5/5 con UA de navegador. **El diagnóstico del mensaje induce al
+     fix equivocado**: habilitar Playwright (`--enable-js`) no sirve, porque el
+     navegador aterrizaría en la misma cola. Dos consecuencias más: (a) la avería es
+     PARCIAL y se ve por-request — en la misma corrida `IT - Panini Planet Manga`
+     rindió 75 y `ES - Panini Manga España` 9, mientras las 16 searches consecutivas
+     a `panini.es/catalogsearch` caían todas; y `IT - Panini Variant ed Esclusive`
+     rindió 14 contra mediana 54, compatible con la cola entrando a mitad de
+     paginación; (b) por gotcha **#199** (aún sin resolver) el reporte de salud
+     colapsa las 16 searches en una fila FANTASMA `ES - Panini España (search)
+     [search` con 1 skip, y muestra las 16 reales como 🟢 Healthy con `Runs 0`.
+     `tiendapanini.com.mx` es otro dominio y NO está afectado. **NO RESUELTO**
+     (decisión del owner). Fix de mecanismo propuesto: detectar el host
+     `queue-it.net` en la URL final (o el redirect 302 hacia él) y clasificarlo como
+     `challenge`/anti-bot —no como `empty`— para que `source_health` lo cuente en la
+     columna Challenge; opcionalmente, reintentar con backoff largo en otra corrida
+     en vez de gastar el slot. Regla general: **"HTML muy corto" es un síntoma, no
+     un diagnóstico; antes de atribuirlo a JS hay que mirar la URL final del
+     redirect** — una sala de espera, un consent wall y un SPA pesan lo mismo y
+     piden arreglos opuestos. Fichas: `docs/scraper/sources/es-panini-espana.md`,
+     `docs/scraper/sources/it-panini-planet-manga.md`.
+
+
+209. **El índice de upsert de `append_jsonl` sólo indexa la `url` TOP-LEVEL de
+     cada fila, no las de `sources[]` — así que cuando una fuente secundaria
+     re-lista un producto multi-fuente, el scraper crea una fila DUPLICADA.**
+     Detectado 2026-09-17: 9 de los 10 items crudos de Rakuten del run ya existían
+     en el corpus como filas estandarizadas, con el MISMO `books.rakuten.co.jp/rb/
+     <id>` registrado en su `sources[]`. Mecanismo, en `manga_watch.py` (~línea
+     5917): el dict `existing` se puebla con `key = normalize_url_for_dedup(
+     item["url"])` — **una sola URL por fila**. Las filas nacidas de Sumikko o
+     Sanyodo llevan esa URL como `url` top-level y la de Rakuten sólo dentro de
+     `sources[]`; cuando el scrape de Rakuten trae `rb/18791905`, el lookup falla
+     y nace una fila nueva. Medido sobre el corpus del día: **1545 URLs viven en
+     `sources[]` sin estar indexadas** — cada una es un duplicado latente.
+     **Corrige el diagnóstico de gotcha #192 (2026-09-06 / 2026-09-16)**: el
+     `?l-id=search-c-item-img-NN` posicional de Rakuten NO es la causa. `l-id` está
+     en `TRACKING_PARAMS` desde 2026-05-22 y `normalize_url_for_dedup` lo strippea
+     correctamente (verificado: las 3 URLs de prueba normalizan al mismo `rb/<id>`
+     con puestos 01→08, 03→09, 18→24). El `l-id` cambiando de puesto es lo que hace
+     VISIBLE el bug —es la razón por la que Rakuten re-lista— pero el duplicado
+     nace del índice incompleto, no del parámetro. **El daño no es corrupción
+     permanente sino COSTO**: el duplicado nace crudo (sin `cluster_key`), se va a
+     **Tier 3 —la ruta más cara del LLM—** y recién después se fusiona con la fila
+     buena por `edition_key`. En este run fueron 9 llamadas Tier 3 gastadas para
+     re-derivar metadata que el corpus ya tenía. Es invisible en el conteo de items
+     (el neto del día fue +24 con sólo **13 URLs realmente nuevas**). **NO RESUELTO**
+     (decisión del owner). Fix de mecanismo propuesto: indexar también las URLs de
+     `sources[]` al construir `existing` (mapear cada una a la misma fila), de modo
+     que el upsert reconozca el producto por CUALQUIERA de sus fuentes. Ojo al
+     implementarlo: con varias URLs apuntando a la misma fila, el `last-wins` deja
+     de ser trivial y hay que decidir qué fila gana si dos filas distintas reclaman
+     la misma URL secundaria — resolver por tier de `cluster_key`, no por orden de
+     archivo. Regla general de medición, ya usada acá: **el delta neto de líneas NO
+     mide novedades**; comparar URLs NORMALIZADAS contra el backup `pre-scrape-*`
+     del propio run. Ficha: `docs/scraper/sources/jp-rakuten-books.md`.
+
+
+210. **Un `publisher` vacío parte una edición en dos: `…-unknown-…` y
+     `…-<editorial>-…` conviven como filas separadas del MISMO producto.** Detectado
+     2026-09-17 sobre un item nuevo del día: `タロットカード付き xxxHOLiC・戻（6）特装版`
+     (misma serie, mismo volumen 6, misma fecha 2026-11-06, mismo contenido) quedó en
+     DOS filas porque una fuente no entregó la editorial:
+
+     ```
+     xxxholic-unknown-special-jp-6    publisher ''         cluster edition:xxxholic-unknown-special-jp|6
+     xxxholic-kodansha-special-jp-6   publisher 'Kodansha' cluster edition:xxxholic-kodansha-special-jp|6
+     ```
+
+     El `edition_key` lleva el publisher como segmento, así que un publisher ausente
+     produce una key distinta → `cluster_key` distinto → el merge por cluster (decisión
+     #4) no las ve como el mismo producto y **nunca las fusiona**. `validate_corpus` no
+     lo detecta: las dos filas son estructuralmente válidas y sus cluster_keys son
+     legítimamente distintos. **Medido sobre el corpus del día: 1662 items tienen
+     `-unknown-` en su `edition_key`, y 110 grupos están partidos** —misma `series_key`,
+     mismo `volume`, mismo tipo de edición y mismo país, con una fila `unknown` y otra con
+     editorial real. Ejemplos verificados donde la editorial conocida es obviamente la
+     correcta: `radiant-unknown-collector-fr-10` ⇄ `radiant-ankama-collector-fr-10`
+     (Ankama publica Radiant en Francia), `sun-ken-rock-unknown-collector-fr-1` ⇄
+     `…-dokidoki-…`, `chiikawa-unknown-special-jp-8` ⇄ `chiikawa-kodansha-special-jp-8`,
+     `ikkitousen-unknown-limited-jp-13` ⇄ `…-wanibooks-…`. El retrofit
+     `normalize_edition_publishers` (que corre dentro de `enforce_listadomanga_rules`)
+     unifica variantes de nombre entre editoriales conocidas, pero **no trata `unknown`
+     como comodín absorbible** por una editorial real del mismo grupo. Efecto para el
+     owner: el mismo producto aparece **dos veces** en la UI, con metadata repartida
+     entre ambas filas. Es la misma familia que el caso Mangarden del 2026-09-15 ("la
+     fila nueva queda con publisher `unknown`"). **NO RESUELTO** (decisión del owner).
+     Fix de mecanismo propuesto: en `normalize_edition_publishers`, cuando un grupo
+     (`series_key`, tipo de edición, país, `volume`) tiene exactamente una editorial real
+     y una o más filas `unknown`, absorber las `unknown` en la real y re-derivar
+     `cluster_key` para que `consolidate_by_cluster` las funda. **Trampa a evitar**: si el
+     grupo tiene DOS editoriales reales distintas, `unknown` es ambiguo y no debe
+     absorberse a ninguna —son potencialmente ediciones de licenciatarios distintos, y el
+     país ya está en la key (regla "país = edición")—; en ese caso, dejar la fila y
+     mandarla a curación. Verificar con `--dry-run` sobre los 110 grupos antes de aplicar.
+
+211. **SocialAnime activó el Managed Challenge de Cloudflare y la fuente pasó de
+     ~641 a 0 items.** Detectado en el delta del 2026-09-20: `wikis/socialanime.py`
+     recibió **403 en la primera página de los DOS tipos** (`type=variant` y
+     `type=box`) contra
+     `socialanime.it/store/backend/flow_mangafeed.php`. Verificado en vivo el mismo
+     día: el 403 trae `cf-mitigated: challenge`, `server: cloudflare` y el cuerpo
+     "Just a moment..." con Turnstile (`challenges.cloudflare.com`) — es decir, un
+     **challenge JS de sitio completo**, no un bloqueo por User-Agent ni un
+     rate-limit. Probado con el UA del scraper, con `Referer: .../store/` y contra
+     la **home** `socialanime.it/store/`: los tres dan 403 con el mismo challenge,
+     así que no hay endpoint sano que sirva de fallback ni cabecera que lo destrabe.
+     Misma familia que el `sgcaptcha` de Mangavariant (intermitente) y **distinta**
+     de la Queue-it de Panini (#208): acá el fallo es RUIDOSO —`WARN ... 403` en el
+     log, 0 items, y el reporte de salud lo marca 🔴 con 0% de la mediana—, no el
+     yield parcial silencioso de #208. Nota sobre el reporte: `wiki:socialanime`
+     aparece SIMULTÁNEAMENTE en 🔴 YIELD REGRESSIONS (0 vs mediana 641) y en 🟢
+     Healthy (`Zero runs 1`) — la misma doble contabilidad de #199, acá sin `:` en
+     el nombre de fuente. **NO RESUELTO** (decisión del owner). Opciones, de menor a
+     mayor costo: (a) esperar — si es una regla temporal de Cloudflare se cae sola,
+     como se cayó el challenge de Mangavariant del 2026-09-05; (b) `--enable-js` NO
+     sirve por sí solo (Turnstile necesita resolver el desafío, no sólo ejecutar JS);
+     (c) inyectar la cookie `cf_clearance` obtenida a mano desde el navegador, que
+     caduca y ata la ingesta a una sesión. Antes de tocar nada, re-medir: una sonda
+     `curl -sI` al endpoint dice en una línea si el challenge sigue puesto.
+
+212. **Un alias escrito con `×××` (signo de multiplicación U+00D7) no matchea el
+     título real escrito con `xxx` latinas.** Destapado en el delta del 2026-09-20
+     con xxxHOLiC: la canónica de xxxHOLiC Modori existe en `series_aliases.yml` bajo
+     la key **`bd-holic`** (display `xxxHOLiC Modori`) y su ÚNICO alias es
+     `×××HOLiC・戻`. Las dos fuentes que trajeron el producto del día (Rakuten Books
+     `特装版` y Sumikko) escriben el título como `xxxHOLiC・戻（6）特装版` con equis
+     latinas, así que `canonical_series_key()` no resuelve y los items caen a la cola
+     de unmapped con `series_key = xxxholic`. El resolver normaliza acentos, mayúsculas
+     y guiones, pero **no mapea homoglifos** (`×`→`x`), y el problema es simétrico:
+     cualquier serie cuyo título oficial use `×` (xxxHOLiC, `×××HOLiC`, `Kimi ni
+     Todoke`-style cruces, `D×D`) puede quedar partida entre la forma con `×` y la
+     forma con `x`. Agravante de identificación: la key `bd-holic` no contiene la
+     cadena "holic" de forma buscable para un humano que audite el YAML — nació
+     corrupta (probablemente de un slug de fuente) y esconde la entrada. **NO
+     RESUELTO** (decisión del owner). Fix de mecanismo propuesto: extender la
+     normalización del resolver (`series_aliases._normalize`) con un mapa de
+     homoglifos (`×`→`x`, `＋`→`+`, `－`→`-`, comillas tipográficas), que es una sola
+     tabla y arregla la familia entera; como parche local, agregar `xxxHOLiC・戻` (con
+     x latinas) a los aliases de `bd-holic` y renombrar esa canónica a
+     `xxxholic-modori`. **Trampa a evitar**: NO agregar `xxxholic` pelado como alias de
+     `bd-holic` — `xxxHOLiC` a secas es la serie MADRE de CLAMP, una obra distinta de
+     `xxxHOLiC・戻`, y ese alias las fusionaría de forma irreversible tras el backfill.
+
+     **Ampliación 2026-09-24 — el homoglifo NO es la única barrera, y hay una
+     canónica INALCANZABLE.** Hoy los 2 items de `xxxHOLiC・戻` volvieron a caer a la
+     cola de aliases, pero con un `series_key` distinto al de la vez anterior:
+     **`xxxholic` con x LATINAS**, ya normalizado. Es decir, arreglar el mapa de
+     homoglifos **no habría resuelto este caso**: lo que falla acá es que el parser
+     derivó el `series_key` **perdiendo el `・戻`**, el marcador que distingue la
+     secuela de la serie madre. Son dos defectos independientes que se veían como
+     uno.
+
+     Estado real del YAML medido hoy (3580 canónicas):
+
+     ```
+     bd-holic:      display "xxxHOLiC Modori"  aliases: ['×××HOLiC・戻']   ← x = U+00D7
+     xxxholic-rei:  display "xxxHOLiC Rei"     aliases: []                 ← SIN aliases
+     ```
+
+     O sea hay **DOS canónicas para la misma obra**, y la de nombre correcto
+     (`xxxholic-rei`) **no tiene un solo alias**, así que el resolver no puede llegar
+     a ella por ningún camino: es una entrada muerta. La otra sólo es alcanzable
+     escribiendo el título con el signo de multiplicación. Ningún item del corpus
+     puede resolver contra ninguna de las dos.
+
+     **El lint no las ve** (`lint_series_aliases.py` salió verde hoy, con sólo 4
+     colisiones pre-existentes): `bd-holic` y `xxxholic-rei` **no normalizan igual**,
+     así que no colisionan — el lint detecta claves duplicadas y colisiones de
+     normalización, no sinónimos semánticos. Es el mismo punto ciego de #210/#214:
+     cada entrada es válida por separado.
+
+     **La trampa de arriba sigue vigente y hoy es más tentadora**: el audit propone
+     `xxxholic-rei` con confianza 🟢 0.80 para el `series_key` `xxxholic`. Aceptarlo
+     agregaría `xxxholic` pelado como alias de la SECUELA, y fusionaría
+     irreversiblemente la serie madre de CLAMP con ella en el próximo backfill. Por
+     eso la candidata se saltó otra vez. **Fix correcto**: fusionar `bd-holic` en
+     `xxxholic-rei` (mover el alias, borrar la perdedora), agregar `xxxHOLiC・戻` con
+     x latinas a sus aliases, y corregir el parser para que no descarte el `・戻`.
+213. **El `slug` de un item crudo se fosiliza: la estandarización le asigna
+     `series_key`/`edition_key` reales pero `generate_slugs.py` corre con
+     `--only-missing`, así que el slug derivado del título/ISBN crudo nunca se
+     regenera.** Medido en el delta del 2026-09-21: de los 14 563 items
+     estandarizados con `edition_key` y `slug`, sólo **4 tienen un slug que NO
+     empieza por su `edition_key`** — y **3 de esos 4 son items ingresados ese mismo
+     día**, o sea el desalineamiento se produce en la ingesta y no se corrige nunca
+     después:
+
+     | slug (fosilizado) | edition_key (correcto, post-estandarización) |
+     |---|---|
+     | `box-001-008-unknown-boxset-jp-8` | `otoko-ippiki-gaki-daishou-unknown-boxset-jp` |
+     | `isbn-9791141116118` | `merry-marbling-haksan-limited-kr` |
+     | `nft-unknown-special-jp` | `sengoku-jieitai-unknown-special-jp` |
+
+     El patrón común es que la derivación CRUDA tomó un fragmento espurio del título
+     como serie (`BOXセット … 001〜008` → `box-001-008`; `NFTデジタル特典付き` → `nft`)
+     o cayó al fallback de ISBN (Aladin, título 100% coreano). Después el LLM resolvió
+     bien la serie (`otoko-ippiki-gaki-daishou`, `sengoku-jieitai`, `merry-marbling`),
+     pero el slug ya estaba escrito.
+
+     **Por qué importa**: el slug es la IDENTIDAD PÚBLICA del item (la URL de su ficha
+     en la UI y la clave con que el dashboard/feedback lo referencian). Un item cuyo
+     slug dice `nft-unknown-special-jp` es inencontrable por su serie, y dos items
+     futuros cuya derivación cruda produzca el mismo fragmento espurio compiten por el
+     mismo slug.
+
+     **Por qué el gate no lo ve**: `validate_corpus` chequea `SLUGUNIQ` (unicidad) y
+     `SLUGFMT` (forma) — los 4 casos pasan las dos. `EDSLUG` compara el TIPO de
+     edición del slug contra el título, no el prefijo de SERIE. No hay invariante que
+     ate `slug` a `edition_key`.
+
+     **NO RESUELTO** (decisión del owner, porque el fix CAMBIA SLUGS — mismo riesgo que
+     el retrofit de ISBN pendiente: rompe URLs y marcadores existentes). Fix de
+     mecanismo propuesto: (a) invariante nueva `SLUGEK` (warn) en `validate_corpus.py`
+     que reporte todo item estandarizado cuyo `slug` no empiece por su `edition_key` —
+     barata y sin efectos, cierra la ceguera; (b) en el enforcer, regenerar el slug
+     SÓLO de los items que esa invariante marque, en vez de `--only-missing` a ciegas.
+     Con 4 items el blast radius de (b) hoy es mínimo, que es justamente el momento
+     barato para aplicarlo.
+
+     **Ampliación 2026-09-21 (medido en la cola de aliases del delta):** además del
+     alias con homoglifos, el YAML tiene **DOS canónicas para la misma obra**:
+     `bd-holic` (display `xxxHOLiC Modori`, alias `×××HOLiC・戻`) y **`xxxholic-rei`**
+     (display `xxxHOLiC Rei`, `aliases: []`). 戻 en el título oficial de CLAMP se lee
+     *Rei*, así que son la misma serie partida en dos entradas. El lint no las detecta
+     porque sus normalizaciones NO colisionan (`bd-holic` ≠ `xxxholic-rei`) — el
+     `lint_series_aliases.py` sólo ve keys duplicadas y colisiones de normalización,
+     no sinónimos semánticos. Los 2 items del día (`タロットカード付き xxxHOLiC・戻（6）
+     特装版`, Rakuten + Sumikko) siguen cayendo a la cola como `xxxholic` porque
+     ninguna de las dos entradas los resuelve. El fix completo son 3 movimientos, todos
+     del owner: (1) el mapa de homoglifos en `_normalize`; (2) fusionar `bd-holic` en
+     `xxxholic-rei` conservando el alias `×××HOLiC・戻` y agregando la forma con x
+     latinas; (3) seguir SIN aliasear `xxxholic` pelado (la trampa de arriba).
+
+214. **El rótulo de STOCK de Mangarden.pl (`OSTATNIE`, `II Gatunek`) y el `tom NN`
+     entran al `edition_key`, y parten UNA edición en N ediciones de un solo tomo.**
+     Medido 2026-09-23 sobre el corpus completo: **130 items** de J.P.Fantastica
+     (Polonia, fuente `pl-mangarden`) tienen `-tom-NN-` dentro del `edition_key`, y
+     **128 de esos 130 viven en una "edición" que contiene UN SOLO item**. La misma
+     edición deluxe de *Ranma ½* está partida en **16** `edition_key` distintas
+     (`ranma-1-2-tom-02-ostatnie-unknown-deluxe-pl`,
+     `ranma-1-2-tom-03-ostatnie-unknown-deluxe-pl`, …), una por tomo; lo mismo
+     *Inuyasha* (15), *Urusei Yatsura* (13), *Yu Yu Hakusho* (12), *Fullmetal
+     Alchemist Deluxe* (10), *City Hunter* (10), *Sailor Moon Eternal* (9),
+     *Initial D* (7). En total **29 familias / 156 `edition_key`** que deberían ser
+     29 ediciones.
+
+     **Causa**: el título que publica Mangarden lleva pegados dos textos que NO son
+     parte del nombre de la edición — el número de tomo (`Ranma ½ tom 02 (oprawa
+     twarda)`) y un **rótulo de estado de la tienda** (`- OSTATNIE` = "últimas
+     unidades", `- II Gatunek` = "segunda calidad / ejemplar con defecto"). La
+     derivación del `edition_key` los consume como si fueran el nombre de la edición.
+
+     **Lo peligroso no es la fragmentación, es que el rótulo es MUTABLE**: describe
+     el inventario de hoy, no el producto. Cuando la tienda cambia el rótulo, el
+     MISMO tomo cambia de `edition_key` y por lo tanto de `slug` — o sea de
+     IDENTIDAD — y nace una fila duplicada. Ya está pasando dentro de una misma
+     serie: *Ranma ½* tomo 06 quedó en `…-tom-06-ii-gatunek-…` mientras sus hermanos
+     están en `…-ostatnie-…`. Es la causa de mecanismo detrás de lo observado el
+     2026-09-15 ("el slug cambia de `preorder` a `ostatnie` y la fila nueva queda con
+     publisher `unknown`"): aquello se anotó como 5 duplicados sueltos; acá está el
+     motivo y su alcance real. `ostatnie` aparece hoy en **94** `edition_key`.
+
+     **Por qué ningún gate lo ve** (mismo punto ciego que #210 y #213): `EKPREFIX`
+     pasa porque el prefijo SÍ empieza con el `series_key` correcto (`ranma-1-2`);
+     `DUPVOL` no dispara porque cada edición tiene un solo tomo, así que no hay
+     volumen repetido *dentro* de una edición; `SLUGUNIQ`/`SLUGFMT` aprueban porque
+     los slugs son únicos y bien formados. Todas las filas son individualmente
+     válidas — lo que está mal es la PARTICIÓN, y ninguna invariante mira eso.
+
+     **Colateral #210 confirmado en la misma familia**: el `edition_key` dice
+     `-unknown-deluxe-pl` aunque el campo `publisher` del item sí trae
+     `J.P.Fantastica`, así que a la fragmentación por tomo se le suma la partición
+     por editorial vacía.
+
+     **Efecto de producto**: la UI muestra ~29 series polacas como 156 ediciones de
+     un tomo cada una en vez de 29 ediciones con sus tomos ordenados, lo que además
+     rompe la regla dura de "dentro de una edición, siempre orden por volumen".
+
+     **NO RESUELTO** (decisión del owner: el fix CAMBIA SLUGS, mismo riesgo que #213
+     y que el retrofit de ISBN pendiente). Fix de mecanismo propuesto: (a) quitar el
+     rótulo de stock en el parser de la fuente — denylist corta y verificable
+     (`OSTATNIE`, `II GATUNEK`, `PRZEDSPRZEDAŻ`, `ZAPOWIEDŹ`) aplicada al título
+     ANTES de derivar keys, no después; (b) excluir el `tom NN` del `edition_key`
+     (el tomo ya vive en `volume`); (c) invariante nueva de partición (warn) que
+     reporte familias de `edition_key` que difieren sólo en un número embebido —
+     hoy marcaría 29 familias y cerraría la ceguera para cualquier fuente, no sólo
+     Polonia.
+
+215. **El módulo wiki de Kinokuniya USA sólo emite `título + ISBN`: el 96 % de sus
+     items entra al corpus SIN `publisher`, el 100 % sin `release_date` y el 83 %
+     sin `volume` — y esa editorial vacía es la que alimenta #210 aguas abajo.**
+     Medido 2026-09-24 sobre los 47 items de `US - Kinokuniya Exclusives` que hay en
+     el corpus: **45 sin `publisher`** (96 %), **47 sin `release_date`** (100 %),
+     **39 sin `volume`** (83 %), y **11 ya arrastran `-unknown-` en el
+     `edition_key`**. El `description` que emite el parser es literalmente
+     `"Kinokuniya Exclusive. ISBN: <isbn>."` — no hay más campos porque la página de
+     listado (`usa.kinokuniya.com/kinokuniya-exclusives`) es una grilla de portadas
+     con el título y poco más; la ficha por producto (`/bw/<isbn>`) sí trae
+     editorial y fecha, pero el módulo **no la visita**.
+
+     **Por qué importa y no es cosmético**: `publisher` es un componente del
+     `edition_key` (`<serie>-<editorial>-<tipo>-<país>`). Con la editorial vacía el
+     item acuña `…-unknown-variant-us`; si el MISMO producto entra después por otra
+     fuente que sí trae la editorial, nacen **dos ediciones** para un solo producto
+     — el mecanismo exacto de **#210**. O sea Kinokuniya no sufre #210: lo
+     **produce**. Los 4 items nuevos del 2026-09-24 (`Servant Beasts`,
+     `It's Strictly Business`, `Omniscient Reader's Viewpoint Novel`,
+     `Can You Kiss Me First?`) entraron los 4 con `-unknown-variant-us`.
+
+     **Efecto secundario en la rareza**: sin stock ni fecha, la señal que queda es
+     `retailer_exclusive`, y la rareza sale `rare` **por incertidumbre**, no por
+     evidencia — 6 de los 47 hoy. Son justamente los que `/watch-validate-rarity`
+     existe para verificar.
+
+     **Contexto de alcance (medido el mismo día)**: en todo el corpus hay **1672
+     items** con `-unknown-` en el `edition_key` y **204 grupos partidos** (misma
+     serie + volumen + tipo + país repartidos en ≥2 `edition_key`, uno de ellos
+     `-unknown-`). El 2026-09-17 ese conteo de grupos partidos era **110** sobre
+     1662 items con `-unknown-`: el pool de items está estable pero la
+     **fragmentación casi se duplicó en una semana**, así que #210 no es un defecto
+     latente sino uno en crecimiento activo.
+
+     **Por qué ningún gate lo ve**: mismo punto ciego de #210/#213/#214. Cada fila
+     es individualmente válida — `PUBMIX` no dispara (no hay mezcla de editoriales
+     dentro de una edición: hay UNA edición con la editorial vacía y otra con la
+     editorial puesta), `EKPREFIX` pasa (el prefijo sí arranca con el `series_key`)
+     y `SLUGUNIQ`/`SLUGFMT` aprueban. Lo que está mal es la PARTICIÓN.
+
+     **NO RESUELTO** (decisión del owner). Fix de mecanismo propuesto, en orden de
+     retorno: (a) que el módulo `scripts/wikis/kinokuniya.py` haga fetch-details de
+     `/bw/<isbn>` para levantar editorial + fecha + tomo (es 1 request por item
+     sobre ~47 items, costo trivial, y cierra el agujero EN EL ORIGEN); (b) como red
+     transversal, una invariante nueva (warn) de partición por editorial vacía que
+     reporte los grupos serie+volumen+tipo+país repartidos entre un `-unknown-` y un
+     `edition_key` con editorial — hoy marcaría los 204 grupos y serviría para
+     cualquier fuente, no sólo Kinokuniya.
+
+
+### Resoluciones de ingestión — 2026-09-24
+
+#202, #203, #204, #205, #206, #209: correcciones de mecanismo implementadas y
+cubiertas por tests (contador, PT-BR, cache/corpus, Meian, fechas IT, URLs
+secundarias). #208: diagnóstico Queue-it corregido; bloqueo externo persiste.
+#211: falla SocialAnime propagada correctamente; Cloudflare persiste.
+No confundir corrección de detección con recuperación de disponibilidad.
+La auditoría detallada y sus límites viven en
+[2026-09-24-ingestion](../scraper/audits/2026-09-24-ingestion.md).
+
+
+Hallazgo adicional 2026-09-24: extractores con selectores omitían el gate non-manga; se centralizó antes de spool/sink. El control de recuperación descubrió falsos negativos por bestseller y por nombres de marcas/editoriales en variantes de mangas: corregidos con evidencia estructurada de Mangavariant y señales literarias explícitas. Tests en test_ingestion_integrity.py.
+
+
+216. **Ingestión y limpieza discrepaban sobre catálogos curados.**
+     `process_state` aceptaba `variant-catalog`/artbooks sin keywords, mientras
+     `filter_collectible.should_reject` rederivaba señales y expulsaba los crudos
+     como regulares. En la recuperación 2026-09-24: 134/147 productos se habrían
+     perdido otra vez. Corregido reutilizando `is_curated_collectible_source`
+     después de los gates duros. Prueba real dry-run: 147 kept, cero rejected.
+
+217. **El sink omitía JSONL inválido antes de reemplazar el archivo.**
+     `append_jsonl` y `_read_spool` ignoraban errores de JSON, produciendo pérdida
+     silenciosa al hacer rewrite/borrar spool. Ahora `read_jsonl_strict` aborta con
+     path/línea y conserva ambos originales. Se prueban JSON truncado, null y array
+     en catálogo y spool. Una URL primaria duplicada o secundaria ambigua también
+     bloquea el rewrite en vez de escoger arbitrariamente un producto.
+
+218. **Volúmenes no reconocidos colapsaban productos distintos.** `第22期`,
+    `tom 06`, `Band 01-05`, `16 (한정판)` y `2 【特裝版】` ahora conservan
+    número/rango. Sin volumen, una edición inferida no identifica un producto;
+    las variantes crudas tampoco se fusionan por volumen. Conflictos positivos
+    de volumen o cubierta A/B preceden al ISBN (que puede ser compartido).
+219. **Un conflicto de URL secundaria detenía la ingestión completa.** En
+    ingestión se conserva en `items.jsonl.conflicts`, se publica el resto y
+    se devuelve fallo. La cola sobrevive errores de escritura y se reintenta
+    sin adelantar el checkpoint. El append genérico sigue estricto.
+220. **“Siguiente noticia” no es paginación de catálogo.** Sanyodo enlazaba
+    artículos ajenos con `.next`. Se exige misma ruta con query o una ruta
+    explícita de paginación, incluido `_p2` de KADOKAWA. Queue-it, por su lado,
+    puede cargar correctamente al renderizar el URL original con Chromium.
+
+### #221 — Calendarios semanales: frontera del mes y cobertura histórica
+
+AnimeClick omitía la semana iniciada antes del día 1 aunque contuviera salidas
+del mes solicitado. Ahora se incluyen semanas cuyo fin alcanza el cutoff.
+Un tope fijo de 520 semanas también truncaba silenciosamente fulls desde 2015;
+2000 semanas es el nuevo límite de seguridad, con incidencia al agotarse. Una
+semana repetida o inválida debe fallar sin confirmar watermark. Las pruebas
+`test_wiki_coverage_boundaries.py` cubren estos casos y los topes de Shueisha.
+
+### #222 — Panini oculta agotados y novedades no equivale a catálogo
+
+Panini IT y ES activan por defecto el filtro comprable/a la venta. El enlace
+público para eliminarlo añade `skip_default_filters=true`; sin él, el catálogo
+italiano comprobado pierde 2318 productos del listado (3584 vs 5902). Las URLs
+de nuestras categorías lo desactivan. La antigua URL española de novedades es
+una página promocional mixta, no el índice manga: se usa `/comics/manga.html`.
+
+### #223 — `rc=1` en un wiki ya NO significa "la fuente falló"
+
+Desde la auditoría de ingestión del 2026-09-24, cualquier incidencia registrada
+con `wikis/health.report_issue()` hace que el bootstrap termine en 1:
+
+```python
+# scripts/manga_watch.py:9886
+return 1 if session._ingestion_issues else 0
+```
+
+Es intencional y correcto —el objetivo declarado del módulo es *"keep acquired
+data, fail the run visibly"*, y cierra la familia de fallos silenciosos tipo
+Queue-it de Panini (#208)—, pero **cambia el significado del exit code**: `rc=1`
+ahora quiere decir *"hubo al menos una incidencia"*, no *"no se ingirió nada"*.
+Un paso puede salir en rojo habiendo trabajado bien.
+
+Medido en el delta del 2026-09-25, donde 5 wikis salieron `rc=1`:
+
+| Paso | Incidencia | ¿Ingirió? |
+|---|---|---|
+| `viz` | un 429 en UNA página de detalle | **sí**: 16 candidatos, 16 portadas |
+| `kodansha-us` | `repeated search page=2` | **sí**: 9 candidatos, 3 items |
+| `sevenseas` | challenge Cloudflare ×3 | no: 0 books |
+| `socialanime` | challenge Cloudflare ×2 (#211) | no: 0 items |
+| `storefront:spp-tw` | JSON falló ×3 | no: 0 items |
+
+O sea: **2 de los 5 "fallos" fueron corridas exitosas con degradación parcial.**
+
+Consecuencias al leer un run:
+1. **El conteo de "pasos en error" no es comparable con los runs anteriores al
+   2026-09-24.** Los runs que cerraban con "0 pasos en error" lo hacían en parte
+   porque el silencio era el default; pasar de 0 a 7 no implica una regresión.
+2. Para saber si una fuente realmente cayó hay que leer su log y mirar el
+   `[RESUMEN BOOTSTRAP-WIKI]`, no el exit code.
+3. `install_response_guard` además convierte una página de WAF servida con
+   **HTTP 200** en `HTTPError`, de modo que un challenge no avanza el checkpoint.
+   Por eso una fuente bloqueada reintenta la misma ventana al día siguiente en vez
+   de darla por cubierta.
+
+### #224 — Publicación antigua no significa producto ya ingerido
+
+PRH delta descartaba cualquier release_date anterior a la ventana. Una ficha de
+un producto antiguo recién agregada se perdía indefinidamente. Los listados sin
+modified_at fiable se recorren completos; el delta lo decide el contenido persistido.
+
+### #225 — Clave aproximada no vence evidencia contradictoria
+
+El upsert podía separar ISBN diferentes pero la consolidación final los volvía a
+fusionar por edition_key. Ahora preserva ambas URLs y marca identity_review_required;
+la marca tiene prioridad al derivar cluster y sobrevive a reingestas.
+
+### #226 — HTTP 200, selección editorial y formato digital
+
+Un 200 no prueba extracción (PRH manga-hardcovers no expuso tarjetas estáticas).
+El índice Delcourt /mangas era portada; usar /mangas/liste-mangas y restringir a
+fichas /mangas/, excluyendo recomendaciones /bd/. Kingstone devuelve libros y ebooks
+juntos; 【電子書】 invalida la edición física aunque el título diga 完全版.
+
+Auditoría 2026-09-25: Médaka-Box no es un box set por llevar «Box» en el nombre;
+se corrige el caso separado por guion. Double Edition / Edition double tampoco
+prueba formato premium; requiere hardcover, collector u otra señal adicional.
+Las cajas y versiones premium reales de esas series siguen admitidas.

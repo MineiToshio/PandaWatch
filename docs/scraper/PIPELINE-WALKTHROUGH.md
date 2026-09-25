@@ -183,7 +183,7 @@ flowchart TD
     F2 -->|FULL| FU2["listadomanga **lista** (~3432)<br/>+ **mangavariant sitemap** (~2700, todo)<br/>+ histórico de wikis (--wiki-from 2000/2013/2015)"]
     D2 --> F3
     FU2 --> F3
-    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["rescore → **clean_titles** →<br/>normalize_release_dates →<br/>filter_non_manga → filter_collectible →<br/>backfill imágenes →[full] mirror →<br/>enforcer → consolidate_sources"]
+    F3["FASE 3 · Cleanup retrofits<br/>(= ETAPA 1)"] --> R["**absorb_spool** → rescore → **clean_titles** →<br/>normalize_release_dates →<br/>filter_non_manga → filter_collectible →<br/>backfill imágenes →[full] mirror →<br/>enforcer → consolidate_sources"]
     R --> F4{"FASE 4 · validate_corpus<br/>(gate DURO)"}
     F4 -->|✗ exit 2: violaciones duras| SKIP["build OMITIDO<br/>(build anterior intacto)"]
     F4 -->|✓ válido| F5["FASE 5 · build_web.py"]
@@ -348,11 +348,33 @@ Dos corridas canónicas, misma estructura (4 fases), misma diferencia central:
   sin verse hace >90 días, por fuente.
 
 #### Delta diario (programación)
-`scripts/com.pandawatch.scrape-delta.plist` — LaunchAgent de macOS listo para correr
-el delta todos los días a las 3:30 AM (instrucciones de instalación dentro del archivo;
-NO está instalado por defecto — decisión del owner). Si la Mac duerme a esa hora,
-launchd lo dispara al despertar. Con el lock global, un delta diario nunca pisa un
-full manual en curso.
+
+**Mecanismo canónico (2026-08-24): tarea programada de Claude Code
+`pandawatch-delta-diario`**, diaria a las 11:00 AM. Vive en
+`~/.claude/scheduled-tasks/pandawatch-delta-diario/SKILL.md` (fuera del repo) y
+corre como sesión visible en la app de Claude Code — el owner la eligió sobre
+launchd precisamente por la visibilidad (transcript completo + notificación).
+Requiere la app abierta; si la Mac está apagada a esa hora, corre al siguiente
+arranque de la app.
+
+Qué hace cada corrida: sanity (lock/abort-marker) → `scrape_delta.sh` en
+background → **freno**: si hay >300 items crudos NO estandariza (flaggea al
+owner) → `/watch-standardize-catalog` incremental → `/watch-enrich-series-aliases`
+solo si creció `unmapped_series.jsonl` → `set_rarity.py` → `validate_corpus.py`
+(gate: si falla, se detiene sin build) → `build_web.py` → fichas de fuente si
+hubo hallazgos por-fuente → reporte matinal que abre con los HALLAZGOS del día
+(ediciones especiales nuevas vía `detected_at >= inicio del run`: raras,
+boxsets/artbooks, variantes limitadas y preórdenes primero) y sigue con
+operación, colas pendientes (portadas, feedback, inciertos) y decisiones
+recomendadas (documentadas, nunca auto-aplicadas).
+Es la ÚNICA excepción autorizada a la política de no auto-invocar skills
+(CLAUDE.md). Modelo del orquestador y modo de permisos se configuran en el
+formulario de edición de la tarea en la app (recomendado: Opus + omitir permisos).
+
+Alternativa headless (no usada): `scripts/com.pandawatch.scrape-delta.plist` —
+LaunchAgent de macOS para correr solo el scrape a las 3:30 AM (instrucciones
+dentro del archivo; NO instalado — el owner prefirió la tarea visible). Con el
+lock global, un delta diario nunca pisa un full manual en curso.
 
 #### FASE 1 — sources del YAML
 ```bash
@@ -435,6 +457,7 @@ Cadena de retrofits que limpia y consolida lo recién scrapeado (corre **dentro*
 
 | Paso | Script | Qué hace |
 |---|---|---|
+| 4·0 | `absorb_spool.py` | **Nuevo (2026-08-24, post-mortem del delta 08-22/24, gotcha #152)**: absorbe `data/items.jsonl.spool` si quedó un flush huérfano de una corrida anterior interrumpida (timeout/señal ENTRE el flush por-fuente y el `append_jsonl` de cierre). Corre `append_jsonl(items_path, [])` — no-op limpio si no hay spool pendiente. Va PRIMERO porque el resto de esta cadena hace dump-completo (`write_items_atomic`/`write_lines_atomic`) y NUNCA lee el spool; las filas varadas quedarían huérfanas para siempre si este paso no corriera antes. |
 | 4a | `rescore.py` | Recalcula `score`/`signals`/`signal_types`/`product_type`. **Guard gotcha #61 (2026-06-11)**: items con `standardized_at` se saltean por defecto (`--include-standardized` para override) — el paso es seguro sobre corpus estandarizado. |
 | 4b | `clean_titles.py` | Re-corre `clean_title` (mojibake, junk). **Reordenado ANTES de los filtros (2026-07-07, gotcha #110)**: antes corría al final (4d) y los gates de 4c/4d evaluaban el título SUCIO en un run y el LIMPIO recién en el siguiente — un título que solo pasa/rechaza tras limpiarse (ej. 한정판 recortado por `_strip_korean_retailer_tail`) daba resultado distinto según en qué run cayera. Ahora los filtros ven SIEMPRE el título ya limpio, en la misma corrida. |
 | 4b2 | `normalize_release_dates.py --all-formats` | **Automático desde 2026-07-07**: re-normaliza `release_date` legacy a ISO (`normalize_release_date()`, fuente única). `--all-formats` porque el backlog real (113 filas, invariante DATEISO) es casi todo datetime de tienda JP (`YYYY/MM/DD hh:mm:ss`), fuera de la familia DD/MM/YYYY que cubre el modo default. Barato (compute-only, sin red) y no-op cuando el corpus ya está limpio — `normalize_release_date()` ya es la guardia universal en el sink del scraper (`candidate_to_json`), así que items nuevos entran normalizados; este paso sólo limpia legacy que sobrevivió (backups restaurados, merges crudos). |
@@ -491,7 +514,8 @@ Procesa items **sin `standardized_at`** (incremental). Nunca toca golden records
 4. **Tier 3** — subagentes derivan todo desde cero.
 5. **Merge** — `standardize_apply.py merge`: **preserva el `edition_key` existente**, fallback a la propuesta heurística si el LLM devolvió keys vacías (sin keys usables → el item queda PENDIENTE y se reintenta, con `standardize_attempts` +1 — ver abajo), `canonical_series_key()` (consolida multilingüe), recomputa `cluster_key`, **fusiona duplicados** con `consolidate_by_cluster` (no borra — preserva fuentes hermanas) y emite reporte INTEGRITY. `product_type` se valida contra un enum cerrado (nunca un edition-kind como special/deluxe — eso vive en `edition_key`); si el LLM devolvió algo fuera del enum, se re-deriva con `derive_product_type()`.
    > **`is_manga=false` (2026-07-07, gotcha #122) YA NO expulsa a `non_manga_blacklist.jsonl`.** El item queda PENDIENTE (sin `standardized_at`) y se registra en `data/unmapped_series.jsonl` (reason `llm_non_manga`) para curación manual — son los gates DETERMINISTAS del pipeline (`filter_non_manga`/`filter_collectible`, Fase 3 del scrape) los que deciden la expulsión real en la próxima corrida, nunca el veredicto crudo del LLM. Excepción dura: Mangavariant NUNCA se expulsa (el veredicto se ignora con WARN).
-   > **Escalado de retry (`standardize_attempts`)**: cada vez que el merge deja un item pendiente por keys inusables, incrementa `item.standardize_attempts`. Al auditar la próxima vez (`standardize_audit.py`), un item Tier 2/3 con `standardize_attempts >= MAX_STANDARDIZE_ATTEMPTS` (3) se EXCLUYE de las proyecciones (no vuelve a gastar LLM) y se manda directo a `unmapped_series.jsonl` (reason `standardize_exhausted`) — evita el loop infinito de un título irromanizable.
+   > **Curación periódica de esa cola (paso manual, no automatizable).** Los gates deterministas no alcanzan para todo (un fumetto italiano indie o una figura sin marcador estructural no se pueden expresar como patrón sin falsos positivos), así que cada tanto hay que revisar la cola `llm_non_manga` a mano y decidir KEEP/EXPEL con verificación web. Última corrida: 2026-08-23 sobre 265 items → **94 KEEP / 171 EXPEL / 7 inciertos**; 83 de los KEEP eran light novels que el propio prompt del skill mandaba a rechazar (gotcha #147, ya corregido). El playbook completo está en `docs/reference/conventions.md` § "El LLM propone, el determinismo dispone"; el retrofit modelo es `scripts/retrofit/curate_llm_non_manga_20260823.py`. Los KEEP no llevan marca: al quedar sin `standardized_at` la próxima corrida del skill los retoma sola.
+   > **Escalado de retry (`standardize_attempts`)**: cada vez que el merge deja un item pendiente —por keys inusables **o por veredicto `is_manga=false`** (esta segunda rama no lo contaba hasta 2026-09-07, gotcha #191: el escape hatch nunca se disparaba y el item volvía a gastar Tier 3 en cada corrida, indefinidamente)—, incrementa `item.standardize_attempts`. Al auditar la próxima vez (`standardize_audit.py`), un item Tier 2/3 con `standardize_attempts >= MAX_STANDARDIZE_ATTEMPTS` (3) se EXCLUYE de las proyecciones (no vuelve a gastar LLM) y se manda directo a `unmapped_series.jsonl` (reason `standardize_exhausted`) — evita el loop infinito de un título irromanizable.
 6. **Enforcer** — `enforce_listadomanga_rules.py` (Step 6b del skill): re-aplica determinísticamente TODAS las reglas duras de agrupación sobre lo que el LLM dejó. Desde 2026-06-11 incluye 5 pasos nuevos (3c1 `canonicalize_edition_slugs.py` #69, 3c2 `merge_duplicate_series.py` #70, 3c3 `normalize_edition_publishers.py`, 3c4 `fix_edition_key_prefix.py` #71, 3c5 `fix_title_edition_words.py` #72, antes de `backfill_cluster_key`) y **ya no es solo-listadomanga**: esos pasos aplican a todas las fuentes. Además el **paso 4b** re-corre `fix_lmc_display_titles` + `fix_especial_title_order` DESPUÉS de consolidate — el merge de filas podía revivir un título contaminado ya limpiado y el enforcer necesitaba 2 pasadas para converger; con 4b converge en UNA (verificado: 2ª corrida → items.jsonl byte-idéntico).
 7. **→ ETAPA 4 (slugs)** y **→ ETAPA 5 (traducción)**.
 8. `pytest tests/test_extraction.py` + `validate_corpus.py` (0 violaciones duras; warnings EDSLUG/SERIESDUP/EKPREFIX/PUBMIX en 0 o justificados).
@@ -522,6 +546,19 @@ Consume `data/unmapped_series.jsonl` (log de `series_key` no canónicos que el s
 **Gates del skill (Lote B):** cada edición del YAML pasa por `scripts/audit/lint_series_aliases.py` (Loader estricto que ERROREA ante claves duplicadas — `safe_load` se quedaría con la última en silencio, perdiendo la entrada original y sus aliases — + colisiones de normalización vía `find_canonical_duplicates`). Las colisiones tienen semántica **baseline**: al arrancar, el skill captura el set pre-existente (`--snapshot data/diagnostics/aliases_collisions_baseline.json`); el gate post-edición (`--baseline`) aborta SOLO ante colisiones NUEVAS — las históricas quedan como warning informado al owner (las dup keys abortan SIEMPRE). El backfill respalda `items.jsonl` con `backup_and_rotate(..., timestamped=True)` (un backup por corrida, no un slot fijo: un falso merge es irreversible tras la siguiente corrida) e imprime `[SUMMARY] items cambiados: N` para verificar convergencia (2ª corrida con los mismos `--only-keys` → 0). Al cerrar, el skill corre `scripts/export_series_aliases.py` para refrescar `data/series_aliases.json` (índice de búsqueda que web-next lee por mtime).
 
 **Cuándo:** después de cada standardize que reportó series nuevas.
+
+> ⚠️ **`unmapped_series.jsonl` son DOS colas en un archivo** (gotchas #155/#198). Las
+> filas SIN `reason` son series sin mapear: las consume este skill y el próximo scrape
+> las regenera. Las filas CON `reason` (`llm_non_manga`, `standardize_exhausted`) son
+> **curación manual y el scrape NO las regenera**. El Step 5 del skill hacía
+> `: > data/unmapped_series.jsonl` y borraba las dos; el costo real fue que la rutina
+> diaria pasó **7 corridas** (2026-08-29 → 09-07) salteándose el skill entero para no
+> destruir la curación, con lo que tampoco se procesó la cola de series.
+> **Desde 2026-09-07 el Step 5 invoca `scripts/prune_unmapped_queue.py`** (fuente única),
+> que conserva toda fila con `reason`, poda las de series y deduplica. El appender
+> (`log_unmapped_series`) también deduplica ya **entre corridas** (#157): antes el 76-92%
+> del archivo eran `series_key` repetidas, lo que rompía la condición "¿creció la cola?"
+> del PASO 4 de la rutina diaria — se disparaba siempre.
 
 ---
 
@@ -571,6 +608,12 @@ Pobla `description_es` y `extras[].description_es`. **Último paso del skill #2*
   porque ninguno de los dos clientes tiene estado mutable compartido en el hot path
   (`GoogleTranslator` se instancia nuevo por llamada; el cliente HTTP de `deepl` está
   hecho para uso concurrente).
+- **⚠️ Hueco conocido (2026-09-11, gotcha #201, NO resuelto)**: el contrato de "tres
+  estados" de arriba sólo cubre excepción o resultado vacío. Cuando Google responde con
+  su página de error, `deep-translator` la devuelve como texto no vacío y se persiste
+  como traducción válida (`"Error 500 (Server Error)!!1500.That’s an error…"`) con su
+  `description_es_src_hash` — el item queda marcado como traducido y no se reintenta.
+  Medido: 289 de 12 370 traducciones. `--retry-empty` NO los recupera (no están vacíos).
 ```bash
 translate_descriptions.py --workers 4
 translate_descriptions.py --retry-empty          # recupera fallos de API viejos mal marcados
@@ -589,6 +632,8 @@ El scrape ya baja la portada de items nuevos (Fase 1 del espejo), **ya estandari
 > **Umbral único de baja calidad: 90 000 px** (`LOW_QUALITY_PX`, 2026-07-08). Es la MISMA constante en `fetch_better_covers.py` (`DEFAULT_MIN_PIXELS`), `sync_cover_preview.py` y `promote_hires_cover.py` (`LOW_PX_THRESHOLD`) — antes había una banda 90k-100k entre motor y sync que generaba churn (el motor buscaba candidatas que sync podaba al instante). Candado en `tests/test_cover_engine_gates.py::test_low_quality_threshold_locked`.
 >
 > **Ledger de rechazos + denylist** (`data/cover_rejections.jsonl`, append-only): cada vez que se rechaza una candidata (desde `cover-preview.html` o el retiro automático de `sync_cover_preview`), se apendea `{slug, action, target, rejected_url, a_hash, match_dist, ref_pixels, reason, rejected_at}`. `fetch_better_covers.is_rejected_candidate()` es la fuente única que lo consulta — una candidata ya rechazada **no se vuelve a proponer** (veta por URL exacta siempre; por hash sólo con motivo de IDENTIDAD y distancia ≤2). Detalle: `docs/reference/images.md`.
+>
+> **Acción `remove_image` (2026-09-01)**: `cover_preview.json`/`apply_preview()` ganaron una acción nueva — "eliminar imagen de galería SIN reemplazo" — para resolver los pares casi-duplicados que `dedup_carousel_images.py --redteam-auto` (ver punto 3 de abajo y `docs/reference/images.md` § "OLA 2") detecta pero NO auto-elimina por ser dudosos (dims iguales o dHash 3-8). Regla dura: nunca propone eliminar `images[0]` (la portada), con guard en tres capas (encolador, `sync_preview`, `apply_preview`). `scripts/retrofit/enqueue_wave2_dudosos_removal.py` encoló los 327 pares reportados como candidatas `pending` (280 válidas en 260 productos; 44 hubieran tocado la portada, 3 eran `target` duplicado) — el owner las revisa una por una en `cover-preview.html`, igual que cualquier otra candidata. Detalle completo del esquema/UI en `docs/reference/dashboard.md` y `docs/reference/images.md`.
 
 1. **`mirror_images.py`** — espejo local del histórico: baja a `data/images/` el `local` faltante de CADA entry de `images[]` (portada `images[0]` + galería). GC mark-and-sweep saca archivos huérfanos (cuenta `images[].local` + `sources[].image_local`; → `_orphans/` o `--gc-delete`).
 2. **`upgrade_image_resolution.py`** — quita parámetros/segmentos CDN de resize (9 patrones: Magento query params, WP -NxM, Shopify _Nx, Amazon ._SY300_., Rakuten ?_ex=, Buscalibre fit-in/, Cultura cdn-cgi/image/, Whakoom small→large, Magento cache path). Pasa Referer del item para evitar 403. Compara píxeles (`--min-gain 0.10`). **Automático en `scrape_full.sh` [4g2]**. → luego `mirror_images.py --gc`.
@@ -745,3 +790,153 @@ de [`scripts/audit/data_quality.py`](../../scripts/audit/data_quality.py); UI en
 skills `watch-standardize-catalog` / `watch-enrich-series-aliases` /
 `watch-validate-rarity` / `watch-search-covers` / `watch-review-feedback` si cambia
 el orden de etapas o se agrega/quita un proceso.*
+
+
+### Ingestión: correcciones 2026-09-24
+
+Antes del discovery, se contrasta state con las URLs principales/secundarias del
+catálogo y spool; una URL ausente vuelve a evaluarse. Los rechazos explícitos se
+respetan incluso si cambia el contenido. El upsert reconoce fuentes secundarias,
+preserva metadata no recapturada y fecha/contador de revisión. JSONL corrupto o URL
+secundaria ambigua detiene el rewrite sin descartar datos. Hash incluye portadas y
+extras remotos. Full usa --full-catalog; ambos incluyen Meian API. Delta de
+Mangavariant incluye modificaciones de siete días. Los fallos reportados de wiki,
+limitaciones de páginas y corridas incompletas no terminan con éxito. Un backup
+fallido aborta antes de mutar el catálogo. `--include-seen` también escribe al sink.
+
+Auditoría reproducible: `.venv/bin/python scripts/audit/ingestion_integrity.py
+--output /tmp/ingestion-integrity.json`. Es solo lectura; una ausencia de caché no
+es una orden de recuperar ni prueba automática de pérdida. Ver
+[auditoría y límites](audits/2026-09-24-ingestion.md).
+
+
+El gate non-manga corre antes de spool y sink también para extractores con selectores. Bestseller solo no prueba novela. Mangavariant usa identidad estructurada de serie para evitar falsos rechazos de crossovers/distribuidores. Recuperación del 2026-09-24: +147 productos, +150 fechas, sin estandarización LLM.
+
+
+Corrección 2026-09-24 — paridad del cleanup: `filter_collectible.should_reject`
+reutiliza el contrato de fuentes curadas (`is_curated_collectible_source`) para
+filas crudas. Antes habría expulsado 134 de los 147 productos recién recuperados
+como `regular_tomo`. Después: 147/147 sobreviven, sin omitir gates duros de título.
+La comprobación equivalente non-manga conserva también 147/147.
+
+### Continuación de integridad — 2026-09-24
+
+Los bootstraps guardan `data/.ingestion-checkpoints/<wiki>.json` únicamente tras
+escribir corpus y estado, si no hubo incidencias y la cobertura llega al mes
+actual. Guardan el inicio de corrida (no su final) y amplían la siguiente ventana
+con siete días de solapamiento. No se infiere cobertura histórica anterior al
+primer checkpoint. Fallos, topes, dry-runs e imports por IDs no lo adelantan.
+Mangavariant usa el mismo data-dir de la corrida para su discovery.
+
+Los enlaces secundarios solo resuelven un propietario ambiguo si el ISBN
+entrante coincide con exactamente uno de esos propietarios. Un ISBN distinto
+en una asociación única no puede absorber una edición nueva. Esto no fusiona
+productos globalmente por ISBN ni sanea automáticamente asociaciones históricas.
+
+La lectura de sitemaps descomprime solo si los bytes conservan la firma gzip.
+`requests` puede haber descomprimido el transporte aunque siga presente el header
+Content-Encoding o el sufijo .gz; intentar descomprimir dos veces perdía el índice.
+
+La entrada `python manga_watch.py` agrega `scripts/` al path para cargar los
+mismos módulos internos que la entrada canónica. Antes podía descubrir productos
+y luego fallar antes del spool por `ModuleNotFoundError: series_aliases`.
+
+Una edición inferida sin volumen no sirve como identidad para consolidar todos
+sus productos: se deja independiente por URL. Los números chinos `第N期`/`N卷`/
+`N冊` se reconocen para impedir la fusión de tomos diferentes. También se rechazan
+challenges HTML aunque el servidor devuelva 200 en los bootstraps wiki; no avanzan
+su watermark ni se reportan como catálogos vacíos exitosos.
+
+Los conflictos de identidad no detienen el resto del lote: la ingestión los
+conserva en `items.jsonl.conflicts`, devuelve error y no confirma el watermark.
+La cola se reintenta al siguiente append de ingestión; el estado de esas URLs
+se invalida para permitir obtener metadatos frescos. Se escribe la cola antes
+del corpus sin descartar pendientes previos; solo después del commit se retiran
+los resueltos y el spool. El append genérico mantiene el modo estricto por defecto.
+
+Las portadas variantes crudas también mantienen identidad por URL aunque tengan
+volumen: dos cubiertas distintas de un mismo tomo no son el mismo producto.
+Se conserva la identidad explícita aportada por un parser y la identidad curada
+al actualizar productos existentes. Se versiona el hash de ingestión para que
+la siguiente consulta reprocese los productos observados con las nuevas reglas.
+
+Con `--enable-js`, Queue-it activa un intento de renderizado en Chromium; si
+funciona, el resto de páginas de esa entrada usa navegador. No se convierte un
+bloqueo persistente en éxito. Se probó vivo con Panini IT y Panini ES.
+
+La recuperación inicial de Fase 3 reintenta también `items.jsonl.conflicts`
+aunque no exista spool. Si la ambigüedad sigue, conserva la entrada y devuelve
+error; el dry-run es solo lectura. La navegación semanal de AnimeClick conserva
+la semana que cruza el inicio del mes y marca como incompletos los ciclos, fallos
+y límites; las cadenas de Shueisha también exponen límites y cambios de esquema.
+
+Los listados HTML guardan cada página adquirida en spool antes de solicitar la
+siguiente. No avanzan estado; el cierre reingiere idempotentemente y enriquece
+las filas. Así un timeout externo o interrupción durante una fuente extensa
+conserva también las páginas de esa fuente, no solo las fuentes terminadas.
+Las asociaciones secundarias con ISBN **válidos** diferentes se separan al
+reobservarse, conservando ambos productos y todas sus URLs primarias.
+
+`collector-catalog` solo se asigna a categorías verificadas que contienen
+exclusivamente ediciones coleccionables (inicialmente dos categorías de Panini
+IT). Permite títulos bare con score base 20, después del gate non-manga; el
+cleanup respeta la misma evidencia. No convierte búsquedas genéricas en
+catálogos curados ni inventa un tipo de variante/cofre. Sin edición explícita,
+los productos raw de esas categorías mantienen identidad por URL.
+
+Una importación limitada a meses futuros tampoco confirma watermark: la ventana
+efectiva debe incluir el mes actual, además de terminar sin incidencias. Esto
+evita que una consulta de preventas certifique cobertura de meses no recorridos.
+
+
+### Ventanas de calendarios verificadas (2026-09-24)
+
+Full y delta consultan VIZ, Yen Press, Manga Sanctuary y Otaku Calendar hasta
+el mes actual +3 (`LISTADO_CAL_TO`, configurable). Manga Sanctuary full inicia
+en 2010-01; delta usa `LISTADO_CAL_FROM`. Otaku full inicia en 2010-01, tras verificar páginas reales de 2015.
+Una ejecución exclusivamente futura no avanza el checkpoint: la ventana debe
+contener el mes actual y ambos destinos deben haberse escrito sin incidencias.
+AnimeClick conserva su navegación semanal hacia atrás, sin prometer meses futuros.
+
+## Fuentes y ciclo de vida — revisión 2026-09-25
+
+El alcance incluye manga/manhwa/manhua, artbooks y ediciones premium; el owner
+confirmó conservar novelas ligeras y danmei premium. Se excluyen mercancía,
+cómic occidental y ebooks (incluido el marcador chino 【電子書】).
+
+Los wrappers exportan `MANGA_WATCH_INGESTION_MODE=full|delta`; el CLI ofrece
+`--ingestion-mode` y `--source-policy`. `manual` conserva el diagnóstico ad hoc.
+`ingestion_policy.yml` controla los wikis: apagar una entrada YAML no bastaba
+porque los wrappers invocaban parsers virtuales por separado. Los retirados se
+omiten con motivo explícito; no se borran sus productos ni referencias históricas.
+
+Una fuente sin recibo compatible en `data/.source-baselines/` hace primero un
+recorrido completo. La huella incluye configuración y el recibo guarda el umbral
+mínimo de score. Error, cap, dry-run, persistencia fallida o conflictos pendientes
+impiden declararlo completo. HTML: una fuente sana puede completar aunque otra
+falle; wikis: se exige ventana que incluya el presente y candidatos. Un recibo
+prueba recorrido de los endpoints configurados, NO cobertura del universo editorial.
+El primer delta tras migrar puede durar más porque faltan recibos históricos;
+no fabricar recibos desde el mero conteo de productos. Los wikis iniciales tienen
+presupuesto de hasta 4 horas en el wrapper delta; un timeout sigue siendo fallo.
+
+HTML sin timestamp de modificación fiable: full y delta recorren páginas completas
+(tope de seguridad 1000; si existe siguiente al alcanzar el tope, corrida incompleta).
+Delta es comparación de contenido contra estado durable. Calendarios mantienen
+ventana con solapamiento y recuperación desde el último checkpoint; sitemaps usan
+fecha de modificación. PRH revisita ambas selecciones, nunca descarta un producto
+antiguo recién listado por su fecha de publicación. ListadoManga full y delta usan
+el mismo score mínimo 20; cambiarlo invalida el recibo.
+
+Antes de fusionar clusters se comprueba evidencia contradictoria (ISBN válido,
+mercado, letra explícita de portada). Se preservan ambas filas con
+`identity_review_required=true` y cluster por URL; la marca es persistente ante
+reingesta y se reporta como `IDENTITY_REVIEW`. La curación debe resolver identidad
+antes de quitarla. La coincidencia de serie o ISBN por sí sola no autoriza fusión
+ni retiro de una fuente. `source_overlap.py` informa overlap alto, no redundancia.
+
+La rutina diaria conserva su freno de >300 crudos. El backlog de miles de crudos
+requiere la corrida de estandarización autorizada por el owner; esta auditoría no
+invoca automáticamente skills de pago ni considera ese backlog "datos perdidos".
+
+La protección de identidad también separa box set/tomo, partes chinas `第N部` y SKUs distintos de Kingstone. Una actualización por URL secundaria conserva la URL canónica y recalcula su clave protegida. `identity_review_required` conserva el producto ante evidencia contradictoria; no lo elimina ni representa una deduplicación ya resuelta.

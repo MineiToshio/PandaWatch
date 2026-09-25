@@ -16,8 +16,8 @@
 #
 # Mangavariant corre en AMBOS modos pero distinto: el full baja las ~2700 URLs
 # del sitemap; el delta baja los sitemaps y fetchea SOLO las variantes cuya URL
-# no está ya en el corpus (diff incremental, tope MANGAVARIANT_MAX_NEW, orden por
-# lastmod desc). El resto de fuentes (SocialAnime, BBM, Manga-Sanctuary, Whakoom,
+# no está ya en el corpus o fue modificada en los últimos siete días (tope
+# MANGAVARIANT_MAX_NEW, orden global por lastmod desc). El resto de fuentes (SocialAnime, BBM, Manga-Sanctuary, Whakoom,
 # retailers Shopify/Tiendanube, etc.) se comportan igual entre delta y full por
 # ahora — la otra diferencia grande es el método de discovery de listadomanga.
 #
@@ -169,6 +169,18 @@ PER_HOST_LIMIT="${PER_HOST_LIMIT:-2}"
 # Si ninguno está disponible, corre sin timeout (mejor que fallar).
 _run_timed() {
     local secs=$1; shift
+    # A new/changed source needs a historical baseline, not the short delta budget.
+    local previous="" argument wiki_id=""
+    for argument in "$@"; do
+        if [[ "$previous" == "--bootstrap-wiki" ]]; then wiki_id="$argument"; break; fi
+        previous="$argument"
+    done
+    if [[ -n "$wiki_id" ]]; then
+        if "$VENV_PY" -c 'import sys; from scripts import ingestion_policy as p; s=p.load_policy()["wikis"].get(sys.argv[1], {}); sys.exit(0 if s.get("enabled") and p.needs_full("delta", "data", "wiki:"+sys.argv[1], s) else 1)' "$wiki_id"; then
+            secs=14400
+            echo "    [INITIAL-FULL] $wiki_id: presupuesto histórico de $secs segundos"
+        fi
+    fi
     if command -v timeout &>/dev/null 2>&1; then
         timeout "$secs" "$@"
         return $?
@@ -189,6 +201,8 @@ _run_timed() {
 # [hoy-2m..hoy] y se perdían los anuncios futuros (P1).
 LISTADO_CAL_FROM="${LISTADO_CAL_FROM:-$(date -v-2m '+%Y-%m' 2>/dev/null || date -d '2 months ago' '+%Y-%m' 2>/dev/null || date '+%Y-%m')}"
 LISTADO_CAL_TO="${LISTADO_CAL_TO:-$(date -v+3m '+%Y-%m' 2>/dev/null || date -d '3 months' '+%Y-%m' 2>/dev/null || date '+%Y-%m')}"
+
+export MANGA_WATCH_INGESTION_MODE=delta
 
 GLOBAL_START=$(date +%s)
 
@@ -267,8 +281,8 @@ if [ -s data/items.jsonl ]; then
     if [ -n "$PRESCRAPE_BACKUP" ] && [ -f "$PRESCRAPE_BACKUP" ]; then
         echo "    backup → $PRESCRAPE_BACKUP"
     else
-        echo "    ⚠ backup pre-scrape falló (continúa)"
-        PRESCRAPE_BACKUP=""
+        echo "    ✗ backup pre-scrape falló — abortando antes de modificar el catálogo"
+        exit 1
     fi
     echo
 fi
@@ -344,6 +358,8 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     P2B_START=$(date +%s)
     _run_timed 600 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki manga-sanctuary \
+        --wiki-from "$LISTADO_CAL_FROM" \
+        --wiki-to "$LISTADO_CAL_TO" \
         --sleep-seconds 0.5 \
         --min-score 20 \
         > "$LOG_DIR/02b-manga-sanctuary.log" 2>&1
@@ -485,6 +501,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     P2M_START=$(date +%s)
     _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki yenpress \
+        --wiki-to "$LISTADO_CAL_TO" \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 0.5 \
         --min-score 20 \
@@ -511,6 +528,7 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     P2O_START=$(date +%s)
     _run_timed 300 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki viz \
+        --wiki-to "$LISTADO_CAL_TO" \
         --wiki-from "$LISTADO_CAL_FROM" \
         --sleep-seconds 1.0 \
         --min-score 20 \
@@ -568,18 +586,37 @@ if [ "$SKIP_WIKIS" != "1" ]; then
     # Así las ediciones variantes nuevas entran en el delta diario en vez de
     # esperar hasta el próximo full (antes: hasta ~3 meses de lag).
     # Requiere Playwright para el challenge; sin él degrada con WARN e importa 0.
-    # Timeout 1200s: challenge (~5-8s, one-shot) + 3 sitemaps + hasta 400 detail
-    # pages (workers=4 default × ~1.5s ÷ 4 ≈ 150s) + mirror de portadas nuevas.
-    # ≈ 4-8× lo esperado, pero bounded para no colgar el run diario.
-    echo ">>> [2t] mangavariant incremental (variantes nuevas vs corpus, tope 400)"
+    # --workers 8 (post-mortem 2026-08-22/24, Fix 3): en el path bootstrap-wiki
+    # `args.workers` NO alimenta el ThreadPoolExecutor de fetch de detail-pages
+    # (ese usa su propio default interno de bootstrap()) — sólo alimenta
+    # `mirror_candidate_images`. Sin este flag el default de manga_watch.py es
+    # 1 → el mirror de portadas nuevas corre SERIAL (~3s/imagen). Con
+    # MAX_NEW=400 eso solo puede tardar ~1200s, agotando el timeout viejo antes
+    # de terminar. Timeout 3600s (antes 1200s, 4× corto contra la evidencia real
+    # del 08-22): challenge (~5-8s) + 3 sitemaps + hasta 400 detail pages +
+    # mirror de hasta 400 portadas nuevas a 8 workers (~150s) con margen real.
+    echo ">>> [2t] mangavariant incremental (variantes nuevas vs corpus, tope 400, workers=8)"
     P2T_START=$(date +%s)
-    _run_timed 1200 env MANGAVARIANT_INCREMENTAL=1 MANGAVARIANT_MAX_NEW=400 \
+    MV_SINCE="${MANGAVARIANT_SINCE:-$("$VENV_PY" -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc)-timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S+00:00"))')}"
+    _run_timed 3600 env MANGAVARIANT_INCREMENTAL=1 MANGAVARIANT_MAX_NEW=400 MANGAVARIANT_SINCE="$MV_SINCE" \
         PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --bootstrap-wiki mangavariant \
+        --workers 8 \
         --sleep-seconds 0.3 \
         --min-score 20 \
         > "$LOG_DIR/02t-mangavariant-incremental.log" 2>&1
-    record_step "mangavariant-incremental" $?
+    MV_RC=$?
+    if [ "$MV_RC" -ne 0 ]; then
+        # Fix 4 (post-mortem 2026-08-22/24): source_health.py clasifica por
+        # texto de log, sin conocer el exit code del wrapper — un rc=124
+        # (timeout) mataba el proceso a mitad y dejaba stats vacías (sin
+        # error/challenge/skip/candidatos), que `classify()` con runs_seen=1
+        # caía por default a "healthy". Este marker lo hace visible: se
+        # clasifica como `broken_timeout` (ver source_health.py::classify).
+        printf '[STEP_TIMEOUT] source=wiki:mangavariant rc=%s\n' "$MV_RC" \
+            >> "$LOG_DIR/02t-mangavariant-incremental.log"
+    fi
+    record_step "mangavariant-incremental" "$MV_RC"
     echo "    duración: $(($(date +%s) - P2T_START))s — items: $(count_lines)"
 
     # 2q (OPT-IN). Whakoom spider (Cloudflare risk)
@@ -597,6 +634,12 @@ if [ "$SKIP_WIKIS" != "1" ]; then
         echo "    [SKIP] whakoom spider profundo (INCLUDE_WHAKOOM_SPIDER=0)"
     fi
 
+    echo ">>> Meian (API catálogo completo)"
+    _run_timed 1800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
+        --bootstrap-wiki meian --workers "$SCRAPE_WORKERS" --min-score 20 \
+        --sleep-seconds 0.3 > "$LOG_DIR/02-meian.log" 2>&1
+    record_step "meian" $?
+
     echo " ✓ PHASE 2 wikis done"
 else
     echo "[SKIP] PHASE 2 (wikis) saltada por SKIP_WIKIS=1"
@@ -607,6 +650,17 @@ fi
 # ============================================================
 if [ "$SKIP_CLEANUP" != "1" ]; then
     phase_header 3 "Cleanup retrofits"
+
+    # [4·0] absorb_spool PRIMERO que nada: si la Fase 1/2 murió por timeout/señal
+    # entre el flush por-fuente (spool) y el append_jsonl de cierre, el resto de
+    # esta cadena hace dump-completo (write_items_atomic/write_lines_atomic) y
+    # NUNCA lee el spool — esas filas quedarían huérfanas para siempre. No-op
+    # limpio si no hay spool pendiente (post-mortem 2026-08-22/24: 274 items
+    # varados en data/items.jsonl.spool tras un timeout de mirror_candidate_images).
+    echo ">>> [4·0] absorb_spool (spool huérfano de una corrida interrumpida)"
+    "$VENV_PY" scripts/retrofit/absorb_spool.py > "$LOG_DIR/04-0-absorb-spool.log" 2>&1
+    record_step "absorb_spool" $?
+    echo "    items: $(count_lines)"
 
     echo ">>> [4a] rescore"
     "$VENV_PY" scripts/retrofit/rescore.py > "$LOG_DIR/04a-rescore.log" 2>&1
@@ -901,3 +955,8 @@ echo "  - Para recorrer el catálogo COMPLETO de listadomanga (~3432"
 echo "    colecciones via lista.php), usar: ./scripts/scrape_full.sh"
 echo "  - Frecuencia recomendada: delta semanal, full mensual/trimestral."
 echo
+
+# Partial runs must propagate failure to the caller/scheduler.
+if [ "${#FAILED_STEPS[@]}" -gt 0 ]; then
+    exit 1
+fi

@@ -35,6 +35,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
+
 import requests
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -80,6 +85,7 @@ def _get_json(session: requests.Session, url: str, params: dict | None = None,
         except (requests.RequestException, ValueError):
             pass
         time.sleep(1.0 * (attempt + 1))
+    report_issue(session, f"JSON request failed after 3 attempts: {url}")
     return None
 
 
@@ -90,16 +96,21 @@ def _get_json(session: requests.Session, url: str, params: dict | None = None,
 def _jd_intl_list(session: requests.Session, sleep: float) -> Iterator[dict]:
     """WooCommerce Store API — catálogo completo (~1246, 13 págs a 100)."""
     page = 1
-    while page <= 20:
+    while page <= 1000:
         data = _get_json(session, "https://jd-intl.com/wp-json/wc/store/v1/products",
                          {"per_page": 100, "page": page, "orderby": "date"})
         if not data:
+            break
+        if not isinstance(data, list):
+            report_issue(session, "jd-intl: unknown product response schema")
             break
         yield from data
         if len(data) < 100:
             break
         page += 1
         time.sleep(sleep)
+    else:
+        report_issue(session, "jd-intl: pagination limit reached")
 
 
 # Marcadores premium de Jade Dynasty (auditoría: 珍藏版 91 + 愛藏版 54 +
@@ -135,7 +146,8 @@ def _spp_list(session: requests.Session, sleep: float) -> Iterator[dict]:
     seen: set[Any] = set()
     for kw in _SPP_KEYWORDS:
         start = 0
-        while start < 3000:  # TotalSize 限定版 ≈ 2200 (auditoría)
+        page_signatures: set[tuple] = set()
+        while start < 150000:
             data = _get_json(
                 session,
                 "https://www.spp.com.tw/webapi/SearchV2/GetShopSalePageBySearch",
@@ -147,24 +159,31 @@ def _spp_list(session: requests.Session, sleep: float) -> Iterator[dict]:
             items = []
             if isinstance(data, dict):
                 inner = data.get("Data") or data
+                if not any(k in inner for k in ("SalePageList", "SalePages", "List")):
+                    report_issue(session, "spp-tw: unknown search response schema")
                 items = (inner.get("SalePageList") or inner.get("SalePages")
                          or inner.get("List") or [])
             elif isinstance(data, list):
                 items = data
             if not items:
                 break
-            new = 0
+            signature = tuple(str(it.get("Id") or it.get("SalePageId")) for it in items)
+            if signature in page_signatures:
+                report_issue(session, f"spp-tw: repeated page keyword={kw} start={start}")
+                break
+            page_signatures.add(signature)
             for it in items:
                 pid = it.get("Id") or it.get("SalePageId")
-                if pid in seen:
+                if not pid or pid in seen:
                     continue
                 seen.add(pid)
-                new += 1
                 yield it
-            if new == 0 or len(items) < 150:
+            if len(items) < 150:
                 break
             start += len(items)
             time.sleep(sleep)
+        else:
+            report_issue(session, f"spp-tw: pagination limit reached keyword={kw}")
 
 
 def _spp_map(p: dict, source: Source) -> Candidate | None:
@@ -201,18 +220,25 @@ _VN_FALSE_POSITIVE_RE = re.compile(
 
 
 def _shopify_like_list(base: str, session: requests.Session, sleep: float,
-                       limit: int = 100, max_pages: int = 100) -> Iterator[dict]:
+                       limit: int = 100, max_pages: int = 1000) -> Iterator[dict]:
     """Sapo/Bizweb y Haravan clonan el /products.json de Shopify."""
     page = 1
     while page <= max_pages:
         data = _get_json(session, f"{base}/collections/all/products.json",
                          {"page": page, "limit": limit})
-        products = (data or {}).get("products") or []
+        if data is None:
+            break
+        if not isinstance(data, dict) or not isinstance(data.get("products"), list):
+            report_issue(session, f"{base}: unknown product response schema")
+            break
+        products = data["products"]
         if not products:
             break
         yield from products
         page += 1
         time.sleep(sleep)
+    else:
+        report_issue(session, f"{base}: pagination limit reached")
 
 
 def _vn_map(p: dict, source: Source, base: str) -> Candidate | None:
@@ -248,7 +274,7 @@ def _vn_map(p: dict, source: Source, base: str) -> Candidate | None:
 def _yaakz_list(session: requests.Session, sleep: float) -> Iterator[dict]:
     """API Laravel — categoría 1098 Box Set/Limited Edition (~58 items)."""
     page = 1
-    while page <= 10:
+    while page <= 1000:
         data = _get_json(session, "https://www.yaakz.com/api/products",
                          {"filter[parent_category_id]": 1098,
                           "page": page, "per_page": 20})
@@ -262,6 +288,8 @@ def _yaakz_list(session: requests.Session, sleep: float) -> Iterator[dict]:
             break
         page += 1
         time.sleep(sleep)
+    else:
+        report_issue(session, "yaakz: pagination limit reached")
 
 
 def _yaakz_map(p: dict, source: Source) -> Candidate | None:

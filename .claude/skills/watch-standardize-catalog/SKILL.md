@@ -316,7 +316,10 @@ heurística como fallback de keys vacías, corrige outliers de serie por
   negativo del LLM en un título ambiguo/CJK ya no puede borrar un item real del
   corpus). **Excepción dura**: un item con source Mangavariant NUNCA se expulsa — si el
   LLM lo marca `is_manga=false`, se IGNORA el veredicto (WARN en consola) y sigue el
-  flujo normal de estandarización.
+  flujo normal de estandarización. **Esa cola se cura a mano cada tanto** (playbook en
+  `docs/reference/conventions.md`); la última fue el 2026-08-23 sobre 265 items →
+  94 KEEP / 171 EXPEL / 7 inciertos. Ojo con el sesgo del prompt: 83 de esos 265 eran
+  light novels que `prompt-rules.md` mandaba a rechazar por error (gotcha #147).
 - **`product_type` siempre del enum** (manga/artbook/fanbook/guidebook/boxset/novel/
   magazine/audiobook). Si el LLM devuelve un edition-kind (special/deluxe/variant/
   limited/collector — eso va en `edition_key`, nunca en `product_type`), se descarta y
@@ -443,3 +446,41 @@ Then re-run the skill normally.
 - Before publishing a fresh build of the dashboard.
 - Weekly as part of overnight maintenance.
 - When you notice messy titles, missing series_keys, or non-manga items in the dashboard.
+
+---
+
+## Modo de fallo conocido del workflow: `subagent completed without calling StructuredOutput`
+
+**Visto 2 veces seguidas el 2026-09-07** sobre el mismo lote (79 items, 4 chunks
+Tier 3), la segunda vez reanudando desde checkpoint. El error es del contrato del
+tool `Workflow`, no del skill:
+
+```
+Error: agent({schema}): subagent completed without calling StructuredOutput
+       (after in-conversation nudge)
+```
+
+**Diagnóstico antes de reintentar** (en este orden):
+
+1. `wc -l data/items.jsonl` + `scripts/validate_corpus.py` → el corpus queda
+   INTACTO: el merge sólo corre al final, así que un fallo a mitad no lo toca.
+2. `cat data/standardize-progress.json` → si `tier1_done: true`, el Tier 1 ya se
+   aplicó y no hay que repetirlo.
+3. `ls data/standardize-run/result_*` → los chunks ya resueltos se conservan.
+
+**Reanudar una vez** con `args: {resume_progress: true}` es correcto (salta Tier 1
+y sólo relanza los chunks sin `result_*`). **Si vuelve a fallar igual, NO insistas:**
+es reproducible, y cada reintento re-gasta el LLM de los chunks pendientes.
+
+**Vía de recuperación que funcionó**: el **camino manual** (Steps 3-10 de arriba).
+Los subagentes escriben `result_NN.jsonl` con la tool `Write` en vez de devolver
+salida estructurada, así que el modo de fallo desaparece por construcción. El
+Step 5 (verificación de integridad) atrapa cualquier item faltante y el Step 6
+(`standardize_apply.py merge`) es el mismo en las dos vías — no hay diferencia en
+el resultado, sólo en la orquestación.
+
+**Antes de re-auditar tras un fallo**: si entre medio corriste un retrofit que
+cambió URLs, regenerá las proyecciones (`rm -rf data/standardize-run` +
+`standardize_audit.py`). Las proyecciones guardan la `url` del item, y una
+proyección con la URL vieja hace que el merge no encuentre a quién aplicarle el
+veredicto.

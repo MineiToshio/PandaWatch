@@ -140,3 +140,10 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0
 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful,
 actualiza esta ficha.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitó 1 referencia de `www.normaeditorial.com` asociada a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.

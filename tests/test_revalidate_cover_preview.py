@@ -10,6 +10,11 @@ Cubre:
   - MOOT: portada vigente ya ≥ LOW_QUALITY_PX (sync la podaría) → intacta.
   - IDEMPOTENCIA: una 2ª pasada no cambia nada (byte-idéntico).
   - No escribe el ledger de rechazos (escritor único = apply/sync).
+  - GUARD POR ACTION (#167): remove_image/replace_cover_demote no pasan por
+    el gate de identidad/calidad.
+  - EVIDENCIA STALE (#167): `verified` calculado contra un `old_image`
+    purgado o contra una portada que el item ya no tiene → se limpia y
+    re-valida contra la portada ACTUAL, no se salta para siempre.
 """
 
 import sys
@@ -225,3 +230,114 @@ def test_no_ledger_written(tmp_path, monkeypatch):
 
     assert stats["rejected_same_cover"] == 1
     assert calls == []                         # el ledger no se tocó
+
+
+# ---------------------------------------------------------------------------
+# Gotcha #167 (2026-09-01): guard por `action` + evidencia stale
+# ---------------------------------------------------------------------------
+
+def test_skipped_by_action_remove_image(tmp_path):
+    """`remove_image` no pasa por el gate de identidad/calidad — `new_image`
+    ahí es la imagen que se propone ELIMINAR de la galería, no una candidata
+    de portada. Antes del guard, esta candidata (imagen deliberadamente
+    DISTINTA a la referencia) habría caído en rejected_same_cover."""
+    imgs = tmp_path / "images"; imgs.mkdir()
+    _draw_cover(imgs / "old.png", (100, 150), variant=0)
+    _draw_cover(imgs / "other.png", (800, 1200), variant=2)  # otra portada
+
+    cand = _cand("other.png", action="remove_image")
+    entry = _entry("s7", "old.png", [cand])
+    items = {"s7": _item("s7", "old.png", cover_url="http://x/old.png")}
+
+    out, stats = revalidate_preview([entry], items, imgs)
+
+    assert stats["skipped_by_action"] == 1
+    assert stats["rejected_same_cover"] == 0
+    assert out[0]["candidates"][0] == cand      # totalmente intacta
+
+
+def test_skipped_by_action_replace_cover_demote(tmp_path):
+    """`replace_cover_demote` tampoco pasa por el gate — `new_image` suele ser
+    una foto YA existente en la propia galería del item, no algo fetcheado."""
+    imgs = tmp_path / "images"; imgs.mkdir()
+    _draw_cover(imgs / "old.png", (100, 150), variant=0)
+    _draw_cover(imgs / "gallery_twin.png", (400, 500), variant=2)
+
+    cand = _cand("gallery_twin.png", action="replace_cover_demote")
+    entry = _entry("s8", "old.png", [cand])
+    items = {"s8": _item("s8", "old.png", cover_url="http://x/old.png")}
+
+    out, stats = revalidate_preview([entry], items, imgs)
+
+    assert stats["skipped_by_action"] == 1
+    assert out[0]["candidates"][0] == cand
+
+
+def test_stale_evidence_missing_old_image_recomputed(tmp_path):
+    """Candidata ya `verified` (de una corrida previa) contra un `old_image`
+    que fue purgado del disco en una ola posterior de limpieza de imágenes →
+    se limpia y se re-valida contra la portada ACTUAL del item, en vez de
+    quedar saltada para siempre por la regla de idempotencia."""
+    imgs = tmp_path / "images"; imgs.mkdir()
+    # "purged.png" (old_image congelado de la entry) NUNCA se crea en disco.
+    _draw_cover(imgs / "current_cover.png", (100, 150), variant=0)
+    _draw_cover(imgs / "new.png", (800, 1200), variant=0)  # misma portada, hi-res
+
+    stale_cand = {**_cand("new.png"), "verified": True, "match_dist": 1,
+                  "ref_pixels": 15_000}
+    entry = _entry("s9", "purged.png", [stale_cand])
+    items = {"s9": _item("s9", "current_cover.png", cover_url="http://x/current.png")}
+
+    out, stats = revalidate_preview([entry], items, imgs)
+
+    assert stats["stale_evidence_recomputed"] == 1
+    assert stats["already_verified"] == 0
+    cand = out[0]["candidates"][0]
+    assert cand["status"] == "pending"
+    assert cand["verified"] is True             # re-validada, no la evidencia vieja
+    assert stats["passed"] == 1
+
+
+def test_stale_evidence_item_cover_changed_recomputed(tmp_path):
+    """`old_image` de la entry SIGUE existiendo en disco, pero el item cambió
+    de portada desde que la candidata se verificó (otra ola promovió una
+    portada distinta) → igual es evidencia stale: se re-valida contra la
+    portada ACTUAL, no la vieja congelada."""
+    imgs = tmp_path / "images"; imgs.mkdir()
+    _draw_cover(imgs / "old_frozen.png", (100, 150), variant=1)     # frozen, DISTINTA
+    _draw_cover(imgs / "current_cover.png", (100, 150), variant=0)  # portada ACTUAL
+    _draw_cover(imgs / "new.png", (800, 1200), variant=0)           # = portada ACTUAL
+
+    stale_cand = {**_cand("new.png"), "verified": True, "match_dist": 1,
+                  "ref_pixels": 15_000}
+    entry = _entry("s10", "old_frozen.png", [stale_cand])
+    items = {"s10": _item("s10", "current_cover.png", cover_url="http://x/current.png")}
+
+    out, stats = revalidate_preview([entry], items, imgs)
+
+    assert stats["stale_evidence_recomputed"] == 1
+    cand = out[0]["candidates"][0]
+    # Si hubiera usado la referencia stale (variant=1, otra portada) habría
+    # rechazado por rejected_same_cover; usando la ACTUAL (variant=0) pasa.
+    assert stats["rejected_same_cover"] == 0
+    assert cand["verified"] is True
+    assert stats["passed"] == 1
+
+
+def test_verified_not_recomputed_when_reference_still_valid(tmp_path):
+    """Caso base (regresión): si old_image sigue existiendo Y sigue siendo la
+    portada actual del item, `verified` NO se toca — sigue siendo idempotente."""
+    imgs = tmp_path / "images"; imgs.mkdir()
+    _draw_cover(imgs / "old.png", (100, 150), variant=0)
+    _draw_cover(imgs / "new.png", (800, 1200), variant=0)
+
+    verified_cand = {**_cand("new.png"), "verified": True, "match_dist": 1,
+                      "ref_pixels": 15_000}
+    entry = _entry("s11", "old.png", [verified_cand])
+    items = {"s11": _item("s11", "old.png", cover_url="http://x/old.png")}
+
+    out, stats = revalidate_preview([entry], items, imgs)
+
+    assert stats["already_verified"] == 1
+    assert stats["stale_evidence_recomputed"] == 0
+    assert out[0]["candidates"][0] == verified_cand   # byte-idéntica, sin recompute

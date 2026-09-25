@@ -274,3 +274,99 @@ PY
 **Antes de cerrar cualquier cambio en VIZ**: validar (`validate_corpus`, 0 duras) → tests
 (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza esta
 ficha.
+
+## 2026-09-07 — 429 puntual en el fetch de una ficha (no bloqueante)
+
+En el bootstrap `02o-viz` (artbooks US) apareció **un** rate-limit al pedir la ficha de
+producto:
+
+```
+[viz] ERROR product https://www.viz.com/manga-books/manga/jojo-s-bizarre-adventure-part-7-steel-ball-run-volume-9-0/product/8984/hardcover: 429 Client Error: Too Many Requests
+```
+
+Es un único item de 36 s de corrida; el resto del bootstrap terminó bien y la fase no
+falló (rc=0). Se anota como **línea base**: si el mismo 429 vuelve a aparecer en corridas
+sucesivas o escala a varias fichas, la fuente necesitaría entrar a un `throttle_group`
+(como se hizo con las Shopify en `throttle_group: shopify`). Con una sola ocurrencia
+aislada no hay evidencia para pedir cambio de configuración.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Auditoría histórica — 2026-09-24
+
+El recorrido 2013-01→2026-09 encontró límites temporales 429 en 33 calendarios
+y 19 fichas. Conservó lo recibido y terminó con salida 1; se reintentan esos
+huecos por separado y con pausas. Una respuesta de ficha HTTP 200 sin metadata
+de libro parseable ahora también registra incidencia, en vez de omitirla como
+si el recorrido fuera completo. Los detalles recuperados fuera del calendario
+no reciben una fecha inventada: si no existe, queda vacía.
+
+Los 52 grupos fallidos (33 calendarios + 19 detalles) se reintentaron con pausas.
+Quedó un 429 en febrero de 2022, resuelto con una última corrida de ese mes (2
+candidatos, sin incidencias). El staging de reintento recuperó 48 URLs primarias
+ausentes; la corrida inicial con salida 1 sigue registrada como parcial.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+Full y delta incluyen ahora el mes actual +3 mediante LISTADO_CAL_TO.
+La prueba 2026-10–12 terminó sin errores con 8 candidatos/reportables. Antes,
+el default al mes actual omitía esos anuncios. El timeout full pasa a 1800 s
+para permitir el recorrido histórico con pausas y reintentos.
+
+El parser limpia también el prefijo de navegación `VIZ: Read a Free Preview of`
+del og:title, sin cambiar el nombre del libro. Un producto enlazado que devuelve
+404 se registra como cobertura incompleta y no permite adelantar el checkpoint.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitó 1 referencia de `www.viz.com` asociada a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.
+
+Cierre 2026-09-25: se incorporaron 35 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.
+
+### Delta 2026-09-25 — 429 puntual + idioma fuera del enum
+
+**(a) Rate-limit 429.** Una sola página de detalle devolvió `429 Too Many Requests`:
+
+```
+[viz] ERROR product .../my-hero-academia-box-set-2/product/9072/paperback: 429
+```
+
+La corrida siguió normalmente: **16 candidatos** emitidos sobre los 6 meses de
+ventana, 16 portadas espejadas, 0 fallidas. El paso salió `rc=1` sólo por la
+incidencia registrada. Es degradación parcial de un item, no caída de la fuente;
+si se repite, bajar la concurrencia o subir `--sleep-seconds` para VIZ.
+
+**(b) `language` fuera del enum — 148 items.** La fuente emite `"English"` (inglés)
+en vez del valor del enum del corpus, `"Inglés"`. Medido en la corrida de hoy,
+`validate_corpus` reporta **LANG_ENUM 229** en total y VIZ es el principal
+contribuyente:
+
+| Fuente | items con idioma crudo |
+|---|--:|
+| US - VIZ Media Special Editions | 148 |
+| US - Kinokuniya Exclusives | 47 |
+| US - PRH Comics | 17 |
+| US - Yen Press Calendar | 8 |
+| JP - Shueisha Books | 4 |
+
+De los 229, **157 se detectaron el 2026-09-25** (la ingesta ad-hoc de la madrugada),
+o sea el defecto está activo y creciendo, no es deuda histórica congelada.
+
+Es `warn`, no violación dura, así que no frena el gate — pero el idioma es un filtro
+de la UI y un valor fuera del enum no matchea. **No aplicado**: el fix correcto es
+normalizar en el extractor (fuente única), no un retrofit por fuente. Decisión del owner.

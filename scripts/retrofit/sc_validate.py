@@ -9,10 +9,12 @@ así el skill y el pipeline de producción no pueden driftear.
 
 Uso: sc_validate.py [input.json]
   input.json: {"item": {...}, "candidate_urls": [{"url","page_title","domain","query"}...],
-               "curr_px": int, "ref_image_local": str}
-  stdout:     {"validated": [candidata...]}
+               "curr_px": int, "ref_image_local": str, "reference_sha256": str (opcional)}
+  stdout:     {"validated": [candidata...]} (+ "drift": "reference_changed"/"reference_missing"
+               si `reference_sha256` no matchea la referencia actual — ver
+               `reference_drift_reason` abajo, gotcha #178)
 """
-import re, sys, json, requests
+import hashlib, re, sys, json, requests
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -22,11 +24,36 @@ import fetch_better_covers as fbc
 # Patrones verificados empíricamente 2026-06-11. Orden: más específico primero.
 # _same_cover valida cada descarga, así que una reescritura incorrecta no
 # contamina (si la variante upgraded devuelve otra imagen, _same_cover la rechaza).
+
+# buscalibre: reescribir fit-in/<W>x<H>/ → fit-in/1200x1200/ — NO quitar el
+# segmento entero (gotcha #167, 2026-09-01). Quitarlo del todo no devuelve el
+# original en máxima resolución: el CDN sirve un tamaño "base" intermedio,
+# bastante menor que pedir 1200x1200 explícito. Verificado en vivo (request
+# real, 2026-09-01) sobre la misma imagen:
+#   fit-in/360x360/...   →  256×360   =  92 160 px  (a caballo del piso 90k
+#                                         de LOW_QUALITY_PX → re-encolada
+#                                         eternamente, nunca sube de calidad)
+#   sin fit-in/ (segmento quitado, patrón viejo) → 384×540 = 207 360 px
+#   fit-in/1200x1200/... →  853×1200  = 1 023 600 px  (5× más que quitar el
+#                                         segmento, 11× más que el 360 original)
+# No re-capa si el fit-in pedido ya es ≥1200 en ambas dimensiones (no downgrade
+# — algún día el CDN podría devolver menos al pedir un tamaño mayor al real).
+_BUSCALIBRE_RE = re.compile(r"(//images\.cdn\d*\.buscalibre\.com/)fit-in/(\d+)x(\d+)/")
+_BUSCALIBRE_MAX_FIT = 1200
+
+
+def _buscalibre_upgrade(m: "re.Match[str]") -> str:
+    w, h = int(m.group(2)), int(m.group(3))
+    if w >= _BUSCALIBRE_MAX_FIT and h >= _BUSCALIBRE_MAX_FIT:
+        return m.group(0)  # ya pide alta resolución — no re-capar
+    return f"{m.group(1)}fit-in/{_BUSCALIBRE_MAX_FIT}x{_BUSCALIBRE_MAX_FIT}/"
+
+
 _URL_UPGRADES = [
     # whakoom: /small/ o /thumb/ o /medium/ → /large/
     (re.compile(r"(//i1\.whakoom\.com/)(?:small|thumb|medium)/"), r"\1large/"),
-    # buscalibre: quitar segmento fit-in/<W>x<H>/  (2-22× px)
-    (re.compile(r"(//images\.cdn\d*\.buscalibre\.com/)fit-in/\d+x\d+/"), r"\1"),
+    # buscalibre: fit-in/<W>x<H>/ → fit-in/1200x1200/ (ver _buscalibre_upgrade)
+    (_BUSCALIBRE_RE, _buscalibre_upgrade),
     # cultura: quitar cdn-cgi/image/width=<N>/  (hasta 2×)
     (re.compile(r"(//cdn\.cultura\.com/)cdn-cgi/image/width=\d+/"), r"\1"),
     # bdfugue (Magento): quitar cache/<hash8+>/  (2-5× px)
@@ -65,12 +92,73 @@ SKIP_DOMAINS = frozenset({
 MAX_CANDIDATES_PER_CALL = 25   # Google trae ~70+/query; tope por llamada
 
 
-def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
-    """Valida las candidatas del payload y devuelve las aceptadas (ordenadas)."""
+def _resolve_reference_bytes(item: dict, ref_image_local: str, images_dir: Path) -> bytes:
+    """Bytes de la imagen de referencia ACTUAL: `ref_image_local` si existe en
+    disco (foto de galería puntual pasada por el plan), si no la portada
+    (`images[0]`) vía `fbc._get_current_bytes`. `b''` si no hay nada resoluble.
+
+    Fuente ÚNICA de esta resolución dentro del script — `validate()` y
+    `reference_drift_reason()` la comparten para que el chequeo anti-drift
+    compare EXACTAMENTE contra lo mismo que `_same_cover` termina usando."""
+    if ref_image_local and (images_dir / ref_image_local).exists():
+        return (images_dir / ref_image_local).read_bytes()
+    return fbc._get_current_bytes(item, images_dir) or b''
+
+
+def reference_drift_reason(data: dict, images_dir: Path = Path('data/images')) -> str:
+    """"" si la referencia sigue siendo la misma que cuando `sc_plan.py` armó el
+    plan; si no, el motivo corto del drift (gotcha #178, 2026-09-02).
+
+    `sc_plan.py` persiste `reference_sha256` (sha256 del archivo local de
+    referencia al momento del plan) en cada target con `reference_kind ==
+    "real"`. El loop de Chrome del Step 3 del skill tarda decenas de minutos;
+    en esa ventana otra sesión puede purgar/reemplazar esa imagen (medido:
+    la purga de placeholders `.gif` de Rakuten de gotcha #176a corriendo en
+    paralelo invalidó 15/48 targets de una corrida real, "Etapa 2 tanda 2" en
+    docs/reference/images.md). Sin este guard, `sc_validate` cae al gate
+    DÉBIL sin-referencia (`curr_bytes == b''`) y genera candidatas
+    `verified:false` de dudosa relación real sobre una portada que el corpus
+    ya no tiene.
+
+    - `data['reference_sha256']` ausente/vacío → nada que comparar (plan
+      viejo sin el campo, o target "sin imagen"/placeholder que nunca tuvo
+      referencia real) → `""`, el guard es puramente ADITIVO.
+    - Referencia actual irresoluble (archivo movido/borrado Y sin portada en
+      `item['images']`) → `"reference_missing"`.
+    - Referencia actual resoluble pero con OTRO contenido → `"reference_changed"`.
+    """
+    expected_sha = (data.get('reference_sha256') or '').strip()
+    if not expected_sha:
+        return ""
+    item = data.get('item') or {}
+    ref_local = data.get('ref_image_local') or ''
+    current_bytes = _resolve_reference_bytes(item, ref_local, images_dir)
+    if not current_bytes:
+        return "reference_missing"
+    if hashlib.sha256(current_bytes).hexdigest() != expected_sha:
+        return "reference_changed"
+    return ""
+
+
+def validate(data: dict, images_dir: Path = Path('data/images'),
+             drift_reason: str | None = None) -> list[dict]:
+    """Valida las candidatas del payload y devuelve las aceptadas (ordenadas).
+
+    `drift_reason`: si se pasa `None` (default), se calcula acá con
+    `reference_drift_reason(data, images_dir)`; si el caller ya lo calculó
+    (p.ej. `main()`, para reportarlo aparte en stdout) puede pasarlo para no
+    recalcularlo. Si hay drift, se devuelve `[]` ANTES de tocar la red — no
+    tiene sentido descargar/validar candidatas contra una referencia que ya
+    no es la portada real del item (gotcha #178)."""
     item       = data['item']
     candidates = data['candidate_urls']
     curr_px    = data.get('curr_px', 0)
     slug       = item.get('slug', '')
+
+    if drift_reason is None:
+        drift_reason = reference_drift_reason(data, images_dir)
+    if drift_reason:
+        return []
 
     # ITEM 1 — denylist de rechazos: se consulta vía fbc.is_rejected_candidate
     # (fuente única, misma política que producción). Se carga una vez por llamada.
@@ -82,10 +170,7 @@ def validate(data: dict, images_dir: Path = Path('data/images')) -> list[dict]:
     # Imagen de referencia: ref_image_local si se pasó (foto de galería);
     # si no, la portada (images[0]) vía _get_current_bytes.
     ref_local = data.get('ref_image_local') or ''
-    if ref_local and (images_dir / ref_local).exists():
-        curr_bytes = (images_dir / ref_local).read_bytes()
-    else:
-        curr_bytes = fbc._get_current_bytes(item, images_dir) or b''
+    curr_bytes = _resolve_reference_bytes(item, ref_local, images_dir)
 
     validated = []
     for cand in candidates[:MAX_CANDIDATES_PER_CALL]:
@@ -199,7 +284,11 @@ def main() -> None:
             return
         inp = tmp_inputs[0]
     data = json.loads(inp.read_text(encoding='utf-8'))
-    print(json.dumps({'validated': validate(data)}))
+    drift = reference_drift_reason(data)
+    out = {'validated': validate(data, drift_reason=drift)}
+    if drift:
+        out['drift'] = drift
+    print(json.dumps(out))
 
 
 if __name__ == '__main__':

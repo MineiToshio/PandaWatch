@@ -97,3 +97,46 @@ sin el enrich, los items quedan sin ISBN (el valor de dedup de la fuente).
 - **Decisión**: items "Mature Hardcover" se excluyen DE ENTRADA (no son
   coleccionables); las light novels deluxe (Mo Dao Zu Shi, Little Mushroom) SÍ
   entran (LN con formato premium es producto del proyecto).
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 1 item flageado y
+  conservado (Case File Compendium novela vol.10 Special Edition, danmei).
+
+
+## Revisión de ingestión — 2026-09-24
+
+Endpoint WP books devuelve 403 Cloudflare en verificación viva. Fallos agotados se reportan WIKI-ISSUE, no como catálogo vacío exitoso. Un HTTP 400 solo es fin de paginación si code=rest_post_invalid_page_number. Bloqueo externo vigente.
+
+Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
+
+### Continuación de auditoría — 2026-09-24
+
+El delta consulta `modified_after` y ordena por `modified`, para incluir cambios en entradas antiguas. Llegar al límite de páginas produce incidencia. El endpoint continúa bajo challenge 403 en requests y Chromium, también mediante rest_route; la integración remota de modified_after queda pendiente de acceso. El contrato local de paginación está probado.
+
+Contrato `modified_after` confirmado en la [referencia oficial WordPress](https://developer.wordpress.org/rest-api/reference/posts/).
+
+### Verificación con navegador normal — 2026-09-24
+
+El navegador integrado carga `/series/` tras la comprobación automática del
+sitio. La navegación directa al endpoint JSON fue rechazada por el cliente;
+el scraper automatizado continúa bloqueado. El índice HTML accesible confirma
+que el sitio sigue activo, pero no demuestra recuperación de la ingestión API.
+
+### Delta 2026-09-25 — bloqueo Cloudflare confirmado (2º día)
+
+El endpoint `/wp-json/wp/v2/books` volvió a responder challenge de Cloudflare en
+los **3 intentos** (`[WIKI-ISSUE] challenge=cloudflare`), con `partial books=0` y
+**0 candidatos**. Es la continuación directa del bloqueo anotado el 2026-09-24,
+ya no un incidente aislado: dos corridas consecutivas con el mismo modo de fallo.
+
+Novedad operativa: gracias al mecanismo `wikis/health.report_issue` +
+`return 1 if session._ingestion_issues else 0` (`scripts/manga_watch.py:9886`),
+el paso ahora sale **rc=1** en vez de reportar un catálogo vacío como éxito. El
+fallo es RUIDOSO, que es el comportamiento deseado — pero implica que el conteo
+de "pasos en error" del run diario ya NO es comparable con los runs previos al
+2026-09-24.
+
+**Sin acción aplicada.** El bloqueo es externo; recuperarlo exige una vía distinta
+(navegador con challenge resuelto, o un endpoint alternativo). Decisión del owner.
+
+## Auditoría estratégica — 2026-09-25
+
+Parser directo retirado de full/delta administrados mediante ingestion_policy.yml tras repetir 403 en /series/ y API pública. PRH /seven-seas/ añade descubrimiento oficial viable; no garantiza recuperar todo el histórico. Se conservan productos y referencias existentes. Ejecución manual del parser sigue disponible para diagnóstico.

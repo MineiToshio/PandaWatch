@@ -207,9 +207,21 @@ def sync_preview(
       - dropped_missing_item:  entries cuyo slug ya no existe en el catálogo.
       - dropped_empty:         entries que quedaron sin candidatas tras la poda.
       - pruned_cover_ok:       candidatas pending de replace-cover podadas porque
-                               la portada actual ya es ≥ LOW_QUALITY_PX.
+                               la portada actual ya es ≥ LOW_QUALITY_PX (gotcha
+                               #166: `replace_cover_demote` se exime cuando es
+                               una mejora de resolución verificada contra la
+                               galería actual — ver `demote_upgrade_exempted`).
+      - demote_upgrade_exempted: candidatas `replace_cover_demote` que la poda 3b
+                               NO tocó porque su premisa es "gemela de mayor
+                               resolución ya en la galería" (gotcha #166), no
+                               "portada por debajo del piso".
       - pruned_target_gone:    candidatas pending de replace_image podadas porque
                                la foto target ya no está en la galería.
+      - pruned_remove_keep_gone: candidatas remove_image podadas porque la
+                               gemela que se CONSERVABA (`keep_url`) ya no
+                               está en la galería del item (gotcha #168,
+                               2026-09-01) — sin su gemela la candidata queda
+                               huérfana para siempre si no se poda.
       - pruned_target_ok:      candidatas pending de replace_image podadas porque
                                la foto target ya es ≥ LOW_QUALITY_PX.
       - pruned_already_current: candidatas cuya new_url ya es la portada actual.
@@ -230,11 +242,17 @@ def sync_preview(
         "pruned_target_gone": 0,
         "pruned_target_ok": 0,
         "pruned_already_current": 0,
+        "pruned_remove_target_gone": 0,   # remove_image: la imagen a eliminar ya no está en la galería
+        "pruned_remove_would_be_cover": 0,  # remove_image: la imagen a eliminar pasó a ser la portada
+        "pruned_remove_keep_gone": 0,     # remove_image: la gemela que se conservaba ya no está en la galería
         "pixels_recomputed": 0,
         "gc_orphans_removed": 0,
         # Hallazgo #7 — identidad secundaria (url canónica, estable a re-slugs):
         "slug_migrated": 0,   # entry rescatada por url tras un re-slug (slug actualizado)
         "url_backfilled": 0,  # entry legacy sin url; se pobló al matchear por slug
+        # Gotcha #166 — excepción a la poda 3b para replace_cover_demote cuya
+        # premisa es "mejora de resolución con material ya en la galería":
+        "demote_upgrade_exempted": 0,
     }
 
     # Índice url_canónica→item para rescatar entries cuyo slug cambió (#7).
@@ -350,6 +368,54 @@ def sync_preview(
                 new_candidates.append(cand)
                 continue
 
+            # remove_image (OLA 2 dudosos, 2026-09-01) — chequeado ANTES de la
+            # Poda 3a genérica: para esta acción new_url/target apuntan a la
+            # imagen que se propone ELIMINAR, no a un reemplazo "nuevo". Si
+            # corriera 3a primero, `new_url == current_cover_url` (el caso
+            # exacto de la regla dura de abajo) caería en
+            # `pruned_already_current`, un nombre que no describe lo que pasó
+            # acá (no hay "ya es la portada" que aplicar — hay una remoción
+            # que ya no es segura). Dos formas de quedar obsoleta entre que
+            # se encoló y hoy; ninguna genera archivo para `_gc_candidates`
+            # (remove_image no descarga nada nuevo).
+            if action == "remove_image":
+                target_url = cand.get("target", "")
+                if target_url:
+                    # Poda 3e: la imagen a eliminar ya no está en la galería
+                    # (otra pasada — purge_placeholder/dedup/el owner — ya la
+                    # sacó, o el item perdió esa foto).
+                    if target_url not in gallery_urls:
+                        stats["pruned_remove_target_gone"] += 1
+                        continue
+                    # Poda 3f (regla dura): la imagen a eliminar pasó a ser la
+                    # portada vigente desde que se armó la candidata — jamás
+                    # se propone remover images[0]. apply_preview() tiene el
+                    # mismo guard como red de seguridad; podarla ACÁ evita que
+                    # el owner llegue a aprobar algo inválido.
+                    if target_url == current_cover_url:
+                        stats["pruned_remove_would_be_cover"] += 1
+                        continue
+                # Poda 3g (gotcha #168, 2026-09-01): la gemela que se
+                # CONSERVABA (`keep_url`) ya no está en la galería del item —
+                # otra pasada (dedup/purge/el owner) la sacó, o `apply_preview`
+                # ya la promovió a portada y quedó con otra url. Sin su
+                # gemela, la candidata queda huérfana: el par que la motivó ya
+                # no existe (aprobarla removería `target` sin que quede
+                # ninguna "mejor" de referencia) y quedaría pending para
+                # siempre — nada más la poda (no hay poda genérica que la
+                # alcance: `target` sigue en la galería, así que 3e/3f no
+                # aplican). Sólo aplica si la entry TRAE `keep_url` (defaults
+                # de `_normalize_preview_entry`; entries legacy sin contexto
+                # de par no se ven afectadas).
+                keep_url = cand.get("keep_url", "")
+                if keep_url and keep_url not in gallery_urls:
+                    stats["pruned_remove_keep_gone"] += 1
+                    continue
+                # No podada: cae al recompute de new_pixels compartido de abajo
+                # (el archivo de la imagen a eliminar sigue siendo un archivo
+                # real del espejo — igual se beneficia de reflejar el tamaño
+                # ya normalizado) y se agrega a new_candidates ahí mismo.
+
             # Poda 3a: new_url ya es la portada actual (ya aplicada de facto)
             if new_url and new_url == current_cover_url:
                 stats["pruned_already_current"] += 1
@@ -358,12 +424,40 @@ def sync_preview(
                 continue
 
             if action in _REPLACE_COVER_ACTIONS:
-                # Poda 3b: portada actual ya en alta calidad → candidata innecesaria
-                if new_old_pixels >= LOW_QUALITY_PX:
+                # Poda 3b: portada actual ya en alta calidad → candidata innecesaria.
+                #
+                # Excepción (gotcha #166, 2026-09-01): esta poda asume que TODA
+                # candidata `replace_cover*` existe para arreglar una portada
+                # por-debajo-del-piso — cierto para `replace_cover`/
+                # `replace_and_add` (motor de búsqueda web), pero NO para
+                # `replace_cover_demote`, cuya premisa (cola de promoción local,
+                # `enqueue_wave2_dudosos_promotion.py` y la "segunda tanda" de la
+                # OLA 3, ver docs/reference/images.md) es distinta: "ya existe una
+                # gemela de MAYOR resolución EN LA PROPIA GALERÍA del item". Ahí
+                # la portada actual arranca por encima del piso A PROPÓSITO — 3b
+                # las borraba en silencio (44/44 podadas en la corrida que
+                # destapó el bug). No se agrega un campo de premisa nuevo al
+                # schema (mantiene `_normalize_preview_entry` intacto): se
+                # verifica en VIVO, contra la galería actual del item, que (a)
+                # `new_url` sigue estando en `images[]` (la "gemela" no se volvió
+                # obsoleta por otra pasada — dedup/purge/el owner) y (b) sus
+                # píxeles reales superan a los de la portada actual (mejora
+                # real, no un empate ni una regresión). Si cualquiera de las dos
+                # falla, se poda igual que antes — precisión > recall, y
+                # `replace_cover`/`replace_and_add` no cambian de comportamiento.
+                is_verified_demote_upgrade = False
+                if action == "replace_cover_demote":
+                    gallery_px = gallery_px_by_url.get(new_url)
+                    if gallery_px is not None and gallery_px > new_old_pixels:
+                        is_verified_demote_upgrade = True
+
+                if new_old_pixels >= LOW_QUALITY_PX and not is_verified_demote_upgrade:
                     stats["pruned_cover_ok"] += 1
                     if cand.get("new_image"):
                         _gc_candidates.append(cand["new_image"])
                     continue
+                if is_verified_demote_upgrade and new_old_pixels >= LOW_QUALITY_PX:
+                    stats["demote_upgrade_exempted"] += 1
 
             elif action == "replace_image":
                 target_url = cand.get("target", "")
@@ -554,6 +648,9 @@ def main(argv: list[str] | None = None) -> int:
         + stats["pruned_target_gone"]
         + stats["pruned_target_ok"]
         + stats["pruned_already_current"]
+        + stats["pruned_remove_target_gone"]
+        + stats["pruned_remove_would_be_cover"]
+        + stats["pruned_remove_keep_gone"]
     )
     total_dropped = stats["dropped_missing_item"] + stats["dropped_empty"]
     print()
@@ -561,9 +658,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Entries eliminadas — slug no existe:  {stats['dropped_missing_item']}")
     print(f"  Entries eliminadas — quedaron vacías: {stats['dropped_empty']}")
     print(f"  Candidatas podadas — portada ok:      {stats['pruned_cover_ok']}")
+    print(f"  Candidatas exentas de 3b — demote/mejora ya en galería (#166): {stats['demote_upgrade_exempted']}")
     print(f"  Candidatas podadas — target gone:     {stats['pruned_target_gone']}")
     print(f"  Candidatas podadas — target ok px:    {stats['pruned_target_ok']}")
     print(f"  Candidatas podadas — ya es portada:   {stats['pruned_already_current']}")
+    print(f"  Candidatas podadas — remove target gone: {stats['pruned_remove_target_gone']}")
+    print(f"  Candidatas podadas — remove sería portada: {stats['pruned_remove_would_be_cover']}")
+    print(f"  Candidatas podadas — remove gemela se fue: {stats['pruned_remove_keep_gone']}")
     print(f"  new_pixels recomputados (archivo real):{stats['pixels_recomputed']}")
     print(f"  Candidatas huérfanas borradas del espejo: {stats['gc_orphans_removed']}")
     print(f"  Entries migradas por re-slug (url):    {stats['slug_migrated']}")

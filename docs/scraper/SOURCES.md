@@ -43,7 +43,7 @@ nueva, revisá ese registro — puede que ya esté evaluada.
 - **Brasil** — [br-panini-brasil](sources/br-panini-brasil.md) · [br-jbc](sources/br-jbc.md) · [br-newpop](sources/br-newpop.md) · [br-pipoca-nanquim](sources/br-pipoca-nanquim.md)
 - **España** — [es-planeta-comic](sources/es-planeta-comic.md) · [es-norma-editorial](sources/es-norma-editorial.md) · [es-panini-espana](sources/es-panini-espana.md) · [es-milky-way](sources/es-milky-way.md) · [es-distrito-manga](sources/es-distrito-manga.md) · [es-arechi-manga](sources/es-arechi-manga.md) · [es-pika-ediciones](sources/es-pika-ediciones.md) · [es-mangaline-espana](sources/es-mangaline-espana.md)
 - **Estados Unidos** — [us-dark-horse-direct](sources/us-dark-horse-direct.md) · [us-square-enix-manga](sources/us-square-enix-manga.md) · [us-kodansha-usa](sources/us-kodansha-usa.md)
-- **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-glenat-artbooks](sources/fr-glenat-artbooks.md) (alta 2026-07-07, split de fr-glenat: pasó a `kind: js`) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) · [fr-akata](sources/fr-akata.md)
+- **Francia** — [fr-glenat](sources/fr-glenat.md) · [fr-glenat-artbooks](sources/fr-glenat-artbooks.md) (alta 2026-07-07, split de fr-glenat: pasó a `kind: js`) · [fr-pika](sources/fr-pika.md) · [fr-ki-oon](sources/fr-ki-oon.md) · [fr-kana](sources/fr-kana.md) · [fr-delcourt-tonkam](sources/fr-delcourt-tonkam.md) · [fr-meian](sources/fr-meian.md) (2026-09-07: la entrada HTML pasó a `enabled: false` — el sitio es Angular y no renderiza sin JS; la ingesta real es el wiki `--bootstrap-wiki meian`, vía API JSON) · [fr-akata](sources/fr-akata.md)
 - **Italia** — [it-panini-planet-manga](sources/it-panini-planet-manga.md) · [it-star-comics](sources/it-star-comics.md) · [it-dynit](sources/it-dynit.md) · [it-funside-variant](sources/it-funside-variant.md) · [it-manga-dreams](sources/it-manga-dreams.md) · [it-edizioni-bd](sources/it-edizioni-bd.md)
 - **Polonia** (alta 2026-06-12) — [pl-mangarden](sources/pl-mangarden.md) · [pl-mangastore](sources/pl-mangastore.md)
 - **Corea del Sur** (alta 2026-06-12) — [kr-aladin](sources/kr-aladin.md)
@@ -1105,3 +1105,40 @@ Stick to existing values for consistency in the web UI filters:
 
 If you genuinely need a new country, add it but mention in
 `docs/SOURCES.md` and update the documentation table here.
+
+
+### Verificación de ingestión — 2026-09-24
+
+Meian API ya corre en full y delta. `--full-catalog` sigue las páginas descubiertas
+hasta agotarlas (tope de seguridad 1000); las búsquedas/feeds siguen acotados por lo
+que el sitio expone. Los límites y bloqueos se informan como ejecución parcial.
+Ver [matriz completa y evidencia](audits/2026-09-24-ingestion.md).
+
+### Categorías coleccionables verificadas
+
+El tag `collector-catalog` es una declaración de configuración: usarlo solo
+después de verificar que la categoría completa es de variantes/ediciones
+especiales. Habilita aceptación de nombres oficiales sin qualifier y score
+base 20; no se debe asignar a búsquedas ni catálogos generales. Non-manga y
+los gates duros siguen aplicando. Panini IT variantes y cofanetti son los dos
+usos iniciales comprobados.
+
+## Política efectiva de fuentes — 2026-09-25
+
+La activación de HTML/JS vive en sources.yml; la de parsers virtuales en
+ingestion_policy.yml. Los jobs full/delta respetan ambos. Las fichas manuales
+pueden seguir diagnosticándose con --ingestion-mode manual.
+
+Prioridad: editorial/distribuidor oficial, catálogo estructurado confiable y
+retailer para exclusivas. Noticias no sustituyen fichas de producto. Compartir
+series o >70% de ISBN NO basta para retirar una fuente; exigir cobertura completa
+por producto, mercado, volumen y variante. Un aporte observado de 0 únicos en una
+muestra pequeña no prueba inclusión de todo el catálogo ni de futuras exclusivas.
+
+Cambios: PRH incorpora su selección Seven Seas; Kingstone incorpora SPP Manga;
+Delcourt pasa de portada editorial al catálogo de productos. Se retiran Pika ES
+(noticias de tercero), la entrada genérica duplicada de Manga México (se conserva
+el wiki), y los jobs bloqueados SocialAnime, Seven Seas directo y SPP-TW. Ninguno
+borra los históricos. Alternativas parciales, no promesa de cobertura universal.
+Ver auditoría `audits/2026-09-25-source-strategy.md` y evidencia en
+`reports/source-strategy-2026-09-25/`.

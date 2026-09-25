@@ -251,3 +251,73 @@ PY
 **Antes de cerrar cualquier cambio en Yen Press**: validar (`validate_corpus`, 0 duras) →
 tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-09-01 — `normalize_image_url` rompe el CDN de portadas (500 sin `w`/`h`)
+
+OLA 1 de depuración de imágenes (auditoría de portadas sin espejo local, gotcha #158).
+Las 5 portadas pendientes de Yen Press Calendar fallaron el backfill (`mirror_images.py`)
+con `http_500` en las 5/5, no de forma intermitente:
+
+- La URL original en `images[0].url` es
+  `images.yenpress.com/imgs/<isbn>.jpg?w=285&h=422&type=books` — un resize-proxy, no
+  el archivo crudo. **Confirmado manualmente: con `?w=…&h=…&type=books` responde 200
+  imagen real; con sólo `?type=books` (el resultado de `image_store.
+  normalize_image_url`, que pela `w`/`h` asumiendo que son params de RESIZE
+  descartables tipo Magento) responde 500 en las 5/5 URLs probadas.** El proxy de Yen
+  Press no tiene un "original servible" en esa ruta sin dimensiones — no es el mismo
+  patrón que Magento (`?width=300&height=300&quality=80…` sí sirve el original sin
+  query).
+- Consecuencia: mientras `normalize_image_url` siga pelando `w`/`h` para este host,
+  estas portadas NUNCA se van a poder mirrorear — no es un fallo transitorio de red
+  (reintentado dos veces más en la misma auditoría, mismo resultado). Cualquier script
+  que use `download_image`/`normalize_image_url` sobre Yen Press hereda el mismo
+  problema (no es específico de `mirror_images.py`).
+- **Para el owner (no aplicado)**: `normalize_image_url` es compartida por TODO el
+  pipeline de imágenes (`_CDN_RESIZE_PARAMS`) — excluir el host `images.yenpress.com`
+  de ese patrón (o detectar el 500 y reintentar con los params originales) es un cambio
+  a una función de fuente única, fuera del alcance de esta ola de sólo-backfill. Las 5
+  portadas quedan con la `url` remota como fallback (comportamiento normal de
+  `download_image` ante fallo).
+
+## 2026-09-01 — denylist del placeholder PRH "Cover Coming Soon" (2 items)
+
+Ola 3 de depuración de imágenes (ver `docs/reference/images.md` § "OLA 3"). Dos
+items de esta fuente (`nightschool-yenpress-collector-us-{1,2}`, Nightschool: The
+Weirn Books Collector's Edition vols 1/2) tenían como ÚNICA foto un "Cover Coming
+Soon" — pero servido desde `images.penguinrandomhouse.com/cover/<isbn13>`, NO desde
+`images.yenpress.com` (el CDN propio de Yen Press documentado arriba). Penguin
+Random House aloja portadas para varios sellos que distribuye (incluido Yen Press
+en algunos casos) bajo ese path genérico por-ISBN; para estos 2 ISBN concretos PRH
+tampoco tiene la carátula real y sirve su placeholder. Confirmado visualmente
+(conversión AVIF→PNG + lectura): variante de tamaño (1058×1600) distinta de la
+firma "Cover Coming Soon" ya registrada (297×449, 2026-06-13) — mismo diseño, sha1
+distinto. Agregado a `data/placeholder_signatures.json` (sha1
+`6a948548150f018bc3993b8fd8531d79b6f3f06c`). Purgado con
+`purge_placeholder_images.py --only-reasons signature` (gotcha #161): las 2 filas
+quedaron sin ninguna foto (pasan al bucket de búsqueda web / 📚 en la UI). No
+relacionado con el bug de `normalize_image_url` de arriba (host distinto, causa
+distinta): ahí el problema es que el CDN de Yen Press rechaza la URL normalizada;
+acá el problema es que ni Yen Press ni PRH tienen la carátula real para este ISBN.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+La revisión 2010-01–2026-09 terminó sin errores: 89 candidatos, 49 reportables.
+La ventana 2026-10–12 encontró 8 candidatos, 5 reportables. Full y delta pasan
+ahora el extremo futuro explícito (mes actual +3), pues el default terminaba en
+el mes actual y omitía anuncios. El full conserva el inicio documentado 2013-01.
+
+Cierre 2026-09-25: se incorporaron 12 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.

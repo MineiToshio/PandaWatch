@@ -59,6 +59,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
+
 import requests
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -317,9 +322,12 @@ def fetch_feed_pages(
             resp.raise_for_status()
             page = resp.json()
         except (requests.RequestException, ValueError) as exc:
-            print(f"[socialanime] WARN type={type_label} group_no={g}: {exc}")
+            report_issue(session, f"socialanime type={type_label} page={g}: {exc}")
             break
-        if not isinstance(page, list) or not page:
+        if not isinstance(page, list):
+            report_issue(session, f"socialanime type={type_label} page={g}: unknown response schema")
+            break
+        if not page:
             break
         items.extend(page)
         if len(page) < PAGE_SIZE:
@@ -327,6 +335,8 @@ def fetch_feed_pages(
             break
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
+    else:
+        report_issue(session, f"socialanime type={type_label}: pagination limit reached ({max_pages})")
     return items
 
 

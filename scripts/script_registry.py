@@ -199,7 +199,7 @@ SCRIPTS: list[dict[str, Any]] = [
                 "id": "normal",
                 "label": "🟢 Normal (recomendado)",
                 "desc": "Busca en todas las fuentes con detalles completos, paralelizado a 8 workers.",
-                "values": {"--fetch-details": True, "--enable-js": True,
+                "values": {"--ingestion-mode": "delta", "--fetch-details": True, "--enable-js": True,
                            "--fuzzy-keywords": True, "--workers": 8,
                            "--per-host-limit": 2, "--sleep-seconds": 0.5},
             },
@@ -223,6 +223,9 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
+            _flag("--ingestion-mode", "Ciclo de ingestión",
+                  "Delta verifica primero la carga inicial. Full recorre todo; manual permite diagnóstico limitado.",
+                  type="choice", choices=["manual", "full", "delta"], default="manual", advanced=True),
             _flag("--fetch-details", "Buscar portada, autor, ISBN y precio",
                   "Después de detectar un item entra a su página y rescata "
                   "portada, autor, ISBN, precio y fecha. Más lento pero deja "
@@ -762,6 +765,9 @@ SCRIPTS: list[dict[str, Any]] = [
             },
         ],
         "flags": [
+            _flag("--ingestion-mode", "Ciclo de ingestión",
+                  "Full/delta respetan la política de fuentes y requieren carga inicial completa; manual sirve para diagnóstico.",
+                  type="choice", choices=["manual", "full", "delta"], default="manual", advanced=True),
             # choices = WIKI_BOOTSTRAP_IDS, importado de manga_watch.py (fuente
             # única) — ya no es una copia a mano, no puede divergir (J-higiene,
             # auditoría Fable 2026-07-08). tests/test_script_registry.py sigue
@@ -1330,6 +1336,49 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--include-approved", "Incluir aprobados",
                   "Procesa también los items aprobados (golden records).",
                   type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "absorb_spool",
+        "mutates_items": True,
+        "category": "Mantenimiento",
+        "icon": "🧹",
+        "name": "Absorber spool huérfano",
+        "tagline": "Absorbe data/items.jsonl.spool si quedó un flush a mitad de una corrida interrumpida.",
+        "what": (
+            "El scraper flushea candidatos por-fuente a un spool append-only "
+            "(data/items.jsonl.spool) durante la corrida; sólo el append_jsonl "
+            "de cierre lo absorbe (upsert) y lo borra. Si un timeout o crash mata "
+            "el proceso ANTES de ese cierre, el spool queda huérfano — invisible "
+            "para el resto del pipeline (los retrofits hacen dump-completo y "
+            "nunca lo leen). Este script fuerza la absorción llamando "
+            "append_jsonl(items_path, []). No-op limpio si no hay spool pendiente."
+        ),
+        "when": (
+            "Como primer paso de cualquier cadena de retrofits (Fase 3 de "
+            "scrape_delta.sh/scrape_full.sh ya lo corre automático), o a mano "
+            "tras una corrida que terminó por timeout/señal a mitad del scrape."
+        ),
+        "command": [PYTHON, "scripts/retrofit/absorb_spool.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Prueba",
+                "desc": "Reporta si hay spool pendiente sin absorberlo.",
+                "values": {"--dry-run": True},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Absorber",
+                "desc": "Absorbe el spool huérfano (no-op si no hay ninguno).",
+                "values": {},
+            },
+        ],
+        "flags": [
+            _flag("--dry-run", "Modo prueba",
+                  "Reporta si hay un spool pendiente sin absorberlo.",
+                  type="bool", default=False),
         ],
     },
 
@@ -3109,8 +3158,14 @@ SCRIPTS: list[dict[str, Any]] = [
             {
                 "id": "default",
                 "label": "🟢 Todas las imágenes pendientes",
-                "desc": "Portadas de baja calidad o ausentes (sin galería).",
+                "desc": "Portadas Y galería de baja calidad o ausentes.",
                 "values": {},
+            },
+            {
+                "id": "covers",
+                "label": "🏷️ Solo portadas",
+                "desc": "Salta galería; procesa solo portadas (img_idx 0).",
+                "values": {"--only-covers": True},
             },
             {
                 "id": "gallery",
@@ -3132,8 +3187,9 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--gallery-only", "Solo galería",
                   "Salta portadas (img_idx 0); procesa solo galería.",
                   type="bool", default=False, advanced=True),
-            _flag("--include-gallery", "Portadas + galería",
-                  "Sin este flag ni --gallery-only, solo se procesan portadas.",
+            _flag("--only-covers", "Solo portadas",
+                  "Salta galería (img_idx >= 1); procesa solo portadas. "
+                  "Por defecto se procesan portadas Y galería.",
                   type="bool", default=False, advanced=True),
             _flag("--retry-failed", "Ignorar exclusión de 30 días",
                   "Reintenta targets con 0 matches en el último mes.",
@@ -3141,6 +3197,66 @@ SCRIPTS: list[dict[str, Any]] = [
             _flag("--query-extra", "Texto extra en cada query",
                   "Se agrega al final de cada variante de búsqueda en Google.",
                   type="str", default="", placeholder="portada oficial",
+                  advanced=True),
+        ],
+    },
+
+    {
+        "id": "we_plan",
+        "mutates_items": False,
+        "category": "Retrofit",
+        "icon": "🇪🇸",
+        "name": "Plan de búsqueda de portadas ES vía Whakoom (whakoom-covers, Step 1)",
+        "tagline": "Arma la lista de portadas ES a buscar por página de edición de Whakoom. No escribe items.jsonl.",
+        "what": (
+            "Planificador determinista del skill /watch-whakoom-covers (owner, "
+            "2026-09-02): selecciona items de country=España sin imagen o con "
+            "portada de baja calidad, con volume <= 11 o vacío (Whakoom solo "
+            "lista ~11 tomos por edición sin login — el resto no es resoluble "
+            "por esta vía). Arma la query Bing site:whakoom.com por serie+"
+            "editorial, calcula total_tomos LOCAL (conteo de items del corpus "
+            "con el mismo edition_key, sin red) y reutiliza data/"
+            "whakoom_edition_map.jsonl si la edición ya se resolvió en una "
+            "corrida anterior. Escribe SOLO .tmp_we_plan.json (o nada con "
+            "--dry-run) — nunca toca items.jsonl."
+        ),
+        "when": "Lo invoca el skill /watch-whakoom-covers en su Step 1. Correrlo "
+                "manual con --dry-run para ver el universo ES sin lanzar el skill.",
+        "command": [PYTHON, "scripts/retrofit/we_plan.py"],
+        "presets": [
+            {
+                "id": "default",
+                "label": "🟢 Todos los targets ES pendientes",
+                "desc": "Sin imagen + portada chica (área < 90 000 px).",
+                "values": {},
+            },
+            {
+                "id": "dryrun",
+                "label": "🧪 Solo ver el universo (no escribe)",
+                "desc": "Imprime el resumen de targets sin escribir .tmp_we_plan.json.",
+                "values": {"--dry-run": True},
+            },
+        ],
+        "flags": [
+            _flag("--limit", "Máximo de targets",
+                  "0 = TODOS los targets pendientes (default).",
+                  type="int", default=0),
+            _flag("--slugs", "Solo estos slugs (CSV)",
+                  "Procesa únicamente estos slugs exactos (ignora --limit).",
+                  type="csv", default="", placeholder="slug1,slug2",
+                  advanced=True),
+            _flag("--dry-run", "Modo prueba (no escribe)",
+                  "Imprime el resumen sin escribir .tmp_we_plan.json.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Incluye items con approved_at (golden records). Por "
+                  "defecto se excluyen.",
+                  type="bool", default=False, advanced=True),
+            _flag("--target-rule", "Criterio de baja calidad",
+                  "'area' (default acá): píxeles < 90 000. 'scale': factor de "
+                  "reescalado en card >= 1.6 (más estricto, mismo default de "
+                  "sc_plan.py).",
+                  type="choice", default="area", choices=["area", "scale"],
                   advanced=True),
         ],
     },
@@ -3241,10 +3357,65 @@ SCRIPTS: list[dict[str, Any]] = [
             # lanzadas desde el panel — mismo criterio que backfill_series_aliases).
         ],
     },
+    {
+        "id": "fix_funside_frozen_titles_20260824",
+        "mutates_items": True,
+        "category": "Retrofit",
+        "icon": "🇮🇹",
+        "name": "Funside: título congelado por fecha/badge",
+        "tagline": "Corrige el title basura ('USCITA: dd/mm/yy' / 'Sconto') congelado en items ya estandarizados.",
+        "what": "El title_selector viejo de IT - Funside Variant capturaba el badge "
+                "de preventa/descuento en vez del título real (gotcha #148). El fix "
+                "de selector corrige items nuevos, pero los ya estandarizados tienen "
+                "el title CONGELADO por el upsert (_CURATED_FIELDS) — el re-scrape "
+                "nunca los toca. Extrae el título real de la description (patrón "
+                "'Confrontare TÍTULO Prezzo normale') y lo asigna. Sólo toca Funside "
+                "+ título basura + standardized_at truthy; respeta approved_at. "
+                "Idempotente.",
+        "when": "One-shot, ya corrido sobre el corpus (2026-08-24, 19 títulos). "
+                "Re-correr sólo si reaparecen items Funside con standardized_at y "
+                "título basura restaurados desde un backup viejo.",
+        "command": [PYTHON, "scripts/retrofit/fix_funside_frozen_titles_20260824.py"],
+        "presets": [
+            {
+                "id": "dryrun",
+                "label": "🧪 Preview (no escribe)",
+                "desc": "Muestra qué títulos se corregirían sin modificar items.jsonl.",
+                "values": {},
+            },
+            {
+                "id": "apply",
+                "label": "🇮🇹 Aplicar",
+                "desc": "Corrige los títulos congelados y escribe evidencia en data/diagnostics/.",
+                "values": {"--apply": True},
+            },
+        ],
+        "flags": [
+            _flag("--apply", "Aplicar (escribe items.jsonl)",
+                  "Sin este flag corre en dry-run (sólo reporta).",
+                  type="bool", default=False),
+        ],
+    },
 
     # =====================================================================
     # AUDITORÍA
     # =====================================================================
+    {
+        "id": "ingestion_integrity",
+        "mutates_items": False,
+        "category": "Auditoría",
+        "icon": "🔎",
+        "name": "Integridad de ingestión",
+        "tagline": "Contrasta catálogo, caché y fuentes secundarias.",
+        "what": "Detecta URLs ausentes, referencias ambiguas, metadata faltante y spool pendiente sin modificar el catálogo.",
+        "when": "Después de full/delta o ante sospecha de pérdida de datos.",
+        "command": [PYTHON, "scripts/audit/ingestion_integrity.py"],
+        "presets": [],
+        "flags": [
+            _flag("--data-dir", "Directorio de datos", "Directorio que se audita.", type="str", default="data"),
+            _flag("--output", "Archivo JSON", "Vacío muestra el informe en consola.", type="str", default=""),
+        ],
+    },
     {
         "id": "source_health",
         "mutates_items": False,
@@ -3500,6 +3671,57 @@ SCRIPTS: list[dict[str, Any]] = [
                   type="bool", default=False),
             _flag("--include-approved", "Incluir aprobados",
                   "Desblinda también items aprobados (golden records).",
+                  type="bool", default=False, advanced=True),
+        ],
+    },
+
+    {
+        "id": "curate_llm_non_manga_20260823",
+        "mutates_items": True,
+        "category": "Mantenimiento",
+        "icon": "🧹",
+        "name": "Curación de los 265 `llm_non_manga` (2026-08-23)",
+        "tagline": "Aplica el veredicto humano sobre los items que el LLM marcó no-manga.",
+        "what": (
+            "Cierra la curación manual de los 265 items que el LLM de "
+            "/watch-standardize-catalog marcó is_manga=false el 2026-08-23 y que, "
+            "por gotcha #122, quedaron PENDIENTES + flageados en "
+            "data/unmapped_series.jsonl. Veredicto verificado item por item: 94 "
+            "KEEP (light novels JP/DE/PL/VN/TW, novelas danmei de Seven Seas, "
+            "artbooks, 1 manga de Gou Tanabe) y 171 EXPEL (cómic occidental, "
+            "merchandising, artbooks de videojuego, DVD, libros de texto). Con "
+            "--apply borra de items.jsonl las 171 URLs curadas (las que "
+            "filter_non_manga no alcanzó por falta de patrón seguro), guarda la "
+            "evidencia en data/diagnostics/items.llm_non_manga_curated.jsonl y "
+            "limpia de la cola las filas ya resueltas. Los 7 INCIERTOS se "
+            "conservan y siguen flageados."
+        ),
+        "when": (
+            "One-shot de la curación 2026-08-23. Correr DESPUÉS de "
+            "filter_non_manga.py (que expulsa 93 de los 171 vía las keywords "
+            "nuevas de comics_blacklist.yml). Idempotente."
+        ),
+        "command": [PYTHON, "scripts/retrofit/curate_llm_non_manga_20260823.py"],
+        "presets": [
+            {
+                "id": "list",
+                "label": "🧪 Listar",
+                "desc": "Cuenta cuántos se expulsarían sin escribir nada.",
+                "values": {},
+            },
+            {
+                "id": "apply",
+                "label": "✅ Aplicar curación",
+                "desc": "Expulsa los curados y limpia la cola de inciertos.",
+                "values": {"--apply": True},
+            },
+        ],
+        "flags": [
+            _flag("--apply", "Aplicar de verdad",
+                  "Expulsa y limpia la cola. Sin este flag solo cuenta.",
+                  type="bool", default=False),
+            _flag("--include-approved", "Incluir aprobados",
+                  "Procesa también items aprobados (golden records).",
                   type="bool", default=False, advanced=True),
         ],
     },

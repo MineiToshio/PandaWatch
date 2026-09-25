@@ -12,6 +12,15 @@ Fuente ÚNICA — este retrofit solo re-aplica el gate a lo que ya estaba en la
 cola antes de que el gate existiera (no reimplementa el criterio).
 
 Comportamiento (hallazgo #9, 2026-07-08 — alineado con `revalidate_cover_preview.py`):
+  - Sólo evalúa candidatas cuya `action` traiga una imagen NUEVA fetcheada de
+    una fuente externa (`fetch_better_covers.NEW_EXTERNAL_IMAGE_ACTIONS`:
+    replace_cover/replace_image/replace_and_add/add_gallery/add_extra). Las
+    demás (`remove_image`: `new_image` es la imagen que se propone ELIMINAR,
+    no una candidata; `replace_cover_demote`: `new_image` suele ser una foto
+    YA existente en la propia galería del item) se saltan intactas — contadas
+    en `skipped_by_action` (gotcha #167, 2026-09-01: antes este script evaluaba
+    _is_soft_image sobre TODAS las candidatas sin mirar `action`, y marcaba
+    rejected+ledger 52 candidatas `remove_image` ajenas al criterio de calidad).
   - Evalúa cada candidata `pending` cuyo archivo local exista en data/images/.
   - Las que dan `_is_soft_image == True` (detalle < DETAIL_RATIO_MIN) se marcan
     `status: "rejected"` + `reject_reason: "soft_image"` y se APPENDEAN al ledger
@@ -86,6 +95,7 @@ def main() -> int:
     kept_entries: list[dict] = []
     rejected_cands = 0
     dropped_entries = 0
+    skipped_by_action = 0
     by_domain = Counter()
     examples: list[tuple[str, str, float, int]] = []
 
@@ -96,6 +106,14 @@ def main() -> int:
             # Solo re-evaluamos las pendientes: una decisión ya tomada por el
             # owner (approved/rejected) no se toca.
             if c.get("status", "pending") != "pending":
+                kept_cands.append(c)
+                continue
+            # Gotcha #167: sólo acciones con imagen NUEVA externa (fuente
+            # única en fetch_better_covers.NEW_EXTERNAL_IMAGE_ACTIONS) — ver
+            # docstring. remove_image/replace_cover_demote se saltan intactas.
+            action = c.get("action", "replace_cover")
+            if action not in fbc.NEW_EXTERNAL_IMAGE_ACTIONS:
+                skipped_by_action += 1
                 kept_cands.append(c)
                 continue
             is_soft, ratio, px = _candidate_eval(c)
@@ -126,6 +144,7 @@ def main() -> int:
     # ── reporte ────────────────────────────────────────────────────────────────
     print(f"[prune] criterio: chica (< {fbc.SOFT_GUARD_PX:,} px) Y blanda (detalle < {fbc.DETAIL_RATIO_MIN})")
     print(f"[prune] candidatas blandas rechazadas (status=rejected + ledger): {rejected_cands}")
+    print(f"[prune] saltadas por action (remove_image/replace_cover_demote/etc): {skipped_by_action}")
     print(f"[prune] entries eliminadas (sin candidatas restantes): {dropped_entries}")
     print(f"[prune] entries antes/después: {len(entries)} → {len(kept_entries)}")
     if by_domain:

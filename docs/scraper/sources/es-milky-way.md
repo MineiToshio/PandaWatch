@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-07.
+> Última revisión: 2026-09-15 (falso positivo de yield regression reconfirmado; §8).
 
 ---
 
@@ -82,6 +82,24 @@ Sin parser propio: ambas entradas se scrapean en la **FASE 1** del pipeline
   `throttle_group: "shopify"` como medida preventiva (semáforo compartido + delay
   mínimo 2s). **`ES - Milky Way (search)` todavía NO tiene el campo seteado** — si
   llega a 429ear, agregarlo ahí también.
+- **2026-09-08 — `deluxe` marcado *yield regression* (6 vs mediana 14): FALSO POSITIVO
+  por mediana obsoleta.** El search rindió **6 el 09-07 y 6 el 09-08** — idéntico, no
+  hay caída. La alerta salta porque la mediana del baseline (14) se calcula sobre una
+  ventana que todavía incluye el régimen viejo de 13-16; la fuente se estabilizó en un
+  nivel nuevo y la mediana no lo alcanzó. Mismo patrón que `BR - Editora JBC Checklist`
+  (99→20, mediana 72.5). **No tocar la fuente**: `edicion especial` (19) y `tapa dura`
+  (6) siguen normales, y la fuente respondió sin errores en la corrida.
+  **Reconfirmado 2026-09-11**: `deluxe` rindió 6 por **cuarta corrida seguida** (09-07,
+  09-08, 09-09, 09-11; HTTP 200, 33 cards) y la alerta volvió a saltar (6 vs 14). Nivel
+  estable, no caída — se apagará cuando la ventana de la mediana deje atrás el régimen
+  13-16.
+  **Reincide 2026-09-15**: `deluxe` = 6 otra vez (mediana ya bajó de 14 a 13, 21 corridas
+  en la ventana). Mismo nivel estable; sin errores ni challenges.
+- **Curación LLM non-manga 2026-08-23 (gotcha #149)**: un post de
+  `/blogs/news/nuevas-licencias-…` había entrado como producto con el titular como
+  `title`. Fix aplicado: `_BLOG_URL_PATTERNS` en `manga_watch.py` ahora incluye
+  `/blogs/[^/]+/` (en Shopify los productos viven en `/products/` y las listas en
+  `/collections/`).
 
 ---
 
@@ -95,6 +113,14 @@ Sin parser propio: ambas entradas se scrapean en la **FASE 1** del pipeline
   variantes de volumen; de ser así, evaluar `shopify_variants.py`}}.
 - **Cobertura search-template**: limitada a las 5 keywords configuradas; ediciones
   especiales con otra nomenclatura podrían no salir en la búsqueda.
+- **Watchlist benigna (2026-08-24)**: `ES - Milky Way Próximamente` y
+  `ES - Milky Way (search) [search: kanzenban]` dieron 0 candidatos en las 3
+  últimas corridas medidas (2026-07-07, 2026-08-22, 2026-08-24 —
+  `logs/metrics.jsonl`). Decisión del owner: **NO podar** — 0 items en 3
+  corridas puede significar simplemente que no hubo ediciones especiales
+  nuevas / con la keyword "kanzenban" en esa ventana, no que el selector esté
+  roto (`status: healthy`, `errors: 0` en las 3). Validar selectores recién si
+  llegan a 0 con un corpus shift visible o pasan >3 meses sin ningún candidato.
 
 ---
 
@@ -129,3 +155,41 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-09-16 — `deluxe` a 6: tercera medición igual, la mediana es la obsoleta
+
+`source_health` volvió a marcar `ES - Milky Way (search) [search: deluxe] | 6 |
+mediana 13 | 46%`. Es la **tercera corrida consecutiva con el mismo 6** (2026-09-07,
+09-08 y hoy), contra una mediana que arrastra valores viejos. Las otras searches del
+mismo host rindieron normal en la misma corrida (`edicion limitada` 20,
+`edicion especial` 18, `tapa dura` 6, `kanzenban` 0), así que no hay avería de host ni
+de parser: el catálogo deluxe de Milky Way simplemente tiene ese tamaño ahora.
+
+Ya anotado el 2026-09-08 como "no hay caída"; queda aquí la confirmación para no
+volver a diagnosticarlo. Mismo patrón que gotcha #190 (mediana histórica obsoleta que
+dispara falsos positivos indefinidamente).
+
+## 2026-09-17 — `deluxe` rinde 6 por cuarta corrida seguida
+
+`ES - Milky Way (search) [search: deluxe]`: **6 candidatos**, igual que el 09-16, el 09-15
+y el 09-08. Mediana del baseline: 13.
+
+Cuatro corridas con el MISMO valor no son una caída — son el nivel real de la búsqueda. La
+mediana de 13 es histórica y ya no describe a la fuente. Las otras searches del mismo host
+rindieron normal en la misma corrida (`edicion limitada` 20, `edicion especial` 19,
+`tapa dura` 6), así que **no hay problema de host, de UA ni de parser**.
+
+**Para el owner (no aplicado):** re-basar la mediana de esta search. Mismo caso que las
+searches de Dark Horse y que JBC — ver `us-dark-horse-direct.md` § 2026-09-17.
+
+## 2026-09-18 — `deluxe` 6 (5ª corrida igual); entra un cuaderno como "artbook"
+
+Mediana obsoleta, sin avería. Entró además `Atelier of Witch Hat Notebook` (papelería,
+cuaderno de la franquicia): el LLM lo marcó `is_manga=false` y quedó en curación.
+
+### Reparación de referencias históricas — 2026-09-24
+
+Se quitó 1 referencia de `www.milkywayediciones.com` asociada a otra fila con ISBN
+válido diferente del producto cuya URL primaria es esa misma referencia. Se
+conservan ambos productos y su URL primaria; no se fusionan por ISBN. Evidencia
+por URL/ISBN en `reports/ingestion-audit-2026-09-24/closure/publication-2-manifest.json`.

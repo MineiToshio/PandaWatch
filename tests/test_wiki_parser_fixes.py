@@ -40,7 +40,7 @@ def test_ms_canonical_edition_phrase_lookup():
     assert canonical_edition_phrase(" prestige ") == "édition prestige"
     assert canonical_edition_phrase("limitée") == "édition limitée"
     assert canonical_edition_phrase("Limitée") == "édition limitée"
-    assert canonical_edition_phrase("unlimited double") == "limited edition"
+    assert canonical_edition_phrase("unlimited double") == "bonus"
     assert canonical_edition_phrase("Deluxe") == "deluxe"
     assert canonical_edition_phrase("Collector") == "collector edition"
     # Intégrale = omnibus, fuera de scope (gotcha #18) → sin mapeo.

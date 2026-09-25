@@ -267,3 +267,55 @@ def test_ambiguous_volume_set_includes_item_volume_no_conflict():
     assert fbc.candidate_metadata_conflict(
         item, "https://x.com/pack-vols-1-2-3.jpg", "Pack tomos 1 a 3"
     ) is False
+
+
+# ── gotcha #177: sufijo `_N` de ÍNDICE DE FOTO de un CDN (Aladin) ────────────
+
+def test_metadata_conflict_aladin_photo_index_suffix_not_volume():
+    # k622831461_1.jpg: "_1" es la FOTO 1 (portada) de Aladin, no el tomo 21.
+    item = {"volume": "21"}
+    assert fbc.candidate_metadata_conflict(
+        item,
+        "https://image.aladin.co.kr/product/30792/4/cover500/k622831461_1.jpg",
+    ) is False
+    # mismo patrón sin la letra de prefijo (SKU puramente numérico)
+    item6 = {"volume": "6"}
+    assert fbc.candidate_metadata_conflict(
+        item6,
+        "https://image.aladin.co.kr/product/1234/5/cover500/8925290057_1.jpg",
+    ) is False
+
+
+def test_metadata_conflict_aladin_photo_index_suffix_isbn_still_checked():
+    # El fix es SOLO sobre volumen bare — un conflicto de ISBN real en la
+    # misma URL de Aladin se sigue detectando. (separador "-" y no "_" antes
+    # del índice de foto, para no toparse con el propio límite de `\b` de
+    # `_ISBN13_RE` — "_" cuenta como \w en regex y anula el boundary; no
+    # tiene relación con este fix).
+    item = {"isbn": "9781506701981"}
+    assert fbc.candidate_metadata_conflict(
+        item,
+        "https://image.aladin.co.kr/product/30792/4/cover500/"
+        "9781506711980-1.jpg",
+    ) is True
+
+
+def test_metadata_conflict_page_title_volume_still_works_with_cdn_url():
+    # El marcador explícito en page_title sigue funcionando aunque la URL
+    # tenga el sufijo de índice de foto de Aladin.
+    item = {"volume": "2"}
+    assert fbc.candidate_metadata_conflict(
+        item,
+        "https://image.aladin.co.kr/product/30792/4/cover500/k622831461_1.jpg",
+        "Return of the Mount Hua Sect vol. 1",
+    ) is True
+
+
+def test_metadata_conflict_bare_suffix_not_before_extension_still_detected():
+    # El sufijo bare que NO queda inmediatamente antes de la extensión (hay
+    # más filename después) sigue tratándose como marcador real — regresión
+    # del caso existente `akira-norma_01_cover.jpg`.
+    item = {"volume": "5"}
+    assert fbc.candidate_metadata_conflict(
+        item, "https://cdn.example.com/12345678_01_cover.jpg"
+    ) is True

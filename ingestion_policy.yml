@@ -1,0 +1,38 @@
+# Runtime policy for the canonical full/delta jobs. Manual parser runs remain available.
+# Retiring a source never deletes its historical products or provenance.
+version: 1
+allow_premium_prose: true  # Owner confirmed: premium light novels and danmei remain in scope.
+wikis:
+  listadomanga-collections: {enabled: true, full_from: '2000-01', strategy: collections}
+  manga-sanctuary: {enabled: true, full_from: '2010-01', strategy: calendar, revision: 2}
+  otaku-calendar: {enabled: true, full_from: '2010-01', strategy: calendar}
+  manga-mexico: {enabled: true, full_from: '2000-01', strategy: catalog}
+  mangavariant: {enabled: true, full_from: '2000-01', strategy: sitemap}
+  socialanime:
+    enabled: false
+    reason: 'Repeated public-feed 403; replaced operationally by AnimeClick, Panini and exclusive retailers. Historical records retained; coverage is not assumed identical.'
+  blogbbm: {enabled: true, full_from: '2009-01', strategy: curated_catalog}
+  booksprivilege: {enabled: true, full_from: '2020-01', strategy: calendar}
+  sumikko: {enabled: true, full_from: '2000-01', strategy: catalog}
+  mangapassion: {enabled: true, full_from: '2000-01', strategy: catalog}
+  animeclick: {enabled: true, full_from: '2015-01', strategy: calendar}
+  prhcomics: {enabled: true, full_from: '2000-01', strategy: curated_catalog, revision: 2}
+  kinokuniya: {enabled: true, full_from: '2000-01', strategy: catalog}
+  yenpress: {enabled: true, full_from: '2013-01', strategy: calendar}
+  shueisha: {enabled: true, full_from: '2000-01', strategy: linked_catalog}
+  viz: {enabled: true, full_from: '2013-01', strategy: calendar}
+  sevenseas:
+    enabled: false
+    reason: 'Repeated API and HTML 403. Official PRH manga and Seven Seas selections verified (104 accepted products); partial replacement only, historical records retained.'
+  kodansha-us: {enabled: true, full_from: '2000-01', strategy: catalog}
+  jd-intl: {enabled: true, full_from: '2000-01', strategy: catalog}
+  spp-tw:
+    enabled: false
+    reason: 'Repeated CloudFront 403/API failures. Kingstone SPP Manga catalog is the alternative; historical completeness is not assumed.'
+  kimdong: {enabled: true, full_from: '2000-01', strategy: catalog}
+  ipm: {enabled: true, full_from: '2000-01', strategy: catalog}
+  yaakz: {enabled: true, full_from: '2000-01', strategy: catalog}
+  meian: {enabled: true, full_from: '2000-01', strategy: catalog}
+  listadomanga: {enabled: false, reason: 'Superseded by full collection parser; calendar alone loses special editions.'}
+  listadomanga-blog: {enabled: false, reason: 'News articles, superseded by product catalog.'}
+  whakoom: {enabled: false, reason: 'Unreliable automated access; manual optional investigation only.'}

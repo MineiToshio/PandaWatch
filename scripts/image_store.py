@@ -532,9 +532,42 @@ def url_basename_stem(url: str) -> str:
     return tail.rsplit(".", 1)[0].strip().lower()
 
 
+# (3) Por HOST + EXTENSIÓN: la familia Rakuten Books (`tshop.r10s.jp`,
+# `thumbnail.image.rakuten.co.jp`, `shop.r10s.jp`) genera, cuando no tiene la portada
+# real, una "tarjeta de título" con el nombre del libro QUEMADO en la imagen — por eso
+# cada archivo tiene SHA-256 distinto y ni C3b (dedup por hash compartido) ni una firma
+# fija de placeholder_signatures.json los agrupa (gotcha #170). El discriminador que sí
+# funciona es la EXTENSIÓN de archivo: Rakuten sirve esas tarjetas como `.gif` y las
+# portadas reales como `.jpg`. Verificado contra el triage de visión de la Etapa 1
+# (gotcha #171, `data/diagnostics/etapa1-triage.json`): de las 50 portadas `.gif` de
+# estos hosts en el corpus, 50/50 NO son portada usable (49 tarjeta de título +
+# 1 mockup con marca de agua SAMPLE); de las 295 `.jpg`, 0 resultaron placeholder.
+# Ojo: el sufijo de transformación de Rakuten (`?downsize=130:*`,
+# `?fitin=560:400&composite-to=*`) va DESPUÉS de la extensión — hay que mirar el PATH
+# (antes de la query), no el string crudo con `.endswith()`.
+_RAKUTEN_PLACEHOLDER_HOSTS: frozenset[str] = frozenset({
+    "tshop.r10s.jp",
+    "thumbnail.image.rakuten.co.jp",
+    "shop.r10s.jp",
+})
+
+
+def _is_rakuten_gif_placeholder(url: str) -> bool:
+    """True si `url` es del host Rakuten Books Y su PATH (sin query) termina en
+    `.gif` — la tarjeta de título generada, nunca una portada real en este corpus."""
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host not in _RAKUTEN_PLACEHOLDER_HOSTS:
+        return False
+    return (parsed.path or "").lower().endswith(".gif")
+
+
 def known_placeholder_url_reason(url: str) -> str:
-    """`"known:LABEL"` si `url` es un placeholder conocido (por stem exacto del basename
-    o por fragmento de URL), else "". No toca la red ni el disco — decide sólo por la URL."""
+    """`"known:LABEL"` si `url` es un placeholder conocido (por stem exacto del basename,
+    por fragmento de URL, o por la regla host+extensión de Rakuten), else "". No toca la
+    red ni el disco — decide sólo por la URL."""
     label = KNOWN_PLACEHOLDER_URL_STEMS.get(url_basename_stem(url))
     if label:
         return f"known:{label}"
@@ -542,6 +575,8 @@ def known_placeholder_url_reason(url: str) -> str:
     for frag, lbl in KNOWN_PLACEHOLDER_URL_FRAGMENTS.items():
         if frag in low:
             return f"known:{lbl}"
+    if _is_rakuten_gif_placeholder(url):
+        return "known:rakuten:title-card-gif"
     return ""
 
 

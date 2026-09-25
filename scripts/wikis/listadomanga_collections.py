@@ -64,6 +64,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin
 
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -1198,6 +1203,7 @@ def _merge_extras_into_items(
             edition_note, signal_keywords = _CREATE_KINDS[target_kind]
             raw_series = ex.get("raw_series", "") or collection_title
             title = f"{raw_series} nº{target_vol}" if target_vol else raw_series
+            title = normalize_display_title(title, target_kind)
             desc_parts = [collection_title, edition_note]
             desc_parts.extend(signal_keywords)
             if formato:
@@ -1871,6 +1877,7 @@ def fetch_collection(
         # poder re-correr esos ids (antes se trataba igual que una página
         # inexistente y la colección se perdía en silencio).
         print(f"  [WARN] coleccion {coleccion_id}: error de red ({exc.__class__.__name__}: {exc}); omitida")
+        report_issue(session, f"listadomanga collection={coleccion_id}: {exc}")
         NETWORK_ERROR_LOG.append((coleccion_id, f"{exc.__class__.__name__}: {exc}"))
         return []
     # Páginas inexistentes devuelven HTML mínimo o redirect a lista.
@@ -1914,7 +1921,8 @@ def _discover_via_lista(
         if not response.encoding:
             response.encoding = response.apparent_encoding
         text = response.text
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        report_issue(session, f"listadomanga lista discovery: {exc}")
         return []
 
     soup = BeautifulSoup(text, "html.parser")
@@ -1986,7 +1994,8 @@ def _discover_via_calendar(
             if not response.encoding:
                 response.encoding = response.apparent_encoding
             text = response.text
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            report_issue(session, f"listadomanga calendar={y}-{m:02d}: {exc}")
             continue
         for m_id in anchor_re.finditer(text):
             cid = int(m_id.group(1))

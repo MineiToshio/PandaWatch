@@ -47,6 +47,8 @@ Niebios = TGCF — ojo, es de Czarna Owca, NO de Kotori).
   útil como referencia (la URL como referencia es válida — ver memoria del owner).
 - **NO scrapear la categoría Kotori completa** (`/kotori-c-2_8.html`, 498 items,
   mayoría tankōbon regulares — C1 fail en la evaluación).
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 1 item flageado y
+  conservado (twoje imię. (LN) tapa dura — la light novel de Your Name).
 
 ## 10. Runbook
 

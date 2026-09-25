@@ -61,6 +61,11 @@ from typing import Any, Callable
 
 import requests
 
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
+
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -318,6 +323,7 @@ def fetch_volumes(
             resp.raise_for_status()
             data = resp.json()
         except (requests.RequestException, ValueError) as exc:
+            report_issue(session, f"mangapassion: fetch failed: {exc}")
             print(f"[mangapassion] WARN page={page}: {exc}")
             break
 
@@ -334,6 +340,8 @@ def fetch_volumes(
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
 
+    else:
+        report_issue(session, f"mangapassion: pagination limit reached ({max_pages})")
     return items
 
 

@@ -81,6 +81,11 @@ catálogo en una grilla.
   de selector — fue un blip transitorio del sitio. Falta correr un scrape real para
   confirmar que el `item_selector` sigue matcheando esos 18 productos y que llegan a
   `items.jsonl`.
+- **Curación LLM non-manga 2026-08-23 (gotcha #149)**: la HOME de pika.fr había
+  entrado como item, con un párrafo de noticia como `title` ("Una alianza
+  estratégica para el manga en español…"). No hay patrón de URL posible para
+  filtrar una home; se curó por lista
+  (`scripts/retrofit/curate_llm_non_manga_20260823.py`).
 
 ---
 
@@ -128,3 +133,7 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`,
 0 duras) → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo
 meaningful, actualiza esta ficha.
+
+## Auditoría estratégica — 2026-09-25
+
+Entrada retirada: hablamosdelibros.es es un tercero de noticias, no catálogo oficial. source_class pasa de official a community y enabled=false. No se borran productos históricos; ListadoManga y catálogos editoriales siguen cubriendo España, sin asumir cobertura perfecta.

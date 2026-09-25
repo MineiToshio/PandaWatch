@@ -176,6 +176,9 @@ API pública paralela al resto de wikis: `parse_calendar_page`, `fetch_calendar_
   para evitar mojibake. No se envía `Accept-Encoding: br` (evita el Brotli binario, #15).
 - **Decisiones (lo que NO se hace)**: no se mergea cross-país (#46); por defecto sólo entra
   `US` (otros países como `AU` se filtran salvo que se configure `allowed_countries`).
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 4 items flageados, los 4
+  conservados — novelas danmei chinas de Seven Seas en deluxe hardcover/special
+  edition (Mo Dao Zu Shi, Little Mushroom, Panguan, Qiang Jin Jiu).
 
 ---
 
@@ -229,3 +232,26 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+Full y delta pasan explícitamente el extremo mes actual +3 mediante
+LISTADO_CAL_TO. El full inicia en 2010-01: la exploración confirmó páginas
+históricas anteriores a 2024 (junio de 2015 devuelve 49 productos, con fechas
+de junio de 2015). El límite anterior era de configuración, no del archivo.
+Una corrida solo futura no adelanta el checkpoint del delta.
+
+El recorrido 2010-01–2026-09 terminó sin errores: 941 candidatos,
+543 reportables; el staging recuperó 490 URLs primarias que faltaban. Los
+omnibus sin otro calificador se descartaron por el gate normal.

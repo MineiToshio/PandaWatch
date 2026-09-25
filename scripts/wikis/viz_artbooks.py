@@ -49,6 +49,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -182,11 +187,11 @@ def parse_product_page(html: str) -> dict | None:
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Título — og:title es la fuente más confiable: "VIZ: See {title}".
+    # Strip only VIZ's navigation copy; preserve the official book title.
     title = ""
     og_t = soup.find("meta", property="og:title")
     if og_t and og_t.get("content"):
-        title = re.sub(r"^VIZ:\s*See\s+", "", og_t["content"]).strip()
+        title = re.sub(r"^VIZ:\s*(?:See|Read a Free Preview of)\s+", "", og_t["content"]).strip()
     if not title:
         for h in soup.find_all(["h1", "h2"]):
             text = h.get_text().strip()
@@ -276,6 +281,7 @@ def fetch_calendar_month(
                            headers={"User-Agent": UA, "Accept": "text/html"})
         resp.raise_for_status()
     except requests.RequestException as exc:
+        report_issue(session, f"viz_artbooks: fetch failed: {exc}")
         print(f"[viz] ERROR calendar {url}: {exc}")
         return []
 
@@ -312,15 +318,19 @@ def fetch_product(
         resp = session.get(url, timeout=timeout,
                            headers={"User-Agent": UA, "Accept": "text/html"})
         if resp.status_code == 404:
+            report_issue(session, f"viz: unavailable linked product {url}")
             return None
         resp.raise_for_status()
     except requests.RequestException as exc:
+        report_issue(session, f"viz_artbooks: fetch failed: {exc}")
         print(f"[viz] ERROR product {url}: {exc}")
         return None
 
     meta = parse_product_page(resp.text)
     if meta:
         meta["url"] = url
+    else:
+        report_issue(session, f"viz: could not parse product {url}")
     return meta
 
 

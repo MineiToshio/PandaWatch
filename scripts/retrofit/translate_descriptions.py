@@ -48,7 +48,13 @@ _SCRIPTS = Path(__file__).resolve().parent.parent  # scripts/retrofit → script
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from manga_watch import backup_and_rotate, is_approved  # type: ignore
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
+# patrón que fetch_better_covers.py / backfill_series_aliases.py).
+try:
+    from manga_watch import backup_and_rotate, is_approved  # type: ignore
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import backup_and_rotate, is_approved  # type: ignore
 
 # Determinismo de langdetect: sin fijar la seed, el detector arranca de un estado
 # aleatorio y el MISMO texto puede clasificarse distinto entre corridas (un item

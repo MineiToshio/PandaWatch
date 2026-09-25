@@ -8,6 +8,12 @@ Verifica las 6 reglas de poda/eliminación de sync_preview():
   4. current_images/old_pixels se refrescan al estado real del item.
   5. Slug inexistente → entry eliminada.
   6. replace_image cuyo target ya no está en la galería → podada.
+
+Gotcha #166: la excepción de la poda 3b para `replace_cover_demote` cuya
+premisa es "gemela de mayor resolución YA en la galería del item" (ver
+`test_demote_gallery_upgrade_exempted_from_3b` y siguientes) — a diferencia
+de `replace_cover`/`replace_and_add`, cuya premisa SÍ es "portada por debajo
+del piso" y siguen podándose igual que antes.
 """
 
 import json
@@ -335,3 +341,127 @@ def test_new_pixels_recomputed_from_real_file(tmp_path):
     synced2, stats2 = sync_preview(synced, items_by_slug, images_dir)
     assert stats2["pixels_recomputed"] == 0
     assert synced2[0]["candidates"][0]["new_pixels"] == 120_000
+
+
+# ---------------------------------------------------------------------------
+# Gotcha #166 — excepción de la poda 3b para replace_cover_demote
+# ---------------------------------------------------------------------------
+
+def test_demote_gallery_upgrade_exempted_from_3b(tmp_path):
+    """replace_cover_demote cuya premisa es real (gemela de mayor resolución
+    YA en la galería del item, verificado en vivo) NO se poda por 3b aunque
+    la portada actual ya esté por encima del piso de calidad — es exactamente
+    el caso de `enqueue_wave2_dudosos_promotion.py` / la "segunda tanda" de
+    la OLA 3 (docs/reference/images.md), que destapó la gotcha #166."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    cover_file = "cover_hires.jpg"
+    _make_img(images_dir / cover_file, size=(400, 300))     # 120_000 px (≥90k)
+    twin_file = "gallery_twin_hires.jpg"
+    _make_img(images_dir / twin_file, size=(800, 600))       # 480_000 px (mayor)
+
+    cover_url = "http://x/cover.jpg"
+    twin_url = "http://x/gallery-twin.jpg"
+    item = _item("slug-demote-ok", images=[
+        {"url": cover_url, "local": cover_file, "kind": "gallery"},
+        {"url": twin_url, "local": twin_file, "kind": "extra"},
+    ])
+    items_by_slug = {"slug-demote-ok": item}
+
+    cand = _cand("replace_cover_demote", new_url=twin_url, new_image=twin_file,
+                target=cover_url)
+    entry = _entry("slug-demote-ok", candidates=[cand],
+                   old_url=cover_url, old_image=cover_file, old_pixels=120_000)
+    synced, stats = sync_preview([entry], items_by_slug, images_dir)
+
+    assert len(synced) == 1
+    assert len(synced[0]["candidates"]) == 1
+    assert synced[0]["candidates"][0]["status"] == "pending"
+    assert stats["pruned_cover_ok"] == 0
+    assert stats["demote_upgrade_exempted"] == 1
+    assert stats["dropped_empty"] == 0
+
+
+def test_replace_cover_normal_still_pruned_when_cover_ok(tmp_path):
+    """Regresión: `replace_cover`/`replace_and_add` "normales" (motor de
+    búsqueda web, premisa = portada por debajo del piso) siguen podándose
+    igual que antes — la excepción #166 sólo aplica a replace_cover_demote."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    cover_file = "cover_hires.jpg"
+    _make_img(images_dir / cover_file, size=(400, 300))  # 120_000 px
+
+    cover_url = "http://x/cover.jpg"
+    item = _item("slug-normal", images=[
+        {"url": cover_url, "local": cover_file, "kind": "gallery"},
+    ])
+    items_by_slug = {"slug-normal": item}
+
+    cand = _cand("replace_and_add", new_url="http://x/webfind.jpg",
+                new_image="webfind.jpg")
+    entry = _entry("slug-normal", candidates=[cand],
+                   old_url=cover_url, old_image=cover_file, old_pixels=120_000)
+    synced, stats = sync_preview([entry], items_by_slug, images_dir)
+
+    assert synced == []
+    assert stats["pruned_cover_ok"] == 1
+    assert stats["demote_upgrade_exempted"] == 0
+
+
+def test_demote_no_real_upgrade_still_pruned(tmp_path):
+    """replace_cover_demote cuya "gemela" NO es de mayor resolución que la
+    portada actual (empate o regresión) no aplica la excepción — se poda
+    igual que una candidata replace_cover normal (precisión > recall)."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    cover_file = "cover_hires.jpg"
+    _make_img(images_dir / cover_file, size=(800, 600))   # 480_000 px
+    twin_file = "gallery_twin_smaller.jpg"
+    _make_img(images_dir / twin_file, size=(400, 300))     # 120_000 px (≥90k pero MENOR)
+
+    cover_url = "http://x/cover.jpg"
+    twin_url = "http://x/gallery-twin.jpg"
+    item = _item("slug-demote-noup", images=[
+        {"url": cover_url, "local": cover_file, "kind": "gallery"},
+        {"url": twin_url, "local": twin_file, "kind": "extra"},
+    ])
+    items_by_slug = {"slug-demote-noup": item}
+
+    cand = _cand("replace_cover_demote", new_url=twin_url, new_image=twin_file,
+                target=cover_url)
+    entry = _entry("slug-demote-noup", candidates=[cand],
+                   old_url=cover_url, old_image=cover_file, old_pixels=480_000)
+    synced, stats = sync_preview([entry], items_by_slug, images_dir)
+
+    assert synced == []
+    assert stats["pruned_cover_ok"] == 1
+    assert stats["demote_upgrade_exempted"] == 0
+
+
+def test_demote_stale_gallery_membership_still_pruned(tmp_path):
+    """Obsolescencia real: la "gemela" que la candidata promete ya no está en
+    la galería del item (otra pasada — dedup/purge/el owner — la sacó). La
+    excepción #166 se verifica EN VIVO contra `images[]`, así que no confía
+    en el `new_pixels` congelado de la candidata — se poda igual que antes."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    cover_file = "cover_hires.jpg"
+    _make_img(images_dir / cover_file, size=(400, 300))  # 120_000 px
+
+    cover_url = "http://x/cover.jpg"
+    # El item YA NO tiene la "gemela" en su galería (idx>=1 desapareció).
+    item = _item("slug-demote-stale", images=[
+        {"url": cover_url, "local": cover_file, "kind": "gallery"},
+    ])
+    items_by_slug = {"slug-demote-stale": item}
+
+    gone_twin_url = "http://x/gallery-twin-gone.jpg"
+    cand = _cand("replace_cover_demote", new_url=gone_twin_url,
+                new_image="ghost.jpg", target=cover_url)
+    entry = _entry("slug-demote-stale", candidates=[cand],
+                   old_url=cover_url, old_image=cover_file, old_pixels=120_000)
+    synced, stats = sync_preview([entry], items_by_slug, images_dir)
+
+    assert synced == []
+    assert stats["pruned_cover_ok"] == 1
+    assert stats["demote_upgrade_exempted"] == 0

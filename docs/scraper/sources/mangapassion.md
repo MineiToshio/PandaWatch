@@ -190,6 +190,9 @@ las dos queries se deduplican por `id` para no duplicar un volumen que matchee a
   NUEVOS ya entran correctos. Las 802 filas existentes se normalizan con el retrofit
   genérico `scripts/retrofit/normalize_languages.py` (mapa de sinónimos incluye
   `"Deutsch" → "Alemán"`; corre `--dry-run` primero, guard `approved_at`).
+- **Curación LLM non-manga 2026-08-23 (gotcha #147)**: 10 items flageados, los 10
+  conservados — son las Limited Edition de light novels 2-in-1 (I'm in Love with
+  the Villainess, Makeine, 7th Time Loop, Arifureta, Holy Grail of Eris).
 
 ---
 
@@ -245,3 +248,29 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Continuación de auditoría — 2026-09-24
+
+Agotar max_pages con hydra:next pendiente produce incidencia de cobertura.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+La revisión completa de Sonderausgaben terminó sin errores, con 945
+reportables. El staging contiene 65 URLs primarias nuevas frente al catálogo
+de 16 173 productos; las altas definitivas dependen de los filtros de publicación.
+
+Cierre 2026-09-25: se incorporaron 2 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.

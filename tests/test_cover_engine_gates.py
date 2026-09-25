@@ -315,6 +315,68 @@ def test_write_preview_merge_no_duplicate_candidates(tmp_path, monkeypatch):
     assert out[0]["candidates"][0]["status"] == "approved"
 
 
+def test_write_preview_merge_cross_action_url_collision_keeps_both(tmp_path, monkeypatch):
+    """Gotcha #168 (2026-09-01): dos candidatas de ACCIONES DISTINTAS pueden
+    compartir el mismo `new_url` por coincidencia — `remove_image` usa
+    `new_url` para la imagen a ELIMINAR, mientras que `replace_cover_demote`
+    (y el resto) lo usan para la imagen NUEVA. Caso real: bleach-christmas-
+    variant-panini-cofanetto-it-1 — un pair encoló `remove_image` para
+    1718902782.jpeg (contra otra foto de galería) y otro pair encoló
+    `replace_cover_demote` para la MISMA url 1718902782.jpeg (contra la
+    portada). Antes del fix, el merge por `new_url` pelado fundía ambas como
+    "la misma candidata" y la de disco (remove_image, pending) se perdía."""
+    preview_path = tmp_path / "cover_preview.json"
+    monkeypatch.setattr(fbc, "_PREVIEW_PATH", preview_path)
+
+    same_url = "http://x/1718902782.jpeg"
+    disk = [_entry("bleach-1", [
+        _cand(same_url, status="pending", action="remove_image", target=same_url,
+              keep_url="http://x/1718902782-1.jpeg"),
+    ])]
+    preview_path.write_text(json.dumps(disk), encoding="utf-8")
+
+    memory = [_entry("bleach-1", [
+        _cand(same_url, status="pending", action="replace_cover_demote",
+              target="http://x/natale.jpg"),
+    ])]
+    fbc._write_preview(memory)
+
+    out = json.loads(preview_path.read_text(encoding="utf-8"))
+    assert len(out) == 1
+    cands = out[0]["candidates"]
+    actions = sorted(c["action"] for c in cands)
+    # AMBAS candidatas sobreviven — ni se pierde la de disco ni se duplica la demote.
+    assert actions == ["remove_image", "replace_cover_demote"]
+    remove_c = next(c for c in cands if c["action"] == "remove_image")
+    assert remove_c["status"] == "pending"
+    assert remove_c["keep_url"] == "http://x/1718902782-1.jpeg"
+
+
+def test_write_preview_merge_dedupes_identical_candidates_same_action(tmp_path, monkeypatch):
+    """Si disco y memoria terminan con la MISMA candidata (misma identidad
+    action+target+new_url) no debe quedar duplicada tras el merge — y si una
+    de las dos ya fue decidida (approved/rejected), esa gana sobre la pending."""
+    preview_path = tmp_path / "cover_preview.json"
+    monkeypatch.setattr(fbc, "_PREVIEW_PATH", preview_path)
+
+    disk = [_entry("s1", [
+        _cand("http://x/a.jpg", status="approved", action="replace_cover_demote",
+              target="http://x/old.jpg"),
+    ])]
+    preview_path.write_text(json.dumps(disk), encoding="utf-8")
+
+    memory = [_entry("s1", [
+        _cand("http://x/a.jpg", status="pending", action="replace_cover_demote",
+              target="http://x/old.jpg"),
+    ])]
+    fbc._write_preview(memory)
+
+    out = json.loads(preview_path.read_text(encoding="utf-8"))
+    cands = out[0]["candidates"]
+    assert len(cands) == 1
+    assert cands[0]["status"] == "approved"
+
+
 # ── --slugs — filtro de candidatos por slug (Parte B) ─────────────────────────
 
 def test_filter_candidates_by_slugs_keeps_only_requested():

@@ -7,7 +7,8 @@
 >
 > Mantenimiento: cada vez que se deshabilita una fuente en `sources.yml` o se
 > descarta una candidata en una evaluación, se registra acá EN EL MISMO TURN
-> (regla dura de FUENTES, CLAUDE.md). Última revisión: 2026-06-12.
+> (regla dura de FUENTES, CLAUDE.md). Última revisión: 2026-08-24 (DE - Carlsen
+> Manga Novedades deshabilitada: ban de IP del host, gotcha #150).
 
 Tres categorías:
 
@@ -99,6 +100,8 @@ Tres categorías:
 | España | ES - Listado Manga Blog RSS | rss | Decisión 2026-05-23: deshabilitado. Son posts de noticias, |
 | España | ES - Listado Manga Calendario | html | autodetect falla (anchors con imagen sin texto); usar --bootstrap-wiki listadomanga |
 | España | ES - Listado Manga Novedades | html | autodetect falla; el wiki parser cubre /calendario.php que es equivalente |
+| España | ES - MangaLine España | html | disabled 2026-08-23 (host caído): timeout de conexión puro desde 2026-07-07 (~6 semanas, hosting Arsys), re-confirmado 2026-08-22 y 2026-08-23. Editorial ACTIVA (relanzamiento 2026 bajo Rafael); ediciones ES ya cubiertas por ListadoManga (colecciones). Ver ficha `sources/es-mangaline-espana.md`. |
+| Alemania | DE - Carlsen Manga Novedades | html | disabled 2026-08-24 (ban de IP del host): 429 persistente en TODO el host (home Y `/robots.txt`, sin `Retry-After`, con UAs distintos — firma de bloqueo perimetral, no rate-limit; gotcha #150), 2 deltas consecutivos afectados (2026-08-22, 2026-08-24). Decisión del owner: pausa temporal — cobertura DE ya aportada por Manga-Passion Sonderausgaben (wiki) + altraverse/Egmont/TOKYOPOP. Ver ficha `sources/de-direct-publishers.md`. |
 | España | ES - Misión Tokyo lanzamientos | js | sitio caído (connection timeout 30s+); reactivar si vuelve |
 | España | ES - Misión Tokyo novedades manga | js | sitio caído (connection timeout 30s+); reactivar si vuelve |
 | España | ES - Norma (search) | html | disabled 2026-06-12 (poda de fuentes muertas): 7 búsquedas/run → 0 items netos; Norma está íntegramente cubierta por ListadoManga (colecciones) y la fuente de catálogo Norma (3 items). |
@@ -168,6 +171,7 @@ Tres categorías:
 | Japón | JP - Square Enix Comics | html | disabled 2026-06-12 (poda de fuentes muertas): 1 item compartido, 0 únicos; el catálogo JP de SQEX no expone especiales scrapeables (las 限定版 llegan vía Sumikko/Rakuten). |
 | Japón / Global | SOCIAL - Manga Mogura Bluesky | bluesky | audit 2026-05-25: 0 items |
 | Japón / Global | SOCIAL - Manga Mogura RE X | html | tags: ["social", "x", "twitter", "news", "manga"] |
+| México | MX - MangaLine México Tienda | html | disabled 2026-08-23 (host caído): timeout de conexión puro desde 2026-07-07 (~6 semanas, hosting Arsys), re-confirmado 2026-08-22 y 2026-08-23. Editorial ACTIVA (redes sociales/marketplaces con actividad reciente); sin agregador equivalente a ListadoManga para México — hueco de cobertura, candidatas sin implementar: Buscalibre México, Mixup, Amazon/Mercado Libre. Ver ficha `sources/mx-mangaline-mexico.md`. |
 | México | MX - Panini Manga México | html | disabled 2026-06-12 (poda de fuentes muertas): 2 candidatos/run → 0 netos; Panini México Boxsets (31) + búsquedas (36+4) cubren la editorial. |
 
 ---
@@ -182,3 +186,15 @@ Tres categorías:
 | Crunchyroll Store US | US | Ver §1 — si exponen feed. Contenido único real (Frieren box set exclusivo, etc.). |
 | BooksPrivilege (JP) | JP | Deshabilitada 2026-05-26 (11k items de tomo regular + bonus de tienda SIN foto del extra). Re-evaluar SOLO si empiezan a fotografiar los extras. Módulo `wikis/booksprivilege.py` sigue disponible. |
 | Censored covers ListadoManga | ES | Portadas adultas detrás de modal "aceptar contenido adulto" — requeriría Playwright o cookie injection per-source (diferido explícito en CLAUDE.md). |
+| MangaLine España / México (hosts propios) | ES/MX | `mangaline.es` y `mangaline.com.mx` caídos desde 2026-07-07 (host Arsys, timeout puro; re-confirmado 2026-08-22 y 2026-08-23) — `enabled: false` desde 2026-08-23. Ambas editoriales SIGUEN ACTIVAS (ES en relanzamiento bajo nueva dirección 2026; MX activa en redes/marketplaces). Reactivar apenas el host responda de nuevo — chequeo simple: `curl -sI https://mangaline.es` / `https://mangaline.com.mx`. |
+| Buscalibre México / Mixup / Amazon MX / Mercado Libre (cobertura MangaLine MX) | MX | Candidatas SIN evaluar formalmente para cubrir el hueco dejado por MX - MangaLine México Tienda (deshabilitada 2026-08-23, sin agregador ES-like en México). MangaLine MX vende en las 4 según fuentes públicas (Instagram/linktree). Evaluar con `/watch-evaluate-sources` antes de implementar — marketplaces genéricos (Amazon/ML) probablemente requieren `purity: mixed` y selectores más ruidosos que una tienda propia. |
+| DE - Carlsen Manga Novedades (host propio) | DE | `carlsen.de` está devolviendo 429 en TODO el host (home Y `/robots.txt`, sin `Retry-After`) desde al menos 2026-08-22 — firma de ban de IP, no rate-limit (gotcha #150). `enabled: false` desde 2026-08-24. Reactivar apenas el host deje de banear — chequeo simple: `curl -sI https://www.carlsen.de/robots.txt` (esperar código != 429). No requiere cambio de código, sólo volver a poner `enabled: true`. |
+
+## Decisiones operativas — 2026-09-25
+
+- ES Pika Ediciones / hablamosdelibros: noticias de tercero mal clasificadas como oficial; deshabilitada.
+- Wikis SocialAnime, Seven Seas directo y SPP-TW: retirados del job automático por bloqueo persistente. Históricos preservados; parsers manuales conservados.
+- Seven Seas: ampliar PRH oficial; SPP: incorporar Kingstone Manga. Alternativas parciales, sin afirmar equivalencia histórica total.
+- Books.com.tw SPP: 403 en prueba actual; no habilitar. PRH manga-hardcovers: 200 sin tarjetas estáticas; no habilitar como parser listo.
+- TongLi: catálogo oficial accesible, editor diferente; candidato futuro, no sustituto de SPP.
+- No retirar fuentes por >70% de series/ISBN compartidos. Exigir cobertura completa por producto/mercado/variante.

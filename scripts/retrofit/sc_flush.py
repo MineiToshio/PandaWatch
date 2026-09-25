@@ -148,6 +148,117 @@ def validate_candidates(candidates: list[dict], slug: str, images_dir: Path) -> 
         sys.exit(1)
 
 
+# Campos que el guard de URL compartida agrega a una candidata NO desambiguada.
+# `shared_with` lleva los OTROS slugs que reclaman la misma imagen; el owner los
+# revisa uno a uno en el panel. Nunca se auto-aprueba una candidata así marcada.
+_SHARED_GUARD_FIELDS = ('shared_with', 'confidence', 'needs_visual_review')
+
+
+def _apply_shared_url_guard(acc: dict) -> dict:
+    """Guard de URL compartida entre slugs (gotcha #173, 2026-09-02).
+
+    Hallazgo de la Etapa 2 tanda 1: para items SIN imagen de referencia,
+    `sc_validate.py` no puede correr `_same_cover` (no hay con qué comparar) y
+    acepta cualquier candidata plausible (aspect-ratio + `_is_soft_image` +
+    `candidate_metadata_conflict`). Consecuencia medida: 36/50 (72%) de esas
+    candidatas `verified:false` compartían la MISMA `new_url` con la candidata
+    de OTRO slug de la MISMA serie con OTRO volumen (whakoom devolviendo la
+    miniatura de la serie o de otro tomo cuando el tomo específico no tiene
+    página propia indexada) — matemáticamente no pueden ser todas correctas.
+
+    Corre sobre TODO el acumulador de la corrida (`acc`, uno por slug, con las
+    candidatas que ya pasaron `sc_validate.py`) y agrupa por la clave canónica
+    de imagen (`fbc._img_stem(new_url)` — la MISMA que usa el resto del
+    pipeline para dedup de `images[]`, así que variantes de tamaño/CDN de la
+    misma imagen caen en el mismo grupo). Para cada grupo con ≥2 slugs
+    distintos:
+
+      - Si el `page_title`/`new_url` de la candidata declara un número de
+        tomo EXPLÍCITO (`fbc._extract_candidate_volumes`) que coincide con el
+        `volume` de UN solo slug del grupo → esa candidata se conserva sólo
+        ahí; en los demás slugs se marca `status="rejected"`,
+        `reject_reason="otro_tomo"` (se queda en el acumulador/preview como
+        registro auditable, no desaparece en silencio).
+      - Si no hay forma de desambiguar (ningún marcador explícito, o el
+        marcador no resuelve a un único slug) → TODAS quedan `pending` pero
+        con `shared_with` (los otros slugs del grupo), `confidence="low"` y
+        `needs_visual_review=True` — nunca se auto-aprueban.
+
+    Idempotente y seguro de re-invocar en cada flush de la corrida: las
+    candidatas ya `rejected` se excluyen de la agrupación (no se re-evalúan),
+    y los campos de un grupo no resuelto se recalculan igual cada vez a partir
+    del estado actual del acumulador — si un slug nuevo se suma al grupo en un
+    flush posterior, `shared_with` crece para reflejarlo.
+
+    Devuelve el resumen para el stdout del flush:
+      {'shared_groups': N, 'kept_disambiguated': N, 'rejected_otro_tomo': N,
+       'unresolved_flagged': N}
+    """
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for slug, entry in acc.items():
+        for idx, c in enumerate(entry.get('candidates', [])):
+            if c.get('status') == 'rejected':
+                continue
+            stem = fbc._img_stem(c.get('new_url', ''))  # noqa: SLF001
+            if not stem:
+                continue
+            groups.setdefault(stem, []).append((slug, idx))
+
+    counts = {
+        'shared_groups'      : 0,
+        'kept_disambiguated' : 0,
+        'rejected_otro_tomo' : 0,
+        'unresolved_flagged' : 0,
+    }
+
+    for stem, occurrences in groups.items():
+        slugs_involved = {slug for slug, _ in occurrences}
+        if len(slugs_involved) < 2:
+            # También limpiar el marcador si un grupo dejó de compartirse (p.ej.
+            # el resto se rechazó en un flush anterior y sólo queda 1 slug vivo).
+            for slug, idx in occurrences:
+                c = acc[slug]['candidates'][idx]
+                for f in _SHARED_GUARD_FIELDS:
+                    c.pop(f, None)
+            continue
+        counts['shared_groups'] += 1
+
+        # ¿Alguna candidata del grupo declara EXPLÍCITAMENTE un tomo que
+        # coincide con el `volume` de exactamente UN slug del grupo?
+        vol_matches: list[tuple[str, int]] = []
+        for slug, idx in occurrences:
+            c = acc[slug]['candidates'][idx]
+            text = f"{c.get('page_title', '')} {c.get('new_url', '')}"
+            explicit, _bare = fbc._extract_candidate_volumes(text)  # noqa: SLF001
+            item_vol = str(acc[slug].get('volume', '') or '').strip()
+            if explicit and item_vol.isdigit() and int(item_vol) in explicit:
+                vol_matches.append((slug, idx))
+
+        if len(vol_matches) == 1:
+            keep_slug, keep_idx = vol_matches[0]
+            for slug, idx in occurrences:
+                c = acc[slug]['candidates'][idx]
+                if slug == keep_slug and idx == keep_idx:
+                    for f in _SHARED_GUARD_FIELDS:
+                        c.pop(f, None)
+                    counts['kept_disambiguated'] += 1
+                else:
+                    c['status'] = 'rejected'
+                    c['reject_reason'] = 'otro_tomo'
+                    for f in _SHARED_GUARD_FIELDS:
+                        c.pop(f, None)
+                    counts['rejected_otro_tomo'] += 1
+        else:
+            for slug, idx in occurrences:
+                c = acc[slug]['candidates'][idx]
+                c['shared_with'] = sorted(slugs_involved - {slug})
+                c['confidence'] = 'low'
+                c['needs_visual_review'] = True
+                counts['unresolved_flagged'] += 1
+
+    return counts
+
+
 def flush(input_path: str, preview_path: str, acc_path: str,
           images_dir: str = 'data/images') -> None:
     inp_p = Path(input_path)
@@ -215,12 +326,22 @@ def flush(input_path: str, preview_path: str, acc_path: str,
             'series_display': item.get('series_display', ''),
             'publisher'     : item.get('publisher', ''),
             'country'       : item.get('country', ''),
+            # 'volume' es SÓLO para el guard de URL compartida (abajo): compara
+            # el volumen de items DISTINTOS que comparten la misma new_url dentro
+            # de la corrida. No es campo de esquema del preview (no lo lee la UI).
+            'volume'        : item.get('volume', ''),
             'old_image'     : old_local,
             'old_url'       : old_url,
             'old_pixels'    : curr_px,
             'current_images': current_images,
             'candidates'    : list(candidates),
         }
+
+    # Guard de URL compartida (gotcha #173, 2026-09-02): dentro de esta corrida,
+    # si la MISMA new_url se propuso para ≥2 slugs distintos, no puede ser
+    # correcta para todos — se re-evalúa sobre TODO el acumulador en cada flush
+    # (idempotente, ver docstring de _apply_shared_url_guard).
+    shared_url_guard = _apply_shared_url_guard(acc)
 
     # Persistir acumulador (estado CRUDO de esta corrida — las decisiones del owner
     # se reconcilian contra el disco en cada flush, ver abajo).
@@ -272,7 +393,8 @@ def flush(input_path: str, preview_path: str, acc_path: str,
 
     total_candidates = sum(len(e.get('candidates', [])) for e in merged)
     print(json.dumps({'flushed': True, 'products': len(merged),
-                      'total_candidates': total_candidates}))
+                      'total_candidates': total_candidates,
+                      'shared_url_guard': shared_url_guard}))
 
 
 def main() -> None:

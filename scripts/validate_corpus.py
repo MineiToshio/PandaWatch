@@ -117,7 +117,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest — a diferencia de un `from manga_watch import X` bare (que tira
+# ImportError si X no existe ahí), este `import manga_watch as mw` NO falla al
+# importar: `mw` queda apuntando silenciosamente al wrapper (que sólo reexporta
+# parse_args/run) y el error sólo aparece más abajo, al acceder a un atributo
+# real (`mw._COUNTRY_SLUG_MAP`, `mw.PRODUCT_TYPE_ENUM`) → AttributeError. Mismo
+# mecanismo que build_web.py::_mw(): se detecta el wrapper con `hasattr` de un
+# símbolo real y, si falta, se reemplaza por el módulo real de scripts/.
 import manga_watch as mw  # noqa: E402
+if not hasattr(mw, "_COUNTRY_SLUG_MAP"):  # pragma: no cover — wrapper raíz bajo pytest
+    from scripts import manga_watch as mw  # noqa: E402
 from series_aliases import aggressive_series_norm  # noqa: E402
 from wikis.listadomanga_collections import normalize_display_title  # noqa: E402
 
@@ -582,6 +592,10 @@ def main():
     # o MISMO título exacto (ej. 'Fruits Basket Edición Coleccionista 7' ×2). Un
     # regular + un especial del mismo vol con títulos distintos coexisten (OK).
     for (ek, vol), group in ev_owner.items():
+        protected = [r for r in group if r.get("identity_review_required")]
+        if protected:
+            flag("IDENTITY_REVIEW", f"{ek} vol{vol}: {len(protected)} products preserved after conflicting identity evidence")
+            group = [r for r in group if not r.get("identity_review_required")]
         if len(group) < 2:
             continue
         kinds = [_lmc_kind(it) for it in group]
@@ -668,7 +682,7 @@ def main():
 
     # Reporte
     print(f"=== VALIDACIÓN DE CORPUS ({N} items) ===\n")
-    order = ["SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
+    order = ["IDENTITY_REVIEW", "SLUG", "CLKEY", "DUPCL", "DUPSYN", "LMCKIND", "TITLE", "ONECOLE", "DUPVOL",
              "COLED", "PAIS", "PAISKEY", "EDSLUG", "SPECIALREG", "SERIESDUP", "PUBMIX", "EKPREFIX", "ISBNDUP", "STOLENIMG",
              "DATEISO", "PTYPE_ENUM", "LANG_ENUM", "VOLRANGE", "EKMALFORMED",
              "SLUGUNIQ", "SLUGFMT", "STDKEYS", "MIRRORREF", "SRCURL", "SRCFMT",

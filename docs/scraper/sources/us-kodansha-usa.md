@@ -157,3 +157,43 @@ python -m pytest tests/test_kodansha_us.py -v
 # Validar corpus después de ingestión
 python scripts/validate_corpus.py
 ```
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Continuación de auditoría — 2026-09-24
+
+Se corrige el fin de paginación: la ausencia de total_count no equivale a cero productos; se compara el total acumulado, no el count de una página. HTTP no exitoso, página repetida, esquema inválido y tope alcanzado producen incidencia. Tope defensivo: 1000 páginas.
+
+### Delta 2026-09-25 — paginación que se repite (`repeated search page=2`)
+
+Primera aparición de esta incidencia. La API de búsqueda de Kodansha USA devolvió
+en `page=2` **el mismo lote que en `page=1`** (ningún slug nuevo), dos veces en la
+corrida. El módulo lo detectó y cortó la paginación:
+
+```
+[WIKI-ISSUE] kodansha_us: repeated search page=2
+```
+
+**Por qué importa ahora**: el cambio del 2026-09-24 subió `max_pages` de 10 a 1000
+en `search_series()` (`scripts/wikis/kodansha_us.py`). Sin el guard de página
+repetida que se agregó en el mismo cambio, un endpoint que devuelve siempre la
+misma página haría **hasta 1000 requests en un bucle inútil**. El guard es lo que
+convierte un bucle silencioso en una incidencia visible — vale la pena entenderlo
+como un par indivisible: el tope alto sólo es seguro con el guard puesto.
+
+**La ingesta NO se perdió**: la fuente emitió 9 candidatos, el gate descartó 6 por
+no ser edición coleccionable y entraron 3. El `rc=1` del paso refleja la incidencia
+de paginación, no un fallo de ingestión.
+
+**Pendiente de verificar (no hecho hoy)**: si la API ignora el parámetro de página
+o si `total_count` miente, el catálogo podría estar truncándose sin que se note.
+Conviene una sonda manual de `page=1` vs `page=2` antes de tocar nada. Decisión del
+owner.

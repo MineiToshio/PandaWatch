@@ -49,16 +49,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from manga_watch import (  # noqa: E402
-    PRODUCT_TYPE_ENUM,
-    backup_and_rotate,
-    consolidate_by_cluster,
-    derive_cluster_key,
-    derive_product_type,
-    rebuild_edition_key_prefix,
-    sanitize_key_ascii,
-    write_items_atomic,
-)
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
+# patrón que fetch_better_covers.py / backfill_series_aliases.py).
+try:
+    from manga_watch import (  # noqa: E402
+        PRODUCT_TYPE_ENUM,
+        backup_and_rotate,
+        consolidate_by_cluster,
+        derive_cluster_key,
+        derive_product_type,
+        rebuild_edition_key_prefix,
+        sanitize_key_ascii,
+        write_items_atomic,
+    )
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import (  # noqa: E402
+        PRODUCT_TYPE_ENUM,
+        backup_and_rotate,
+        consolidate_by_cluster,
+        derive_cluster_key,
+        derive_product_type,
+        rebuild_edition_key_prefix,
+        sanitize_key_ascii,
+        write_items_atomic,
+    )
 from series_aliases import (  # noqa: E402
     _build_aggressive_lookup,
     _build_lookup,
@@ -379,6 +394,15 @@ def cmd_merge(base: Path, force_all: bool) -> int:
                     note=(r.get("non_manga_reason", "") or "flagged_by_review"),
                     seen=unmapped_seen,
                 )
+                # Cuenta como INTENTO (gotcha #191). Ésta era la única rama que
+                # dejaba el item pendiente SIN incrementar el contador, así que
+                # `standardize_exhausted` nunca se disparaba y el item volvía a
+                # gastar Tier 3 —la ruta más cara— en cada corrida, para
+                # siempre. Verificado en 6 corridas seguidas (2026-09-02→07),
+                # con el pool creciendo de 3 a 6 items. Con el contador, tras
+                # MAX_STANDARDIZE_ATTEMPTS el audit lo saca de las proyecciones
+                # y lo manda a curación manual en vez de re-inferirlo.
+                it["standardize_attempts"] = (it.get("standardize_attempts", 0) or 0) + 1
                 llm_non_manga += 1
                 final.append(it)
                 continue

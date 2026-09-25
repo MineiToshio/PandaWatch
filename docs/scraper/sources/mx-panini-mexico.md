@@ -77,6 +77,14 @@ mercado mexicano (idioma ES, país `mx`) que otras fuentes no cubren.
 
 ---
 
+## 8. Problemas encontrados — qué funcionó y qué NO
+
+- **Curación LLM non-manga 2026-08-23**: 3 items expulsados — One World Under
+  Doom #6/#7/#8 (portada variante), evento Marvel colado por el search "portada
+  variante"; se agregó "One World Under Doom" a `data/comics_blacklist.yml`.
+
+---
+
 ## 9. Pendientes / limitaciones conocidas
 
 - Anti-bot / quirks y calidad de imágenes del sitio: **{{pendiente: no determinado en esta

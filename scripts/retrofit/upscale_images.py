@@ -133,6 +133,44 @@ def _upscale_file(
         return False
 
 
+def _decodable_upscaler_input(src_path: Path, images_dir: Path) -> tuple[Path, bool]:
+    """Devuelve `(path, es_temporal)` listo para pasarle al binario upscaler.
+
+    Gotcha (2026-08-23): waifu2x-ncnn-vulkan/realesrgan-ncnn-vulkan solo
+    aceptan jpg/png/webp como `-i` (su propio `--help` lo dice). El espejo
+    local es 100% AVIF desde la estandarización 2026-06-15
+    (`image_store.normalize_image`) — sin esta conversión, el binario no
+    podía decodificar NINGÚN archivo del espejo y CADA llamada fallaba en
+    silencio (return code != 0, `_upscale_file` devuelve False → "FALLÓ" sin
+    excepción visible). Detectado en la corrida post-scrape 2026-08-23:
+    3159/3159 candidatos fallando. Fix: si el archivo no es jpg/png/webp por
+    magic bytes, decodifica con PIL (mismo patrón lazy-import que
+    `_pixels_from_bytes`) a un PNG temporal en el mismo directorio (evita
+    cross-device rename) y lo usa como input; el caller borra el temporal.
+    """
+    try:
+        data = src_path.read_bytes()
+    except OSError:
+        return src_path, False
+    is_jpeg = data[:3] == b"\xff\xd8\xff"
+    is_png = data[:8] == b"\x89PNG\r\n\x1a\n"
+    is_webp = data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    if is_jpeg or is_png or is_webp:
+        return src_path, False
+    try:
+        import io
+
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(io.BytesIO(data)) as im:
+            im = im.convert("RGB")
+            tmp = images_dir / f".upscale-src-{uuid.uuid4().hex}.png"
+            im.save(tmp, format="PNG")
+            return tmp, True
+    except Exception:
+        return src_path, False
+
+
 # ── Image dimensions ──────────────────────────────────────────────────────────
 
 def _pixels_from_bytes(data: bytes) -> int | None:
@@ -430,7 +468,12 @@ def run(
         ) as tf:
             tmp_path = Path(tf.name)
 
-        ok = _upscale_file(upscaler_path, upscaler_kind, src_path, tmp_path, scale, denoise)
+        upscaler_input, input_is_tmp = _decodable_upscaler_input(src_path, images_dir)
+        try:
+            ok = _upscale_file(upscaler_path, upscaler_kind, upscaler_input, tmp_path, scale, denoise)
+        finally:
+            if input_is_tmp:
+                upscaler_input.unlink(missing_ok=True)
         if not ok:
             tmp_path.unlink(missing_ok=True)
             print("FALLÓ")

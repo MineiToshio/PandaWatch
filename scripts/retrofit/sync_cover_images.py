@@ -13,6 +13,14 @@ retrofit es la limpieza de la galería:
      (banners de tienda, placeholders) vía IMAGE_URL_BAD_PATTERNS.
   3. Limpia refs basura en sources[] (otro layer, per-fuente).
 
+"Junk" de un archivo local se decide por CONTENIDO/ESTRUCTURA — `_compute_junk_local`
+delega en `image_store.placeholder_reason()` (el mismo detector estructural que usa
+`purge_placeholder_images.py`), más la señal independiente "compartido por >=4 obras
+distintas". El tamaño en bytes NO es un criterio (gotcha #185, 2026-09-02): antes un
+umbral de <6KB crudo marcaba como basura thumbnails reales y chicos (listadomanga en
+AVIF comprime a 2.6-6KB), y esto vaciaba `images[]` de ediciones sin galería de
+respaldo. Un archivo chico pero real (estructura/dimensión ok) SIEMPRE se conserva.
+
 Items aprobados (`approved_at`) se saltean por defecto (--include-approved
 para forzar). Idempotente. Backup vía backup_and_rotate antes de escribir.
 """
@@ -77,20 +85,49 @@ def _norm(url: str) -> str:
 
 def _is_junk(url: str) -> bool:
     low = (url or "").lower()
-    return any(p in low for p in IMAGE_URL_BAD_PATTERNS)
+    if any(p in low for p in IMAGE_URL_BAD_PATTERNS):
+        return True
+    # Registro único de placeholders CONOCIDOS por URL (stem exacto / fragmento /
+    # regla host+extensión Rakuten) — mismo detector que usa purge_placeholder_images.py
+    # y el backfill de mirror_images.py. Gotcha #185: antes esta función SOLO miraba
+    # IMAGE_URL_BAD_PATTERNS (sustrings genéricos); una URL placeholder fichada por
+    # hash/fragmento pero sin esos sustrings pasaba como "no junk" acá.
+    return bool(image_store.known_placeholder_url_reason(url))
 
 
-# Set de archivos locales basura (placeholders/anuncios/píxeles), detectados por
-# datos: 0 bytes, diminutos (<6KB = íconos/píxeles/garabatos), o el MISMO archivo
-# compartido por muchas series distintas (bytes idénticos desde URLs distintas =
-# placeholder reusado: banners, "now printing", pósters de eventos, etc.).
+# Set de archivos locales basura (placeholders/anuncios/píxeles/rotos), detectado
+# por el detector ESTRUCTURAL único de `image_store.placeholder_reason()` (dims
+# diminutas, casi-sólido, firma de contenido conocida, roto) — MISMO criterio que
+# usa `purge_placeholder_images.py` — más una señal independiente de bytes: el
+# MISMO archivo compartido por muchas OBRAS distintas (placeholder reusado: banners,
+# "now printing", pósters de eventos, etc., típicamente con contenido variable que
+# el detector estructural no siempre capta).
 # Poblado por _compute_junk_local() antes del barrido. Validado visualmente.
 _JUNK_LOCAL: set[str] = set()
-_TINY_BYTES = 6000
 _SHARED_SERIES_MIN = 4
+# Bound de performance/seguridad (mismo valor que purge_placeholder_images.py): un
+# archivo por encima de este tamaño NUNCA es un placeholder en este corpus (un
+# placeholder pesa unos pocos KB) — no vale la pena decodificarlo con PIL. NO es un
+# criterio de "basura": es sólo el techo de evaluación estructural.
+_EVAL_MAX_BYTES = 200_000
 
 
 def _compute_junk_local(items: list[dict], images_dir: Path) -> set[str]:
+    """Detecta archivos locales basura por CONTENIDO/ESTRUCTURA, nunca por tamaño
+    crudo (gotcha #185, 2026-09-02): antes clasificaba junk cualquier archivo
+    <6000 bytes sin mirar dimensión/contenido — los thumbnails LEGÍTIMOS de
+    listadomanga (96-124×150-160px) comprimen en AVIF a 2.6-6KB y caían acá, y
+    `_fix_bad_cover` terminaba vaciando `images[]` de ediciones sin galería
+    alternativa (111 items ES afectados en la corrida real del 2026-08-23; ver
+    `restore_lm_thumbnails_20260902.py` para la reparación del dato).
+
+    Fuente ÚNICA de la heurística estructural: `image_store.placeholder_reason()`
+    (mismo detector que usa `purge_placeholder_images.py` para archivos <=
+    `_EVAL_MAX_BYTES`: dims ≤8px, casi-sólido std<3, firma de contenido conocida,
+    o roto/0 bytes). El único criterio NO estructural que se conserva es
+    "compartido por >=4 obras distintas" — independiente de bytes, y es una señal
+    de reuso (placeholder servido para portadas que no tiene), no de tamaño.
+    """
     from collections import defaultdict
     sizes: dict[str, int] = {}
     if images_dir.exists():
@@ -122,16 +159,17 @@ def _compute_junk_local(items: list[dict], images_dir: Path) -> set[str]:
         # `images_dir` no existe (o el archivo simplemente no se mirroreó
         # todavía), CADA local caía acá con sz==0 → se clasificaba TODO como
         # basura y `_fix_bad_cover` arrasaba portadas en masa. "No existe" es
-        # un skip legítimo (borrado/nunca descargado); sólo "existe pero pesa
-        # 0 bytes" es basura real (descarga corrupta/truncada).
+        # un skip legítimo (borrado/nunca descargado).
         if f not in sizes:
             continue                                   # no existe en el espejo — NO es basura
+        if len(works) >= _SHARED_SERIES_MIN:           # placeholder reusado entre OBRAS distintas
+            junk.add(f)
+            continue
         sz = sizes[f]
-        if sz == 0:                                    # existe pero 0 bytes → corrupto
-            junk.add(f)
-        elif sz < _TINY_BYTES:                        # píxeles / íconos / garabatos
-            junk.add(f)
-        elif len(works) >= _SHARED_SERIES_MIN:        # placeholder reusado entre OBRAS distintas
+        if sz > _EVAL_MAX_BYTES:
+            continue                                   # portada real grande: nunca placeholder, no evaluar
+        reason = image_store.placeholder_reason(images_dir / f)
+        if reason:                                      # roto / tiny / solid / firma conocida
             junk.add(f)
     return junk
 

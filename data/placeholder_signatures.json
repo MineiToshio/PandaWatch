@@ -28,6 +28,153 @@
       "source_hint": "socialanime.s3",
       "dims": "720x720",
       "added": "2026-06-13"
+    },
+    {
+      "sha1": "7198af74883c98ebd0f6aeb20e9bf021b57f0943",
+      "label": "Dark Horse Direct — foto promocional genérica de Berserk Deluxe (reutilizada en los 15 tomos)",
+      "source_hint": "www.darkhorsedirect.com",
+      "dims": "1600x1600",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "49e8419c2b0a631ecd198994a8ba2d3db1a367ae",
+      "label": "Mangavariant — logo metálico 'U' (placeholder de tienda)",
+      "source_hint": "mangavariant.com",
+      "dims": "512x512",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "8fe710766d89bbb99d2ed50b53759b31f51f5005",
+      "label": "Square Enix Manga & Books — banner de editorial",
+      "source_hint": "fyre.cdn.sewest.net",
+      "dims": "900x471",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "6a948548150f018bc3993b8fd8531d79b6f3f06c",
+      "label": "Penguin Random House 'Cover Coming Soon' (variante 1058x1600)",
+      "source_hint": "images.penguinrandomhouse.com",
+      "dims": "1058x1600",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "51b45316ed9f6d8de41558d52e4eae5ec6b23b86",
+      "label": "Funside 'Immagine non disponibile' (logo MD, variante 500x500 nueva)",
+      "source_hint": "funside.it",
+      "dims": "500x500",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "b10109774a879c1d8f484177fea3bafd6ffa46bf",
+      "label": "Rakuten Books — plantilla genérica 'sin portada' con el título del libro superpuesto como texto",
+      "source_hint": "thumbnail.image.rakuten.co.jp",
+      "dims": "1004x1172",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "74527790152165b7db548ffb5ebfa09d426534c7",
+      "label": "Livriz — icono de cámara tachada 'sin imagen'",
+      "source_hint": "cdn.livriz.com",
+      "dims": "1200x1500",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "1bff44a55de9e0afc37ba5bf6763b32de19cb7bd",
+      "label": "Meian Editions — banner OG por defecto de meian-editions.fr (colado como foto de galería en 7 items de 3 series)",
+      "source_hint": "meian-editions.fr",
+      "dims": "1200x630",
+      "added": "2026-09-01"
+    },
+    {
+      "sha1": "140a4352062228eda4f55717be6dae33c2de5319",
+      "label": "AnimeClick — 'COPERTINA NON DISPONIBILE' + logo (1 archivo compartido por 3 items)",
+      "source_hint": "www.animeclick.it/bundles/accommon/images/non_disponibile.jpg",
+      "dims": "150x210",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "fad947a10a235d0bf3f5ddf41a80cff2b5fc880f",
+      "label": "Amazon — tarjeta 'coming soon'/'now printing' del editor (ISBN 4408642126)",
+      "source_hint": "images-na.ssl-images-amazon.com",
+      "dims": "696x1000",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "3dc30da7e249c791eec8a1e29db5f19ada8da232",
+      "label": "Amazon — tarjeta 'coming soon'/'now printing' del editor (ISBN 4049524325)",
+      "source_hint": "images-na.ssl-images-amazon.com",
+      "dims": "700x1000",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "71c7c130301de6ea65436b86b631786472ead7db",
+      "label": "Amazon — tarjeta 'coming soon'/'now printing' del editor (ISBN 4046602813)",
+      "source_hint": "images-na.ssl-images-amazon.com",
+      "dims": "1120x1600",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "545bc19ccb94cdfcd6b33e3407f1126ce3ea9c05",
+      "label": "Amazon — tarjeta 'coming soon'/'now printing' del editor (ISBN 4058028130)",
+      "source_hint": "images-na.ssl-images-amazon.com",
+      "dims": "650x1000",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "f5bbb15ab451b1cadf34781d0a8b78e3e4f2bea5",
+      "label": "Funside — 'MQ · IMMAGINE NON DISPONIBILE' (variante cover_*.jpg)",
+      "source_hint": "funside.it",
+      "dims": "500x541",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "95b8de890857430a060d8565513273988ceb6ae9",
+      "label": "Mangavariant — banner de evento 30º aniversario City Hunter (hunt1.jpg)",
+      "source_hint": "mangavariant.com",
+      "dims": "1352x1512",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "e8bc9175ef98a51fd34c56264b23b061db1240a0",
+      "label": "wrong_image:katekyo-hitman-reborn-haksanmunhwasa-limited-kr-16 — escaneo de página en blanco/lomo, no portada",
+      "source_hint": "image.aladin.co.kr",
+      "dims": "150x217",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "1c19b6f34e80f521ce325de8d3bdff55b800ce3b",
+      "label": "wrong_image:kagurabachi-kana-special-fr-10 — foto de merch/goodies del pack, no la portada",
+      "source_hint": "img.sanctuary.fr",
+      "dims": "300x188",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "d9f30dc2b6e5722ce9a9548e6638743c90347957",
+      "label": "wrong_image:debut-or-die-unknown-limited-kr-2 — collage de merch (postales/goods), no es portada",
+      "source_hint": "image.aladin.co.kr",
+      "dims": "300x212",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "1b4fb8e7f4577c5527e5cd978da9eb9ad24a858d",
+      "label": "wrong_image:my-dress-up-darling-kana-coffret-fr-1 — foto de display/merch, no la portada",
+      "source_hint": "www.lapreface.net",
+      "dims": "1600x1387",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "26434114c7792dac20151264326077f2a4c81b2a",
+      "label": "wrong_image:the-heroic-legend-of-arslan-kobunsha-boxset-jp-1-16 — mockup del box con marca de agua SAMPLE (Rakuten .gif)",
+      "source_hint": "thumbnail.image.rakuten.co.jp",
+      "dims": "1600x1131",
+      "added": "2026-09-02"
+    },
+    {
+      "sha1": "c57609a5010b04d77e6b9021e52a88d77b003715",
+      "label": "wrong_image:sous-un-rayon-de-soleil-panini-coffret-fr-1 — contraportada (sinopsis + código de barras)",
+      "source_hint": "m.media-amazon.com",
+      "dims": "468x700",
+      "added": "2026-09-02"
     }
   ]
 }

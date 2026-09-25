@@ -37,6 +37,12 @@ data/  (todo gi salvo los .yml versionados)
   edits.jsonl                — log append-only de ediciones inline (auditoría).
   quality_report.json        — output de audit/data_quality.py; lo lee quality.html.
   cover_preview.json         — candidatas de portada pendientes de aprobación.
+  whakoom_edition_map.jsonl  — caché append-only de resoluciones edición-whakoom↔item
+                               ES (skill /watch-whakoom-covers): {series_key, publisher,
+                               country, listado_coleccion_id, total_tomos, formato,
+                               whakoom_edition_id, whakoom_edition_url, resolved_at,
+                               method}. La escribe we_resolve.py (éxito o no, con motivo
+                               en method); we_plan.py sólo la lee.
   wayback_negative_cache.json — {url: checked_at_iso} de URLs SIN snapshot
                                confirmado en Wayback (TTL 90d). Escrito por
                                wayback_recover.py; sólo cachea negativos
@@ -127,6 +133,12 @@ scripts/
                                reintentar una fuente rota: `source_health.py` para
                                identificarla + `manga_watch.py --only-source <fuente>`.
   series_aliases.py          — canonical_series_key() + log_unmapped_series(). Ver #20.
+                               El dedup de la cola se siembra desde disco (#157): una
+                               series_key ya encolada no se re-apila entre corridas.
+  prune_unmapped_queue.py    — poda data/unmapped_series.jsonl CONSERVANDO la cola de
+                               curación (toda fila con `reason`) y deduplicando (#155/#157/#198).
+                               Fuente única: el Step 5 de /watch-enrich-series-aliases lo
+                               invoca en vez de truncar el archivo.
   image_store.py             — primitivas del espejo local (hash, magic-bytes, idempotencia)
                                + normalize_image() (estandariza a AVIF Q60 ≤1600px al ingresar,
                                fuente única; fija VIPS_CONCURRENCY=1) + placeholder_reason().
@@ -179,6 +191,14 @@ scripts/
     sevenseas.py               wiki US Seven Seas: listing API WP (books) + enrich por item (media?parent + ISBN/fecha del HTML). Filtro is_special_title (sin omnibus a secas ni Mature Hardcover).
     kodansha_us.py             wiki US Kodansha: API /wp-json/kodansha/v1/search-series → series page (volume list) → volume page (JSON-LD: ISBN/fecha/portada). Filtro is_special_series.
     storefront_json.py         5 storefronts API en UN módulo con perfiles: jd-intl (HK, WooCommerce), spp-tw (91APP), kimdong/ipm (VN, products.json), yaakz (TH, Laravel). Filtros de título por idioma.
+    meian.py                   FR Meian: ingesta por API JSON (el sitio es Angular y no
+                               renderiza NADA sin JS — ver #197). 3 endpoints en
+                               www.anime-store.fr/api-meian/v5/: licences → produits/licence
+                               → produit. Exige header `Origin: meian-editions.fr` (si no, 403)
+                               y hay que sacar el prefijo anti-XSSI `)]}',`. Trae ISBN, fecha,
+                               autor, portada y el contenido de la caja (info_sup). Sin modo
+                               delta (el API no expone fecha de alta). Reemplaza la entrada
+                               HTML de sources.yml, que quedó enabled: false.
   retrofit/                  — utilidades sobre data histórica. README.md + reglas
                                de backup/flush/nohup en "Conventions" abajo.
     rescore.py                 refresca score/signal_types/product_type (tras cambiar detectores). Salta approved y standardized (gotcha #61) salvo --include-*.
@@ -293,6 +313,17 @@ scripts/
                                memoria de intentos 30d, referencia degenerada). Escribe
                                .tmp_sc_plan.json/.tmp_sc_acc.json — NUNCA items.jsonl. Reemplaza
                                las ~300 líneas embebidas del skill (hallazgo F9).
+    we_plan.py                  planificador determinista (Step 1) del skill /watch-whakoom-covers:
+                               targets ES (España) sin imagen/portada chica con volume<=11 o
+                               vacío (límite público de Whakoom sin login), total_tomos LOCAL
+                               (conteo por edition_key, sin red), reutiliza caché de ediciones
+                               ya resueltas. Escribe .tmp_we_plan.json — NUNCA items.jsonl.
+    we_resolve.py                resolución determinista (Step 2) del skill /watch-whakoom-covers:
+                               decide si una página /ediciones/ de Whakoom (editorial+idioma
+                               "Spanish (Spain)"+total de tomos) ES la edición del item; ambigüedad
+                               entre hermanas ⇒ no resuelve. Arma candidate_urls para sc_validate.py
+                               (no reimplementa identidad/calidad). Apendea siempre a
+                               data/whakoom_edition_map.jsonl (caché de resoluciones).
     apply_approvals.py         re-materializa approvals.jsonl tras reconstruir el catálogo.
     fix_edition_key_anomalies.py  normaliza edition_key: panini-es→panini + xx→país (tier: source country → grupo ISBN → editorial mono-país → hermano de la misma edición). Enforcer 2b.
     disambiguate_coleccion_editions.py  coleccion distinta=edición distinta: -c{cole} si edition_key colisiona (#57). Enforcer 3-0.
@@ -384,6 +415,14 @@ scripts/
                                (--serper-fallback, solo targets con 0 matches). Escribe
                                candidatas a cover_preview.json. NUNCA toca items.jsonl. Step 1 (plan
                                de queries) compilado a scripts/retrofit/sc_plan.py (hallazgo F9).
+  whakoom-covers/               vía alternativa a search-covers, específica del mercado España
+                               (owner, 2026-09-02): resuelve la página /ediciones/ de Whakoom
+                               (editorial+idioma+total de tomos) ANTES de buscar la imagen — el
+                               1% de acierto de search-covers sobre el pool ES (gotcha #173)
+                               motivó esta vía. Browser pane de Claude Code (no la sesión del
+                               owner). Step 1/2 → scripts/retrofit/we_plan.py/we_resolve.py; la
+                               validación de imagen reusa sc_validate.py/sc_flush.py sin cambios.
+                               Alcance: sólo volume<=11 (límite público sin login de Whakoom).
 .claude/workflows/            — workflows GUARDADOS (orquestación de skills como código JS: fan-out
                                de subagentes, schemas, checkpoints — no markdown para el modelo).
                                Detalle en .claude/skills/README.md § "Workflows":
@@ -424,3 +463,26 @@ docs/                        — README.md índice + scraper/ (ARCHITECTURE, SOU
                                /feature-spec, uno por épica).
 ```
 
+
+
+### Auditoría de ingestión (2026-09-24)
+
+- `scripts/audit/ingestion_integrity.py`: contraste de corpus, caché, rechazos,
+  procedencias, campos ausentes y spool; solo lectura, salida JSON.
+- `scripts/wikis/health.py`: contrato común de incidencias de bootstrap parcial.
+- `tests/test_ingestion_integrity.py`: regresiones de pérdida, reingesta y salud.
+- `docs/scraper/audits/2026-09-24-ingestion.md`: hallazgos, evidencia y matriz de fuentes.
+
+### Continuación de integridad — 2026-09-24
+
+- `scripts/wikis/checkpoints.py`: watermarks por fuente, replay con solapamiento
+y escritura atómica; invocado por el dispatcher después de persistir resultados.
+- `docs/scraper/sources/booksprivilege.md`: ficha del calendario japonés de bonus.
+
+## Archivos de estrategia de fuentes — 2026-09-25
+
+- `ingestion_policy.yml`: política runtime de wikis y alcance confirmado.
+- `scripts/ingestion_policy.py`: helper de huellas y recibos atómicos; no es CLI del Panel.
+- `tests/test_source_lifecycle.py`: full/delta, errores parciales, políticas, identidad y alcance.
+- `docs/scraper/audits/2026-09-25-source-strategy.md`: decisiones y límites de cobertura.
+- `reports/source-strategy-2026-09-25/`: inventario, solapamiento observado, pruebas y corridas.

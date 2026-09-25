@@ -136,3 +136,23 @@ PY
 **Antes de cerrar cualquier cambio en esta fuente**: validar (`validate_corpus`, 0 duras)
 → tests (`pytest tests/test_extraction.py`) → build. Si tocaste algo meaningful, actualiza
 esta ficha.
+
+## 2026-09-05 — read timeout del host (primer registro)
+
+Delta diario (`logs/scrape-delta-2026-09-05-113236/`). Aparece en
+`🔴 Broken (HTTP errors)` del reporte de salud:
+
+```
+[ERROR] ES - Planeta Cómic: request error
+HTTPSConnectionPool(host='www.planetadelibros.com', port=443): Read timed out.
+```
+
+La petición no completó, así que la fuente aportó **0 items** en la corrida. Es el primer
+incidente registrado en esta ficha, y llegó junto con otros dos timeouts del mismo run
+(Pipoca & Nanquim y la búsqueda de Panini Brasil) — tres hosts distintos, en tres países,
+fallando del mismo modo en la misma corrida. Eso apunta más a una ventana de saturación
+local/red del corredor que a un problema de `planetadelibros.com` en particular.
+
+**Nada aplicado** (rutina diaria: documenta, no cambia configuración). A vigilar: si el
+timeout se repite sólo en esta fuente mientras los otros dos se recuperan, entonces sí es
+específico del host y corresponde revisar su timeout propio.

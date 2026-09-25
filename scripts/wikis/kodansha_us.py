@@ -46,6 +46,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -137,7 +142,7 @@ def search_series(
     session: requests.Session,
     keyword: str,
     timeout: tuple[int, int] = (15, 45),
-    max_pages: int = 10,
+    max_pages: int = 1000,
 ) -> list[dict]:
     """Busca series por keyword en la API de Kodansha. Pagina hasta obtenerlas todas."""
     out: list[dict] = []
@@ -151,20 +156,30 @@ def search_series(
                 timeout=timeout,
             )
             if not resp.ok:
+                report_issue(session, f"kodansha_us: search HTTP {resp.status_code} page={page}")
                 break
             data = resp.json()
-            batch = data.get("data") or []
+            if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+                report_issue(session, "kodansha_us: unknown search response schema")
+                break
+            batch = data["data"]
             if not batch:
                 break
             new_items = [s for s in batch if s.get("slug") not in seen_slugs]
+            if not new_items:
+                report_issue(session, f"kodansha_us: repeated search page={page}")
+                break
             for s in new_items:
                 seen_slugs.add(s.get("slug", ""))
             out.extend(new_items)
             # Si count == total_count ya los tenemos todos.
-            if data.get("count", 0) >= data.get("total_count", 0):
+            if data.get("total_count") is not None and len(out) >= int(data["total_count"]):
                 break
-        except (requests.RequestException, ValueError):
+        except (requests.RequestException, ValueError) as exc:
+            report_issue(session, f"kodansha_us: fetch failed: {exc}")
             break
+    else:
+        report_issue(session, f"kodansha_us: search pagination limit reached ({max_pages})")
     return out
 
 
@@ -192,7 +207,8 @@ def get_volume_urls(
                 seen.add(href)
                 urls.append(href)
         return urls
-    except (requests.RequestException, Exception):
+    except (requests.RequestException, Exception) as exc:
+        report_issue(session, f"kodansha_us: fetch failed: {exc}")
         return []
 
 
@@ -234,7 +250,8 @@ def get_volume_data(
                         }
             except (json.JSONDecodeError, AttributeError):
                 continue
-    except (requests.RequestException, Exception):
+    except (requests.RequestException, Exception) as exc:
+        report_issue(session, f"kodansha_us: fetch failed: {exc}")
         pass
     return None
 

@@ -15,16 +15,26 @@ Uso:
   .venv/bin/python scripts/retrofit/dedup_carousel_images.py [--all]
 """
 from __future__ import annotations
-import json, sys, argparse
+import hashlib, json, sys, argparse
 from collections import OrderedDict
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "retrofit"))
 sys.path.insert(0, str(ROOT / "scripts"))
-import fetch_better_covers as fbc  # noqa: E402  (reusa _ahash/_hamming/_get_dims_from_bytes)
+import fetch_better_covers as fbc  # noqa: E402  (reusa _ahash/_dhash/_hamming/_get_dims_from_bytes)
 import requests  # noqa: E402
 import image_store  # noqa: E402  (fuente única de THUMB_ASPECT_TOL, hallazgo #12)
+try:  # señal ADICIONAL opcional para el reporte de pares dudosos (gotcha #159) —
+    # NUNCA decide el criterio auto, sólo se imprime/reporta como contexto extra
+    # para el review humano. Si el paquete no está instalado el script sigue
+    # funcionando igual (degrada con gracia, sin la columna pHash-imagehash).
+    import imagehash  # noqa: E402
+    from PIL import Image  # noqa: E402
+    _HAS_IMAGEHASH = True
+except ImportError:  # pragma: no cover
+    _HAS_IMAGEHASH = False
 try:  # import dual robusto (CLI directo vs wrapper raíz bajo pytest)
     from manga_watch import (  # noqa: E402
         backup_and_rotate, is_approved, make_session, write_items_atomic,
@@ -51,6 +61,28 @@ THUMB_HAMMING = 14     # umbral relajado SOLO para el par thumbnail↔full (un t
 # promote_hires_cover.py, con drift (0.12 vs 0.06) — ahora ambos importan de
 # image_store.
 THUMB_ASPECT_TOL = image_store.THUMB_ASPECT_TOL
+
+# ── Regla AUTO validada por red-team visual (37 casos, 0 falsos positivos,
+#    OLA 2 de depuración de imágenes, 2026-09-01, gotcha #159) ────────────────
+# Dentro de un MISMO item, un par es duplicado AUTO-eliminable SOLO si:
+#   (a) SHA-256 de bytes idéntico, O
+#   (b) dHash Hamming <= REDTEAM_DHASH_AUTO_MAX Y dimensiones DISTINTAS
+#       Y |aspect1-aspect2|/aspect1 <= REDTEAM_ASPECT_TOL
+# El falso positivo típico (shikishi de colores distintos, caja llena vs
+# vacía) tiene dimensiones EXACTAMENTE iguales — por eso "dimensiones
+# distintas" es una condición DURA de (b), no un detalle cosmético: dos
+# fotos DISTINTAS del mismo producto casi siempre comparten resolución
+# (misma cámara/escaneo), mientras que la MISMA foto en dos resoluciones
+# (el caso real que sí hay que dedupear) por definición no. NUNCA relajar
+# estos 3 valores sin repetir el red-team (ver docs/reference/images.md).
+REDTEAM_DHASH_AUTO_MAX = 2      # dHash Hamming máximo para el criterio (b)
+REDTEAM_ASPECT_TOL = 0.02       # aspect ratio ±2% para el criterio (b)
+# Banda de "vale la pena mirar el par" (no auto-elimina, sólo entra al
+# análisis): dHash <= este valor. Fuera de esta banda el par se ignora
+# (imágenes claramente distintas). DHASH_MAX_DIST (8) es el mismo tope que
+# usa `_same_cover` para el gate de identidad de portadas — reusado como
+# banda de "candidato a revisar", no reimplementado.
+REDTEAM_DHASH_SCAN_MAX = fbc.DHASH_MAX_DIST
 
 # Sesión HTTP con retry + UA del pipeline (hallazgo #5c, 2026-07-08): antes un
 # UA propio ("Mozilla/5.0 (dedup)") distinto al del resto del scraper — fuentes
@@ -112,10 +144,183 @@ def _fingerprint(im: dict):
     return (h, w * ht, w, ht)
 
 
+def _redteam_fingerprint(im: dict) -> dict | None:
+    """(sha256, dhash, px, w, h) para la regla AUTO — None si no es dedupable
+    (no es kind=gallery, o no se pudieron leer bytes/dims). Los `extra`
+    (cofres, bonuses) NUNCA son candidatos, igual que `_dedupable` de arriba."""
+    if im.get("kind", "gallery") != "gallery":
+        return None
+    data = _img_bytes(im)
+    if not data:
+        return None
+    w, h = fbc._get_dims_from_bytes(data)
+    if w <= 0 or h <= 0:
+        return None
+    return {
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "dhash": fbc._dhash(data),
+        "px": w * h,
+        "w": w,
+        "h": h,
+    }
+
+
+def _redteam_classify(rf1: dict, rf2: dict) -> str | None:
+    """'auto' | 'dudoso' | None (par fuera de la banda de interés).
+
+    Ver constantes arriba para la justificación de cada umbral — validadas
+    por red-team visual (37 casos, 0 falsos positivos)."""
+    if rf1["px"] <= 0 or rf2["px"] <= 0:
+        return None
+    sha1, sha2 = rf1["sha256"], rf2["sha256"]
+    if sha1 and sha2 and sha1 == sha2:
+        return "auto"
+    dh1, dh2 = rf1["dhash"], rf2["dhash"]
+    if dh1 is None or dh2 is None:
+        return None
+    dist = fbc._hamming(dh1, dh2)
+    if dist > REDTEAM_DHASH_SCAN_MAX:
+        return None  # fuera de la banda de interés, ni auto ni dudoso
+    w1, h1, w2, h2 = rf1["w"], rf1["h"], rf2["w"], rf2["h"]
+    dims_distinct = (w1, h1) != (w2, h2)
+    r1 = (w1 / h1) if h1 else 0
+    r2 = (w2 / h2) if h2 else 0
+    aspect_diff = abs(r1 - r2) / r1 if r1 else 1.0
+    if dist <= REDTEAM_DHASH_AUTO_MAX and dims_distinct and aspect_diff <= REDTEAM_ASPECT_TOL:
+        return "auto"
+    return "dudoso"  # dentro de la banda pero no cumple (b): dims iguales o
+                      # dHash 3-8 — el caso típico de falso positivo del red-team.
+
+
+def _imagehash_phash_signal(data1: bytes, data2: bytes) -> int | None:
+    """Distancia pHash (librería `imagehash`) entre dos imágenes — señal
+    ADICIONAL sólo informativa para el reporte de pares dudosos (nunca decide
+    el criterio auto). None si `imagehash` no está instalado o el par no es
+    decodificable."""
+    if not _HAS_IMAGEHASH:
+        return None
+    try:
+        import io
+        h1 = imagehash.phash(Image.open(io.BytesIO(data1)))
+        h2 = imagehash.phash(Image.open(io.BytesIO(data2)))
+        return int(h1 - h2)  # numpy.int64 no serializa a JSON — normalizar a int nativo
+    except Exception:
+        return None
+
+
+def _process_item_redteam(it: dict, imgs: list[dict]):
+    """Aplica la regla AUTO red-team (ver constantes arriba) a los `images[]`
+    de UN item. Devuelve (new_imgs_or_None, dropped, dudosos):
+
+    - `new_imgs_or_None`: nueva lista de `images[]` (con la portada
+      re-promovida si hizo falta) si hubo ≥1 auto-drop, o `None` si no
+      cambió nada.
+    - `dropped`: detalle de lo auto-eliminado (para el reporte/summary).
+    - `dudosos`: pares que quedan en la banda de interés pero NO cumplen el
+      criterio auto (dims iguales o dHash 3-8) — se reportan, NUNCA se tocan.
+    """
+    slug = it.get("slug", "")
+    rfs = [_redteam_fingerprint(im) for im in imgs]
+    keep = [True] * len(imgs)
+    dropped: list[dict] = []
+    for i in range(len(imgs)):
+        if not keep[i] or rfs[i] is None:
+            continue
+        for j in range(i + 1, len(imgs)):
+            if not keep[j] or rfs[j] is None:
+                continue
+            if _redteam_classify(rfs[i], rfs[j]) != "auto":
+                continue
+            reason = "sha256" if rfs[i]["sha256"] == rfs[j]["sha256"] else "dhash_rescale"
+            drop, win = (j, i) if rfs[j]["px"] <= rfs[i]["px"] else (i, j)
+            keep[drop] = False
+            dropped.append({
+                "slug": slug, "reason": reason, "was_cover": drop == 0,
+                "dropped_url": imgs[drop].get("url", ""),
+                "dropped_local": imgs[drop].get("local", ""),
+                "dropped_px": rfs[drop]["px"],
+                "kept_url": imgs[win].get("url", ""),
+                "kept_local": imgs[win].get("local", ""),
+                "kept_px": rfs[win]["px"],
+            })
+            if drop == i:
+                break  # i descartado, no seguir comparándolo
+
+    # Pares DUDOSOS: se evalúan sobre los SOBREVIVIENTES tras el auto-drop
+    # (si A y B eran dup y se auto-drop B, un dudoso B-C ya no existe en la
+    # galería final — reportar sobre lo que va a quedar, no sobre lo viejo).
+    dudosos: list[dict] = []
+    surv = [k for k, kp in enumerate(keep) if kp]
+    for a in range(len(surv)):
+        ia = surv[a]
+        if rfs[ia] is None:
+            continue
+        for b in range(a + 1, len(surv)):
+            ib = surv[b]
+            if rfs[ib] is None:
+                continue
+            if _redteam_classify(rfs[ia], rfs[ib]) != "dudoso":
+                continue
+            dh = None
+            if rfs[ia]["dhash"] is not None and rfs[ib]["dhash"] is not None:
+                dh = fbc._hamming(rfs[ia]["dhash"], rfs[ib]["dhash"])
+            phash_dist = _imagehash_phash_signal(_img_bytes(imgs[ia]), _img_bytes(imgs[ib]))
+            dudosos.append({
+                "slug": slug,
+                "dhash_dist": dh, "phash_dist_imagehash": phash_dist,
+                "same_dims": (rfs[ia]["w"], rfs[ia]["h"]) == (rfs[ib]["w"], rfs[ib]["h"]),
+                "image_a": {"url": imgs[ia].get("url", ""), "local": imgs[ia].get("local", ""),
+                            "px": rfs[ia]["px"]},
+                "image_b": {"url": imgs[ib].get("url", ""), "local": imgs[ib].get("local", ""),
+                            "px": rfs[ib]["px"]},
+            })
+
+    if not dropped:
+        return None, [], dudosos
+    new_imgs = [im for k, im in zip(keep, imgs) if k]
+    if not new_imgs:
+        return None, [], dudosos  # nunca dejar sin imágenes (guard defensivo, ídem path legacy)
+    repromoted = False
+    if not keep[0]:
+        for gi, im in enumerate(new_imgs):
+            if im.get("kind", "gallery") == "gallery":
+                if gi != 0:
+                    new_imgs.insert(0, new_imgs.pop(gi))
+                    repromoted = True
+                break
+    for d in dropped:
+        d["repromoted_cover"] = repromoted if d["was_cover"] else False
+    return new_imgs, dropped, dudosos
+
+
 def _write_items(dst: Path, items: list[dict]) -> None:
     """Escritura atómica (tmp + fsync + replace) con `sort_keys=True`
     (idempotencia byte-idéntica entre corridas, hallazgo #5e, 2026-07-08)."""
     write_items_atomic(dst, items)
+
+
+DUDOSOS_REPORT = ROOT / "data" / "diagnostics" / "dedup-wave2-dudosos.json"
+
+
+def _write_dudosos_report(dudosos: list[dict]) -> Path:
+    """Reporte de pares dudosos — SOLO evidencia para review humano, NUNCA una
+    cola de aprobación paralela (regla dura del repo: no inventar archivos
+    tipo review_X/uncertain_X). El orquestador/owner decide qué hacer con
+    cada par; este script no los toca."""
+    DUDOSOS_REPORT.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "note": ("Pares DUDOSOS de dedup_carousel_images.py --redteam-auto: dentro de la "
+                 "banda dHash<=8 pero NO cumplen la regla auto (dims iguales, o dHash 3-8). "
+                 "NO se auto-eliminan. Esto NO es una cola de aprobación (cover_preview.json "
+                 "no soporta hoy una acción 'eliminar imagen' pendiente) — es sólo evidencia "
+                 "para que el owner decida."),
+        "count": len(dudosos),
+        "pairs": dudosos,
+    }
+    DUDOSOS_REPORT.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+                               encoding="utf-8")
+    return DUDOSOS_REPORT
 
 
 def main() -> int:
@@ -127,6 +332,12 @@ def main() -> int:
                     help="También dedupea items aprobados (golden records). Por defecto se "
                          "saltean: dedup puede REORDENAR images[0] (la portada) de un item "
                          "aprobado si la portada actual cae como duplicado de menor resolución.")
+    ap.add_argument("--redteam-auto", action="store_true",
+                     help="Usa la regla AUTO validada por red-team (SHA-256 idéntico, o dHash<=2 "
+                          "+ dims DISTINTAS + aspect<=2%%) en vez de la heurística aHash histórica "
+                          "de este script. Escanea TODO el corpus (ignora --all/filtro listadomanga) "
+                          "y además reporta pares DUDOSOS (sin tocarlos) en "
+                          "data/diagnostics/dedup-wave2-dudosos.json.")
     args = ap.parse_args()
     items = [json.loads(l) for l in ITEMS.open(encoding="utf-8") if l.strip()]
 
@@ -135,11 +346,14 @@ def main() -> int:
         # Backup ANTES del loop (convención dura): el loop baja imágenes de red
         # y puede tardar — el backup es el punto de retorno de TODA la corrida,
         # no solo del write final.
-        backup = backup_and_rotate(ITEMS, "dedup-carousel")
+        label = "wave2-dedup" if args.redteam_auto else "dedup-carousel"
+        backup = backup_and_rotate(ITEMS, label)
 
     removed_total = 0
     items_changed = 0
     skipped_approved = 0
+    cover_repromotions = 0
+    dudosos: list[dict] = []
     examples = []
     _FLUSH_EVERY = 50  # flush items.jsonl cada N items con cambios (convención)
     for it in items:
@@ -149,6 +363,27 @@ def main() -> int:
         imgs = it.get("images") or []
         if len(imgs) < 2:
             continue
+
+        if args.redteam_auto:
+            new_imgs, dropped, item_dudosos = _process_item_redteam(it, imgs)
+            dudosos.extend(item_dudosos)
+            if new_imgs is None:
+                continue
+            if not args.dry_run:
+                it["images"] = new_imgs
+            removed_total += len(dropped)
+            items_changed += 1
+            if any(d.get("repromoted_cover") for d in dropped):
+                cover_repromotions += 1
+            if len(examples) < 25:
+                examples.append((it.get("title", "")[:34],
+                                  [(d["reason"], (d["dropped_url"] or "").split("/")[-1][:18])
+                                   for d in dropped]))
+            if not args.dry_run and items_changed % _FLUSH_EVERY == 0:
+                _write_items(ITEMS, items)
+                print(f"  → flush parcial ({items_changed} items)", flush=True)
+            continue
+
         if not args.all and not any("listadomanga.com" in (im.get("url") or "") for im in imgs):
             continue
         fps = [_fingerprint(im) for im in imgs]
@@ -227,7 +462,21 @@ def main() -> int:
             _write_items(ITEMS, items)
             print(f"  → flush parcial ({items_changed} items)", flush=True)
 
-    print(f"[dedup] items con duplicados de portada: {items_changed} | imágenes quitadas: {removed_total}")
+    if args.redteam_auto:
+        report_path = _write_dudosos_report(dudosos)
+        print(f"[dedup-redteam] items con auto-dup: {items_changed} | imágenes auto-eliminadas: "
+              f"{removed_total} | portadas re-promovidas: {cover_repromotions}")
+        try:
+            report_rel = report_path.relative_to(ROOT)
+        except ValueError:
+            report_rel = report_path  # path fuera de ROOT (tests con tmp_path)
+        print(f"[dedup-redteam] pares DUDOSOS (sin tocar, sólo reportados): {len(dudosos)} "
+              f"→ {report_rel}")
+        if not _HAS_IMAGEHASH:
+            print("[dedup-redteam] aviso: paquete `imagehash` no disponible — el reporte de "
+                  "dudosos no incluye la señal pHash adicional.")
+    else:
+        print(f"[dedup] items con duplicados de portada: {items_changed} | imágenes quitadas: {removed_total}")
     if skipped_approved:
         print(f"[dedup] items aprobados saltados (usar --include-approved): {skipped_approved}")
     for t, dr in examples:

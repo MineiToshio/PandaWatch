@@ -44,7 +44,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from manga_watch import Candidate, derive_series_metadata  # noqa: E402
+# El wrapper manga_watch.py de la RAÍZ puede estar ya cacheado en sys.modules
+# bajo pytest (no expone estos símbolos) → fallback al módulo real (mismo
+# patrón que fetch_better_covers.py / backfill_series_aliases.py).
+try:
+    from manga_watch import Candidate, derive_series_metadata  # noqa: E402
+except ImportError:  # pragma: no cover
+    from scripts.manga_watch import Candidate, derive_series_metadata  # noqa: E402
 from series_aliases import aggressive_series_norm  # noqa: E402
 from standardize_apply import (  # noqa: E402
     MAX_STANDARDIZE_ATTEMPTS,

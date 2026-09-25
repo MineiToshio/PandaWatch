@@ -7,6 +7,12 @@ Uso:
 El código principal vive en scripts/manga_watch.py.
 """
 
+import sys
+from pathlib import Path
+
+# Keep sibling imports identical to running scripts/manga_watch.py directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
+
 from scripts.manga_watch import parse_args, run
 
 

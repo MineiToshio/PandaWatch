@@ -146,6 +146,23 @@ que este mismo GET vaciara la cola de aprobación entera (cada slug se veía com
 borrado"). El frontend no necesita tratar `synced.degraded` de forma especial — `entries`
 sigue siendo la cola completa, sólo que sin refrescar contra el catálogo en ese request.
 
+**Poda 3b y `replace_cover_demote` (gotcha #166, fix 2026-09-01)**: cada `GET
+/api/cover-preview` corre `sync_preview()` (arriba) y persiste — así que la poda 3b de
+`sync_cover_preview.py` (candidatas `replace_cover*` innecesarias porque la portada actual
+ya está ≥ `LOW_QUALITY_PX`) se ejecuta en cada carga del panel, no sólo en el CLI. Esa poda
+asume que TODA candidata `replace_cover*` existe para arreglar una portada por-debajo-del-piso
+— cierto para `replace_cover`/`replace_and_add` (motor de búsqueda web), pero NO para
+`replace_cover_demote`: la cola de promoción local (`enqueue_wave2_dudosos_promotion.py` y la
+"segunda tanda" de la OLA 3, ver `docs/reference/images.md`) la usa con una premisa distinta —
+"ya existe una gemela de mayor resolución EN LA PROPIA GALERÍA del item" — así que su portada
+actual arranca por encima del piso a propósito. Antes del fix, abrir el panel bastaba para
+borrar esa cola completa (44/44 candidatas podadas y sus 43 entries vaciadas en la corrida que
+destapó el bug, ANTES de que el owner llegara a verlas). `sync_preview()` ahora exime la poda
+3b cuando, en vivo contra `images[]` del item, la `new_url` de la candidata `replace_cover_demote`
+sigue en la galería Y sus píxeles reales superan a los de la portada actual (contador
+`demote_upgrade_exempted`) — sin campo de premisa nuevo en el schema. El panel no necesita
+ningún cambio: sigue mostrando lo que `entries` traiga.
+
 **Orden best-first de la cola (2026-07-08)**: `sortBestFirst()` en Alpine reordena `entries`
 tras cada carga (ambas rutas: `GET /api/cover-preview` y el fallback estático). Prioridad:
 (1) entries con alguna candidata **pendiente** con `match_dist` numérico, ascendente por el
@@ -263,6 +280,69 @@ nodo a medio desmontar — Alpine tira `"Cannot set properties of undefined (set
 'textContent')"`. `x-show` sólo alterna `display`, nunca remueve el nodo, así que el handler
 termina su ciclo de vida normalmente antes de ocultarse.
 
+## Cover-preview — eliminar imagen sin reemplazo (`remove_image`, 2026-09-01)
+
+Acción nueva de `cover_preview.json`/`apply_preview()` para resolver los 327
+pares "casi-duplicados dudosos" que `dedup_carousel_images.py --redteam-auto`
+detecta pero NO auto-elimina (ver `docs/reference/images.md` § "OLA 2" y
+"Resolución de los pares dudosos" para el detalle completo del diseño y la
+corrida real). Hasta esta ola, `cover_preview.json` sólo soportaba acciones
+que REEMPLAZAN o AGREGAN una imagen; ésta es la primera que la QUITA sin
+poner nada en su lugar.
+
+**Esquema de la candidata** (dentro de `candidates[]`, mismo array que el
+resto): `action: "remove_image"`, `target` = url de la imagen a eliminar
+(igual convención que `replace_image`). `new_url`/`new_image` apuntan a esa
+MISMA imagen (no a un reemplazo) — así el dashboard la muestra reusando
+`candSrc()` sin cambios de rendering. Contexto del PAR para que la UI muestre
+"se va" vs "se queda" de un vistazo: `keep_url`/`keep_local` (la gemela que
+se conserva), `remove_dims`/`keep_dims` (`[w, h]` de cada una), `same_dims`
+(heredado del reporte de la ola 2). `match_dist` (campo genérico existente)
+lleva el dHash del par.
+
+**Regla dura — jamás sin portada**: si `target` es `images[0]`, la acción es
+inválida. Tres capas: el encolador nunca la propone así de entrada;
+`sync_preview()` poda una candidata `pending` cuyo `target` pasó a ser la
+portada mientras tanto (`pruned_remove_target_gone`/
+`pruned_remove_would_be_cover`, chequeadas ANTES que la poda genérica
+`pruned_already_current` para no perder el detalle de motivo); y
+`apply_preview()` es la red de seguridad final — una aprobada que resolviera
+a `images[0]` vuelve a `pending` (`invalid_reason: "would_remove_cover"`) en
+vez de aplicarse o reportar un "removed" fantasma.
+
+**Poda por gemela ausente (`pruned_remove_keep_gone`, gotcha #168,
+2026-09-01)**: además de las dos podas de arriba, `sync_preview()` poda una
+candidata `pending` cuya gemela CONSERVADA (`keep_url`, contexto del par) ya
+no está en `images[]` — sin ella el par que motivó la candidata ya no existe
+y quedaría pending para siempre (ninguna de las otras podas la alcanza,
+porque `target` SÍ sigue en la galería). Caso real que destapó el hueco:
+`vanquished-queens-unknown-limited-jp-3`.
+
+**UI (`web/cover-preview.html`)**: mínimo cambio sobre la card/modal
+existente — el modal ya comparaba "actual" (panel izquierdo) vs "candidata"
+(panel derecho); para esta acción, `openCompare()` auto-navega el panel
+izquierdo a `keep_url` y el derecho ya muestra la imagen a eliminar sin
+cambios, así el mismo modal compara el PAR sin paneles nuevos. La card
+compacta suma un segundo thumb chico con la gemela + badges "🗑 a
+eliminar"/"✓ se conserva" en vez de la comparación de píxeles (no aplica: no
+hay "ganancia" en una remoción). El dropdown de acción se oculta para esta
+candidata (no tiene sentido redirigir una remoción a "agregar a galería").
+Aprobar/Rechazar reusan los mismos botones y atajos de teclado (A/R/1-5/N/P)
+sin cambios — el guard de portada corre server-side, no en el cliente.
+`approved_unapplied` (P24) ya cuenta genéricamente por `status`, así que
+incluye estas candidatas sin tocar el contador.
+
+**Encolado de los 327 pares**: `scripts/retrofit/enqueue_wave2_dudosos_removal.py`
+(one-shot, re-ejecutable) lee `data/diagnostics/dedup-wave2-dudosos.json`,
+re-verifica cada par contra el corpus vigente, determina keep/target (gana
+la de más píxeles; empate → gana la de índice menor en la galería actual),
+aplica la regla dura de portada, y escribe con
+`fetch_better_covers._write_preview(entries, merge=True)` — funde con lo que
+haya en disco, nunca reescritura total (necesario: la cola recibe escrituras
+concurrentes del dashboard/otros scripts). Corrida real: 280 candidatas
+encoladas en 260 productos (44 saltadas por la regla dura de portada, 3 por
+`target` duplicado entre pares). Detalle completo en images.md.
+
 ## Carga de datos del catálogo — vivo primero, embed VACÍO por default (2026-06-14)
 
 `loadItems()` en `web/index.html` prioriza **items.jsonl EN VIVO** (decisión #5):
@@ -369,3 +449,10 @@ pública Next.js).
 
 Ninguno de los dos cambia qué se persiste en `items.jsonl` — `data_quality.py` sigue
 siendo 100% de solo lectura; sólo cambia qué reporta el panel.
+
+### Ingestión administrada — 2026-09-25
+
+El preset normal del scraper usa --ingestion-mode delta, que verifica la carga inicial.
+El control avanzado permite full/delta/manual tanto para scraper como para wikis;
+manual es diagnóstico y no certifica carga histórica. Los wrappers siguen siendo
+la vía canónica para el ciclo completo.

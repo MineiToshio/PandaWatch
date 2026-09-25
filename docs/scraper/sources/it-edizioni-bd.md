@@ -2,7 +2,7 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-06-08.
+> Última revisión: 2026-09-08.
 
 ---
 
@@ -65,6 +65,25 @@ práctica la presencia de Edizioni BD / J-Pop en el corpus llega hoy por OTRAS f
   de esta fuente es 0.
 - **#7 (search_template)**: la fuente usa el mecanismo de `search_template` + keywords; la
   `source_purity` se propaga a las fuentes virtuales por keyword.
+- **Curación LLM non-manga 2026-08-23**: 4 items expulsados por los searches
+  variant/cofanetto/edizione limitata: Dark Ark, Critical Role Vox Machina, Archie
+  Box, House of Slaughter.
+- **2026-09-08 — `[SKIP-empty]` en los 5 searches, TRANSITORIO (no accionable)**: en el
+  delta del 09-08 las 5 keywords devolvieron el MISMO cuerpo de 1331 chars y el scraper
+  las saltó (`HTML muy corto ... Probablemente JS-rendered o vacío`). **No es JS-rendering
+  ni un cambio del sitio**: verificado en vivo el mismo día, `catalogsearch/result/?q=deluxe`
+  responde **200 con 105 769 bytes** e incluye `Risultati di ricerca per: 'deluxe'` y
+  `li.product-item` — y responde igual con UA de navegador que con el UA por defecto del
+  scraper (`manga-watch-personal/0.2`), así que **el UA no es la causa**. Historial: las 6
+  corridas previas (09-03 → 09-07) tuvieron **0 skips**. Lectura: bloqueo/throttle
+  momentáneo del WAF ante las 5 requests consecutivas al mismo host dentro del run,
+  auto-recuperado. **Mismo patrón intermitente que Mangavariant** — si se repite, la
+  herramienta proporcionada es backoff+retry, no cambiar selectors ni `enabled`.
+- **El skip de arriba quedó INVISIBLE en el reporte de salud (gotcha #199)**: por el
+  nombre con dos puntos (`... [search: deluxe]`), `_SKIP_RE` de `scripts/audit/source_health.py`
+  cortó el nombre en `IT - Edizioni BD (search) [search` y atribuyó los 5 skips a esa
+  fuente FANTASMA (con `Enabled ✗`, porque el nombre truncado no matchea el YAML), mientras
+  las 5 fuentes reales aparecieron en **🟢 Healthy** con 0 runs. Detalle y alcance en §9.
 
 ---
 
@@ -75,6 +94,20 @@ práctica la presencia de Edizioni BD / J-Pop en el corpus llega hoy por OTRAS f
   la entrada de **búsqueda** (`(search)`), que hoy también rinde 0 items netos.
 - {{pendiente: confirmar si la búsqueda Magento requiere otros selectors/keywords o está
   bloqueada — la cobertura real de J-Pop Manga llega por animeclick.it, no por este sitio}}.
+- **Gotcha #199 — el reporte de salud pierde los skips de TODA fuente `search`** (defecto de
+  observabilidad, NO de esta fuente; detectado acá porque fue la primera en dispararlo).
+  `_SKIP_RE`/`_ERROR_RE_LEGACY` (`scripts/audit/source_health.py:105,111`) capturan el
+  nombre con `([^:]+)`, que corta en el PRIMER `:`. Los nombres de las fuentes virtuales
+  de búsqueda son `<fuente> [search: <keyword>]` → **94 de las 140 fuentes del run del
+  09-08 tienen `:` en el nombre**, así que cualquier `[SKIP-*]` suyo se contabiliza contra
+  un nombre fantasma y la fuente real queda clasificada **Healthy**. Es la misma familia
+  que los fixes #1/#2/#4 ya anotados en ese archivo (todos: "fuente rota que el reporte
+  daba por sana"). Latente hasta ahora —8 líneas SKIP en las últimas 10 corridas, 5 de
+  ellas las de hoy—, pero enmascara justo el modo de fallo más común de las fuentes de
+  búsqueda. `_CHALLENGE_RE` y `_STEP_TIMEOUT_RE` NO están afectados (delimitan el nombre
+  con `type=` / `rc=`). **Fix recomendado, no aplicado** (decisión del owner): anclar el
+  nombre al final de línea con un separador explícito, p. ej. `^\[SKIP-([\w-]+)\]\s+(.+?):\s+(.+)$`
+  resolviendo la ambigüedad contra los nombres conocidos del YAML.
 - {{pendiente: decidir si conviene mantener la fuente habilitada dado el aporte 0, o
   re-evaluar selectors/keywords}}.
 

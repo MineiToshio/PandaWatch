@@ -87,7 +87,7 @@ def _fetch_text(url: str, session: requests.Session, timeout: tuple[int, int] = 
             print(f"[sitemap_miner] WARN {url}: {exc}", file=sys.stderr)
             return ""
         # Algunos sitemaps vienen gzipped pero el servidor responde con .xml.gz
-        if url.endswith(".gz") or response.headers.get("Content-Encoding") == "gzip" or response.content[:2] == b"\x1f\x8b":
+        if response.content[:2] == b"\x1f\x8b":
             try:
                 return gzip.decompress(response.content).decode("utf-8", errors="replace")
             except (OSError, ValueError) as exc:

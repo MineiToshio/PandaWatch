@@ -39,6 +39,9 @@ franchise_keywords:
   - "Guardians of the Galaxy"
   - "Fantastic Four"
   # DC
+  - "Wayne Family Adventures"  # DC webcomic, even when Batman is omitted.
+  - "Dylan Dog"  # Bonelli fumetto, not manga.
+  - "Spawn"  # Image comic; Japanese adaptation excepted below.
   - "Batman"
   - "Superman"
   - "Wonder Woman"
@@ -216,6 +219,146 @@ franchise_keywords:
   - "Luis Royo"
   - "Boris Vallejo"
   - "Frank Frazetta"
+  # --- Curación 2026-08-23 (revisión de los 265 `llm_non_manga`) -----------
+  # Cabeceras/series verificadas una por una contra la web (autor + editorial
+  # de origen). Todas son cómic occidental que entraba por retailers de
+  # "variant covers" (IT - Funside, IT - Star Comics search, Edizioni BD,
+  # Dark Horse Direct, Panini MX/ES/BR, Aladin KR). Verificado: cada keyword
+  # matchea SOLO items de esa curación, 0 colaterales en el corpus.
+  # Marvel / DC (cabeceras italianas, coreanas y de LatAm que faltaban)
+  - "Marvel Miniserie"
+  - "One World Under Doom"
+  - "Ultimate Endgame"
+  - "Ultimate Universe"
+  - "Secret Wars"
+  - "Marvel Treasury"
+  - "X-Force"
+  - "Capitan America"      # italiano, sin tilde (ES/PT ya estaban)
+  - "Sinister's Six"
+  - "DC Crossover"
+  - "DC Facsimile Edition"
+  - "Freccia Verde"        # Green Arrow (IT)
+  - "Vertigo Presenta"
+  - "What If?"
+  - "시빌 워"               # Civil War (KR)
+  - "블랙팬서"              # Black Panther (KR)
+  # Disney Italia (Panini) — NO usar "Disney" solo (Twisted Wonderland es manga)
+  - "Topolino"
+  - "Paperino"
+  - "Zio Paperone"
+  - "Paperinik"
+  - "Disney Special Events"
+  - "A Twisted Tale"       # línea YA de Disney; NO colisiona con "Twisted Wonderland"
+  - "くまのプーさん"          # Winnie the Pooh (KADOKAWA Store)
+  # Fumetto italiano (Bonelli, Bao, Gigaciao, Mirage, Tora, Cosmo…)
+  - "Zagor"
+  - "Senzanima"
+  - "Dragonero"
+  - "Mondo Oscuro"
+  - "Nero 9"
+  - "Outcast: Il Reietto"
+  - "Zerocalcare"
+  - "Scheletri"
+  - "Lupo Alberto"
+  - "Leo Ortolani"
+  - "Scottecs"
+  - "Barbascura"
+  - "Inferno di Dante"
+  - "Cronache di Arda"
+  - "Cronache di Florens"
+  - "Geist Maschine"
+  - "Dark Shots"
+  - "Starhenge"
+  - "Hoka Hey"
+  - "Dead Eyes"
+  - "Anyman"
+  - "Tutto Attica"
+  - "Norse: Miti e Dei"
+  - "Scegli la tua avventura"
+  # Valiant / Image / IDW / indie US (vía Star Comics, Edizioni BD, Funside)
+  - "X-O Manowar"
+  - "Bloodshot"
+  - "Harbinger"
+  - "Britannia"
+  - "Void Rivals"
+  - "Hyde Street"
+  - "Helen di Wyndhorn"
+  - "Sonic the Hedgehog"
+  - "House of Slaughter"
+  - "Dark Ark"
+  - "Archie"
+  - "Strayed"
+  - "Barnstormers"
+  - "Rabbids"
+  - "Meta-Baroni"
+  - "The Plot Holes"
+  - "Tom Strong"
+  # Franquicias de videojuego / animación occidental (artbooks Dark Horse Direct)
+  - "Critical Role"
+  - "Vox Machina"
+  - "Witcher"
+  - "World of Warcraft"
+  - "Helldivers"
+  - "Horizon Forbidden West"
+  - "Masters of the Universe"
+  - "Over the Garden Wall"
+  # NOTA: "Roblox" NO se puede blacklistear por keyword — el título taiwanés lo
+  # embebe entre CJK ("100款ROBLOX絕讚") y `\b` no hace frontera contra un
+  # carácter CJK (que Python trata como word char). Ese item se curó por URL.
+  # --- Curación 2026-08-26 (ciclo diario de IT - Funside Variant) ----------
+  # Cabeceras de cómic US/italiano que la fuente re-listaba en CADA delta:
+  # se ingestaban, la estandarización LLM las marcaba non-manga (sin expulsar),
+  # el filtro determinista las expulsaba a la corrida siguiente, y la Fase 1 de
+  # esa misma corrida las volvía a levantar. Bucle estable de ~15 items/día que
+  # pagaba estandarización Tier 3 sin converger nunca. Detalle y evidencia en
+  # docs/scraper/sources/it-funside-variant.md (entrada 2026-08-26).
+  # Verificado item por item contra el corpus: los 11 términos capturan 15 items,
+  # 0 colaterales fuera de Funside/Star Comics.
+  #
+  # ⚠️ Se usan los títulos ITALIANOS de Stray Dogs (Tony Fleecs, Image), NUNCA
+  # "Stray Dogs" pelado: chocaría con los 12 items de "Bungo Stray Dogs" del
+  # corpus, que SÍ es manga. Misma razón para no blacklistear "Diablo" solo
+  # (existe "Jiraishin Diablo Artbook"): se usa su subtítulo italiano.
+  - "Cani Randagi"
+  - "Giorni da Cani"
+  - "L'Alba dell'Odio"
+  - "American Caper"
+  - "Check, Please"
+  - "Undiscovered Country"
+  - "Ultimate Impact"
+  # Marvel: cabeceras italianas / sin guion que no matcheaban las existentes
+  # ("X-Men" no matchea "XMEN"; "Fantastic Four" no matchea el título italiano).
+  - "XMEN"
+  - "Fantastici Quattro"
+  # Precisos a propósito: "Street Fighter" y "Godzilla" tienen adaptaciones manga
+  # reales, así que se acota lo que se puede. "Street Fighter Legends" es la
+  # cabecera de UDON (cómic US). "Godzilla" va pelado porque los dos títulos de
+  # Funside no comparten subtítulo — hoy 0 colisiones en el corpus, pero si algún
+  # día entra un Godzilla manga legítimo, va a title_exceptions (no quitar de acá).
+  - "Street Fighter Legends"
+  - "Godzilla"
+
+  # --- Agregadas 2026-09-02 (revisión de fuentes pedida por el owner) ---
+  # Cómic occidental / artbooks de videojuego que entraban a diario por los
+  # searches de formato de Funside (IT), Star Comics (IT) y Dark Horse Direct
+  # (US). Cada una verificada contra el corpus completo antes de agregarla:
+  # matchean SOLO los items fuera de alcance, 0 manga real.
+  - "Transformers"              # Funside variant + artbook "War for Cybertron" (2 items, 0 manga)
+  - "The Goon"                  # Eric Powell, Dark Horse (1 item)
+  - "Cyberpunk 2077"            # Library Edition (cómic) + "The World of…" (artbook de videojuego) (2 items)
+  - "Birdking"                  # Dark Horse, cómic occidental (1 item)
+  - "Valiant"                   # editorial de cómic US; el título no la nombra pero el slug sí
+                                # (`/fumetto/valiant-variant-cover-29-faith-1` → FAITH). Sólo matchea por URL.
+  - "Totally Twisted Tales"     # Funside (1 item)
+  - "Hollywood Horror Stories"  # Funside (1 item)
+  - "Maledizione del Drago"     # "La Maledizione del Drago d'Oro", Funside (1 item)
+  - "Imperial"                  # evento Marvel 2025 (Hickman); 1 solo item en el corpus.
+                                # Palabra genérica: si algún día aparece un manga con este
+                                # título, va a title_exceptions, no se quita de acá.
+  # OJO: "300" NO se agrega pelado a propósito — mataría "300 jours avec toi"
+  # (manga FR) y "Ich habe 300 Jahre lang Schleim getötet" (manga DE), ambos
+  # reales y vivos en el corpus. Se usa la frase completa del producto.
+  - "300 Variant Edition"       # 300 de Frank Miller, Star Comics (1 item)
 
 # Excepciones de título: títulos que contienen una keyword de franchise_keywords
 # O un patrón hard non-manga, pero SON manga reales (crossovers japoneses, obras
@@ -224,6 +367,7 @@ franchise_keywords:
 # franchise_keywords como los patrones hard non-manga. Las reglas publisher y
 # format_keywords siguen activas.
 title_exceptions:
+  - "Shadows of Spawn"  # Manga by Juzo Tokoro, distinct from the US comic.
   - "Io Sakisaka Variant Bundle"  # bundle de tomos variant de la mangaka Io Sakisaka (AnimeClick IT) — contiene "Variant Bundle"
   - "Jewel Joker"           # Shugo Chara! Jewel Joker — shojo de Peach-Pit (contiene "Joker")
   - "Gangan Joker"          # revista manga de Square Enix (variant covers de Vanitas etc.) — contiene "Joker"

@@ -692,3 +692,74 @@ título en inglés tras " / "). Se persiste sólo si no viene vacío. Es pura se
 el flujo de aliases (unmapped/enrich lo parsea aparte para poblar
 `series_aliases.yml`) — **nunca** renombra el `title` ni se escribe directo a los
 aliases (misma política de arriba).
+
+
+### Corrección de integridad de ingestión (2026-09-24)
+
+La caché state no es evidencia de persistencia: se reconcilia con todas las URLs
+del corpus/spool antes de deduplicar. Los rechazos explícitos tienen un índice
+transitorio propio y no se reingresan por cambios de hash. Upsert por URL reconoce
+fuentes secundarias y conserva identidad canónica; un match secundario ambiguo
+aborta, nunca fusiona arbitrariamente. Lectura del catálogo/spool estricta antes de
+rewrite; un archivo malformado permanece intacto. El hash cubre imágenes remotas y
+extras; la ruta local queda excluida. Ver informe 2026-09-24 en docs/scraper/audits.
+
+### Continuación de integridad — 2026-09-24
+
+El watermark por wiki vive junto al corpus en `.ingestion-checkpoints/`, separado
+del cache de contenido. Se confirma después de ambos sinks y nunca en corridas
+parciales. Véase PIPELINE-WALKTHROUGH. La resolución de URL secundaria admite
+ISBN como discriminante entre propietarios ya asociados a esa URL, no como
+clave global de fusión; un conflicto de ISBN preserva la edición entrante.
+
+Las claves de edición inferidas sin volumen ya no se publican como identidad
+para fusionar productos: se conserva series/edition_display y la URL separada
+hasta tener identidad explícita. Los parsers que entregan edition_key explícito
+conservan su contrato. Un volumen explícitamente distinto invalida la asociación
+secundaria histórica antes de elegir propietario. Se reconocen volúmenes chinos
+`第N期`, `N卷`, `N冊` además del japonés `N巻`.
+
+Para variantes sin identidad explícita, el volumen no basta para fusionar:
+los registros crudos quedan separados por URL. Los campos de serie y descripción
+de edición siguen disponibles. `items.jsonl.conflicts` conserva las entradas
+ambiguas, incluso si falla la escritura del corpus, y no avanza checkpoints.
+
+La durabilidad del scraper HTML llega a cada página: se flushea antes de pedir
+la siguiente, sin avanzar state. La serialización de páginas y cierres de
+fuentes comparte lock en runs con workers. Repetir una fila de spool en el cierre
+es seguro por upsert. Al resolver URLs secundarias, ISBN válidos incompatibles
+son evidencia de ediciones distintas; códigos SKU no se usan con ese fin.
+
+El worker Playwright reutiliza contextos efímeros por host solo para Panini IT/ES,
+de modo que la paginación comparte cookies y caché del sitio sin reinicializar
+una sesión por página. Otros hosts mantienen aislamiento por render. La sesión
+no se exporta a disco ni al perfil personal y se destruye con el browser worker.
+
+Los raw provenientes de `collector-catalog` no reciben un edition_key inferido
+ni se agrupan por título/volumen: distintas cubiertas pueden compartir ambos.
+La identidad queda por URL hasta disponer de una edición explícita. La evidencia
+de categoría habilita ingestión y cleanup sin falsificar signal_types del item.
+
+La revisión de identidad v5 excluye el número del nombre `Kaiju No. 8` de la
+extracción de volumen, incluido cuando precede a un calificador de edición.
+El título oficial no cambia. Esto evita separar erróneamente referencias del
+mismo tomo y activa una reevaluación del delta mediante la revisión del hash.
+
+La separación de referencias por ISBN valida también el dígito de control del
+ISBN-10 **antes** de convertirlo a ISBN-13. Convertir diez dígitos arbitrarios
+produce un ISBN-13 con checksum válido y no prueba la identidad del original.
+Los 69 arreglos históricos por ISBN fueron comprobados contra esta regla.
+
+## Integridad de fuentes e identidad — 2026-09-25
+
+Los jobs administrados requieren baseline durable por fuente/configuración/umbral
+antes de permitir delta. Política de wikis en ingestion_policy.yml; recibos atómicos
+fuera del corpus en data/.source-baselines/. No equivalen a bibliografía editorial
+completa; se documenta si el endpoint es selección, calendario o catálogo.
+
+`consolidate_by_cluster` ya no fusiona evidencia contradictoria aunque coincida
+edition_key: conserva URLs y marca identity_review_required. El marcador fuerza
+cluster por URL, sobrevive a upserts y aparece como warning IDENTITY_REVIEW. No se
+borra metadato ni producto para resolver conflictos; queda revisión explícita.
+
+La protección de identidad también separa box set/tomo, partes chinas `第N部` y SKUs distintos de Kingstone. Una actualización por URL secundaria conserva la URL canónica y recalcula su clave protegida. `identity_review_required` conserva el producto ante evidencia contradictoria; no lo elimina ni representa una deduplicación ya resuelta.

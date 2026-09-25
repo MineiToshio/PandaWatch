@@ -281,3 +281,67 @@ FMA Variant Bundle 1". Los patterns de standee/Variant Bundle/T-shirt los mataba
 Fix genérico (gotcha #92): marcador "con/with/+" en ventana corta alrededor del match
 rescata; "Io Sakisaka Variant Bundle" (sin marcador) va por `title_exceptions` de
 `data/comics_blacklist.yml`.
+
+## 2026-09-02 — placeholder "COPERTINA NON DISPONIBILE" (URL exacta, denylist trivial)
+
+AnimeClick sirve `https://www.animeclick.it/bundles/accommon/images/non_disponibile.jpg`
+(texto "COPERTINA NON DISPONIBILE" + mascota/logo del sitio) cuando no tiene portada. En el
+corpus actual son **3 ítems compartiendo 1 solo archivo local** (`fb88ab0e8281fd87.avif`,
+sha256 `fd6804dd…`): `finder-series-magicpress-deluxe-it-14`,
+`ken-il-guerriero-le-origini-del-panini-lore-it-12` y
+`takamine-rimettiti-le-mutandine-magicpress-variant-it-6`. Es el único caso de la tanda
+donde la denylist por URL exacta o por hash es trivialmente segura (URL constante, no
+parametrizada por título). Detectado en la Etapa 1 de triage
+(`docs/reference/images.md` § "Etapa 1 — resultados").
+
+**Aplicado (2026-09-02, cierre de la Etapa 1, gotcha #176)**: sha1
+`140a4352062228eda4f55717be6dae33c2de5319` agregado a `data/placeholder_signatures.json`
+(label "AnimeClick — 'COPERTINA NON DISPONIBILE' + logo"). `purge_placeholder_images.py
+--only-reasons known,signature` quitó las 3 entries; los 3 items quedaron sin ninguna
+foto (candidatos a `/watch-search-covers` o re-fetch).
+
+Ojo con el sentido inverso: las fotos 3D de cofres/estuches sobre fondo blanco de esta misma
+fuente (Berserk, L'Attacco dei Giganti, Death Note Black Edition, Jujutsu Kaisen, Samurai 8)
+dispararon la heurística de placeholder tipográfico y **son portadas válidas** — 17 falsos
+positivos en un solo chunk del triage. Gotcha #172.
+
+### Integridad de ingestión — continuación 2026-09-24
+
+Los fallos de transporte ahora registran `[WIKI-ISSUE]` en la sesión. El dispatcher
+conserva los resultados parciales y termina con error; incluye el fallo en el
+reporte. Una respuesta fallida no equivale a catálogo vacío. El watermark por
+fuente solo avanza después de persistir corpus y estado, sin incidencias ni
+límites alcanzados. Tras una interrupción, el calendario amplía su ventana hasta
+el último inicio exitoso con siete días de solapamiento. Un import histórico
+acotado, un chunk explícito o un dry-run no adelantan ese watermark.
+
+### Auditoría de continuidad — 2026-09-24
+
+El límite anterior de 520 semanas truncaba un full desde 2015 al ejecutarse en
+2026 sin informar cobertura incompleta. Se amplía a 2000 y su agotamiento genera
+incidencia (sin checkpoint). Fechas inválidas, JSON inesperado y semanas que no
+retroceden detienen la paginación con error conservando lo adquirido. Se incluye
+la semana que cruza el inicio del mes y se respeta el mes final al seleccionar
+semanas. El rango se define por semanas: puede incluir días adyacentes.
+
+La verificación viva posterior recorrió 614 semanas hasta 2015-01 y descubrió
+1645 fichas de ediciones especiales para procesar. Esto confirma que el límite
+de 520 semanas era insuficiente para el full configurado.
+
+
+## Revalidación de calendarios y catálogos — 2026-09-24
+
+El histórico 2015-01–2026-09 completó 614 semanas y 1587 candidatos finales,
+1580 reportables, sin errores ni conflictos pendientes. El tope anterior de
+520 semanas habría truncado 94 semanas. No se simula cobertura futura: esta
+fuente navega hacia atrás desde la semana actual.
+
+La revisión de asociaciones detectó `Kaiju No. 8 Limited Edition 1` interpretado
+como volumen 8. El extractor excluye el 8 del nombre de esta serie antes de
+buscar el tomo; se conserva la asociación existente al tomo 1 y se evita un alta
+duplicada. Regresiones cubren título sin tomo, nº16 y tomo 8 real.
+
+Cierre 2026-09-25: se incorporaron 105 referencias adicionales de esta fuente
+a productos ya existentes, recuperadas del resultado del upsert en staging.
+Cada URL tenía un único propietario propuesto y no existía aún en ninguna
+ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.

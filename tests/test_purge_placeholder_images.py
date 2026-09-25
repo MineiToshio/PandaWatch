@@ -213,6 +213,55 @@ def test_known_hash_registered_in_image_store():
     assert image_store.known_placeholder_url_reason(_KNOWN_URL + "?v=2").startswith("known:")
 
 
+def test_rakuten_gif_is_known_placeholder():
+    """Regla host+extensión (gotcha #171): en los hosts de Rakuten Books, un PATH que
+    termina en `.gif` es la tarjeta de título generada — 50/50 verificado contra el
+    triage de visión. Positivo con y sin sufijo de transformación (que va DESPUÉS de la
+    extensión); negativo .jpg del mismo host (portada real); negativo .gif de OTRO host
+    (la regla es específica de Rakuten, no genérica por extensión)."""
+    # positivo: los 3 hosts de la familia, con y sin query de transformación.
+    assert image_store.known_placeholder_url_reason(
+        "http://tshop.r10s.jp/book/cabinet/1234/9784001234567.gif"
+    ) == "known:rakuten:title-card-gif"
+    assert image_store.known_placeholder_url_reason(
+        "http://tshop.r10s.jp/book/cabinet/1234/9784001234567.gif?downsize=130:*"
+    ).startswith("known:")
+    assert image_store.known_placeholder_url_reason(
+        "http://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/5006/2100011005006.gif"
+    ).startswith("known:")
+    assert image_store.known_placeholder_url_reason(
+        "http://shop.r10s.jp/foo/cabinet/bar/9784001234567.gif?fitin=560:400&composite-to=*"
+    ).startswith("known:")
+    # negativo: .jpg del MISMO host es portada real, no se toca.
+    assert image_store.known_placeholder_url_reason(
+        "http://tshop.r10s.jp/book/cabinet/1234/9784001234567.jpg"
+    ) == ""
+    # negativo: .gif de un host QUE NO es de la familia Rakuten.
+    assert image_store.known_placeholder_url_reason(
+        "https://cdn.example.com/cover.gif"
+    ) == ""
+
+
+def test_purge_rakuten_gif_placeholder_cover(harness):
+    """Integración: la portada (images[0]) de un `.gif` de Rakuten se purga; la de un
+    `.jpg` del mismo host se conserva intacta."""
+    ppi, items_path, images, f = harness
+    gif_url = "http://tshop.r10s.jp/book/cabinet/1234/9784001234567.gif"
+    jpg_url = "http://tshop.r10s.jp/book/cabinet/9999/9784009999999.jpg"
+    items = [
+        {"slug": "placeholder-item", "title": "Some Title 1", "series_display": "Some Title",
+         "images": [{"url": gif_url, "local": "", "kind": "cover"}], "sources": []},
+        {"slug": "real-cover-item", "title": "Other Title 1", "series_display": "Other Title",
+         "images": [{"url": jpg_url, "local": "", "kind": "cover"}], "sources": []},
+    ]
+    items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+    assert _run(ppi, []) == 0
+    by = _by_slug(items_path)
+    assert by["placeholder-item"]["images"] == []
+    assert len(by["real-cover-item"]["images"]) == 1
+    assert by["real-cover-item"]["images"][0]["url"] == jpg_url
+
+
 def test_purge_known_placeholder_url_keeps_owner(harness):
     """Rule (a): la MISMA URL placeholder conocida (local="") se purga de las
     series ROBADAS (kind=gallery) pero se CONSERVA en el dueño legítimo (el único
@@ -316,3 +365,43 @@ def test_purge_intra_series_shared_url_preserved(harness):
     by = _by_slug(items_path)
     assert len(by["box"]["images"]) == 1
     assert all(len(by[f"t{v}"]["images"]) == 1 for v in range(1, 6)), "misma serie → conservado"
+
+
+# ── --only-reasons (purga acotada a una categoría, 2026-09-01) ─────────────────
+
+def test_only_reasons_scopes_purge_to_given_category(harness):
+    """`--only-reasons signature` detecta pero NO toca un placeholder `solid`
+    (fuera de la lista); sólo purga el que matchea `signature`. Sirve para aplicar
+    una denylist puntual (firmas nuevas) sin arrastrar categorías separadas que el
+    corpus ya venga acumulando y que no fueron parte de la revisión que autorizó
+    la corrida."""
+    ppi, items_path, images, f = harness
+    body = _textured(120, 120)
+    sha1 = hashlib.sha1(body).hexdigest()
+    sig_file = images / "signed.png"
+    sig_file.write_bytes(body)
+    import image_store
+    orig_sigs = image_store._signatures_cache
+    image_store._signatures_cache = {sha1: "Fake denylist icon"}
+    try:
+        items = [
+            {"slug": "a", "title": "A", "images": [
+                {"url": "http://x/w.png", "local": f["white"], "kind": "gallery"},
+                {"url": "http://x/r.png", "local": f["real"], "kind": "gallery"},
+            ], "sources": []},
+            {"slug": "b", "title": "B", "images": [
+                {"url": "http://x/sig.png", "local": "signed.png", "kind": "gallery"},
+                {"url": "http://x/r2.png", "local": f["real2"], "kind": "gallery"},
+            ], "sources": []},
+        ]
+        items_path.write_text("\n".join(json.dumps(it) for it in items) + "\n")
+        assert _run(ppi, ["--only-reasons", "signature"]) == 0
+        by = _by_slug(items_path)
+        # A: el "solid" NO está en --only-reasons ⇒ se detecta pero se conserva intacto.
+        assert len(by["a"]["images"]) == 2
+        assert by["a"]["images"][0]["local"] == f["white"]
+        # B: el "signature" SÍ está en la lista ⇒ se purga, la real queda sola.
+        assert len(by["b"]["images"]) == 1
+        assert by["b"]["images"][0]["local"] == f["real2"]
+    finally:
+        image_store._signatures_cache = orig_sigs

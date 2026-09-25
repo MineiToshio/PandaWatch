@@ -37,6 +37,11 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 import requests
+
+try:
+    from .health import report_issue
+except ImportError:  # direct script execution
+    from health import report_issue
 from bs4 import BeautifulSoup
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
@@ -91,7 +96,10 @@ _EDITION_LABEL_CANONICAL: dict[str, str] = {
     "prestige": "édition prestige",
     "limitée": "édition limitée",
     "limitee": "édition limitée",
-    "unlimited double": "limited edition",
+    "unlimited double": "bonus",  # Air Gear: new extras; not a limited print run.
+    "spéciale": "édition spéciale",
+    "speciale": "édition spéciale",
+    "spécial": "édition spéciale",
     "deluxe": "deluxe",
     "collector": "collector edition",
 }
@@ -302,7 +310,8 @@ def fetch_detail_metadata(
         if not response.encoding:
             response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, "html.parser")
-    except (requests.RequestException, Exception):
+    except (requests.RequestException, Exception) as exc:
+        report_issue(session, f"manga_sanctuary: fetch failed: {exc}")
         return result
 
     # Validar que la página corresponde al item esperado.
@@ -356,7 +365,8 @@ def fetch_planning_month(
         if not response.encoding:
             response.encoding = response.apparent_encoding
         text = response.text
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        report_issue(session, f"manga_sanctuary: fetch failed: {exc}")
         return []
     raw = parse_planning_page(text)
     return [score_candidate(c) for c in raw]

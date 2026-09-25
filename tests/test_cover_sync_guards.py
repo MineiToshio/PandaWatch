@@ -12,7 +12,9 @@ Cobertura:
   4. `_fix_bad_cover` no promueve `kind: "extra"` a portada, y preserva extras
      legítimas al limpiar (#8).
   5. `prune_soft_cover_candidates.py` marca candidatas blandas como `rejected` +
-     ledger, igual que `revalidate_cover_preview.py` (#9, política unificada).
+     ledger, igual que `revalidate_cover_preview.py` (#9, política unificada);
+     y el guard por `action` (#167) — `remove_image`/`replace_cover_demote`
+     nunca pasan por `_is_soft_image`.
   6. `sort_keys=True` en el escritor de `sync_cover_images.py` (#12).
   7. GC de candidatas huérfanas en `sync_preview()` (#14) — borra sólo lo que
      nada más referencia; nunca un archivo que también usa un item real.
@@ -421,6 +423,87 @@ def test_prune_dry_run_does_not_touch_ledger_or_file(tmp_path, monkeypatch, ledg
     rc = psc.main()
     assert rc == 0
     assert json.loads(preview_path.read_text(encoding="utf-8")) == original
+    assert not ledger_path.exists()
+
+
+def test_prune_skips_remove_image_action(tmp_path, monkeypatch, ledger_path):
+    """Gotcha #167: `remove_image` candidatas NO pasan por _is_soft_image —
+    `new_image` ahí es la imagen que se propone ELIMINAR de la galería, no una
+    candidata de portada. Antes del guard, esta imagen blanda se marcaba
+    rejected+ledger igual que una `replace_cover` real (52 candidatas ajenas
+    en la corrida que destapó el bug)."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    soft_file = "soft.jpg"
+    _make_soft_gradient(images_dir / soft_file)
+
+    preview_path = tmp_path / "cover_preview.json"
+    entries = [{
+        "slug": "s1",
+        "title": "Test",
+        "old_pixels": 10_000,
+        "candidates": [{
+            "status": "pending",
+            "action": "remove_image",
+            "target": "https://x/soft.jpg",
+            "new_url": "https://x/soft.jpg",
+            "new_image": soft_file,
+            "domain": "x.com",
+        }],
+    }]
+    preview_path.write_text(json.dumps(entries), encoding="utf-8")
+
+    monkeypatch.setattr(psc, "COVER_PREVIEW", preview_path)
+    monkeypatch.setattr(psc, "IMAGES", images_dir)
+    monkeypatch.setattr(sys, "argv", ["prune_soft_cover_candidates.py"])
+
+    rc = psc.main()
+    assert rc == 0
+
+    updated = json.loads(preview_path.read_text(encoding="utf-8"))
+    cand = updated[0]["candidates"][0]
+    # Intacta: sigue pending, sin reject_reason.
+    assert cand["status"] == "pending"
+    assert "reject_reason" not in cand
+    # Y el ledger de rechazos NO se tocó (nada que registrar).
+    assert not ledger_path.exists()
+
+
+def test_prune_skips_replace_cover_demote_action(tmp_path, monkeypatch, ledger_path):
+    """Gotcha #167: `replace_cover_demote` tampoco pasa por _is_soft_image —
+    `new_image` suele ser una foto YA existente en la propia galería del item
+    (cola de promoción local), no algo recién descargado a evaluar."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    soft_file = "soft.jpg"
+    _make_soft_gradient(images_dir / soft_file)
+
+    preview_path = tmp_path / "cover_preview.json"
+    entries = [{
+        "slug": "s1",
+        "title": "Test",
+        "old_pixels": 10_000,
+        "candidates": [{
+            "status": "pending",
+            "action": "replace_cover_demote",
+            "new_url": "https://x/soft.jpg",
+            "new_image": soft_file,
+            "domain": "x.com",
+        }],
+    }]
+    preview_path.write_text(json.dumps(entries), encoding="utf-8")
+
+    monkeypatch.setattr(psc, "COVER_PREVIEW", preview_path)
+    monkeypatch.setattr(psc, "IMAGES", images_dir)
+    monkeypatch.setattr(sys, "argv", ["prune_soft_cover_candidates.py"])
+
+    rc = psc.main()
+    assert rc == 0
+
+    updated = json.loads(preview_path.read_text(encoding="utf-8"))
+    cand = updated[0]["candidates"][0]
+    assert cand["status"] == "pending"
+    assert "reject_reason" not in cand
     assert not ledger_path.exists()
 
 

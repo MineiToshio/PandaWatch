@@ -10,13 +10,15 @@ Cobertura:
   4. test_skip_domains               — candidata en pinterest.com → descartada sin fetch
   5. test_uses_production_threshold  — candado anti-drift MAX_HASH_DIST == fbc.DEFAULT_MAX_HASH_DIST
   6. test_upgrade_whakoom            — small→large (upgrade aplicado)
-  7. test_upgrade_buscalibre         — fit-in se quita
+  7. test_upgrade_buscalibre         — fit-in/<W>x<H>/ se reescribe a fit-in/1200x1200/
+     (+ test_upgrade_buscalibre_does_not_downgrade_already_large)
   8. test_upgrade_wordpress          — sufijo -600x900.jpg se quita
   9. test_upgrade_no_pattern         — URL sin patrón devuelve [url] (original al final)
  10. test_upgrade_original_is_last   — la URL original siempre aparece al final
  11. test_upgrade_integrated_validate — URL small falla min-gain; variante large pasa → new_url = large
 """
 
+import hashlib
 import io
 import json
 import sys
@@ -267,11 +269,23 @@ def test_upgrade_whakoom():
 
 
 def test_upgrade_buscalibre():
-    """buscalibre: quita segmento fit-in/<W>x<H>/."""
+    """buscalibre: fit-in/<W>x<H>/ se reescribe a fit-in/1200x1200/ — NO se
+    quita el segmento entero (gotcha #167: quitarlo del todo da un tamaño
+    "base" intermedio del CDN, bastante menor que pedir 1200x1200 explícito;
+    verificado en vivo: 384×540 sin fit-in vs 853×1200 con fit-in/1200x1200/)."""
     url = 'https://images.cdn3.buscalibre.com/fit-in/360x360/f6/da/x.jpg'
     variants = sc_validate.upgrade_url_variants(url)
-    assert variants[0] == 'https://images.cdn3.buscalibre.com/f6/da/x.jpg'
+    assert variants[0] == 'https://images.cdn3.buscalibre.com/fit-in/1200x1200/f6/da/x.jpg'
     assert variants[-1] == url
+
+
+def test_upgrade_buscalibre_does_not_downgrade_already_large():
+    """buscalibre: un fit-in que ya pide ≥1200 en ambas dimensiones no se
+    re-capa (evita que la reescritura empeore una URL ya en alta resolución)."""
+    url = 'https://images.cdn3.buscalibre.com/fit-in/1500x1500/f6/da/x.jpg'
+    variants = sc_validate.upgrade_url_variants(url)
+    # Ningún patrón matchea (la única variante es la original al final).
+    assert variants == [url]
 
 
 def test_upgrade_wordpress():
@@ -341,4 +355,123 @@ def test_upgrade_integrated_validate(tmp_path, monkeypatch):
     assert result[0]['new_url'] == large_url, (
         f"new_url debe ser la variante large, got: {result[0]['new_url']}"
     )
+    assert result[0]['verified'] is True
+
+
+# ── 12. Guard anti-drift (gotcha #178) — reference_drift_reason ──────────────
+# `sc_plan.py` persiste `reference_sha256` en cada target con referencia real.
+# `sc_validate.py` lo recalcula contra el archivo actual ANTES de correr
+# `_same_cover` — si cambió (o desapareció) entre el plan y esta validación,
+# el target se omite (candidatas [], sin gastar red) en vez de generar
+# candidatas `verified:false` de dudosa relación real sobre una referencia
+# obsoleta (el caso medido: 8 items afectados por una purga concurrente,
+# docs/reference/images.md § "Etapa 2, tanda 2").
+
+def test_reference_drift_reason_no_check_without_sha(tmp_path):
+    """Sin `reference_sha256` en el payload (plan viejo, o target sin
+    referencia real) el guard es no-op: "" siempre, nunca bloquea."""
+    data = {'item': {'images': []}, 'ref_image_local': ''}
+    assert sc_validate.reference_drift_reason(data, images_dir=tmp_path) == ""
+
+
+def test_reference_drift_reason_matches_current_file(tmp_path):
+    ref_bytes = _jpeg(_textured_cover())
+    ref_file = tmp_path / "ref.jpg"
+    ref_file.write_bytes(ref_bytes)
+    expected_sha = hashlib.sha256(ref_bytes).hexdigest()
+
+    data = {
+        'item': {'images': []},
+        'ref_image_local': 'ref.jpg',
+        'reference_sha256': expected_sha,
+    }
+    assert sc_validate.reference_drift_reason(data, images_dir=tmp_path) == ""
+
+
+def test_reference_drift_reason_detects_changed_content(tmp_path):
+    """El archivo en disco ya NO es el mismo que cuando se armó el plan
+    (reemplazado por otra corrida concurrente) → "reference_changed"."""
+    old_bytes = _jpeg(_textured_cover())
+    new_bytes = _jpeg(_textured_cover(300, 500))
+    ref_file = tmp_path / "ref.jpg"
+    ref_file.write_bytes(new_bytes)   # el disco YA cambió respecto al plan
+
+    data = {
+        'item': {'images': []},
+        'ref_image_local': 'ref.jpg',
+        'reference_sha256': hashlib.sha256(old_bytes).hexdigest(),   # sha del PLAN
+    }
+    assert sc_validate.reference_drift_reason(data, images_dir=tmp_path) == "reference_changed"
+
+
+def test_reference_drift_reason_detects_missing_reference(tmp_path):
+    """El archivo de referencia fue purgado/movido a cuarentena y el item ya
+    no tiene ninguna imagen (`images: []`) → "reference_missing"."""
+    data = {
+        'item': {'images': []},
+        'ref_image_local': 'ref_gone.jpg',   # no existe en tmp_path
+        'reference_sha256': 'a' * 64,
+    }
+    assert sc_validate.reference_drift_reason(data, images_dir=tmp_path) == "reference_missing"
+
+
+def test_validate_skips_without_network_when_drift(tmp_path, monkeypatch):
+    """Con drift detectado, validate() devuelve [] SIN llamar a fbc._fetch
+    (no tiene sentido gastar red validando contra una referencia obsoleta)."""
+    fetch_called = []
+
+    def mock_fetch(url, session, **kwargs):
+        fetch_called.append(url)
+        return _jpeg(_textured_cover())
+
+    monkeypatch.setattr(fbc, '_fetch', mock_fetch)
+
+    old_bytes = _jpeg(_textured_cover())
+    new_bytes = _jpeg(_textured_cover(300, 500))
+    ref_file = tmp_path / "ref.jpg"
+    ref_file.write_bytes(new_bytes)
+
+    data = {
+        'item': {'images': []},
+        'candidate_urls': [
+            {'url': 'https://example.com/cover-hi.jpg', 'page_title': '', 'domain': 'example.com', 'query': 'q'}
+        ],
+        'curr_px': 0,
+        'ref_image_local': 'ref.jpg',
+        'reference_sha256': hashlib.sha256(old_bytes).hexdigest(),
+    }
+
+    result = sc_validate.validate(data, images_dir=tmp_path)
+    assert result == []
+    assert fetch_called == [], (
+        f"_fetch no debería haberse llamado con drift detectado, se llamó con: {fetch_called}"
+    )
+
+
+def test_validate_proceeds_when_reference_unchanged(tmp_path, monkeypatch):
+    """Sin drift (mismo sha), validate() sigue funcionando normalmente — el
+    guard es aditivo, no rompe el camino feliz existente."""
+    base = _textured_cover(400, 600)
+    ref_bytes = _jpeg(base.resize((160, 240), Image.LANCZOS), quality=80)
+    cand_bytes = _jpeg(base)
+
+    ref_file = tmp_path / "ref.jpg"
+    ref_file.write_bytes(ref_bytes)
+    ref_px = fbc._get_pixels_from_bytes(ref_bytes)
+
+    monkeypatch.setattr(fbc, '_fetch', lambda url, session, **kw: cand_bytes)
+
+    item = {'volume': '1', 'images': []}
+    data = {
+        'item': item,
+        'candidate_urls': [
+            {'url': 'https://example.com/cover-hi.jpg', 'page_title': '', 'domain': 'example.com', 'query': 'q'}
+        ],
+        'curr_px': ref_px,
+        'ref_image_local': 'ref.jpg',
+        'reference_sha256': hashlib.sha256(ref_bytes).hexdigest(),
+    }
+
+    result = sc_validate.validate(data, images_dir=tmp_path)
+    assert len(result) == 1
     assert result[0]['verified'] is True

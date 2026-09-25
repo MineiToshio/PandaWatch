@@ -247,6 +247,35 @@ estructural — sólo propone, y un backstop determinista en `standardize_apply.
   registrado en `data/unmapped_series.jsonl` (reason `llm_non_manga`) para que los
   gates deterministas (`filter_non_manga`/`filter_collectible`) decidan en la próxima
   corrida. Excepción dura: Mangavariant nunca se expulsa (el veredicto se ignora, WARN).
+  **La cola `llm_non_manga` es trabajo pendiente, no un veredicto**: cada tanto hay que
+  curarla a mano porque los gates deterministas NO alcanzan (un cómic italiano indie o
+  una figura sin marcador estructural no se pueden expresar como patrón sin falsos
+  positivos). Playbook, tal como se corrió el 2026-08-23 sobre 265 items:
+  (1) extraer los pendientes a un JSON de trabajo y agrupar por `source` × `note`;
+  (2) verificar en web los ambiguos (autor/editorial de origen decide, no el estilo del
+  dibujo: un fumetto italiano "estilo manga" NO es manga);
+  (3) buscar la CAUSA SISTEMÁTICA antes de curar item por item — en esa corrida 83 de los
+  265 venían de una regla equivocada en el prompt del skill (gotcha #147);
+  (4) expulsar en dos pasos: primero lo que se pueda expresar como patrón seguro
+  (`comics_blacklist.yml` / `_NON_MANGA_HARD`) + test, y correr `filter_non_manga.py`
+  (así además se previene la re-ingesta); el resto, con un retrofit de curación por URL
+  (`curate_llm_non_manga_20260823.py` como modelo: dry-run por defecto, guard
+  `approved_at`, backup, evidencia a `data/diagnostics/`, idempotente);
+  (5) **ante la duda, conservar** — y si el item tiene hermanos YA estandarizados como
+  manga, conservarlo aunque el veredicto suene a no-manga (expulsar uno solo fragmenta
+  la serie); esos quedan en `unmapped_series.jsonl`, nunca en un archivo paralelo;
+  (6) los KEEP no necesitan marca: al quedar sin `standardized_at` la próxima corrida del
+  skill los re-proyecta a Tier 2/3. Sólo hay que borrarles la fila de la cola.
+  **Límite conocido**: no existe override durable de `is_manga` por item — si el LLM
+  vuelve a equivocarse con el mismo item, hay que volver a curarlo. Si esto se repite,
+  la vía es un campo curado que `standardize_apply.py` respete como backstop.
+  **⚠️ La cola es FRÁGIL (gotcha #155)**: `unmapped_series.jsonl` mezcla estas filas
+  con las candidatas de serie sin canónica, y el Step 5 de
+  `/watch-enrich-series-aliases` **trunca el archivo entero**. Correr aliases después
+  de standardize —el orden canónico del delta diario— borra esta cola sin curarla.
+  Antes de currarla, verificá que no se haya perdido; si se perdió, recuperala del
+  backup `data/backups/unmapped_series.jsonl/unmapped_series.jsonl.pre-enrich-bak`
+  (rota max-3, así que no sobrevive muchas corridas).
 - **`product_type`**: se valida contra un enum cerrado (`VALID_PRODUCT_TYPES` en
   `standardize_apply.py` — manga/artbook/fanbook/guidebook/boxset/novel/magazine/
   audiobook). Si el LLM devuelve un edition-kind (special/deluxe/variant/limited/
@@ -332,3 +361,52 @@ Almost always means the extractor didn't pick it up. Workflow:
 4. Run `backfill_metadata.py` (or `--only image_url` etc.) over the
    corpus.
 
+
+## Colas de "registro incierto": conservar lo que el pipeline no sabe regenerar (2026-09-07)
+
+`data/unmapped_series.jsonl` es la ÚNICA cola de registros inciertos del repo (regla dura
+del owner: nunca crear `review_X.jsonl` / `audit_X.jsonl` paralelos). Pero dentro de ese
+archivo conviven **dos poblaciones con vidas distintas**, y tratarlas igual costó 7
+corridas de rutina diaria bloqueada (gotchas #155/#198):
+
+| Población | Marca | ¿La regenera el scrape? | Quién la consume |
+|---|---|---|---|
+| Series sin canónica | sin `reason` | **Sí**, cada corrida | `/watch-enrich-series-aliases` |
+| Curación manual | `reason` presente (`llm_non_manga`, `standardize_exhausted`) | **No, nunca** | un humano, item por item |
+
+**Convención**: ningún proceso automático trunca esta cola. La poda va SIEMPRE por
+`scripts/prune_unmapped_queue.py`, que:
+
+1. conserva **toda** fila con `reason` — incluido un `reason` que no conozca (ante la duda
+   no se borra dato irrecuperable);
+2. poda las filas de series ya procesadas;
+3. deduplica por `(series_key, reason, sample_url)`.
+
+Si agregás un `reason` nuevo, no hay que tocar el script: la regla es "con `reason` = se
+conserva". Lo que sí hay que hacer es documentar quién cura esa cola y con qué playbook.
+
+**Corolario para skills**: un skill NUNCA embebe el truncado (ni ninguna otra mutación de
+datos) — invoca el script. Es el mismo principio de "arreglar el mecanismo, no el síntoma"
+y de fuente única: el Step 5 de `/watch-enrich-series-aliases` tenía su propio
+`: > data/unmapped_series.jsonl` inline, y por eso el bug no se arreglaba en un solo lugar.
+
+
+### Fallos de ingestión (2026-09-24)
+
+`wikis.health.report_issue(session, message)` permite guardar batches parciales y
+propagar un resultado no exitoso al dispatcher. No usar [] silencioso para fallos
+de red/esquema. Scraper devuelve no cero si hay errores/problemas; full/delta
+propagan FAILED_STEPS al proceso llamador. Cero candidatos es low_yield, no garantía
+de fuente healthy. Usar read_jsonl_strict antes de una reescritura del sink; nunca
+omitir líneas inválidas y luego reemplazar el original.
+
+
+El gate de relevancia se aplica tanto en flush_source_candidates como en process_state mediante candidate_is_relevant; Candidate transporta source_purity. Evitar asumir que todos los extractores ya filtraron upstream.
+
+## Contrato de fuentes — 2026-09-25
+
+No clasificar noticias de terceros como official. Retailer no es editorial
+(Funside deja publisher vacío). Retirar un job no borra procedencia histórica.
+Cambios de cobertura requieren recibo full nuevo; no generarlo de un checkpoint
+sin evidencia de recorrido completo. ISBN/serie compartidos son indicadores de
+solapamiento, nunca prueba suficiente de identidad o de fuente redundante.

@@ -25,6 +25,7 @@ logs/
 
 # Artefacto regenerable de la cola de revisión de portadas (familia items.jsonl)
 data/cover_preview.json
+data/cover_preview.json.lock
 
 # Historial de intentos de búsqueda de portadas (estado local, no versionar)
 data/cover_search_attempts.jsonl
@@ -55,3 +56,11 @@ node_modules/
 # Backups ad-hoc de archivos de data que dejan algunos retrofits (.bak-* / .pre-*-bak)
 data/*.bak-*
 data/*.pre-*-bak
+
+# Durable ingestion replay / successful source watermarks
+data/*.jsonl.conflicts
+data/.ingestion-checkpoints/
+data/.source-baselines/
+
+# Runtime write locks
+data/*.jsonl.lock

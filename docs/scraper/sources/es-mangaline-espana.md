@@ -2,7 +2,8 @@
 
 > Ficha del catálogo de fuentes de PandaWatch. Léela ANTES de tocar su ingestión.
 > Gotchas por número (#N) → [docs/reference/gotchas.md](../../reference/gotchas.md).
-> Última revisión: 2026-07-07.
+> Última revisión: 2026-08-23. **DESHABILITADA en `sources.yml` desde
+> 2026-08-23** (host caído, ver §8/§9) — la editorial sigue activa.
 
 > Es una fuente **simple** del YAML (entrada en `sources.yml`, extractor genérico).
 > Sólo lleva §1, §2, §5 (básico), §8/§9 si aplica y §10.
@@ -89,6 +90,30 @@ Grendizer (preventa Goldorak) — que no necesariamente aparecen en otras fuente
   Monitorear el próximo run: si persiste, escalar a contacto directo con la
   editorial en vez de reintentos automáticos (un timeout de conexión no es un
   429/403 — reintentar no ayuda si el host está caído).
+- **Outage SIGUE 2026-08-22** (delta `logs/scrape-delta-2026-08-22-174458/`): mismo
+  `ConnectTimeoutError`. Verificado en vivo con curl (mismo user-agent del scraper,
+  puerto 80 Y 443, `shop/` y raíz `/`): timeout de conexión en ambos puertos, DNS
+  sigue resolviendo (`217.76.149.251`, sin cambios). **Van 2 runs con más de un mes
+  de diferencia (2026-07-07 → 2026-08-22) con el host inalcanzable**, igual que
+  MangaLine México (mismo hosting Arsys) — ya no es razonable seguir llamándolo
+  "transitorio"; escala a **host caído / posible cese del sitio**. No se reintentó
+  el scrape (host caído, no recuperable con un retry). Revisar manualmente en
+  navegador antes del próximo delta; si sigue caído, evaluar `enabled: false` en
+  `sources.yml` para ambas MangaLine (ES + MX) en vez de seguir intentando en vano.
+- **DESHABILITADA 2026-08-23**: re-verificado con `curl -sI` (mismo user-agent,
+  puertos 80/443, timeout corto) — `mangaline.es` sigue sin responder
+  (`ConnectTimeoutError`, exit 28), tercera confirmación tras 2026-07-07 y
+  2026-08-22 (~6 semanas de host inalcanzable). Se puso `enabled: false` en
+  `sources.yml` con comentario fechado. **La editorial NO cerró**: bajo nueva
+  dirección (Rafael, al frente de MangaLine España y Locura MangaLine desde
+  inicios de 2026 tras ~3 años en la estructura interna) están relanzando con
+  periodicidad fija mensual, retomando reimpresiones de catálogo y anunciando
+  licencias nuevas (*Corrector Yui* de Kia Asamiya) — entrevista de julio 2026 en
+  Ramen Para Dos. Es decir: el sitio propio está caído por un problema de hosting
+  (Arsys) ajeno al estado del negocio, que sigue operando. Ojo: existe un cierre
+  **histórico** de "Mangaline Ediciones" en 2011 (deudas, cierre tras completar
+  Yugo/Coco/GTO) — es una editorial distinta/reboot, no confundir con el estado
+  actual.
 
 ---
 
@@ -99,8 +124,16 @@ Grendizer (preventa Goldorak) — que no necesariamente aparecen en otras fuente
   afuera.
 - {{pendiente: confirmar calidad/resolución de las imágenes de portada de esta
   fuente — no verificado en esta ficha}}.
-- **En observación tras el outage de 2026-07-07**: confirmar en el próximo delta/full
-  si `mangaline.es` volvió a responder antes de sospechar un cambio de código.
+- **Cobertura tras deshabilitar (2026-08-23)**: de los 4 items del corpus con esta
+  fuente, 3 quedan SOLO con MangaLine ES como sources[] (se perderían si el item
+  se recorta por staleness) — Grey (Edición Integral), Angelic (Artbook), y Losers
+  Limited Edition. El resto del catálogo España de MangaLine (Devilman, Silent
+  Möbius, Grey variant) YA está cubierto independientemente por **ListadoManga
+  (colecciones)**, que es agregador ES y ya trackea esas ediciones sin depender de
+  este scrape directo — confirmado en el corpus real (`cluster_key` con fuente
+  `ListadoManga (colecciones)` para esos títulos). Reactivar esta fuente si
+  `mangaline.es` vuelve a responder; mientras tanto, ListadoManga es la cobertura
+  de facto para novedades ES de esta editorial.
 
 ---
 
