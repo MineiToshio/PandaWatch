@@ -201,7 +201,7 @@
         portada<span x-show="approvedUnapplied !== 1">s</span>
         aprobada<span x-show="approvedUnapplied !== 1">s</span> SIN APLICAR al catálogo
       </span>
-      <button class="success" @click="applyApproved()" :disabled="isSaving"
+      <button class="success" @click="requestApplyApproved()" :disabled="isSaving || isApplying"
               :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
               title="Aplica las candidatas aprobadas a items.jsonl ahora mismo">
         ✓ Aplicar ahora (<span x-text="approvedUnapplied"></span>)
@@ -234,17 +234,32 @@
       </div>
 
       <div class="actions">
-        <button class="success" @click="applyApproved()"
-                :disabled="approvedCount() === 0 || isSaving"
-                :style="(approvedCount() === 0 || isSaving) ? 'opacity:0.45; cursor:not-allowed' : ''"
+        <button class="success" @click="requestApplyApproved()"
+                :disabled="approvedCount() === 0 || isSaving || isApplying"
+                :style="(approvedCount() === 0 || isSaving || isApplying) ? 'opacity:0.45; cursor:not-allowed' : ''"
                 title="Aplica las aprobadas al catálogo y quita las decididas del listado">
           ✓ Aplicar aprobadas (<span x-text="approvedCount()"></span>)
         </button>
         <button class="outline success" @click="bulkAction('approved')"
-                :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Aprobar todas pendientes</button>
+                :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Aprobar todas pendientes</button>
         <button class="outline danger" @click="bulkAction('rejected')"
-                :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Rechazar todas pendientes</button>
+                :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">Rechazar todas pendientes</button>
       </div>
+
+      <section x-cloak x-show="showApplyConfirmation || isApplying"
+               role="region" aria-label="Confirmar aplicación de imágenes"
+               style="border:1px solid var(--green);border-radius:8px;padding:1rem;margin-bottom:1rem;">
+        <p x-show="!isApplying">
+          Se aplicarán <b x-text="approvedCount()"></b> candidatas aprobadas al catálogo
+          y se quitarán <b x-text="decidedCount() - approvedCount()"></b> rechazadas del listado.
+          Las pendientes se conservarán.
+        </p>
+        <p role="status" x-show="isApplying">Aplicando imágenes al catálogo…</p>
+        <div class="actions" x-show="!isApplying">
+          <button class="success" @click="applyApproved()" :disabled="isSaving || isApplying">Confirmar aplicación</button>
+          <button @click="showApplyConfirmation = false" :disabled="isApplying">Cancelar</button>
+        </div>
+      </section>
 
       <template x-if="pendingCount() === 0 && approvedCount() > 0">
         <div style="background:rgba(34,197,94,0.12); border:1px solid var(--green); border-radius:8px;
@@ -254,7 +269,7 @@
             Todo revisado —
             <span x-text="approvedCount()"></span> aprobada<span x-show="approvedCount() !== 1">s</span> listas.
           </span>
-          <button class="success" @click="applyApproved()" :disabled="isSaving"
+          <button class="success" @click="requestApplyApproved()" :disabled="isSaving || isApplying"
                   :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''">
             ✓ Aplicar aprobadas
           </button>
@@ -287,14 +302,14 @@
                         :title="reportedSlugs[e.slug] ? 'Ya reportado — pendiente de procesar' : 'Reportar (dislike): lo agrega a feedback.jsonl con tu motivo, igual que en el catálogo'"
                         x-text="reportedSlugs[e.slug] ? '✓ Reportado' : '👎 Reportar'"></button>
                 <button class="card-toggle" @click="flagIrrelevant(e)"
-                        :disabled="isSaving"
+                        :disabled="isSaving || isApplying"
                         style="color:var(--muted); border:1px solid var(--border); border-radius:4px;
                                padding:0.1rem 0.45rem; font-size:0.68rem;"
                         :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                         title="Marcar como irrelevante: lo agrega a feedback.jsonl para excluirlo del scraper">Excluir</button>
                 <button class="card-toggle" x-show="pendingInEntry(e) > 0"
                         @click="rejectEntryPending(e)"
-                        :disabled="isSaving"
+                        :disabled="isSaving || isApplying"
                         style="color:var(--red);"
                         :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : 'color:var(--red);'"
                         title="Rechazar todas las candidatas pendientes de este ítem">✕ Rechazar pend.</button>
@@ -447,7 +462,7 @@
                   <div class="cand-controls">
                     <select x-show="currentCand(e).action !== 'remove_image'"
                             x-model="currentCand(e)._choice" @change="applyChoice(e, currentCand(e))"
-                            :disabled="isSaving">
+                            :disabled="isSaving || isApplying">
                       <template x-for="opt in candidateOptions(e)" :key="opt.value">
                         <option :value="opt.value" x-text="opt.label"></option>
                       </template>
@@ -457,10 +472,10 @@
                       Eliminar de la galería (sin reemplazo)
                     </span>
                     <button :class="currentCand(e).status === 'approved' ? 'active-approve' : 'outline-approve'"
-                            :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                            :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'approved')">✓</button>
                     <button :class="currentCand(e).status === 'rejected' ? 'active-reject' : 'outline-reject'"
-                            :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                            :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                             @click="setStatus(e, currentCand(e), 'rejected')">✕</button>
                   </div>
                   <!-- chips de motivo de rechazo — opcionales, 1 clic; el rechazo ya está
@@ -468,7 +483,7 @@
                   <div class="reject-chips" x-show="currentCand(e).status === 'rejected'">
                     <template x-for="r in REJECT_REASONS" :key="r.key">
                       <button type="button" class="chip" :class="rejectReasonKey(currentCand(e)) === r.key ? 'chip-active' : ''"
-                              :disabled="isSaving"
+                              :disabled="isSaving || isApplying"
                               @click="pickReason(e, currentCand(e), r.key, $event)"
                               x-text="r.label"></button>
                     </template>
@@ -609,7 +624,7 @@
             <select x-show="currentCand(compareEntry).action !== 'remove_image'"
                     x-model="currentCand(compareEntry)._choice"
                     @change="applyChoice(compareEntry, currentCand(compareEntry))"
-                    :disabled="isSaving">
+                    :disabled="isSaving || isApplying">
               <template x-for="opt in candidateOptions(compareEntry)" :key="opt.value">
                 <option :value="opt.value" x-text="opt.label"></option>
               </template>
@@ -619,10 +634,10 @@
               Eliminar de la galería (sin reemplazo)
             </span>
             <button :class="currentCand(compareEntry).status === 'approved' ? 'active-approve' : 'outline-approve'"
-                    :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                    :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                     @click="setStatus(compareEntry, currentCand(compareEntry), 'approved')">✓ Aprobar</button>
             <button :class="currentCand(compareEntry).status === 'rejected' ? 'active-reject' : 'outline-reject'"
-                    :disabled="isSaving" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
+                    :disabled="isSaving || isApplying" :style="isSaving ? 'opacity:0.45;cursor:not-allowed' : ''"
                     @click="setStatus(compareEntry, currentCand(compareEntry), 'rejected')">✕ Rechazar</button>
             <span style="margin-left:auto; font-size:0.68rem; color:var(--muted); white-space:nowrap; align-self:center;">
               A aprobar · R rechazar · 1-5 motivo · N/P producto
@@ -633,7 +648,7 @@
           <div class="reject-chips" x-show="currentCand(compareEntry).status === 'rejected'">
             <template x-for="r in REJECT_REASONS" :key="r.key">
               <button type="button" class="chip" :class="rejectReasonKey(currentCand(compareEntry)) === r.key ? 'chip-active' : ''"
-                      :disabled="isSaving"
+                      :disabled="isSaving || isApplying"
                       @click="pickReason(compareEntry, currentCand(compareEntry), r.key, $event)"
                       x-text="r.label"></button>
             </template>
@@ -781,6 +796,8 @@ function previewApp() {
     itemsBySlug: {},
     _itemsPromise: null,
     isSaving: false,
+    isApplying: false,
+    showApplyConfirmation: false,
     // Slugs ya reportados (👎) — se levantan de feedback.jsonl al cargar (cada fila
     // lleva el slug del item) y se actualizan al reportar. Bloquean el re-dislike
     // hasta que se procese la cola (mismo contrato que el dashboard).
@@ -1329,13 +1346,17 @@ function previewApp() {
 
     // Aplica al catálogo las aprobadas + quita del JSON las decididas
     // (aprobadas y rechazadas). Las pendientes se conservan.
+    requestApplyApproved() {
+      if (this.isApplying || this.isSaving) return;
+      if (!this.approvedCount()) { this.showToast('No hay candidatas aprobadas para aplicar', 'err'); return; }
+      this.showApplyConfirmation = true;
+    },
+
     async applyApproved() {
-      const a = this.approvedCount();
-      if (!a) { this.showToast('No hay candidatas aprobadas para aplicar', 'err'); return; }
-      const r = this.decidedCount() - a;  // rechazadas que se van a quitar
-      if (!confirm(
-        `Aplicar ${a} aprobada(s) al catálogo (modifica items.jsonl)` +
-        (r > 0 ? ` y quitar ${r} rechazada(s) del listado` : '') + '. ¿Seguir?')) return;
+      if (this.isApplying || !this.showApplyConfirmation) return;
+      if (!this.approvedCount()) { this.showApplyConfirmation = false; return; }
+      this.isApplying = true;
+      this.showApplyConfirmation = false;
       try {
         // Esperar los guardados en vuelo: el apply lee la cola del DISCO, así que
         // toda decisión tiene que estar persistida antes de aplicar.
@@ -1370,6 +1391,8 @@ function previewApp() {
         }
       } catch (err) {
         this.showToast('Error: ' + err.message, 'err');
+      } finally {
+        this.isApplying = false;
       }
     },
 

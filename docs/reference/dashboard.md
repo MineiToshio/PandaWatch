@@ -464,3 +464,15 @@ con evidencia. La revisión de búsqueda es opcional. `verified` en propuestas
 históricas se presenta como «similitud visual», no como identidad editorial
 certificada. Las tarjetas del catálogo HTML muestran la portada completa con
 `object-fit: contain`, preservando logos y márgenes.
+
+## Aplicar imágenes desde un navegador integrado (2026-09-25)
+
+`Aplicar ahora` y `Aplicar aprobadas` abren una confirmación dentro de la página,
+con el número de aprobadas y rechazadas. Ya no dependen de `window.confirm()`,
+que puede quedar inaccesible en el preview de Codex. `Confirmar aplicación`
+ejecuta el endpoint existente; `Cancelar` no escribe nada. Se muestra el estado
+«Aplicando imágenes al catálogo…» y se bloquean envíos duplicados. Se mantienen
+la espera de guardados y la comprobación de versión de la cola (409).
+
+Regresión: `node --test tests/js/cover-preview-apply.test.cjs` comprueba cancelación,
+espera de guardados, doble envío, conflicto y recuperación tras error de red.
