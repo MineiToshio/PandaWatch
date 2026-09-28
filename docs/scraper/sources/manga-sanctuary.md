@@ -410,3 +410,22 @@ Se repite el calendario completo 2010-01 a 2026-12 con estas reglas para recuper
 ediciones especiales cuyo título no expresaba su formato. Revisión de política 2.
 
 Full verificado 2026-09-25: **204 meses (2010-01 a 2026-12), 2168 candidatos, 2140 admisiones/cambios, 2129 filas tras consolidación**. La integración detecta ISBN contradictorios en grupos antiguos y preserva ambas ediciones con marca de revisión, en lugar de perder una. No supone que el calendario incluya todas las ediciones francesas históricas.
+
+## 154 contra mediana 699 NO es una avería — 2026-09-26
+
+El reporte de salud marcó `wiki:manga-sanctuary` en *yield regressions* al 22% de su
+mediana. Es **mediana contaminada por modo**, no una caída: la baseline histórica de
+esta fuente se había completado en la ingesta del 2026-09-25 (147 items, con
+`revision: 2` en `ingestion_policy.yml`), así que en esta corrida ya tenía recibo y
+corrió en **modo incremental**. Rindió 154 candidatos / 152 reportables, sin errores,
+en ~1 minuto.
+
+La mediana de 699 viene de corridas en modo calendario/full. Mientras convivan ambos
+modos en el mismo baseline, esta fuente va a seguir apareciendo en rojo cada vez que
+corra incremental. Único ruido real del paso: `[ISBN_ANOMALY]` sobre EANs de 13
+dígitos que empiezan en `3701580…` (prefijo GS1 francés, no ISBN) — se conservan tal
+cual, que es lo correcto.
+
+### Resolución operativa — 2026-09-27
+
+La salud compara ahora modos efectivos por fuente, no el nombre del directorio del run. Una carga full inicial dentro de delta no entra en la mediana incremental. Las mediciones históricas sin modo explícito se excluyen al comparar con nuevas mediciones explícitas (warm-up de al menos 3 runs comparables).

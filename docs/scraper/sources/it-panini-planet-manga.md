@@ -501,3 +501,35 @@ lo describe como formato doble en rústica 13×18, sin qualifier premium. Se ret
 las cinco fichas que habían entrado solo por el detector genérico X-Edition, con
 copia revisable. Double Edition ya no basta para admisión; hardcover/cofre/extras
 siguen admitiendo versiones realmente premium.
+
+## Queue-it DESTRABADA vía browser fallback — 2026-09-26
+
+La sala de espera Queue-it que bloqueó esta fuente desde el 2026-09-16 (#208, 11 días
+consecutivos de skips y yields parciales silenciosos) **dejó de ser un bloqueo**. El
+log de Fase 1 del delta 2026-09-26 muestra la ruta nueva:
+
+```
+[23/139] IT - Panini Planet Manga :: https://www.panini.it/shp_ita_it/planet-manga.html
+[BROWSER-FALLBACK] IT - Panini Planet Manga: rendering the public queue in Chromium
+[BROWSER-FALLBACK] IT - Panini Variant ed Esclusive: rendering the public queue in Chromium
+[BROWSER-FALLBACK] IT - Panini Edizioni da Collezione e Cofanetti: rendering the public queue in Chromium
+```
+
+El fallback renderiza la cola pública y atraviesa el gate, incluidos **los dos
+sublistados de los que este proyecto se alimenta** (`variant-ed-esclusive` y
+`edizioni-da-collezione-e-cofanetti`), que eran los más castigados por #208.
+
+Resultado medido en ese run: **4652 items crudos** de esta fuente, contra listados
+que venían rindiendo 0 o truncados a 2 páginas. Es la mayor contribución individual
+del run y por un margen amplio (la segunda, Panini España, aporta 1203 — también por
+esta vía: su log muestra el mismo `[BROWSER-FALLBACK]`).
+
+Advertencia al interpretar ese volumen: **no son novedades**. Es la recuperación del
+catálogo que #208 venía reteniendo, más el `[SOURCE-INITIAL-FULL]` de la migración de
+política (#228). Buena parte entra con `edition_display` `Special` y score 31, o sea
+tomos regulares que el gate de edición especial no distingue — la calidad real del
+lote sólo se conoce después de estandarizar.
+
+**Pendiente de verificar en la próxima corrida limpia**: si el fallback es estable o
+depende de que la cola esté corta. #208 queda como resuelta *con observación*, no
+cerrada.

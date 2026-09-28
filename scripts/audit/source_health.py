@@ -240,6 +240,15 @@ def parse_run_log(run_dir: Path) -> dict[str, dict]:
         current_source: str | None = None
         current_wiki: str | None = None
         for line in content.splitlines():
+            if line.startswith('[SOURCE-MODE] '):
+                _, scan_mode, name = line.split(' ', 2)
+                sources[name]['scan_mode'] = scan_mode
+                continue
+            if line.startswith('[SOURCE-DEFERRED] '):
+                name = line.split(' ', 1)[1]
+                sources[name]['skipped'] = 'historical baseline pending (explicit migration required)'
+                sources[name]['scan_mode'] = 'deferred'
+                continue
             # Formato ACTUAL: source + candidatos en una sola línea.
             m_comb = _CANDIDATES_COMBINED_RE.match(line)
             if m_comb:
@@ -366,6 +375,8 @@ def aggregate_health(
                 a["runs_with_challenge"] += 1
                 a["challenges"].append((run_dir.name, stats["challenge"]))
             elif stats["skipped"]:
+                if stats.get("scan_mode") == "deferred":
+                    a["runs_deferred"] = a.get("runs_deferred", 0) + 1
                 a["runs_with_skip"] += 1
                 a["skips"].append((run_dir.name, stats["skipped"]))
             elif stats["candidates"] is not None:
@@ -424,6 +435,8 @@ def classify(stats: dict) -> str:
     runs = stats["runs_seen"]
     if runs == 0:
         return "unseen"
+    if stats.get("runs_deferred", 0) / runs >= 0.5:
+        return "pending_baseline"
     error_rate = stats["runs_with_error"] / runs
     challenge_rate = stats.get("runs_with_challenge", 0) / runs
     timeout_rate = stats.get("runs_with_timeout", 0) / runs
@@ -471,6 +484,7 @@ def _single_run_agg(stats: dict) -> dict:
     candidates = stats.get("candidates")
     a = {
         "runs_seen": 1,
+        "runs_deferred": int(stats.get("scan_mode") == "deferred"),
         "runs_with_timeout": 1 if timeout else 0,
         "runs_with_error": 1 if (error and not timeout) else 0,
         "runs_with_challenge": 1 if (challenge and not timeout and not error) else 0,
@@ -524,7 +538,8 @@ def append_metrics(metrics_path: Path, run_dir: Path, source_stats: dict[str, di
         rec = {
             "run": run_name,
             "ts": ts,
-            "mode": mode,
+            "mode": stats.get("scan_mode", mode),
+            "mode_explicit": "scan_mode" in stats,
             "source": name,
             "candidates": candidates if candidates is not None else 0,
             # (Fix 4, post-mortem 2026-08-24) Un timeout también cuenta como
@@ -572,7 +587,12 @@ def compute_yield_regressions(
     """
     history: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for rec in _read_metrics(metrics_path):
-        if rec.get("mode") != mode:
+        source_stats = current_stats.get(rec.get('source'), {})
+        effective_mode = source_stats.get('scan_mode', mode)
+        if rec.get("mode") != effective_mode:
+            continue
+        # Old directory-level labels may mix initial full scans with delta.
+        if 'scan_mode' in source_stats and not rec.get('mode_explicit'):
             continue
         if rec.get("run") == current_run_name:
             continue  # la historia excluye el run que estamos evaluando
@@ -592,7 +612,7 @@ def compute_yield_regressions(
     regressions: list[dict] = []
     for name, stats in current_stats.items():
         current = stats.get("candidates")
-        if current is None:
+        if current is None or stats.get("skipped") or stats.get("error") or stats.get("timeout"):
             continue  # errored/skipped: sin conteo de candidatos que comparar
         runs_for_source = history.get(name, [])
         distinct_runs = {r for r, _ in runs_for_source}
@@ -663,6 +683,7 @@ def render_markdown(runs: list[Path], agg: dict[str, dict]) -> str:
         ("broken_timeout", "⏱️ Broken (step timed out / crashed)"),
         ("broken_challenge", "🛡️ Broken (anti-bot / challenge)"),
         ("broken_http", "🔴 Broken (HTTP errors)"),
+        ("pending_baseline", "🟡 Pending historical baseline (deferred)"),
         ("broken_skip", "🟠 Broken (skip/JS issues)"),
         ("selector_dead", "🟡 Selector probably dead (always 0 candidates)"),
         ("low_yield", "🟤 Low yield (avg < 1 candidate/run)"),

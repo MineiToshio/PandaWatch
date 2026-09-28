@@ -195,7 +195,7 @@ def _virtual_source() -> Source:
         name="US - PRH Comics",
         url=PRH_MANGA_URL,
         country="Estados Unidos",
-        language="English",
+        language="Inglés",
         publisher="",
         source_class="trusted_catalog",
         kind="wiki",

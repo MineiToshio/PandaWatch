@@ -146,7 +146,7 @@ def _virtual_source() -> Source:
         name="US - Yen Press Calendar",
         url=CALENDAR_URL,
         country="Estados Unidos",
-        language="English",
+        language="Inglés",
         publisher="Yen Press",
         source_class="trusted_catalog",
         kind="wiki",

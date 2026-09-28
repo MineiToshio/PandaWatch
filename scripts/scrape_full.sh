@@ -69,6 +69,11 @@
 set +e
 set -u
 
+# Prevent idle sleep from stretching a bounded run across the next daily run.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -w "$$" >/dev/null 2>&1 &
+fi
+
 cd "$(dirname "$0")/.."
 
 VENV_PY=".venv/bin/python"
@@ -180,8 +185,29 @@ COLECCION_SLEEP="${COLECCION_SLEEP:-0.3}"
 # Wrapper portable para ejecutar un comando con timeout.
 # Prueba: macOS nativo 'timeout', luego GNU 'gtimeout' (brew coreutils).
 # Si ninguno está disponible, corre sin timeout (mejor que fallar).
+BASELINE_BATCH_SIZE="${BASELINE_BATCH_SIZE:-0}"
+BASELINE_WIKI="${BASELINE_WIKI:-}"
+if [[ ! "$BASELINE_BATCH_SIZE" =~ ^[0-9]+$ ]] || [[ "$BASELINE_BATCH_SIZE" != 0 && -n "$BASELINE_WIKI" ]]; then
+    echo "[ERROR] Choose BASELINE_BATCH_SIZE=N or BASELINE_WIKI=id, not both."
+    exit 2
+fi
+if [[ -n "$BASELINE_WIKI" ]]; then
+    "$VENV_PY" -c 'import sys; from scripts.ingestion_policy import load_policy; sys.exit(0 if load_policy()["wikis"].get(sys.argv[1], {}).get("enabled") else 2)' "$BASELINE_WIKI" || exit 2
+fi
+
 _run_timed() {
     local secs=$1; shift
+    local previous="" argument wiki_id=""
+    for argument in "$@"; do
+        if [[ "$previous" == "--bootstrap-wiki" ]]; then wiki_id="$argument"; break; fi
+        previous="$argument"
+    done
+    if [[ -n "$wiki_id" ]]; then
+        if [[ "$BASELINE_BATCH_SIZE" != 0 ]] || [[ -n "$BASELINE_WIKI" && "$BASELINE_WIKI" != "$wiki_id" ]]; then
+            echo "[MIGRATION-SKIP] wiki:$wiki_id (outside explicit batch)"
+            return 0
+        fi
+    fi
     if command -v timeout &>/dev/null 2>&1; then
         timeout "$secs" "$@"
         return $?
@@ -293,7 +319,7 @@ fi
 # ============================================================
 # PHASE 1: Scrape principal (sources del YAML)
 # ============================================================
-if [ "$SKIP_SCRAPE" != "1" ]; then
+if [[ "$SKIP_SCRAPE" != "1" && -z "$BASELINE_WIKI" ]]; then
     phase_header 1 "Scrape principal (sources YAML, JS+fetch-details, workers=${SCRAPE_WORKERS})"
     P1_START=$(date +%s)
     # Fase 1 envuelta en timeout (3 h): una fuente HTTP colgada NO debe
@@ -302,7 +328,7 @@ if [ "$SKIP_SCRAPE" != "1" ]; then
     _run_timed 10800 env PYTHONUNBUFFERED=1 "$VENV_PY" -u scripts/manga_watch.py \
         --enable-js \
         --fuzzy-keywords \
-        --full-catalog --max-items-per-source 10000 \
+        --full-catalog --max-items-per-source 10000 --baseline-batch-size "$BASELINE_BATCH_SIZE" \
         --fetch-details \
         --diagnostic \
         --workers "$SCRAPE_WORKERS" \

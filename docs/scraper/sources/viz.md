@@ -370,3 +370,53 @@ o sea el defecto está activo y creciendo, no es deuda histórica congelada.
 Es `warn`, no violación dura, así que no frena el gate — pero el idioma es un filtro
 de la UI y un valor fuera del enum no matchea. **No aplicado**: el fix correcto es
 normalizar en el extractor (fuente única), no un retrofit por fuente. Decisión del owner.
+
+## `[SOURCE-INITIAL-FULL]`: 168 meses y 11 horas — 2026-09-26
+
+La migración de `ingestion_policy.yml` marcó esta fuente para baseline histórico:
+
+```
+[INITIAL-FULL] viz: presupuesto histórico de 14400 segundos
+[SOURCE-INITIAL-FULL] viz: complete baseline required
+[BOOTSTRAP-WIKI] rango: 2013-01 → 2026-12
+[viz] 168 meses a recorrer
+```
+
+Rindió **257 candidatos** (253 reportables, 253 portadas al espejo, 0 fallidas), o
+sea la baseline se obtuvo completa y en buen estado. El costo fue el problema: el
+paso consumió **40 454 s de wall-clock (11.2 h)** contra un presupuesto declarado de
+14 400 s, y **aun así completó** — el `timeout` no disparó porque la máquina dormía
+durante la ventana nocturna (#227). No es lentitud de la fuente.
+
+Rate-limiting observado en el recorrido: **8 respuestas 429** (`Too Many Requests`),
+repartidas entre páginas de calendario y fichas de producto, con `--sleep-seconds 1.0`.
+El recorrido siguió y perdió sólo las páginas afectadas; el `rc=1` final es
+consecuencia de esas incidencias, no de un fallo de ingesta (#223).
+
+**Recomendación (no aplicada)**: si se vuelve a pedir baseline completa de esta fuente,
+correrla fuera del delta o con `--sleep-seconds` mayor — 8 × 429 en 168 meses sugiere
+que el límite está cerca del ritmo actual.
+
+## Es la fuente #1 de `LANG_ENUM` — medido 2026-09-26
+
+El invariante `LANG_ENUM` de `validate_corpus.py` pasó de **229** violaciones
+(2026-09-25) a **477** tras esta corrida, y la baseline histórica de VIZ es la causa
+principal: **257 de esas 477** son items de esta fuente con `language: "English"` en
+vez de `Inglés`.
+
+| Fuente | Items con idioma en inglés |
+|---|--:|
+| US - VIZ Media Special Editions | **257** |
+| US - PRH Comics | 89 |
+| US - Yen Press Calendar | 54 |
+| US - Kinokuniya Exclusives | 45 |
+| JP - Shueisha Books | 32 (`Japanese`) |
+
+Es `warn`, no frena el gate, pero **el idioma es filtro de la UI**: un item con
+`English` no aparece cuando el usuario filtra por `Inglés`, así que los 253 items que
+esta baseline acaba de aportar quedan invisibles en ese filtro. El arreglo es
+normalizar al enum en el módulo wiki (o un retrofit de mapeo), no en la UI.
+
+### Resolución operativa — 2026-09-27
+
+La fuente emite `Inglés` y el sink normaliza también `English`. Las 445 filas English del corpus (incluidas las de VIZ) se repararon. El rc=1 del run anterior no se suprime: el log contiene 429 y timeout reales; haber persistido productos no certifica el full. La inicialización pendiente se hace explícitamente con `BASELINE_WIKI=viz bash scripts/scrape_full.sh`.

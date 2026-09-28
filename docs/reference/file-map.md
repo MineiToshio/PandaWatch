@@ -494,3 +494,9 @@ y escritura atómica; invocado por el dispatcher después de persistir resultado
 
 - `scripts/image_snapshot.py`: lectura versionada y escritura optimista para los
   comandos históricos de imágenes; aborta si otro proceso cambió el corpus.
+
+- `tests/test_operational_followup.py`: regresiones de las decisiones operativas
+  del 27 de septiembre (paginación, papel, idioma, baselines y salud).
+- `data/.source-attempts/`: timestamps locales de inicializaciones YAML intentadas;
+  permiten rotar tandas sin confundir intentos con recibos de completitud.
+- `docs/scraper/audits/2026-09-27-operations.md`: decisiones, reparación y pendientes.

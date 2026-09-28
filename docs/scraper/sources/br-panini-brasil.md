@@ -194,3 +194,31 @@ Evidencia y alcance: [auditoría integral](../audits/2026-09-24-ingestion.md).
 
 
 La reingesta aislada encontró además 23 cómics occidentales que pasaban desde selectores sin gate non-manga. Corregido gate común pre-spool/sink; se publicaron solamente Wotakoi 10 y 11 Capa Variante. No se ingresaron los descartes occidentales.
+
+## Las searches dejaron de paginar — 2026-09-25 (2º día el 09-26)
+
+Las entradas `(search)` de esta tienda se quedan en la **primera página**. En este
+run **12 de ellas devolvieron exactamente 12 candidatos**, que es el tamaño de página
+de la tienda: las keywords con poco fondo siguen dando su cuenta real (2, 3, 5, 8) y
+sólo las que tienen catálogo detrás se clavan en 12.
+
+El corte está fechado entre corridas: el **2026-09-24** las searches de Panini
+paginaron **21 veces** (p. ej. `edicion especial` → 50 en 5 págs, `edicion limitada`
+→ 29 en 3 págs) y **ninguna** dio 12; desde el **2026-09-25** paginan **0 veces** y 28
+dan 12. Afecta a los tres storefronts (ES, MX, BR) simultáneamente.
+
+**No es un bloqueo del host y no lo causó el endurecimiento de fuentes** del
+2026-09-25: la tienda de Brasil (`panini.com.br`) responde sana (verificado en vivo el 09-27: HTTP 200,
+27 productos en la primera página, paginación `pages-item-next` con `p=2`…`p=5`, sin
+Queue-it), y el delta del 09-25 ya mostraba el 12 corriendo sobre código previo al
+commit. Mecanismo, medición completa y la pista de `&skip_default_filters=true` en
+**gotcha #230**.
+
+Consecuencia operativa: el reporte de salud lo lista como *yield regression* (20-44%
+de la mediana) pero **sin error ni skip**, y esos valores bajos entran al baseline, así
+que degradan la mediana contra la que se compara mañana. Nada aplicado — es cambio de
+parser/config, decisión del owner.
+
+### Resolución operativa — 2026-09-27
+
+El guard de paginación compartido ahora admite el controlador Magento `/catalogsearch/result/index/` como continuación de `/catalogsearch/result/`. Se conserva la protección de host y rutas de productos. Prueba HTTP realizada en MX y regresión compartida; no se afirma haber repetido un full de BR.

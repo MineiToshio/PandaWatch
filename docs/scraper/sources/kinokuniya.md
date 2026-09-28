@@ -322,3 +322,7 @@ contribuyente después de VIZ (148). Detalle y tabla completa en
 Se suma a #215 (el módulo emite sólo título + ISBN): Kinokuniya es una fuente
 estructuralmente pobre en metadata. **Nada aplicado**; el fix correcto es normalizar
 el idioma en el extractor compartido, no por fuente.
+
+### Resolución operativa — 2026-09-27
+
+El emisor usa `Inglés` en lugar de `English`; el sink canónico protege también las reingestas. Reparación del corpus documentada en la auditoría operativa del 27 de septiembre.

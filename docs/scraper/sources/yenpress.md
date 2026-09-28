@@ -321,3 +321,7 @@ Cierre 2026-09-25: se incorporaron 12 referencias adicionales de esta fuente
 a productos ya existentes, recuperadas del resultado del upsert en staging.
 Cada URL tenía un único propietario propuesto y no existía aún en ninguna
 ficha publicada; se conserva el producto canónico. Manifest: `publication-3-manifest.json`.
+
+### Resolución operativa — 2026-09-27
+
+El emisor usa `Inglés` en lugar de `English`; el sink canónico protege también las reingestas. No cambian endpoints ni criterios de descubrimiento.

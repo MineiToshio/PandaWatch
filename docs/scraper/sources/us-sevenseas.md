@@ -140,3 +140,17 @@ de "pasos en error" del run diario ya NO es comparable con los runs previos al
 ## Auditoría estratégica — 2026-09-25
 
 Parser directo retirado de full/delta administrados mediante ingestion_policy.yml tras repetir 403 en /series/ y API pública. PRH /seven-seas/ añade descubrimiento oficial viable; no garantiza recuperar todo el histórico. Se conservan productos y referencias existentes. Ejecución manual del parser sigue disponible para diagnóstico.
+
+## Retiro efectivo confirmado en el pipeline — 2026-09-26
+
+El delta ya no intenta esta fuente: la omite con motivo, en vez de gastar reintentos
+y salir en rojo (era el patrón de los días previos).
+
+```
+[SOURCE-RETIRED] sevenseas: Repeated API and HTML 403. Official PRH manga and Seven
+Seas selections verified (104 accepted products); partial replacement only,
+historical records retained.
+```
+
+Nota de lectura: el recibo declara reemplazo **parcial** vía PRH. No equivale a
+cobertura del catálogo de Seven Seas.

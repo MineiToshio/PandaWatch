@@ -872,3 +872,11 @@ decisiones, las 149 gotchas, convenciones, dashboard, imágenes) se movió a
 Al cerrar una tarea meaningful: actualizá el doc de referencia que corresponda (NO
 metas detalle nuevo en CLAUDE.md — mantenelo chico), sincronizá el gist si aplica,
 y bumpeá esta fecha. Nada de changelog narrativo acá.
+
+## Operación de inicialización — 2026-09-27
+
+El delta difiere fuentes sin recibo compatible; no absorbe migraciones históricas.
+Usar `BASELINE_BATCH_SIZE=3 bash scripts/scrape_full.sh` para endpoints YAML
+pendientes, o `BASELINE_WIKI=viz bash scripts/scrape_full.sh` para un wiki.
+No ejecutar estandarización/aliases masivos mientras se estabiliza la carga de
+4.917 crudos. Detalles y decisiones: `docs/scraper/audits/2026-09-27-operations.md`.

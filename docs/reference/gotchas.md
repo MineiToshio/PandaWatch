@@ -3,7 +3,7 @@
 > Documento de referencia de PandaWatch, cargado **bajo demanda** desde
 > [CLAUDE.md](../../CLAUDE.md). Leelo cuando vayas a trabajar en este tema.
 
-## The 223 known gotchas
+## The 230 known gotchas
 
 Cada gotcha es la regla durable + la referencia de código. El detalle histórico
 (cómo se descubrió, conteos retroactivos, nombres de tests) está en git.
@@ -4389,3 +4389,167 @@ Auditoría 2026-09-25: Médaka-Box no es un box set por llevar «Box» en el nom
 se corrige el caso separado por guion. Double Edition / Edition double tampoco
 prueba formato premium; requiere hardcover, collector u otra señal adicional.
 Las cajas y versiones premium reales de esas series siguen admitidas.
+
+### #227 — El sueño de macOS congela el delta y neutraliza sus timeouts
+
+Descubierta en el delta del 2026-09-26, que a las 24 h seguía corriendo (un delta
+normal tarda 30-90 min). No fue un cuelgue: el run avanzaba, pero dos pasos
+nocturnos consumieron wall-clock absurdo y **completaron igual**, sin que su
+`timeout` disparara:
+
+| Paso | Ventana | Wall-clock | Presupuesto declarado | ¿Murió? |
+|---|---|---|---|---|
+| `viz` | 26 14:35 → 27 01:49 | **40 454 s (11.2 h)** | 14 400 s | no, completó |
+| `kodansha-us` | 27 01:49 → 27 08:54 | **25 462 s (7.1 h)** | 14 400 s | no, completó |
+| `storefronts` | 27 08:54 → 10:50 | 6 965 s | 14 400 s | no |
+
+Los pasos **diurnos** de la misma corrida fueron normales (listadomanga 2357 s,
+animeclick 3107 s). El discriminante es la hora, no la fuente.
+
+Causa: la máquina corría **en batería** y entraba en `Maintenance Sleep` en ciclos
+(`pmset -g log` → `Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active
+Using Batt`). Mientras el sistema duerme el proceso se congela, pero **el reloj de
+pared sigue**. El `timeout $secs` de `_run_timed` (`scripts/scrape_delta.sh:184`) no
+contabiliza el tiempo dormido igual que `date +%s`, así que:
+
+- la **duración reportada en el log es wall-clock** e incluye el sueño;
+- el **timeout cuenta tiempo despierto**, y por eso nunca alcanzó las 4 h;
+- el resultado es un paso que "tardó 11 horas" y aun así terminó bien.
+
+No hay handler de `SIGTERM` en `manga_watch.py` (verificado), así que la hipótesis
+de "el proceso ignora la señal" queda descartada: la señal simplemente nunca se envió.
+
+**Implicaciones al leer un run:**
+
+1. **Una duración enorme no implica una fuente lenta ni un cuelgue.** Antes de
+   diagnosticar una fuente, cruzar la ventana del paso contra `pmset -g log`.
+2. **Los timeouts del pipeline no son un freno de wall-clock.** No se puede
+   garantizar que un delta cierre en N horas si la máquina puede dormir.
+3. El lock (`data/.scrape.lock`) queda tomado todo ese tiempo, de modo que **la
+   corrida del día siguiente no arranca** — el modo de fallo observado el 09-27.
+
+**Mitigación** (decisión del owner, no aplicada): correr el delta bajo `caffeinate -i`
+(o enchufada) cuando se espera que atraviese la noche, que es justo el caso de
+cualquier corrida con `[SOURCE-INITIAL-FULL]` masivo (#228).
+
+### #228 — Una migración de `ingestion_policy.yml` convierte el delta en un full
+
+En el mismo run del 2026-09-26, la Fase 1 anunció:
+
+```
+[SOURCE-INITIAL-FULL] 137 sources require a complete catalog scan
+```
+
+Es el comportamiento **documentado y deseado** (una fuente nueva o modificada exige
+baseline histórico antes de poder hacer delta), pero al migrar la política de golpe
+lo pidieron **137 fuentes a la vez**, más 6 wikis (`viz`, `kodansha-us`, `jd-intl`,
+`kimdong`, `ipm`, `yaakz`). Efectos medidos:
+
+- `viz` recorrió **168 meses** (2013-01 → 2026-12) en vez de la ventana delta.
+- `kodansha-us`, `jd-intl`, `kimdong`, `ipm`, `yaakz`: rango 2000-01 → 2026-09.
+- La **Fase 1 murió por timeout** (90 min, `rc=124`) con el catálogo a medio
+  recorrer, o sea la baseline quedó **parcial** pese al costo.
+- El corpus pasó de 19 378 a 25 607 líneas y los **crudos saltaron a 11 036**,
+  37× el umbral de 300 del delta diario.
+
+> **Esas dos cifras son de MITAD DE RUN, no el resultado.** Se tomaron mientras el
+> run seguía en la fase de retrofits de cleanup. Al cerrar, `filter_collectible`
+> expulsó **6118 no-coleccionables** (casi todos `regular_tomo`: el barrido completo
+> de catálogo arrastra los tomos regulares junto con las ediciones especiales) y el
+> enforcer consolidó, así que el estado final fue **19 485 items y 4917 crudos** —
+> delta neto de **+107 items**. Al leer una corrida con `[SOURCE-INITIAL-FULL]`
+> masivo hay que esperar el cierre: el pico intermedio infla el conteo ~5× y no es
+> lo que queda en el corpus.
+
+Lo que entra en esa avalancha es mayormente **catálogo histórico**, no novedades:
+entre los items de score más alto hay títulos de 2013-2021. Contar "items nuevos"
+como "novedades del día" en una corrida así sobre-cuenta por más de un orden de
+magnitud.
+
+**Al planificar una migración de política**: hacerla por tandas, o correrla como
+`scrape_full.sh` explícito (que tiene el presupuesto para ello) en vez de dejar que
+el delta la absorba.
+
+### #229 — 「畫冊等級」 describe el PAPEL, no el producto
+
+El extractor de señales trata `畫冊` (artbook) como evidencia de `product_type =
+artbook` (`manga_watch.py:408`). Pero la copy comercial china de ediciones premium
+usa `畫冊` en construcción COMPARATIVA para presumir la calidad del papel:
+
+```
+內文用紙皆採用畫冊等級的高階美術紙120g雪白畫刊
+("el papel interior es de papel de arte de alto nivel, de grado ARTBOOK")
+```
+
+Eso no dice que el producto sea un artbook: dice que el papel es tan bueno como el
+de uno. Medido en el corpus del 2026-09-26: **21 items** cuya descripción contiene
+`畫冊等級`/`畫冊級`, y **21 de 21 (100%) quedaron `product_type = artbook` sin que el
+título lo respalde** — cero usos legítimos. Es toda la familia de *鋼之鍊金術師完全版*
+(Fullmetal Alchemist kanzenban) de Kingstone: **18 tomos numerados + 3 box sets**.
+
+Por qué importa más de lo que parece: `product_type` alimenta el `edition_key`, así
+que un box set etiquetado `artbook` se agrupa mal, y es justo la categoría que este
+proyecto caza. El patrón va a reaparecer en CADA edición premium en chino, porque
+"papel de nivel artbook" es argumento de venta estándar del formato 完全版/典藏版.
+
+Misma familia que **#188** (un `+` después de un token de home video enumera el
+CONTENIDO de la caja) y **#193** (el fallback de autor leía el mega-menú): un token
+correcto matcheado en el ROL SINTÁCTICO equivocado.
+
+Precedente del fix en la misma función: `_build_phrase_pattern` ya lleva
+`(?<!漫)` para que `漫畫集` (antología) no matchee `畫集`, y existe
+`_ARTBOOK_BONUS_ATTACH_RE` que demociona el artbook ADJUNTO como bonus. El guard
+natural es negar la construcción de grado (`畫冊(?!等級|級)`) o democionar por
+descripción igual que el bonus. **No aplicado**: cambia `product_type` y por lo
+tanto `edition_key` y slugs — decisión del owner.
+
+### #230 — Las searches de Panini dejaron de paginar y el reporte no lo dice
+
+Entre la corrida del 2026-09-24 y la del 2026-09-25 las búsquedas de Panini pasaron
+de recorrer varias páginas a quedarse en la primera, en los TRES storefronts a la vez
+(ES, MX, BR). Medición sobre los logs de Fase 1:
+
+| Run | Searches de Panini que paginaron | Searches que devolvieron exactamente 12 |
+|---|--:|--:|
+| 2026-09-24 | **21** | 0 |
+| 2026-09-25 | 0 | **28** |
+| 2026-09-26 | 0 | **28** |
+
+El 12 es el tamaño de página de la tienda, no una coincidencia: las búsquedas con
+pocos resultados siguen devolviendo su cuenta real (`kanzenban` 2, `tapa dura` 3,
+`cofre` 5, `deluxe` 8) y sólo las que tienen fondo suficiente se clavan en 12. En el
+09-24 las mismas keywords daban `edicion especial` **50 (5 págs)** y
+`edicion limitada` **29 (3 págs)**.
+
+**El sitio está sano** — verificado en vivo el 2026-09-27 contra
+`tiendapanini.com.mx/catalogsearch/result/?q=edicion%20especial`: HTTP 200, 304 KB,
+**27 productos** en la primera página y paginación presente (`class="item
+pages-item-next"`, enlaces `p=2` … `p=5`), **sin Queue-it**. O sea la truncación está
+de nuestro lado del parser, no en un bloqueo del host.
+
+**No lo causó el endurecimiento de fuentes**: el commit `3244126` aterrizó el 09-25 a
+las 16:33 y el delta del 09-25 ya mostraba el 12 habiendo corrido a las 11:05, o sea
+sobre código previo. Tampoco hubo commits entre el 09-24 y el 09-25.
+
+Modo de fallo: **es silencioso y además se autoencubre**. No hay error ni skip — sólo
+23 searches entre el 20% y el 44% de su mediana, y como esos valores bajos entran al
+baseline, cada día degradan la mediana contra la que se compara el día siguiente. Es
+el mismo mecanismo de yield parcial silencioso anotado para Planet Manga en #208.
+
+Pista para el diagnóstico (sin verificar): las entradas de search llevan
+`&skip_default_filters=true`; conviene comprobar si ese parámetro cambia el toolbar
+de paginación que el parser busca. **Nada aplicado** — es cambio de parser/config.
+
+### Resolución de #227–#230 — 2026-09-27
+
+- #227: ambos wrappers usan `caffeinate -i -w PID` en macOS durante su ejecución.
+- #228: delta difiere inicializaciones; full admite tandas YAML o un wiki elegido.
+  Ya no amplía silenciosamente cada wiki del delta a cuatro horas.
+- #229: guard sintáctico del grado de papel; 21 filas reparadas, URLs/slugs intactos.
+- #230: causa reproducida en el código vigente: cambio de ruta del controlador de
+  Magento al añadir `/index/`. No era `skip_default_filters`. El nuevo guard admite
+  exactamente esa equivalencia y se verificó en HTTP con página 2 y enlace a 3.
+
+El diagnóstico histórico de que VIZ/Kodansha «ingirieron bien pese a rc=1» debe
+leerse como persistencia parcial, no completitud: hubo 429/timeouts y paginación
+repetida. No se eliminó el error ni se emitieron recibos falsos.

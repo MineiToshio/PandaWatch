@@ -341,7 +341,7 @@ def _virtual_source() -> Source:
         name="US - VIZ Media Special Editions",
         url=CALENDAR_URL,
         country="Estados Unidos",
-        language="English",
+        language="Inglés",
         publisher="VIZ Media",
         source_class="trusted_catalog",
         kind="wiki",

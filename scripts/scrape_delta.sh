@@ -57,6 +57,11 @@
 set +e
 set -u
 
+# Prevent idle sleep from stretching a bounded run across the next daily run.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -w "$$" >/dev/null 2>&1 &
+fi
+
 cd "$(dirname "$0")/.."
 
 VENV_PY=".venv/bin/python"
@@ -169,18 +174,6 @@ PER_HOST_LIMIT="${PER_HOST_LIMIT:-2}"
 # Si ninguno está disponible, corre sin timeout (mejor que fallar).
 _run_timed() {
     local secs=$1; shift
-    # A new/changed source needs a historical baseline, not the short delta budget.
-    local previous="" argument wiki_id=""
-    for argument in "$@"; do
-        if [[ "$previous" == "--bootstrap-wiki" ]]; then wiki_id="$argument"; break; fi
-        previous="$argument"
-    done
-    if [[ -n "$wiki_id" ]]; then
-        if "$VENV_PY" -c 'import sys; from scripts import ingestion_policy as p; s=p.load_policy()["wikis"].get(sys.argv[1], {}); sys.exit(0 if s.get("enabled") and p.needs_full("delta", "data", "wiki:"+sys.argv[1], s) else 1)' "$wiki_id"; then
-            secs=14400
-            echo "    [INITIAL-FULL] $wiki_id: presupuesto histórico de $secs segundos"
-        fi
-    fi
     if command -v timeout &>/dev/null 2>&1; then
         timeout "$secs" "$@"
         return $?

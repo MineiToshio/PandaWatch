@@ -77,3 +77,21 @@ def commit_baseline(data_dir, source, config, *, evidence, min_score=20):
 def needs_full(mode, data_dir, source, config, *, min_score=20):
     return mode == 'full' or (mode == 'delta' and not has_baseline(
         data_dir, source, config, min_score=min_score))
+
+
+def attempt_path(data_dir, source):
+    return Path(data_dir) / '.source-attempts' / receipt_path(data_dir, source).name
+
+
+def record_attempt(data_dir, source):
+    path = attempt_path(data_dir, source)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def pending_batch(data_dir, sources, size, *, min_score=20):
+    pending = [s for s in sources if not has_baseline(data_dir, 'yaml:'+s.name, s, min_score=min_score)]
+    def attempted(source):
+        path = attempt_path(data_dir, 'yaml:'+source.name)
+        return (path.stat().st_mtime_ns if path.exists() else 0, source.name)
+    return sorted(pending, key=attempted)[:size]

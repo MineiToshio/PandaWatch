@@ -209,3 +209,30 @@ tocar configuración. Nada aplicado.
 ## Auditoría estratégica — 2026-09-25
 
 SPP-TW queda retirado del job administrado por 403 persistente también en ficha real (CloudFront). Alternativa incorporada: catálogo SPP Manga de Kingstone; ficha tw-kingstone-spp.md. Books.com.tw respondió 403 y no se habilita. TongLi webpagebooks.aspx sí expone BooksDetail.aspx, pero cubre otro editor y no reemplaza SPP; queda candidato, sin activar un parser incompleto.
+
+## Baseline histórica de los 4 storefronts — 2026-09-26
+
+La migración de `ingestion_policy.yml` (#228) pidió `[SOURCE-INITIAL-FULL]` a los
+cuatro storefronts a la vez (rango 2000-01 → 2026-09). Todos completaron:
+
+| Storefront | Candidatos | Reportables |
+|---|--:|--:|
+| `jd-intl` (HK — Jade Dynasty) | 295 | 295 |
+| `kimdong` (VN — NXB Kim Đồng) | 89 | 88 |
+| `ipm` (VN — IPM) | 57 | 57 |
+| `yaakz` (TH) | 45 | 45 |
+
+Duración conjunta del paso `[2s]`: **6965 s**, inflada por el sueño de la máquina
+(#227) — la ventana es 08:54 → 10:50.
+
+`spp-tw` ya no participa: el paso lo omite con motivo explícito, que es el
+comportamiento nuevo y correcto (antes agotaba reintentos en silencio).
+
+```
+[SOURCE-RETIRED] spp-tw: Repeated CloudFront 403/API failures. Kingstone SPP Manga
+catalog is the alternative; historical completeness is not assumed.
+```
+
+Los tres activos emitieron `[ISBN_ANOMALY]` con códigos EAN-13 no-ISBN
+(`5261414730100`, `8935250721509`, `9789888965305`): se conservan crudos, que es
+lo esperado para estos mercados.

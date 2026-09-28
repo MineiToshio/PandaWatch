@@ -35,7 +35,7 @@ def test_full_receipt_requires_all_pages_but_not_other_sources(tmp_path,monkeypa
     monkeypatch.setattr(mw,'detect_empty_or_js',lambda *a:None)
     monkeypatch.setattr(mw,'find_next_page_url',lambda soup,url,visited:None if 'page=2' in url else url+'?page=2')
     monkeypatch.setattr(mw,'extract_generic_html',lambda source,text,**kw:[mw.candidate_from_source(source,'Berserk Deluxe 1',source.url+'/product','')])
-    argv=['scraper','--skip-image-download','--sleep-seconds','0','--ingestion-mode','delta','--workers',str(workers),'--data-dir',str(tmp_path),'--reports-dir',str(tmp_path)]
+    argv=['scraper','--skip-image-download','--sleep-seconds','0','--ingestion-mode','delta','--initialize-sources','--workers',str(workers),'--data-dir',str(tmp_path),'--reports-dir',str(tmp_path)]
     monkeypatch.setattr(sys,'argv',argv)
     assert mw.run(mw.parse_args())==1
     assert source.url+'?page=2' in calls

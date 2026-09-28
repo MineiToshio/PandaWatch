@@ -1135,7 +1135,7 @@ def _build_phrase_pattern(normalized_phrase: str) -> re.Pattern[str]:
         )
     # 漫畫集 / 漫画集 means a manga anthology, not an illustration artbook.
     if normalized_phrase in {"画集", "畫集", "畫冊"}:
-        return re.compile(r"(?<!漫)" + re.escape(normalized_phrase))
+        return re.compile(r"(?<!漫)" + re.escape(normalized_phrase) + r"(?!\s*(?:等[級级]|[級级]))")
     # CJK / símbolos puros: substring directo (sin boundary).
     return re.compile(re.escape(normalized_phrase))
 
@@ -6673,6 +6673,9 @@ def find_next_page_url(
         # query pagination and explicit page paths, including ECBeing _p2.
         current_path = urlparse(current_url).path.rstrip("/")
         next_path = urlparse(url).path.rstrip("/")
+        # Magento's next link adds /index/ to the same search controller.
+        if current_path == '/catalogsearch/result' and next_path == current_path + '/index':
+            next_path = current_path
         if current_path != next_path and not re.search(
             r"(?:/(?:page|p)/\d+|[_/-]p(?:age)?[-_]?\d+)(?:\.html?)?$",
             next_path, re.IGNORECASE,
@@ -8894,6 +8897,10 @@ def derive_series_metadata(candidate: Candidate) -> dict[str, str]:
     }
 
 
+def canonical_language(value: str) -> str:
+    return {'English': 'Inglés', 'Japanese': 'Japonés', 'Chino tradicional': 'Chino'}.get(value, value)
+
+
 def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
     # El title es el nombre OFICIAL, pero los retailers JP le pegan su perk de
     # compra (店舗特典) — "(…ポストカード)【楽天ブックス限定特典】". Eso NO es el nombre
@@ -8920,7 +8927,7 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
         "source_class": candidate.source_class,
         "publisher": candidate.publisher,
         "country": candidate.country,
-        "language": candidate.language,
+        "language": canonical_language(candidate.language),
         "tags": candidate.tags,
         "published_at": candidate.published_at,
         "description": candidate.description,
@@ -9012,6 +9019,9 @@ def candidate_to_json(candidate: Candidate) -> dict[str, Any]:
             ek = ek or derived.get("edition_key", "")
             ed = ed or derived.get("edition_display", "")
             vol = vol or derived.get("volume", "")
+
+    if candidate.language == 'Chino tradicional':
+        row['language_variant'] = 'tradicional'
 
     # Paso B: pasar el series_key/display por el aliases.yml resolver. Esto
     # consolida traducciones multilingües (Demon Slayer = Kimetsu no Yaiba =
@@ -9750,6 +9760,10 @@ def _run_wiki_bootstrap(
         print(f"[SOURCE-RETIRED] {args.bootstrap_wiki}: {spec.get('reason', 'disabled')}")
         return 0
     initial_full = mode != "manual" and lifecycle.needs_full(mode, items_path.parent, "wiki:"+args.bootstrap_wiki, spec, min_score=args.min_score)
+    if initial_full and mode == 'delta' and not getattr(args, 'initialize_sources', False):
+        print(f"[SOURCE-DEFERRED] wiki:{args.bootstrap_wiki}")
+        return 0
+    print(f"[SOURCE-MODE] {'full' if initial_full else mode} wiki:{args.bootstrap_wiki}")
     if initial_full:
         if getattr(args, "coleccion_ids_file", ""):
             raise ValueError("A partial collection list cannot initialize a full baseline")
@@ -10210,7 +10224,19 @@ def run(args: argparse.Namespace) -> int:
     except ImportError:
         import ingestion_policy as lifecycle
     mode = getattr(args, "ingestion_mode", "manual")
+    batch_size = getattr(args, 'baseline_batch_size', 0)
+    if batch_size:
+        if mode != 'full' or batch_size < 1:
+            raise ValueError('--baseline-batch-size requires full mode and a positive size')
+        sources = lifecycle.pending_batch(data_dir, sources, batch_size, min_score=args.min_score)
     full_sources = {src.name for src in sources if lifecycle.needs_full(mode, data_dir, "yaml:"+src.name, src, min_score=args.min_score)}
+    if mode == 'delta' and not getattr(args, 'initialize_sources', False):
+        for name in sorted(full_sources):
+            print(f"[SOURCE-DEFERRED] {name}")
+        sources = [src for src in sources if src.name not in full_sources]
+        full_sources = set()
+    for src in sources:
+        print(f"[SOURCE-MODE] {'full' if src.name in full_sources else mode} {src.name}")
     completed_full_sources = set()
     if full_sources:
         print(f"[SOURCE-INITIAL-FULL] {len(full_sources)} sources require a complete catalog scan")
@@ -10315,6 +10341,8 @@ def run(args: argparse.Namespace) -> int:
         Devuelve dict con: candidates, errors, problems, text (último HTML
         fetcheado para dump diagnóstico), entry (DiagnosticRecorder entry o
         None)."""
+        if source.name in full_sources and not args.dry_run:
+            lifecycle.record_attempt(data_dir, 'yaml:'+source.name)
         local_errors: list[str] = []
         local_problems: list[dict[str, str]] = []
         local_candidates: list[Candidate] = []
@@ -10873,6 +10901,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tracker personal de mangas físicos coleccionistas y artbooks.")
     parser.add_argument("--ingestion-mode", choices=["manual", "full", "delta"],
                         default=os.environ.get("MANGA_WATCH_INGESTION_MODE", "manual"))
+    parser.add_argument("--baseline-batch-size", type=int, default=0,
+                        help="Full mode: initialize only N pending YAML endpoints, oldest attempts first.")
+    parser.add_argument("--initialize-sources", action="store_true",
+                        help="Explicitly allow historical initialization during delta; daily runs defer it.")
     parser.add_argument("--source-policy", default=str(Path(__file__).resolve().parents[1] / "ingestion_policy.yml"))
     parser.add_argument("--sources", default="sources.yml", help="Archivo YAML con fuentes. Default: sources.yml")
     parser.add_argument("--data-dir", default="data", help="Directorio de datos. Default: data")

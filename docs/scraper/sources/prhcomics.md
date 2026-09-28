@@ -279,3 +279,7 @@ administrados por 403 persistente (HTML y API), no por falta de productos.
 Las novelas ligeras/danmei premium siguen dentro del alcance, confirmado por el owner.
 
 Verificación final 2026-09-25: importación limpia con las nuevas protecciones conserva **104 productos**; delta posterior: **0 nuevos/cambiados**. Se recuperaron las ediciones distintas de Gundam Origin y Vinland Saga que una consolidación previa había fusionado pese a tener ISBN diferentes. El resultado exploratorio de 102 filas se descartó.
+
+### Resolución operativa — 2026-09-27
+
+El emisor usa `Inglés` en lugar de `English`; el sink canónico protege también las reingestas. No cambian endpoints ni criterios de descubrimiento.

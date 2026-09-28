@@ -197,3 +197,24 @@ de paginación, no un fallo de ingestión.
 o si `total_count` miente, el catálogo podría estar truncándose sin que se note.
 Conviene una sonda manual de `page=1` vs `page=2` antes de tocar nada. Decisión del
 owner.
+
+## `[SOURCE-INITIAL-FULL]`: catálogo completo, 7.1 h — 2026-09-26
+
+```
+[INITIAL-FULL] kodansha-us: presupuesto histórico de 14400 segundos
+[SOURCE-INITIAL-FULL] kodansha-us: complete baseline required
+[BOOTSTRAP-WIKI] rango: 2000-01 → 2026-09
+[kodansha-us] catálogo completo
+[WIKI-ISSUE] kodansha_us: repeated search page=2
+```
+
+Resultado: **243 candidatos, 104 reportables**. La baseline se obtuvo.
+
+Duración **25 462 s (7.1 h)** contra un presupuesto de 14 400 s, sin que el timeout
+disparara: la ventana (01:49 → 08:54) es íntegramente nocturna y la máquina dormía
+(#227). La incidencia `repeated search page=2` es la misma ya conocida y no impidió
+la ingesta; el `rc=1` es por incidencia, no por fallo (#223).
+
+### Resolución operativa — 2026-09-27
+
+Se conserva rc=1 ante `repeated search page=2`: los productos guardados no prueban completitud. El delta difiere el wiki sin recibo en vez de extenderlo a 4 horas; la migración se selecciona con `BASELINE_WIKI=kodansha-us bash scripts/scrape_full.sh`. El fallo no se convierte en éxito ni se fabrica un recibo.

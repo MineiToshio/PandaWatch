@@ -132,3 +132,31 @@ se preservan parámetros de identidad/versión. Esto es un riesgo del caché loc
 no prueba de un producto incorrecto en esta fuente. La revisión por URL y el
 resultado de las re-descargas están en `reports/image-audit-2026-09-25/`. Ante
 contenido cambiado o descarga fallida se conserva la imagen anterior.
+
+## Las searches dejaron de paginar — 2026-09-25 (2º día el 09-26)
+
+Las entradas `(search)` de esta tienda se quedan en la **primera página**. En este
+run **9 de ellas devolvieron exactamente 12 candidatos**, que es el tamaño de página
+de la tienda: las keywords con poco fondo siguen dando su cuenta real (2, 3, 5, 8) y
+sólo las que tienen catálogo detrás se clavan en 12.
+
+El corte está fechado entre corridas: el **2026-09-24** las searches de Panini
+paginaron **21 veces** (p. ej. `edicion especial` → 50 en 5 págs, `edicion limitada`
+→ 29 en 3 págs) y **ninguna** dio 12; desde el **2026-09-25** paginan **0 veces** y 28
+dan 12. Afecta a los tres storefronts (ES, MX, BR) simultáneamente.
+
+**No es un bloqueo del host y no lo causó el endurecimiento de fuentes** del
+2026-09-25: la tienda de México (`tiendapanini.com.mx`) responde sana (verificado en vivo el 09-27: HTTP 200,
+27 productos en la primera página, paginación `pages-item-next` con `p=2`…`p=5`, sin
+Queue-it), y el delta del 09-25 ya mostraba el 12 corriendo sobre código previo al
+commit. Mecanismo, medición completa y la pista de `&skip_default_filters=true` en
+**gotcha #230**.
+
+Consecuencia operativa: el reporte de salud lo lista como *yield regression* (20-44%
+de la mediana) pero **sin error ni skip**, y esos valores bajos entran al baseline, así
+que degradan la mediana contra la que se compara mañana. Nada aplicado — es cambio de
+parser/config, decisión del owner.
+
+### Resolución operativa — 2026-09-27
+
+Causa reproducida: el servidor devuelve `/catalogsearch/result/index/?p=2`, que el guard de paths rechazaba desde `/catalogsearch/result/`. Se acepta esa equivalencia exacta. HTTP 200 en páginas 1 y 2, con enlace a página 3, usando `skip_default_filters=true`. No se eliminó ese parámetro ni se relajó el guard a cualquier URL.

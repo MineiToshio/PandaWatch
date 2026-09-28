@@ -777,3 +777,15 @@ no requieren el servicio de búsqueda ni la cola de aprobación.
 Los comandos históricos usan `image_snapshot.py`: si el corpus cambia durante
 su procesamiento, abortan en lugar de restaurar una copia vieja. La limpieza
 manual de previews también conserva archivos referenciados por `cover_history`.
+
+### Operación de baselines e idioma — 2026-09-27
+
+El delta sólo opera sobre fuentes con baseline compatible; registra las pendientes
+como diferidas. La inicialización se ejecuta mediante full por tandas YAML
+(`BASELINE_BATCH_SIZE`) o wiki explícito (`BASELINE_WIKI`). Los intentos rotan pero
+no acreditan completitud. La salud persiste el modo efectivo de cada fuente y
+excluye comparaciones con historia sin modo explícito cuando existe uno nuevo.
+
+El sink `candidate_to_json` normaliza English/Japanese/Chino tradicional a los
+idiomas canónicos. Para chino tradicional conserva `language_variant: tradicional`.
+No modifica el idioma de la edición ni mezcla países; sólo normaliza la etiqueta.

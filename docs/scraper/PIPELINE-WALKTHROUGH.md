@@ -916,9 +916,41 @@ mínimo de score. Error, cap, dry-run, persistencia fallida o conflictos pendien
 impiden declararlo completo. HTML: una fuente sana puede completar aunque otra
 falle; wikis: se exige ventana que incluya el presente y candidatos. Un recibo
 prueba recorrido de los endpoints configurados, NO cobertura del universo editorial.
-El primer delta tras migrar puede durar más porque faltan recibos históricos;
-no fabricar recibos desde el mero conteo de productos. Los wikis iniciales tienen
-presupuesto de hasta 4 horas en el wrapper delta; un timeout sigue siendo fallo.
+Desde 2026-09-27 el delta **difiere** las fuentes sin recibo compatible
+(`[SOURCE-DEFERRED]`) y sigue con las certificadas. No fabrica recibos desde el
+conteo de productos ni convierte la rutina diaria en una migración histórica.
+La salida distingue fuentes diferidas de fuentes vacías; su cobertura queda pendiente.
+`--initialize-sources` permite la inicialización dentro de una invocación delta
+manual explícita, pero la rutina diaria no lo utiliza.
+
+Migración operativa por tandas (incluye limpieza, validación y build del full):
+
+```bash
+BASELINE_BATCH_SIZE=3 bash scripts/scrape_full.sh
+BASELINE_WIKI=viz bash scripts/scrape_full.sh
+```
+
+El primer comando selecciona hasta tres endpoints YAML sin recibo y salta wikis;
+el segundo selecciona un wiki y salta YAML y los demás wikis. Son opciones
+mutuamente excluyentes. Los YAML fallidos rotan al final mediante timestamps en
+`data/.source-attempts/`; un intento nunca equivale a un recibo. El comando se
+puede repetir sin volver a elegir los endpoints ya certificados. Sin estas
+variables el full conserva su alcance habitual. Ambos wrappers mantienen despierto
+macOS mientras viven (`caffeinate -i -w PID`), sin cambiar ajustes permanentes ni
+prometer ejecución con la tapa cerrada o tras un apagado.
+
+
+**Cuánto cuesta la migración, medido (delta 2026-09-26).** La Fase 1 anunció
+`[SOURCE-INITIAL-FULL] 137 sources require a complete catalog scan` y **murió por
+timeout a los 90 min con el catálogo a medio recorrer**, así que un solo delta NO
+absorbe la migración: los recibos en `data/.source-baselines/` pasaron de **4 a 20**
+(+16 de ~137) en una corrida de 25 h. A ese ritmo harían falta varios días de
+corridas y cada una vuelve a gastar el presupuesto en fuentes que no alcanzan a
+completar. Además el barrido arrastra catálogo histórico completo, que
+`filter_collectible` después expulsa en masa (6118 no-coleccionables ese día) y que
+dispara el freno de 300 crudos del delta diario, bloqueando la estandarización. La
+migración se hace **por tandas** o con `scrape_full.sh` explícito, que tiene el
+presupuesto. Ver gotchas #227 (el sueño de macOS neutraliza los timeouts) y #228.
 
 HTML sin timestamp de modificación fiable: full y delta recorren páginas completas
 (tope de seguridad 1000; si existe siguiente al alcanzar el tope, corrida incompleta).

@@ -76,7 +76,7 @@ def _virtual_source() -> Source:
         name="US - Kinokuniya Exclusives",
         url=LISTING_URL,
         country="Estados Unidos",
-        language="English",
+        language="Inglés",
         # Kinokuniya es el RETAILER, NO la editorial. NO poner el nombre de la
         # tienda como publisher (gotcha: la tienda no es la editorial). La
         # editorial real (Viz, Kodansha Comics, Seven Seas, TOKYOPOP…) la deriva
