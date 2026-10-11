@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Rarity Color System" subtitle="6-level rarity scale with icons, tooltips, and score mapping" viewport="700x400" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 12px; }
+.rarity-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.rarity-row {
+  display: grid; grid-template-columns: 140px 1fr 100px 80px;
+  align-items: center; gap: 12px;
+  background: #fff; border-radius: 10px;
+  padding: 12px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  border: 1px solid #EDE9E2;
+}
+.rarity-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
+  border: 1px solid transparent;
+  width: fit-content;
+}
+.rarity-score {
+  font-size: 10px; color: #A89E93;
+  font-family: 'JetBrains Mono', monospace;
+}
+.rarity-desc { font-size: 11px; color: #706560; line-height: 1.4; }
+.rarity-hex { font-size: 10px; color: #A89E93; font-family: 'JetBrains Mono', monospace; }
+svg { flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="label">Rarity System — 6 Levels</div>
+<div class="rarity-grid">
+
+  <div class="rarity-row">
+    <div class="rarity-badge" style="background:#F1F5F9; color:#64748B; border-color:#CBD5E1;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+      Accessible
+    </div>
+    <div class="rarity-desc">Special edition, easy to find. Non-limited premium formats.</div>
+    <div class="rarity-score">Score 0–20</div>
+    <div class="rarity-hex">#64748B</div>
+  </div>
+
+  <div class="rarity-row">
+    <div class="rarity-badge" style="background:#EDFAF3; color:#1A8A5A; border-color:#A6DFCA;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      Limited
+    </div>
+    <div class="rarity-desc">Limited print run, wide enough to find with effort.</div>
+    <div class="rarity-score">Score 21–40</div>
+    <div class="rarity-hex">#1A8A5A</div>
+  </div>
+
+  <div class="rarity-row">
+    <div class="rarity-badge" style="background:#EEF2FF; color:#2D52CC; border-color:#C7D2FE;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      Rare
+    </div>
+    <div class="rarity-desc">Hard to find. Usually secondary market required.</div>
+    <div class="rarity-score">Score 41–65</div>
+    <div class="rarity-hex">#2D52CC</div>
+  </div>
+
+  <div class="rarity-row">
+    <div class="rarity-badge" style="background:#F5F3FF; color:#7C3AED; border-color:#DDD6FE;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75z"/><path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75z"/></svg>
+      Very Rare
+    </div>
+    <div class="rarity-desc">Very low availability. Regional or short print window.</div>
+    <div class="rarity-score">Score 66–85</div>
+    <div class="rarity-hex">#7C3AED</div>
+  </div>
+
+  <div class="rarity-row" style="background: linear-gradient(to right, #FFFBEB, #fff);">
+    <div class="rarity-badge" style="background:#FFFBEB; color:#9E6C00; border-color:#FDE68A;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12l4 6-10 13L2 9z"/></svg>
+      Ultra Rare
+    </div>
+    <div class="rarity-desc">Extremely scarce. Event exclusives, lotteries, micro-prints.</div>
+    <div class="rarity-score">Score 86–100</div>
+    <div class="rarity-hex">#9E6C00</div>
+  </div>
+
+  <div class="rarity-row" style="opacity: 0.7;">
+    <div class="rarity-badge" style="background:#F9FAFB; color:#9CA3AF; border-color:#E5E7EB; border-style: dashed;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Unknown
+    </div>
+    <div class="rarity-desc">Insufficient data. Source or score not available.</div>
+    <div class="rarity-score">Score null</div>
+    <div class="rarity-hex">#9CA3AF</div>
+  </div>
+
+</div>
+
+<div class="label">Score → Rarity Mapping</div>
+<div style="display:flex; height:20px; border-radius:999px; overflow:hidden; gap:2px;">
+  <div style="flex:20; background:#64748B;" title="0–20 Accessible"></div>
+  <div style="flex:20; background:#1A8A5A;" title="21–40 Limited"></div>
+  <div style="flex:25; background:#2D52CC;" title="41–65 Rare"></div>
+  <div style="flex:20; background:#7C3AED;" title="66–85 Very Rare"></div>
+  <div style="flex:15; background:#9E6C00;" title="86–100 Ultra Rare"></div>
+</div>
+<div style="display:flex; justify-content:space-between; margin-top:5px;">
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">0</span>
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">20</span>
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">40</span>
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">65</span>
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">85</span>
+  <span style="font-size:9px; color:#A89E93; font-family:'JetBrains Mono',monospace;">100</span>
+</div>
+
+</body>
+</html>

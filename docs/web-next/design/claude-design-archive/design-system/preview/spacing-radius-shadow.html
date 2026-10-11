@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Radius, Shadow & Motion" subtitle="Border radius scale, 5-level elevation, animation tokens" viewport="700x380" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 12px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; align-items: flex-end; }
+.radius-item { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.radius-box { width: 56px; height: 56px; background: #fff; border: 1.5px solid #DDD8CF; }
+.radius-val { font-size: 10px; color: #8C8178; font-family: 'JetBrains Mono', monospace; }
+.radius-token { font-size: 9px; color: #A89E93; font-family: 'JetBrains Mono', monospace; }
+.shadow-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.shadow-demo {
+  background: #fff; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  width: 130px; height: 80px; border-radius: 10px;
+  gap: 4px;
+}
+.shadow-name { font-size: 11px; font-weight: 500; color: #554D49; }
+.shadow-val { font-size: 9px; color: #A89E93; font-family: 'JetBrains Mono', monospace; text-align: center; padding: 0 8px; line-height: 1.4; }
+.motion-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.motion-item { background: #fff; border-radius: 8px; padding: 10px 14px; border: 1px solid #EDE9E2; display: flex; flex-direction: column; gap: 3px; }
+.motion-name { font-size: 11px; font-weight: 500; color: #554D49; }
+.motion-val { font-size: 10px; color: #A89E93; font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+
+<div class="label">Border Radius Scale</div>
+<div class="row">
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:2px;"></div>
+    <div class="radius-val">2px</div>
+    <div class="radius-token">--radius-xs</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Inline tags</div>
+  </div>
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:6px;"></div>
+    <div class="radius-val">6px</div>
+    <div class="radius-token">--radius-sm</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Inputs</div>
+  </div>
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:10px;"></div>
+    <div class="radius-val">10px</div>
+    <div class="radius-token">--radius-md</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Cards</div>
+  </div>
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:16px;"></div>
+    <div class="radius-val">16px</div>
+    <div class="radius-token">--radius-lg</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Modals</div>
+  </div>
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:24px;"></div>
+    <div class="radius-val">24px</div>
+    <div class="radius-token">--radius-xl</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Panels</div>
+  </div>
+  <div class="radius-item">
+    <div class="radius-box" style="border-radius:999px; width:80px; height:32px;"></div>
+    <div class="radius-val">999px</div>
+    <div class="radius-token">--radius-full</div>
+    <div style="font-size:9px; color:#C6BEB4; text-align:center;">Pills/badges</div>
+  </div>
+</div>
+
+<div class="label">Shadow / Elevation System</div>
+<div class="shadow-row">
+  <div class="shadow-demo" style="box-shadow:0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);">
+    <div class="shadow-name">shadow-sm</div>
+    <div class="shadow-val">Cards, rest state</div>
+  </div>
+  <div class="shadow-demo" style="box-shadow:0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);">
+    <div class="shadow-name">shadow-md</div>
+    <div class="shadow-val">Hover, dropdowns</div>
+  </div>
+  <div class="shadow-demo" style="box-shadow:0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);">
+    <div class="shadow-name">shadow-lg</div>
+    <div class="shadow-val">Modals, sheets</div>
+  </div>
+  <div class="shadow-demo" style="box-shadow:0 24px 48px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.06);">
+    <div class="shadow-name">shadow-xl</div>
+    <div class="shadow-val">Overlays, drawers</div>
+  </div>
+  <div class="shadow-demo" style="border:1.5px solid #DDD8CF; box-shadow:none;">
+    <div class="shadow-name">border only</div>
+    <div class="shadow-val">Sidebar filters, inline</div>
+  </div>
+</div>
+
+<div class="label">Motion Tokens</div>
+<div class="motion-row">
+  <div class="motion-item">
+    <div class="motion-name">fast</div>
+    <div class="motion-val">120ms</div>
+    <div style="font-size:9px; color:#C6BEB4;">Tooltips, badges</div>
+  </div>
+  <div class="motion-item">
+    <div class="motion-name">normal</div>
+    <div class="motion-val">200ms</div>
+    <div style="font-size:9px; color:#C6BEB4;">Card hover, chips</div>
+  </div>
+  <div class="motion-item">
+    <div class="motion-name">slow</div>
+    <div class="motion-val">300ms</div>
+    <div style="font-size:9px; color:#C6BEB4;">Bottom sheet, modal</div>
+  </div>
+  <div class="motion-item">
+    <div class="motion-name">ease-out-expo</div>
+    <div class="motion-val">cubic-bezier(0.22,1,0.36,1)</div>
+    <div style="font-size:9px; color:#C6BEB4;">Primary easing — all transitions</div>
+  </div>
+</div>
+
+</body>
+</html>

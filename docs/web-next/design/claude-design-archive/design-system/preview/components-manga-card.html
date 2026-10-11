@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Manga Card — Single" subtitle="Dark opaque rarity badges — readable on any cover image" viewport="700x480" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 12px; }
+.cards-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.state-label { font-size: 10px; color: #A89E93; text-align: center; margin-top: 8px; }
+
+/* ── MANGA CARD ── */
+.manga-card {
+  width: 208px; border-radius: 12px; overflow: visible;
+  background: #fff; border: 1px solid #E5E0D8;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.22,1,0.36,1), box-shadow 180ms;
+  position: relative;
+}
+.manga-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.10);
+}
+.card-cover {
+  width: 100%; aspect-ratio: 2/3;
+  position: relative; overflow: hidden;
+  border-radius: 11px 11px 0 0;
+}
+/* Cover is clean — no text overlay, no strips */
+.cover-bg { position: absolute; inset: 0; }
+.cover-texture {
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 14px);
+}
+
+/* Rarity badge — dark opaque pill, rarity color for text+icon only */
+.cover-rarity {
+  position: absolute; top: 8px; left: 8px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 5px; font-size: 10px;
+  font-weight: 600; font-family: 'Space Grotesk', sans-serif;
+  background: rgba(20,17,14,0.82); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+/* Status badge — top right, text label not a dot */
+.cover-status {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  padding: 3px 7px; border-radius: 4px; font-size: 9px;
+  font-weight: 700; font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+/* Info section */
+.card-info { padding: 10px 12px 12px; overflow: hidden; }
+.card-series {
+  font-size: 10px; color: #A89E93; font-weight: 500;
+  letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-title {
+  font-size: 13px; font-weight: 600; font-family: 'Space Grotesk', sans-serif;
+  color: #1C1915; line-height: 1.25; margin-bottom: 6px;
+  display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-meta { font-size: 11px; color: #8C8178; margin-bottom: 2px; }
+.card-lang {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: #A89E93; margin-top: 3px;
+}
+.card-edition {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #F5F1EB; color: #706560; border-radius: 3px;
+  padding: 2px 7px; font-size: 10px; font-weight: 500; margin-top: 7px;
+}
+
+/* Hover action tray */
+.card-actions {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: rgba(28,25,21,0.88); backdrop-filter: blur(6px);
+  padding: 8px 10px; display: flex; gap: 6px;
+  opacity: 0; transition: opacity 150ms;
+  border-radius: 0 0 11px 11px;
+}
+.manga-card:hover .card-actions { opacity: 1; }
+.action-btn {
+  flex: 1; text-align: center; font-size: 11px; font-weight: 500;
+  color: #fff; padding: 5px; border-radius: 4px;
+  background: rgba(255,255,255,0.12);
+}
+</style>
+</head>
+<body>
+
+<div class="label">Manga Card — Single Item · 3 States</div>
+<div class="cards-row">
+
+  <!-- Card 1: Default — Rare, no status -->
+  <div>
+    <div class="manga-card">
+      <div class="card-cover">
+        <img src="../uploads/pasted-1779745655223-0.png"
+          alt="Bakuman 20th Anniversary Edition cover"
+          style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center top;">
+        <div class="cover-rarity" style="color:#8BA8F8;">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Rare
+        </div>
+        <div class="card-actions">
+          <div class="action-btn">View details</div>
+          <div class="action-btn" style="color:rgba(255,255,255,0.65);">Source ↗</div>
+        </div>
+      </div>
+      <div class="card-info">
+        <div class="card-series">Bakuman</div>
+        <div class="card-title">20th Anniversary Edition</div>
+        <div class="card-meta">Tokyopop · Germany</div>
+        <div class="card-lang">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          German
+        </div>
+        <div class="card-edition">Anniversary</div>
+      </div>
+    </div>
+    <div class="state-label">Default state — Rare</div>
+  </div>
+
+  <!-- Card 2: Hover state — Limited, New -->
+  <div>
+    <div class="manga-card" style="transform:translateY(-3px); box-shadow:0 6px 16px rgba(0,0,0,0.10);">
+      <div class="card-cover">
+        <img src="../uploads/pasted-1779745655223-0.png"
+          alt="Bakuman cover"
+          style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center top;">
+        <div class="cover-rarity" style="color:#4DC99A;">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Limited
+        </div>
+        <div class="cover-status" style="background:#D93D1A; color:#fff;">New</div>
+        <div class="card-actions" style="opacity:1;">
+          <div class="action-btn">View details</div>
+          <div class="action-btn" style="color:rgba(255,255,255,0.65);">Source ↗</div>
+        </div>
+      </div>
+      <div class="card-info">
+        <div class="card-series">Bakuman</div>
+        <div class="card-title">Deluxe Collector's Edition Vol. 1</div>
+        <div class="card-meta">Shueisha · Japan</div>
+        <div class="card-lang">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Japanese
+        </div>
+        <div class="card-edition">Deluxe</div>
+      </div>
+    </div>
+    <div class="state-label">Hover state + "New" badge</div>
+  </div>
+
+  <!-- Card 3: Very Rare, status: Changed -->
+  <div>
+    <div class="manga-card">
+      <div class="card-cover">
+        <img src="../uploads/pasted-1779745655223-0.png"
+          alt="Bakuman cover"
+          style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center top;">
+        <div class="cover-rarity" style="color:#C4A8FF;">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg>
+          Super Rare
+        </div>
+        <div class="cover-status" style="background:rgba(158,108,0,0.88); color:#FDE68A;">Changed</div>
+        <div class="card-actions">
+          <div class="action-btn">View details</div>
+          <div class="action-btn" style="color:rgba(255,255,255,0.65);">Source ↗</div>
+        </div>
+      </div>
+      <div class="card-info">
+        <div class="card-series">Bakuman</div>
+        <div class="card-title">Exhibition Fanbook — Ohba &amp; Obata</div>
+        <div class="card-meta">Shueisha · Japan</div>
+        <div class="card-lang">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Japanese
+        </div>
+        <div class="card-edition">Fanbook</div>
+      </div>
+    </div>
+    <div class="state-label">"Changed" badge · Super Rare</div>
+  </div>
+
+  <!-- Anatomy callout -->
+  <div style="display:flex; flex-direction:column; gap:8px; max-width:210px; padding-top:4px;">
+    <div class="label" style="margin-bottom:2px;">Card anatomy</div>
+    <div style="background:#fff; border-radius:10px; padding:14px 16px; border:1px solid #EDE9E2; font-size:11px; color:#706560; line-height:1.7; display:flex; flex-direction:column; gap:7px;">
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#1A8A5A; margin-top:4px; flex-shrink:0;"></div>
+        <span><strong style="color:#1C1915; font-weight:500;">Cover (2:3 ratio)</strong> — clean, no text overlay. Image is the hero.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#2D52CC; margin-top:4px; flex-shrink:0;"></div>
+        <span><strong style="color:#1C1915; font-weight:500;">Rarity badge</strong> — top-left, glassy, only unique cover info</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#D93D1A; margin-top:4px; flex-shrink:0;"></div>
+        <span><strong style="color:#1C1915; font-weight:500;">Status badge</strong> — top-right, "New" or "Changed" as text, not a dot</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#9E6C00; margin-top:4px; flex-shrink:0;"></div>
+        <span><strong style="color:#1C1915; font-weight:500;">Info section</strong> — series, title, publisher·country, language, edition type</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#554D49; margin-top:4px; flex-shrink:0;"></div>
+        <span><strong style="color:#1C1915; font-weight:500;">Hover tray</strong> — "View details" + "Source ↗" appear on hover</span>
+      </div>
+    </div>
+    <div style="background:#EDFAF3; border-radius:8px; padding:10px 12px; border:1px solid #A6DFCA; font-size:11px; color:#1A8A5A; line-height:1.5;">
+      <strong style="font-weight:500;">Price</strong> is never shown on the card — only available in the detail view. ISBN shown on detail view only.
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

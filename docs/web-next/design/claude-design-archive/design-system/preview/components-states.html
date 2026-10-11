@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Loading, Empty & Error States" subtitle="Shimmer skeleton, empty state with suggestions, error, micro-badges" viewport="700x440" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 12px; }
+.states-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 24px; }
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #EDE9E2 25%, #E5E0D8 50%, #EDE9E2 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.6s infinite;
+  border-radius: 4px;
+}
+
+.skel-card { width: 160px; border-radius: 10px; overflow: hidden; background: #fff; border: 1px solid #E5E0D8; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.skel-cover { width: 100%; aspect-ratio: 2/3; }
+.skel-info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 7px; }
+
+.empty-state { background: #fff; border-radius: 10px; padding: 32px 24px; border: 1px solid #E5E0D8; text-align: center; width: 340px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.error-state { background: #fff; border-radius: 10px; padding: 28px 24px; border: 1px solid #FABEAD; text-align: center; width: 280px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.state-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+.state-title { font-size: 15px; font-weight: 600; font-family: 'Space Grotesk', sans-serif; color: #1C1915; margin-bottom: 6px; }
+.state-desc { font-size: 13px; color: #8C8178; line-height: 1.5; margin-bottom: 16px; }
+.state-action { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.state-suggestions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.suggestion-chip { padding: 4px 10px; border-radius: 999px; border: 1px solid #DDD8CF; font-size: 11px; color: #706560; cursor: pointer; background: #F5F1EB; }
+.suggestion-chip:hover { border-color: #1A8A5A; color: #1A8A5A; }
+</style>
+</head>
+<body>
+
+<div class="label">Loading Skeleton — Card Grid</div>
+<div class="states-row">
+  <div class="skel-card">
+    <div class="skeleton skel-cover"></div>
+    <div class="skel-info">
+      <div class="skeleton" style="height:8px; width:50%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:12px; width:90%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:10px; width:70%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:9px; width:40%; border-radius:3px;"></div>
+    </div>
+  </div>
+  <div class="skel-card">
+    <div class="skeleton skel-cover"></div>
+    <div class="skel-info">
+      <div class="skeleton" style="height:8px; width:60%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:12px; width:85%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:10px; width:55%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:9px; width:35%; border-radius:3px;"></div>
+    </div>
+  </div>
+  <div class="skel-card">
+    <div class="skeleton skel-cover"></div>
+    <div class="skel-info">
+      <div class="skeleton" style="height:8px; width:45%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:12px; width:80%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:10px; width:65%; border-radius:3px;"></div>
+      <div class="skeleton" style="height:9px; width:45%; border-radius:3px;"></div>
+    </div>
+  </div>
+  <div style="display:flex; flex-direction:column; justify-content:center; padding:12px 0; gap:6px;">
+    <span style="font-size:11px; color:#A89E93;">Cards animate with</span>
+    <span style="font-size:11px; color:#A89E93;">shimmer left→right</span>
+    <span style="font-size:11px; color:#A89E93;">1.6s ease infinite</span>
+  </div>
+</div>
+
+<div class="label">Empty State — No Results</div>
+<div class="states-row">
+  <div class="empty-state">
+    <div class="state-icon" style="background:#F5F1EB;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A89E93" stroke-width="1.5">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+      </svg>
+    </div>
+    <div class="state-title">No editions found</div>
+    <div class="state-desc">Your current filters returned no results. Try broadening your search or clearing some filters.</div>
+    <div class="state-suggestions">
+      <div class="suggestion-chip">Remove "Japan"</div>
+      <div class="suggestion-chip">Remove "Fanbook"</div>
+      <div class="suggestion-chip">Clear rarity filter</div>
+    </div>
+    <div class="state-action" style="background:#1A8A5A; color:#fff;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      Clear all filters
+    </div>
+  </div>
+
+  <div class="empty-state" style="border-color:#EDE9E2;">
+    <div class="state-icon" style="background:#EDFAF3;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1A8A5A" stroke-width="1.5">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+        <polyline points="22,6 12,13 2,6"/>
+      </svg>
+    </div>
+    <div class="state-title">No series match</div>
+    <div class="state-desc">We haven't tracked any special editions for this series yet. New data is added daily.</div>
+    <div class="state-action" style="background:#F5F1EB; color:#554D49; border:1px solid #DDD8CF;">
+      Browse all editions
+    </div>
+  </div>
+</div>
+
+<div class="label">Error State</div>
+<div class="states-row">
+  <div class="error-state">
+    <div class="state-icon" style="background:#FEF3EF;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#D93D1A" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    </div>
+    <div class="state-title">Something went wrong</div>
+    <div class="state-desc" style="font-size:12px;">Couldn't load editions right now. The data updates daily — try again shortly.</div>
+    <div class="state-action" style="background:#1C1915; color:#fff; margin:0 auto;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      Try again
+    </div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:8px; padding-top:4px; max-width:180px;">
+    <div class="label" style="margin-bottom:4px;">Status micro-badges</div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <div style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:999px; background:#FEF3EF; border:1px solid #FABEAD; font-size:10px; font-weight:600; color:#D93D1A;">
+        <div style="width:5px; height:5px; border-radius:50%; background:#D93D1A;"></div>
+        New
+      </div>
+      <div style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:999px; background:#FFFBEB; border:1px solid #FDE68A; font-size:10px; font-weight:600; color:#9E6C00;">
+        <div style="width:5px; height:5px; border-radius:50%; background:#9E6C00;"></div>
+        Changed
+      </div>
+      <div style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:999px; background:#F9FAFB; border:1px solid #E5E7EB; font-size:10px; color:#9CA3AF;">
+        No stock
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

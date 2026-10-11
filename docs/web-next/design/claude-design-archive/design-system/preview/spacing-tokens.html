@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Spacing & Layout Grid" subtitle="4px base grid, 12-step scale, breakpoints, column grid" viewport="700x340" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 12px; }
+.spacing-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.space-item { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.space-bar { background: #1A8A5A; border-radius: 3px; width: 24px; opacity: 0.75; }
+.space-val { font-size: 10px; color: #8C8178; font-family: 'JetBrains Mono', monospace; }
+.space-token { font-size: 9px; color: #A89E93; font-family: 'JetBrains Mono', monospace; }
+.section-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.section { background: #fff; border-radius: 10px; padding: 16px 18px; border: 1px solid #EDE9E2; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.grid-guide { display: flex; gap: 1px; height: 24px; margin-bottom: 8px; border-radius: 4px; overflow: hidden; }
+.grid-col { flex: 1; background: rgba(26,138,90,0.12); border-right: 1px solid rgba(26,138,90,0.3); }
+.grid-col:last-child { border-right: none; }
+</style>
+</head>
+<body>
+
+<div class="label">Spacing Scale — 4px Base Grid</div>
+<div class="spacing-row">
+  <div class="space-item"><div class="space-bar" style="height:4px;"></div><div class="space-val">4px</div><div class="space-token">--space-1</div></div>
+  <div class="space-item"><div class="space-bar" style="height:8px;"></div><div class="space-val">8px</div><div class="space-token">--space-2</div></div>
+  <div class="space-item"><div class="space-bar" style="height:12px;"></div><div class="space-val">12px</div><div class="space-token">--space-3</div></div>
+  <div class="space-item"><div class="space-bar" style="height:16px;"></div><div class="space-val">16px</div><div class="space-token">--space-4</div></div>
+  <div class="space-item"><div class="space-bar" style="height:20px;"></div><div class="space-val">20px</div><div class="space-token">--space-5</div></div>
+  <div class="space-item"><div class="space-bar" style="height:24px;"></div><div class="space-val">24px</div><div class="space-token">--space-6</div></div>
+  <div class="space-item"><div class="space-bar" style="height:32px;"></div><div class="space-val">32px</div><div class="space-token">--space-8</div></div>
+  <div class="space-item"><div class="space-bar" style="height:40px;"></div><div class="space-val">40px</div><div class="space-token">--space-10</div></div>
+  <div class="space-item"><div class="space-bar" style="height:48px;"></div><div class="space-val">48px</div><div class="space-token">--space-12</div></div>
+  <div class="space-item"><div class="space-bar" style="height:64px;"></div><div class="space-val">64px</div><div class="space-token">--space-16</div></div>
+  <div class="space-item"><div class="space-bar" style="height:80px;"></div><div class="space-val">80px</div><div class="space-token">--space-20</div></div>
+  <div class="space-item"><div class="space-bar" style="height:96px;"></div><div class="space-val">96px</div><div class="space-token">--space-24</div></div>
+</div>
+
+<div class="section-row">
+  <div class="section">
+    <div class="label" style="margin-bottom:8px;">Layout Grid — Desktop 1440px</div>
+    <div class="grid-guide">
+      <div class="grid-col"></div><div class="grid-col"></div><div class="grid-col"></div>
+      <div class="grid-col"></div><div class="grid-col"></div><div class="grid-col"></div>
+      <div class="grid-col"></div><div class="grid-col"></div><div class="grid-col"></div>
+      <div class="grid-col"></div><div class="grid-col"></div><div class="grid-col"></div>
+    </div>
+    <div style="font-size:11px; color:#8C8178; line-height:1.7;">
+      12 columns · 24px gutter · 32px margin<br>
+      Sidebar: <span style="font-family:'JetBrains Mono',monospace;">288px</span> fixed<br>
+      Content: fluid remainder<br>
+      Cards: 4–5 per row at 1200px+
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label" style="margin-bottom:8px;">Breakpoints</div>
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="height:3px; background:#1A8A5A; border-radius:2px; width:20px;"></div>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#554D49;">375px</span>
+        <span style="font-size:11px; color:#8C8178;">Mobile</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="height:3px; background:#1A8A5A; border-radius:2px; width:36px;"></div>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#554D49;">640px</span>
+        <span style="font-size:11px; color:#8C8178;">Tablet</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="height:3px; background:#1A8A5A; border-radius:2px; width:60px;"></div>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#554D49;">1025px</span>
+        <span style="font-size:11px; color:#8C8178;">Desktop</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="height:3px; background:#1A8A5A; border-radius:2px; width:80px;"></div>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#554D49;">1280px</span>
+        <span style="font-size:11px; color:#8C8178;">Wide</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="height:3px; background:#8C8178; border-radius:2px; width:100px; opacity:0.5;"></div>
+        <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#A89E93;">1440px</span>
+        <span style="font-size:11px; color:#A89E93;">Max width</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

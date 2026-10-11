@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PandaWatch — Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,400&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <style>
+    /* ═══ TOKENS ═══ */
+    :root {
+      --bg:#090E1E; --surface:#111E36; --surface-2:#182644; --surface-3:#1F2E52;
+      --border:rgba(200,210,255,.07); --border-md:rgba(200,210,255,.13); --border-lg:rgba(200,210,255,.22);
+      --text:#E6EAFF; --text-sec:rgba(210,220,255,.60); --text-muted:rgba(210,220,255,.35);
+      --gold:#F5C242; --gold-dim:rgba(245,194,66,.13); --gold-glow:rgba(245,194,66,.22);
+      --gold-text:#181400;
+      --indigo:#6C7BFF; --indigo-dim:rgba(108,123,255,.14);
+      --violet:#C46BFF; --violet-dim:rgba(196,107,255,.14);
+      --success:#3ECF9A; --success-dim:rgba(62,207,154,.14);
+      --danger:#FF5F6D; --danger-dim:rgba(255,95,109,.14);
+      --warning:#F5A028;
+      --r1:#788399; --r2:#D48A0C; --r3:#E05830;
+      --r4:#0CA99E; --r5:#9540E6; --r6:#F5C242;
+      --f-display:'Bricolage Grotesque',sans-serif;
+      --f-body:'Plus Jakarta Sans',sans-serif;
+      --f-cjk:'Noto Sans JP','Plus Jakarta Sans',sans-serif;
+      --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px;
+      --s6:24px; --s7:32px; --s8:40px; --s9:48px; --s10:64px;
+      --r-xs:4px; --r-sm:6px; --r-md:10px; --r-lg:14px;
+      --r-xl:20px; --r-2xl:28px; --r-full:9999px;
+      --sh-sm:0 2px 6px rgba(0,0,0,.40),0 1px 2px rgba(0,0,0,.30);
+      --sh-md:0 4px 14px rgba(0,0,0,.45),0 1px 4px rgba(0,0,0,.35);
+      --sh-lg:0 8px 28px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35);
+      --sh-xl:0 16px 48px rgba(0,0,0,.65),0 4px 12px rgba(0,0,0,.40);
+      --sh-gold:0 4px 20px rgba(245,194,66,.22),0 2px 8px rgba(0,0,0,.45);
+      --logo-body:#E8ECF8; --logo-patch:#0C1628;
+      --nav-h: 56px;
+    }
+    [data-theme="light"] {
+      --bg:#F1F4FF; --surface:#FFFFFF; --surface-2:#E7ECFA; --surface-3:#D9E1F5;
+      --border:rgba(26,40,80,.07); --border-md:rgba(26,40,80,.13); --border-lg:rgba(26,40,80,.22);
+      --text:#111A38; --text-sec:rgba(20,30,70,.60); --text-muted:rgba(20,30,70,.38);
+      --gold:#C8951C; --gold-dim:rgba(200,149,28,.13); --gold-glow:rgba(200,149,28,.22);
+      --gold-text:#FFFFFF;
+      --indigo:#4050E8; --indigo-dim:rgba(64,80,232,.12);
+      --violet:#9030D8; --violet-dim:rgba(144,48,216,.12);
+      --success:#1A9A6A; --success-dim:rgba(26,154,106,.12);
+      --danger:#D42838; --danger-dim:rgba(212,40,56,.12);
+      --warning:#C07C10;
+      --r1:#6070AA; --r2:#B87808; --r3:#C04420;
+      --r4:#089088; --r5:#7A30C8; --r6:#C8951C;
+      --sh-sm:0 2px 6px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.05);
+      --sh-md:0 4px 14px rgba(0,0,0,.09),0 1px 4px rgba(0,0,0,.06);
+      --sh-lg:0 8px 28px rgba(0,0,0,.11),0 2px 8px rgba(0,0,0,.07);
+      --sh-xl:0 16px 48px rgba(0,0,0,.13),0 4px 12px rgba(0,0,0,.08);
+      --sh-gold:0 4px 20px rgba(200,149,28,.18),0 2px 8px rgba(0,0,0,.07);
+      --logo-body:#FFFFFF; --logo-patch:#111A38;
+    }
+
+    /* ═══ RESET ═══ */
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{color-scheme:dark;scroll-behavior:smooth;}
+    [data-theme="light"]{color-scheme:light;}
+    body{font-family:var(--f-body);background:var(--bg);color:var(--text);font-size:14px;
+      line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
+    input,select,button{font-family:inherit;}
+    ::-webkit-scrollbar{width:6px;height:6px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:var(--border-lg);border-radius:var(--r-full);}
+
+    /* ═══ TOP NAV ═══ */
+    .pw-nav{
+      position:sticky;top:0;z-index:100;
+      height:var(--nav-h);
+      display:flex;align-items:center;gap:var(--s4);
+      padding:0 var(--s6);
+      background:var(--surface);
+      border-bottom:1px solid var(--border);
+      backdrop-filter:blur(12px);
+    }
+    .pw-nav-tabs{display:flex;gap:2px;flex:1;}
+    .pw-nav-tab{
+      padding:6px 14px;border-radius:var(--r-md);
+      border:none;background:transparent;
+      color:var(--text-muted);font-size:13px;font-weight:500;
+      cursor:pointer;transition:all .15s;white-space:nowrap;
+      font-family:var(--f-body);
+    }
+    .pw-nav-tab:hover{color:var(--text);background:var(--surface-2);}
+    .pw-nav-tab.active{color:var(--text);background:var(--surface-2);font-weight:600;}
+    .pw-nav-tab.active-gold{color:var(--gold);background:var(--gold-dim);}
+
+    /* ═══ APP LAYOUT ═══ */
+    .pw-app{min-height:100vh;display:flex;flex-direction:column;}
+    .pw-body{display:flex;flex:1;min-height:0;}
+    .pw-sidebar{
+      width:264px;flex-shrink:0;
+      background:var(--surface);
+      border-right:1px solid var(--border);
+      height:calc(100vh - var(--nav-h));
+      position:sticky;top:var(--nav-h);
+      overflow-y:auto;
+      padding:var(--s5) var(--s4);
+      scrollbar-width:thin;
+    }
+    .pw-main{flex:1;min-width:0;overflow-x:hidden;}
+
+    /* ═══ ANIMATIONS ═══ */
+    @keyframes goldSweep{0%{background-position:-200% center}100%{background-position:200% center}}
+    @keyframes rainbowFlow{
+      0%{background-position:0% 50%;filter:hue-rotate(0deg) saturate(1.4) brightness(1.1)}
+      50%{background-position:100% 50%;filter:hue-rotate(180deg) saturate(1.6) brightness(1.2)}
+      100%{background-position:0% 50%;filter:hue-rotate(360deg) saturate(1.4) brightness(1.1)}
+    }
+    @keyframes holoFull{
+      0%{background-position:0% 0%;filter:hue-rotate(0deg) brightness(1.1) saturate(1.5)}
+      50%{background-position:100% 100%;filter:hue-rotate(180deg) brightness(1.4) saturate(2)}
+      100%{background-position:0% 0%;filter:hue-rotate(360deg) brightness(1.1) saturate(1.5)}
+    }
+    @keyframes shinePass{0%{left:-80%;opacity:0}15%{opacity:1}85%{opacity:1}100%{left:160%;opacity:0}}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes shimmerLoad{0%{background-position:-200% 0}100%{background-position:200% 0}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .skeleton{
+      background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%);
+      background-size:200% 100%;
+      animation:shimmerLoad 1.5s ease-in-out infinite;
+      border-radius:var(--r-sm);
+    }
+
+    /* ═══ CARDS ═══ */
+    .manga-card{
+      background:var(--surface);border-radius:var(--r-lg);overflow:hidden;
+      border:1px solid var(--border);box-shadow:var(--sh-sm);
+      cursor:pointer;position:relative;
+      transition:box-shadow .2s,border-color .2s;
+      will-change:transform;
+    }
+    .manga-card:hover{border-color:var(--border-md);}
+    .manga-card.spotlight{border-color:var(--gold-glow);box-shadow:var(--sh-gold);}
+    .manga-card.foil-ultra{border-color:rgba(196,107,255,.4);box-shadow:0 4px 24px rgba(196,107,255,.3),0 2px 8px rgba(0,0,0,.4);}
+    .manga-card.foil-variant{border-color:rgba(180,100,255,.35);box-shadow:0 4px 18px rgba(140,80,255,.28),0 2px 8px rgba(0,0,0,.4);}
+
+    .cover-ph{
+      background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 3px,var(--surface-3) 3px,var(--surface-3) 6px);
+      display:flex;align-items:flex-end;justify-content:center;
+      padding-bottom:8px;
+      font-family:var(--f-body);font-size:8px;font-weight:600;
+      letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);
+      position:relative;overflow:hidden;
+    }
+    .cover-foil-gold{position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(120deg,transparent 15%,rgba(245,194,66,.55) 38%,rgba(255,245,150,.75) 50%,rgba(245,194,66,.55) 62%,transparent 85%);
+      background-size:200% 100%;animation:goldSweep 2.4s ease-in-out infinite;mix-blend-mode:overlay;}
+    .cover-foil-variant{position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(135deg,hsl(0,90%,62%),hsl(50,90%,60%),hsl(120,85%,55%),hsl(180,90%,52%),hsl(240,90%,62%),hsl(300,90%,60%),hsl(0,90%,62%));
+      background-size:400% 400%;animation:rainbowFlow 3s linear infinite;opacity:.3;mix-blend-mode:screen;}
+    .cover-foil-ultra{position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(135deg,hsl(0,100%,65%),hsl(60,100%,60%),hsl(120,90%,55%),hsl(180,100%,52%),hsl(220,100%,62%),hsl(270,100%,65%),hsl(320,100%,62%),hsl(0,100%,65%));
+      background-size:400% 400%;animation:holoFull 2.5s linear infinite;opacity:.4;mix-blend-mode:screen;}
+    .cover-shine{position:absolute;top:-100%;left:-80%;pointer-events:none;width:40%;height:300%;
+      background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.4) 50%,transparent 70%);
+      animation:shinePass 2.5s ease-in-out infinite;}
+
+    /* ═══ MISC ═══ */
+    .badge-kanzenban{background:linear-gradient(90deg,#9A6800 0%,#C8951C 20%,#F5C242 40%,#FFF0A0 52%,#F5C242 64%,#C8951C 80%,#9A6800 100%);background-size:200% 100%;animation:goldSweep 2.4s ease-in-out infinite;color:#1A1000!important;border-color:transparent!important;}
+    .badge-variant{background:linear-gradient(90deg,hsl(0,90%,62%),hsl(40,90%,58%),hsl(160,90%,48%),hsl(255,90%,66%),hsl(340,90%,60%),hsl(0,90%,62%));background-size:300% 300%;animation:rainbowFlow 3.5s linear infinite;color:#fff!important;border-color:transparent!important;}
+    .badge-ultra{background:linear-gradient(135deg,hsl(0,100%,65%),hsl(60,100%,60%),hsl(180,100%,52%),hsl(270,100%,65%),hsl(0,100%,65%));background-size:400% 400%;animation:holoFull 2.8s ease-in-out infinite;color:#fff!important;border-color:transparent!important;position:relative;overflow:hidden;}
+
+    /* ═══ MOBILE FRAME ═══ */
+    .mobile-outer{
+      display:flex;align-items:flex-start;justify-content:center;
+      padding:var(--s7) var(--s6);
+      min-height:calc(100vh - var(--nav-h));
+      background:var(--bg);
+    }
+    .mobile-frame{
+      width:390px;height:820px;
+      border-radius:40px;overflow:hidden;
+      border:8px solid var(--surface-3);
+      box-shadow:var(--sh-xl),0 0 0 1px var(--border-md);
+      background:var(--bg);
+      display:flex;flex-direction:column;
+      position:relative;flex-shrink:0;
+    }
+    .mobile-content{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;}
+    .mobile-content::-webkit-scrollbar{display:none;}
+    .mobile-bottom-nav{
+      height:72px;flex-shrink:0;
+      background:var(--surface);border-top:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-around;
+      padding:0 var(--s2) 8px;
+    }
+    .m-nav-btn{
+      display:flex;flex-direction:column;align-items:center;gap:3px;
+      padding:6px 12px;border-radius:var(--r-lg);border:none;background:transparent;
+      color:var(--text-muted);font-size:10px;font-weight:600;cursor:pointer;
+      font-family:var(--f-body);transition:all .15s;
+    }
+    .m-nav-btn.active{color:var(--gold);}
+    .m-nav-btn .icon{font-size:20px;line-height:1;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="pw-components.jsx"></script>
+<script type="text/babel" src="pw-catalog.jsx"></script>
+<script type="text/babel" src="pw-detail.jsx"></script>
+<script type="text/babel">
+/* ═══ MAIN APP ═══ */
+function PandaWatchApp() {
+  const [theme,   setTheme]   = React.useState('dark');
+  const [mobile,  setMobile]  = React.useState(false);
+  const [screen,  setScreen]  = React.useState({ view: 'catalog' });
+  const [navTab,  setNavTab]  = React.useState('catalog');
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  const navigate = React.useCallback((view, params = {}) => {
+    setScreen({ view, ...params });
+    if (view === 'catalog') setNavTab('catalog');
+  }, []);
+
+  const navTabs = [
+    { id: 'catalog',    label: 'Descubrir',     icon: '🔍' },
+    { id: 'calendar',   label: 'Calendario',    icon: '📅' },
+    { id: 'collection', label: 'Mi colección',  icon: '📚' },
+    { id: 'alerts',     label: 'Alertas',       icon: '🔔' },
+  ];
+
+  const TopNav = () => (
+    <nav className="pw-nav">
+      <div style={{ cursor:'pointer' }} onClick={() => navigate('catalog')}>
+        <PWLogo size={28} showWordmark onDark={theme === 'dark' ? null : false} />
+      </div>
+
+      <div className="pw-nav-tabs" style={{ display: mobile ? 'none' : 'flex' }}>
+        {navTabs.map(t => (
+          <button key={t.id}
+            className={`pw-nav-tab${navTab === t.id ? ' active' : ''}`}
+            onClick={() => { setNavTab(t.id); if (t.id === 'catalog') navigate('catalog'); }}
+          >{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1 }} />
+
+      {/* Search */}
+      <div style={{ position:'relative', display: mobile ? 'none' : 'block' }}>
+        <span style={{ position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',fontSize:14,color:'var(--text-muted)',pointerEvents:'none' }}>🔍</span>
+        <input placeholder="Buscar edición, serie, editorial..." style={{
+          paddingLeft:32,paddingRight:12,paddingTop:7,paddingBottom:7,
+          background:'var(--surface-2)',border:'1px solid var(--border-md)',
+          borderRadius:'var(--r-full)',color:'var(--text)',fontSize:12,
+          width:220,outline:'none',fontFamily:'var(--f-body)',
+        }} />
+      </div>
+
+      {/* Controls */}
+      <div style={{ display:'flex', gap:'var(--s2)', alignItems:'center' }}>
+        <button onClick={() => setMobile(m => !m)} title="Toggle mobile/desktop" style={{
+          padding:'6px 12px', borderRadius:'var(--r-md)',
+          background: mobile ? 'var(--gold-dim)' : 'var(--surface-2)',
+          border:`1px solid ${mobile ? 'var(--gold)' : 'var(--border-md)'}`,
+          color: mobile ? 'var(--gold)' : 'var(--text-sec)',
+          fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'var(--f-body)',
+          letterSpacing:'.04em',
+        }}>
+          {mobile ? '📱 Mobile' : '🖥 Desktop'}
+        </button>
+        <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} style={{
+          width:32,height:32,borderRadius:'var(--r-md)',
+          background:'var(--surface-2)',border:'1px solid var(--border-md)',
+          color:'var(--text-sec)',cursor:'pointer',fontSize:15,
+        }}>{theme === 'dark' ? '🌙' : '☀️'}</button>
+      </div>
+    </nav>
+  );
+
+  const renderScreen = (isMobile) => {
+    switch (screen.view) {
+      case 'catalog': return <CatalogScreen navigate={navigate} isMobile={isMobile} />;
+      case 'edition': return <EditionScreen navigate={navigate} editionId={screen.editionId} isMobile={isMobile} />;
+      case 'detail':  return <DetailScreen  navigate={navigate} productId={screen.productId} isMobile={isMobile} />;
+      default: return <CatalogScreen navigate={navigate} isMobile={isMobile} />;
+    }
+  };
+
+  return (
+    <div className="pw-app">
+      <TopNav />
+      {mobile ? (
+        <div className="mobile-outer">
+          <div className="mobile-frame">
+            <div className="mobile-content">{renderScreen(true)}</div>
+            <div className="mobile-bottom-nav">
+              {navTabs.map(t => (
+                <button key={t.id} className={`m-nav-btn${navTab === t.id ? ' active' : ''}`}
+                  onClick={() => { setNavTab(t.id); if (t.id === 'catalog') navigate('catalog'); }}
+                >
+                  <span className="icon">{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div>{renderScreen(false)}</div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<PandaWatchApp />);
+</script>
+</body>
+</html>

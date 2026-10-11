@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Filters — Chips & Sidebar" subtitle="Applied filter chips, desktop sidebar, mobile bottom sheet" viewport="700x560" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 10px; }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  background: #1C1915; color: #fff;
+  transition: background 120ms;
+}
+.chip-x {
+  width: 14px; height: 14px; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.18);
+  transition: background 100ms; flex-shrink: 0;
+}
+.chip:hover .chip-x { background: rgba(255,255,255,0.3); }
+.clear-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 6px; font-size: 12px;
+  font-weight: 500; color: #8C8178; border: 1px solid #DDD8CF;
+  background: transparent; cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+.clear-btn:hover { border-color: #D93D1A; color: #D93D1A; }
+
+/* sidebar filter preview */
+.sidebar { background: #fff; border-radius: 10px; padding: 18px; border: 1px solid #E5E0D8; box-shadow: 0 1px 3px rgba(0,0,0,0.05); width: 260px; }
+.filter-group { margin-bottom: 18px; }
+.filter-group-title { font-size: 12px; font-weight: 600; color: #1C1915; font-family: 'Space Grotesk', sans-serif; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.filter-group-title span { font-size: 10px; font-weight: 400; color: #A89E93; cursor: pointer; }
+.filter-option { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+.checkbox { width: 16px; height: 16px; border-radius: 3px; border: 1.5px solid #DDD8CF; background: #fff; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.checkbox.checked { background: #1A8A5A; border-color: #1A8A5A; }
+.filter-label { font-size: 12px; color: #554D49; flex: 1; }
+.filter-count { font-size: 10px; color: #A89E93; }
+.filter-divider { height: 1px; background: #EDE9E2; margin: 14px 0; }
+.show-btn { width: 100%; padding: 10px; background: #1A8A5A; color: #fff; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; font-family: 'Space Grotesk', sans-serif; cursor: pointer; text-align: center; }
+
+.two-col { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<div class="label">Applied Filter Chips — Active State</div>
+<div class="chip-row">
+  <div class="chip" style="background:#EEF2FF; color:#2D52CC; border:1px solid #C7D2FE;">
+    Rare
+    <div class="chip-x" style="background:rgba(45,82,204,0.15);">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="chip" style="background:#F5F3FF; color:#7C3AED; border:1px solid #DDD6FE;">
+    Very Rare
+    <div class="chip-x" style="background:rgba(124,58,237,0.15);">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="chip" style="background:#1C1915; color:#fff;">
+    Japan
+    <div class="chip-x">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="chip" style="background:#EDFAF3; color:#1A8A5A; border:1px solid #A6DFCA;">
+    Fanbook
+    <div class="chip-x" style="background:rgba(26,138,90,0.15);">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="chip" style="background:#1C1915; color:#fff;">
+    Shueisha
+    <div class="chip-x">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="clear-btn">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+    Clear all
+  </div>
+</div>
+
+<div class="two-col">
+  <div>
+    <div class="label">Filter Sidebar — Desktop</div>
+    <div class="sidebar">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-size:14px; font-weight:600; color:#1C1915; font-family:'Space Grotesk',sans-serif;">Filters</div>
+        <span style="font-size:11px; color:#D93D1A; cursor:pointer; font-weight:500;">Clear all</span>
+      </div>
+
+      <div class="filter-group">
+        <div class="filter-group-title">Rarity <span>+</span></div>
+        <div class="filter-option">
+          <div class="checkbox checked"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="filter-label">Rare</div>
+          <div class="filter-count">31</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox checked"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="filter-label">Very Rare</div>
+          <div class="filter-count">18</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Ultra Rare</div>
+          <div class="filter-count">7</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Limited</div>
+          <div class="filter-count">54</div>
+        </div>
+      </div>
+
+      <div class="filter-divider"></div>
+
+      <div class="filter-group">
+        <div class="filter-group-title">Edition Type <span>+</span></div>
+        <div class="filter-option">
+          <div class="checkbox checked"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="filter-label">Fanbook</div>
+          <div class="filter-count">22</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Box Set</div>
+          <div class="filter-count">19</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Deluxe</div>
+          <div class="filter-count">41</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Variant Cover</div>
+          <div class="filter-count">15</div>
+        </div>
+      </div>
+
+      <div class="filter-divider"></div>
+
+      <div class="filter-group">
+        <div class="filter-group-title">Country <span>+</span></div>
+        <div class="filter-option">
+          <div class="checkbox checked"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="filter-label">Japan</div>
+          <div class="filter-count">48</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">France</div>
+          <div class="filter-count">31</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">USA</div>
+          <div class="filter-count">22</div>
+        </div>
+        <div class="filter-option">
+          <div class="checkbox"></div>
+          <div class="filter-label">Spain</div>
+          <div class="filter-count">14</div>
+        </div>
+      </div>
+
+      <div style="margin-top:4px;">
+        <div class="show-btn">Show 128 results</div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="label">Mobile Bottom Sheet — Compact</div>
+    <div style="background:#fff; border-radius:16px 16px 0 0; width:300px; padding:0; overflow:hidden; box-shadow:0 -4px 20px rgba(0,0,0,0.10); border:1px solid #E5E0D8;">
+      <div style="height:4px; width:36px; background:#DDD8CF; border-radius:2px; margin:10px auto 0;"></div>
+      <div style="padding:14px 18px 0;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div style="font-size:14px; font-weight:600; color:#1C1915; font-family:'Space Grotesk',sans-serif;">Filters</div>
+          <span style="font-size:11px; color:#D93D1A; font-weight:500;">Clear all</span>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #1A8A5A; background:#EDFAF3; font-size:12px; font-weight:500; color:#1A8A5A;">Rarity</div>
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #DDD8CF; font-size:12px; font-weight:500; color:#706560; background:#fff;">Type</div>
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #DDD8CF; font-size:12px; font-weight:500; color:#706560; background:#fff;">Country</div>
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #DDD8CF; font-size:12px; font-weight:500; color:#706560; background:#fff;">Publisher</div>
+        </div>
+      </div>
+      <div style="padding:0 18px 18px; border-top:1px solid #EDE9E2; padding-top:14px;">
+        <div style="font-size:12px; font-weight:600; color:#1C1915; font-family:'Space Grotesk',sans-serif; margin-bottom:8px;">Rarity</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+          <div style="padding:5px 12px; border-radius:999px; background:#EEF2FF; color:#2D52CC; border:1.5px solid #C7D2FE; font-size:12px; font-weight:500;">Rare</div>
+          <div style="padding:5px 12px; border-radius:999px; background:#F5F3FF; color:#7C3AED; border:1.5px solid #DDD6FE; font-size:12px; font-weight:500;">Very Rare</div>
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #DDD8CF; font-size:12px; color:#706560;">Ultra Rare</div>
+          <div style="padding:5px 12px; border-radius:999px; border:1.5px solid #DDD8CF; font-size:12px; color:#706560;">Limited</div>
+        </div>
+        <div style="background:#1A8A5A; border-radius:8px; padding:11px; text-align:center; color:#fff; font-size:13px; font-weight:600; font-family:'Space Grotesk',sans-serif;">Show 128 results</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

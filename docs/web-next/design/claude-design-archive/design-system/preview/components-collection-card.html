@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Collection Card — Stacked" subtitle="Plain solid back containers, sized to match main card height" viewport="700x480" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 28px 32px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 14px; }
+.cards-row { display: flex; gap: 48px; flex-wrap: wrap; align-items: flex-start; }
+.state-label { font-size: 10px; color: #A89E93; text-align: center; margin-top: 14px; }
+
+/*
+  Stack logic (revised — aligned with single-card width):
+  - Main card sits in normal flow at top-left of wrapper → defines wrapper's WIDTH
+    and HEIGHT exactly. Wrapper is the same dimensions as a single manga card.
+  - Back cards are absolutely positioned with NEGATIVE right/bottom offsets so
+    they peek BEYOND the main card (to the right + below). This way the main/front
+    card is always identical in size to a single manga card sitting next to it
+    in the catalog grid.
+  - Back cards span the wrapper via top+bottom and left+right anchors → their
+    height/width always equals the main card's, just offset.
+  - Catalog grid needs extra row-gap (≥ 24px) so the back-peek doesn't collide
+    with the next row.
+*/
+.coll-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.back-card {
+  position: absolute;
+  border-radius: 12px;
+}
+
+/* Far back: peeks 12px right and 16px below the main card.
+   left+right and top+bottom span the wrapper → same dimensions as main card. */
+.back-card-far {
+  top: 16px;
+  bottom: -16px;
+  left: 12px;
+  right: -12px;
+  z-index: 1;
+  background: #D6CFC0;
+  border: 1px solid #BAB2A1;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+
+/* Mid back: peeks 6px right and 8px below. */
+.back-card-mid {
+  top: 8px;
+  bottom: -8px;
+  left: 6px;
+  right: -6px;
+  z-index: 2;
+  background: #E2DCCE;
+  border: 1px solid #C9C2B1;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+
+/* Main (front) card */
+.main-card {
+  position: relative;   /* in flow — sets wrapper height */
+  z-index: 3;
+  width: 208px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #E5E0D8;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1px 4px rgba(0,0,0,0.07);
+}
+.card-cover {
+  width: 100%; aspect-ratio: 2/3; position: relative; overflow: hidden;
+}
+.card-cover img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top;
+}
+/* Rarity badge — top-LEFT of cover (matches single manga card position) */
+.cover-rarity {
+  position: absolute; top: 8px; left: 8px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 5px; font-size: 10px;
+  font-weight: 600; font-family: 'Space Grotesk', sans-serif;
+  background: rgba(20,17,14,0.82); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+/* Status badge — top-RIGHT of cover (matches single manga card position) */
+.cover-status {
+  position: absolute; top: 8px; right: 8px; z-index: 5;
+  padding: 3px 7px; border-radius: 4px; font-size: 9px;
+  font-weight: 700; font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+.card-info { padding: 11px 13px 13px; }
+.card-series { font-size: 10px; color: #A89E93; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 3px; }
+.card-title { font-size: 13px; font-weight: 600; font-family: 'Space Grotesk', sans-serif; color: #1C1915; line-height: 1.25; margin-bottom: 5px; }
+.card-meta { font-size: 11px; color: #8C8178; }
+
+/* Footer: Collection/Box Set type tag (was on cover top) + count info */
+.card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid #EDE9E2; gap: 8px; }
+.coll-type {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; border-radius: 5px;
+  background: #F0EDE6; border: 1px solid #DDD8CF;
+  font-size: 10px; font-weight: 600; font-family: 'Space Grotesk', sans-serif;
+  color: #3D3833; letter-spacing: 0.02em;
+}
+.coll-count { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; color: #1A8A5A; }
+.coll-count strong { font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div class="label">Single vs. Stacked — Front card always aligns with single card</div>
+<div style="background:#fff; border-radius:12px; border:1px solid #E5E0D8; padding:24px 28px 40px; margin-bottom:24px; display:flex; gap:36px; align-items:flex-start; flex-wrap:wrap;">
+  <!-- Comparison: a simple single-card silhouette next to a stacked one -->
+  <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+    <!-- "Single card" silhouette at the same dimensions as the stacked main card -->
+    <div style="width:208px; border-radius:12px; overflow:hidden; background:#fff; border:1px solid #E5E0D8; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+      <div style="width:100%; aspect-ratio:2/3; background:#EDE9E2; display:flex; align-items:center; justify-content:center; font-size:10px; color:#A89E93; font-family:'Space Grotesk',sans-serif; letter-spacing:0.08em; text-transform:uppercase;">Single Card</div>
+      <div style="padding:11px 13px 13px; min-height:96px;">
+        <div style="height:8px; width:40%; background:#EDE9E2; border-radius:2px; margin-bottom:6px;"></div>
+        <div style="height:11px; width:80%; background:#E5E0D8; border-radius:2px; margin-bottom:5px;"></div>
+        <div style="height:9px; width:55%; background:#EDE9E2; border-radius:2px;"></div>
+      </div>
+    </div>
+    <div style="font-size:10px; color:#A89E93; letter-spacing:0.08em; text-transform:uppercase;">Single — 208px wide</div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+    <div class="coll-wrap" style="width:208px;">
+      <div class="back-card back-card-far"></div>
+      <div class="back-card back-card-mid"></div>
+      <div class="main-card" style="width:100%;">
+        <div class="card-cover">
+          <img src="../assets/bakuman-cover.png" alt="Bakuman">
+          <div class="cover-rarity" style="color:#8BA8F8;">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Rare
+          </div>
+        </div>
+        <div class="card-info">
+          <div class="card-series">Bakuman</div>
+          <div class="card-title">20th Anniversary Deluxe Edition</div>
+          <div class="card-meta">Dark Horse · USA</div>
+          <div class="card-footer">
+            <div class="coll-type">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+              Collection
+            </div>
+            <div class="coll-count"><strong>14</strong> volumes</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:10px; color:#A89E93; letter-spacing:0.08em; text-transform:uppercase; margin-top:18px;">Stacked — front = 208px wide, back peeks beyond</div>
+  </div>
+
+  <div style="max-width:240px; font-size:12px; color:#706560; line-height:1.7;">
+    <div style="font-family:'Space Grotesk',sans-serif; font-weight:600; color:#1C1915; font-size:13px; margin-bottom:6px;">Same footprint, different silhouette</div>
+    <p style="margin-bottom:8px;">The front card of a stack is <strong style="color:#1C1915; font-weight:500;">identical in size</strong> to a single manga card. Tops, edges, and the front-card baseline all align cleanly in the catalog grid.</p>
+    <p>Back cards <strong style="color:#1C1915; font-weight:500;">peek beyond</strong> the front card's bounding box (12px right, 16px below) — the catalog grid uses extra row-gap (36px) to host that peek without crashing into the next row.</p>
+  </div>
+</div>
+
+<div class="label">Collection Card — Stacked</div>
+<div class="cards-row">
+
+  <!-- CARD 1: Bakuman · 14 vols · Rare -->
+  <div>
+    <div class="coll-wrap">
+      <!-- Back cards are plain solid-colored containers, sized via top+bottom -->
+      <div class="back-card back-card-far"></div>
+      <div class="back-card back-card-mid"></div>
+
+      <div class="main-card">
+        <div class="card-cover">
+          <img src="../assets/bakuman-cover.png" alt="Bakuman 20th Anniversary">
+          <!-- Rarity: top-left, same place as single card -->
+          <div class="cover-rarity" style="color:#8BA8F8;">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Rare
+          </div>
+        </div>
+        <div class="card-info">
+          <div class="card-series">Bakuman</div>
+          <div class="card-title">20th Anniversary Deluxe Edition</div>
+          <div class="card-meta">Dark Horse · USA</div>
+          <div class="card-footer">
+            <!-- Collection type tag (was on top of cover) -->
+            <div class="coll-type">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+              Collection
+            </div>
+            <div class="coll-count"><strong>14</strong> volumes</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="state-label">Bakuman · 14 volumes · Rare</div>
+  </div>
+
+  <!-- CARD 2: Box Set · 11 vols · Limited -->
+  <div>
+    <div class="coll-wrap">
+      <div class="back-card back-card-far"></div>
+      <div class="back-card back-card-mid"></div>
+
+      <div class="main-card">
+        <div class="card-cover">
+          <img src="../assets/bakuman-cover.png" alt="Bakuman Box Set">
+          <!-- Rarity: top-left -->
+          <div class="cover-rarity" style="color:#4DC99A;">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Limited
+          </div>
+          <!-- Status: top-right (was bottom-right) — now matches single card placement -->
+          <div class="cover-status" style="background:#D93D1A; color:#fff;">New</div>
+        </div>
+        <div class="card-info">
+          <div class="card-series">Bakuman</div>
+          <div class="card-title">Complete Box Set Vol. 1–11</div>
+          <div class="card-meta">Shueisha · Japan</div>
+          <div class="card-footer">
+            <!-- Box Set type tag (was on top of cover) -->
+            <div class="coll-type">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+              Box Set
+            </div>
+            <div class="coll-count"><strong>11</strong> items</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="state-label">Box Set · 11 items · Limited · New</div>
+  </div>
+
+  <!-- Anatomy -->
+  <div style="padding-top:8px; max-width:210px;">
+    <div class="label" style="margin-bottom:8px;">How it works</div>
+    <div style="background:#fff; border-radius:10px; padding:14px 16px; border:1px solid #EDE9E2; font-size:11px; color:#706560; line-height:1.7; display:flex; flex-direction:column; gap:7px;">
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#1A8A5A; margin-top:4px; flex-shrink:0;"></div>
+        <span>Front card is <strong style="color:#1C1915; font-weight:500;">identical in size</strong> to a single manga card. Wrapper = front card dimensions, no padding.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#2D52CC; margin-top:4px; flex-shrink:0;"></div>
+        <span>Back cards are <strong style="color:#1C1915; font-weight:500;">plain solid containers</strong> with negative right/bottom anchors → peek beyond the wrapper.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#9E6C00; margin-top:4px; flex-shrink:0;"></div>
+        <span>Offsets: mid <strong style="color:#1C1915; font-weight:500;">6px right · 8px down</strong>, far <strong style="color:#1C1915; font-weight:500;">12px right · 16px down</strong>.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#D93D1A; margin-top:4px; flex-shrink:0;"></div>
+        <span>Catalog grid needs <strong style="color:#1C1915; font-weight:500;">row-gap ≥ 24px</strong> (use 36px for breathing room) so back peeks don't collide with next row.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="width:6px; height:6px; border-radius:50%; background:#554D49; margin-top:4px; flex-shrink:0;"></div>
+        <span>Cover badges match the <strong style="color:#1C1915; font-weight:500;">single card</strong>: rarity top-left, status top-right. Collection / Box Set tag lives in the <strong style="color:#1C1915; font-weight:500;">footer</strong>.</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!-- @dsCard group="UI Kit — Pandawatch" name="PandaWatch UI Kit — Catalog Prototype" subtitle="Interactive 3-view prototype: Catalog, Collection, Detail" viewport="1280x860" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PandaWatch — Manga Collector Database</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; color: #1C1915; }
+::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #C6BEB4; border-radius: 3px; }
+:focus-visible { outline: 2px solid #1A8A5A; outline-offset: 2px; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="data.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="Header.jsx"></script>
+<script type="text/babel" src="MangaCard.jsx"></script>
+<script type="text/babel" src="FilterSidebar.jsx"></script>
+<script type="text/babel" src="CatalogView.jsx"></script>
+<script type="text/babel" src="CollectionView.jsx"></script>
+<script type="text/babel" src="DetailView.jsx"></script>
+
+<script type="text/babel">
+const { useState, useCallback, useEffect } = React;
+
+function App() {
+  const [view, setView] = useState('catalog');   // 'catalog' | 'collection' | 'detail'
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [query, setQuery] = useState('');
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [filterCount, setFilterCount] = useState(0);
+
+  const isMobile = window.innerWidth < 768;
+  const [mobile, setMobile] = useState(isMobile);
+  useEffect(() => {
+    const handler = () => setMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  const handleSelectItem = useCallback((item) => {
+    setSelectedItem(item);
+    setView('detail');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const handleSelectCollection = useCallback((item) => {
+    setSelectedItem(item);
+    setView('collection');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const handleBack = useCallback(() => {
+    setView('catalog');
+    setSelectedItem(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  return (
+    <div style={{ minHeight:'100vh', background:'#F5F1EB' }}>
+      <Header
+        query={query}
+        onQueryChange={setQuery}
+        onToggleFilters={() => setMobileFiltersOpen(v => !v)}
+        filterCount={filterCount}
+        view={view}
+        onLogoClick={handleBack}
+      />
+
+      {view === 'catalog' && (
+        <CatalogView
+          onSelectItem={handleSelectItem}
+          onSelectCollection={handleSelectCollection}
+          isMobile={mobile}
+          externalQuery={query}
+          onFilterCountChange={setFilterCount}
+        />
+      )}
+      {view === 'collection' && selectedItem && (
+        <CollectionView
+          item={selectedItem}
+          onSelectItem={handleSelectItem}
+          onBack={handleBack}
+          isMobile={mobile}
+        />
+      )}
+      {view === 'detail' && selectedItem && (
+        <DetailView
+          item={selectedItem}
+          onBack={handleBack}
+          isMobile={mobile}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

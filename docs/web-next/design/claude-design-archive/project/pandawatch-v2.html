@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PandaWatch v2 — Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,400&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+/* ═══ DESIGN TOKENS ═══ */
+:root {
+  --bg:#090E1E; --surface:#111E36; --surface-2:#182644; --surface-3:#1F2E52;
+  --border:rgba(200,210,255,.07); --border-md:rgba(200,210,255,.13); --border-lg:rgba(200,210,255,.22);
+  --text:#E6EAFF; --text-sec:rgba(210,220,255,.60); --text-muted:rgba(210,220,255,.35);
+  --gold:#F5C242; --gold-dim:rgba(245,194,66,.13); --gold-glow:rgba(245,194,66,.22);
+  --gold-text:#181400;
+  --indigo:#6C7BFF; --indigo-dim:rgba(108,123,255,.14);
+  --violet:#C46BFF; --violet-dim:rgba(196,107,255,.14);
+  --success:#3ECF9A; --success-dim:rgba(62,207,154,.14);
+  --danger:#FF5F6D; --danger-dim:rgba(255,95,109,.14);
+  --warning:#F5A028;
+  --r1:#788399; --r2:#D48A0C; --r3:#E05830;
+  --r4:#0CA99E; --r5:#9540E6; --r6:#F5C242;
+  --f-display:'Bricolage Grotesque',sans-serif;
+  --f-body:'Plus Jakarta Sans',sans-serif;
+  --f-cjk:'Noto Sans JP','Plus Jakarta Sans',sans-serif;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px;
+  --s6:24px; --s7:32px; --s8:40px; --s9:48px; --s10:64px;
+  --r-xs:4px; --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --r-xl:20px; --r-2xl:28px; --r-full:9999px;
+  --sh-sm:0 2px 6px rgba(0,0,0,.40),0 1px 2px rgba(0,0,0,.30);
+  --sh-md:0 4px 14px rgba(0,0,0,.45),0 1px 4px rgba(0,0,0,.35);
+  --sh-lg:0 8px 28px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35);
+  --sh-xl:0 16px 48px rgba(0,0,0,.65),0 4px 12px rgba(0,0,0,.40);
+  --sh-gold:0 4px 20px rgba(245,194,66,.22),0 2px 8px rgba(0,0,0,.45);
+  --logo-body:#E8ECF8; --logo-patch:#0C1628;
+  --nav-h:56px;
+}
+[data-theme="light"] {
+  --bg:#F1F4FF; --surface:#FFFFFF; --surface-2:#E7ECFA; --surface-3:#D9E1F5;
+  --border:rgba(26,40,80,.07); --border-md:rgba(26,40,80,.13); --border-lg:rgba(26,40,80,.22);
+  --text:#111A38; --text-sec:rgba(20,30,70,.60); --text-muted:rgba(20,30,70,.38);
+  --gold:#C8951C; --gold-dim:rgba(200,149,28,.13); --gold-glow:rgba(200,149,28,.22);
+  --gold-text:#FFFFFF;
+  --indigo:#4050E8; --indigo-dim:rgba(64,80,232,.12);
+  --violet:#9030D8; --violet-dim:rgba(144,48,216,.12);
+  --success:#1A9A6A; --success-dim:rgba(26,154,106,.12);
+  --danger:#D42838; --danger-dim:rgba(212,40,56,.12);
+  --warning:#C07C10;
+  --r1:#6070AA; --r2:#B87808; --r3:#C04420;
+  --r4:#089088; --r5:#7A30C8; --r6:#C8951C;
+  --sh-sm:0 2px 6px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.05);
+  --sh-md:0 4px 14px rgba(0,0,0,.09),0 1px 4px rgba(0,0,0,.06);
+  --sh-lg:0 8px 28px rgba(0,0,0,.11),0 2px 8px rgba(0,0,0,.07);
+  --sh-xl:0 16px 48px rgba(0,0,0,.13),0 4px 12px rgba(0,0,0,.08);
+  --sh-gold:0 4px 20px rgba(200,149,28,.18),0 2px 8px rgba(0,0,0,.07);
+  --logo-body:#FFFFFF; --logo-patch:#111A38;
+}
+
+/* ═══ RESET ═══ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{color-scheme:dark;scroll-behavior:smooth;}
+[data-theme="light"]{color-scheme:light;}
+body{font-family:var(--f-body);background:var(--bg);color:var(--text);font-size:14px;
+  line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
+input,select,button,textarea{font-family:inherit;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border-lg);border-radius:var(--r-full);}
+
+/* ═══ STATIC RARITY OVERLAYS (Axis 2) — no loops ═══ */
+
+/* Rare: diagonal gold streak — only visible during shine, then fades out */
+.cover-rarity-rare {
+  position:absolute; inset:0; pointer-events:none; border-radius:inherit; z-index:3;
+  background: linear-gradient(115deg,
+    transparent 0%, transparent 30%,
+    rgba(245,194,66,.12) 37%, rgba(255,245,150,.28) 43%,
+    rgba(245,194,66,.12) 49%, transparent 56%, transparent 100%);
+  opacity:0; transition:opacity .3s ease;
+}
+.shine-active .cover-rarity-rare { opacity:1; }
+
+/* Super Rare: diagonal + lower-third warmth — only during shine */
+.cover-rarity-super {
+  position:absolute; inset:0; pointer-events:none; border-radius:inherit; z-index:3;
+  background:
+    linear-gradient(115deg,
+      transparent 0%, transparent 18%,
+      rgba(245,194,66,.22) 24%, rgba(255,245,150,.42) 30%,
+      rgba(245,194,66,.22) 36%, transparent 42%, transparent 100%),
+    linear-gradient(0deg,
+      rgba(220,150,30,.44) 0%, rgba(255,190,60,.22) 38%, transparent 62%);
+  opacity:0; transition:opacity .3s ease;
+}
+.shine-active .cover-rarity-super { opacity:1; }
+
+/* Ultra Rare: full holo overlay — only during shine, follows tilt */
+.cover-rarity-ultra {
+  position:absolute; inset:0; pointer-events:none; border-radius:inherit; z-index:3;
+  background: linear-gradient(135deg,
+    hsl(0,100%,65%) 0%, hsl(60,100%,60%) 12%, hsl(120,90%,55%) 25%,
+    hsl(180,100%,52%) 38%, hsl(220,100%,62%) 52%, hsl(270,100%,65%) 65%,
+    hsl(320,100%,62%) 78%, hsl(0,100%,65%) 100%);
+  background-size:200% 200%;
+  background-position:
+    calc(var(--shine-x, 0.4) * 100%)
+    calc(var(--shine-y, 0.35) * 100%);
+  opacity:0; mix-blend-mode:screen; transition:opacity .35s ease;
+}
+.shine-active .cover-rarity-ultra { opacity:.38; }
+
+/* ═══ ENTRY/HOVER SHINE BEAM (one-shot, no loop) ═══ */
+@keyframes shineBeam {
+  0%   { transform:translateX(-120%) skewX(-12deg); opacity:0; }
+  15%  { opacity:var(--shine-peak, .4); }
+  85%  { opacity:var(--shine-peak, .4); }
+  100% { transform:translateX(280%) skewX(-12deg); opacity:0; }
+}
+
+.cover-shine-beam {
+  position:absolute; top:-10%; pointer-events:none; z-index:10;
+  left:0; width:32%; height:120%;
+  background:linear-gradient(105deg, transparent 30%, rgba(255,255,255,.75) 50%, transparent 70%);
+  opacity:0; transform:translateX(-120%) skewX(-12deg);
+  will-change:transform,opacity;
+}
+.shine-active .cover-shine-beam {
+  animation:shineBeam var(--shine-duration,.4s) cubic-bezier(.23,1,.32,1) forwards;
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .shine-active .cover-shine-beam { animation:none !important; }
+  .cover-rarity-ultra { background-size:100% 100%; background-position:50% 50%; }
+}
+
+/* ═══ OTHER ANIMATIONS ═══ */
+@keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+@keyframes shimmerLoad { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+@keyframes spin { to{transform:rotate(360deg)} }
+
+/* ═══ LAYOUT ═══ */
+.pw-nav {
+  position:sticky; top:0; z-index:100;
+  height:var(--nav-h);
+  display:flex; align-items:center; gap:var(--s4);
+  padding:0 var(--s6);
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(12px);
+}
+.pw-nav-tabs { display:flex; gap:2px; flex:1; }
+.pw-nav-tab {
+  padding:6px 14px; border-radius:var(--r-md);
+  border:none; background:transparent;
+  color:var(--text-muted); font-size:13px; font-weight:500;
+  cursor:pointer; transition:all .15s; white-space:nowrap;
+  font-family:var(--f-body);
+}
+.pw-nav-tab:hover { color:var(--text); background:var(--surface-2); }
+.pw-nav-tab.active { color:var(--text); background:var(--surface-2); font-weight:600; }
+
+.pw-app { min-height:100vh; display:flex; flex-direction:column; }
+.pw-body { display:flex; flex:1; min-height:0; }
+.pw-sidebar {
+  width:268px; flex-shrink:0;
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  height:calc(100vh - var(--nav-h));
+  position:sticky; top:var(--nav-h);
+  overflow-y:auto;
+  padding:var(--s5) var(--s4);
+  scrollbar-width:thin;
+}
+.pw-main { flex:1; min-width:0; overflow-x:hidden; }
+
+/* Mobile frame */
+.mobile-outer {
+  display:flex; align-items:flex-start; justify-content:center;
+  padding:var(--s7) var(--s6);
+  min-height:calc(100vh - var(--nav-h));
+  background:var(--bg);
+}
+.mobile-frame {
+  width:390px; height:820px;
+  border-radius:40px; overflow:hidden;
+  border:8px solid var(--surface-3);
+  box-shadow:var(--sh-xl),0 0 0 1px var(--border-md);
+  background:var(--bg);
+  display:flex; flex-direction:column;
+  position:relative; flex-shrink:0;
+}
+.mobile-content { flex:1; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.mobile-content::-webkit-scrollbar { display:none; }
+.mobile-bottom-nav {
+  height:72px; flex-shrink:0;
+  background:var(--surface); border-top:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-around;
+  padding:0 var(--s2) 8px;
+}
+.m-nav-btn {
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  padding:6px 12px; border-radius:var(--r-lg); border:none; background:transparent;
+  color:var(--text-muted); font-size:10px; font-weight:600; cursor:pointer;
+  font-family:var(--f-body); transition:all .15s;
+}
+.m-nav-btn.active { color:var(--gold); }
+.m-nav-btn .icon { font-size:20px; line-height:1; }
+
+/* Wordmark comparison row */
+.wm-compare {
+  display:inline-flex; align-items:center; gap:var(--s4);
+  padding:var(--s2) var(--s4);
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:var(--r-full);
+}
+.wm-divider {
+  width:1px; height:18px;
+  background:var(--border-md);
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="pw2-components.jsx"></script>
+<script type="text/babel" src="pw2-catalog.jsx"></script>
+<script type="text/babel" src="pw2-detail.jsx"></script>
+<script type="text/babel">
+/* ═══ MAIN APP v2 ═══ */
+
+const NAV_TABS = [
+  { id:'catalog',    label:'Descubrir',    icon:'🔍', future:false },
+  { id:'calendar',   label:'Calendario',   icon:'📅', future:true  },
+  { id:'collection', label:'Mi colección', icon:'📚', future:true  },
+  { id:'alerts',     label:'Alertas',      icon:'🔔', future:true  },
+];
+
+function PandaWatchApp() {
+  const [theme,   setTheme]   = React.useState('dark');
+  const [mobile,  setMobile]  = React.useState(false);
+  const [screen,  setScreen]  = React.useState({ view:'catalog' });
+  const [navTab,  setNavTab]  = React.useState('catalog');
+  const [wordmark, setWordmark] = React.useState('panda'); // 'panda' | 'manga'
+
+  React.useEffect(()=>{
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme;
+  },[theme]);
+
+  const navigate = React.useCallback((view, params={})=>{
+    setScreen({ view, ...params });
+    if(view==='catalog') setNavTab('catalog');
+  },[]);
+
+  const handleNavTab = (tab) => {
+    setNavTab(tab);
+    if(tab==='catalog') navigate('catalog');
+    else setScreen({ view:tab });
+  };
+
+  /* ── Top Nav ── */
+  const TopNav = () => (
+    <nav className="pw-nav">
+      {/* Logo + wordmark toggle */}
+      <div style={{display:'flex',alignItems:'center',gap:'var(--s3)',cursor:'pointer',flexShrink:0}} onClick={()=>navigate('catalog')}>
+        <PWLogo size={28} showWordmark wordmarkVariant={wordmark} onDark={theme==='dark'?null:false}/>
+      </div>
+
+      {/* Wordmark variant toggle (design deliverable #8) */}
+      <div className="wm-compare" style={{display:mobile?'none':'inline-flex'}}>
+        <button onClick={()=>setWordmark('panda')} style={{background:'none',border:'none',cursor:'pointer',padding:'2px 0',opacity:wordmark==='panda'?1:.4,transition:'opacity .15s'}}>
+          <span style={{fontFamily:'var(--f-display)',fontWeight:800,fontSize:13,letterSpacing:'-.02em'}}>
+            <span style={{color:'var(--text)'}}>Panda</span><span style={{color:'var(--gold)'}}>Watch</span>
+          </span>
+        </button>
+        <div className="wm-divider"/>
+        <button onClick={()=>setWordmark('manga')} style={{background:'none',border:'none',cursor:'pointer',padding:'2px 0',opacity:wordmark==='manga'?1:.4,transition:'opacity .15s'}}>
+          <span style={{fontFamily:'var(--f-display)',fontWeight:800,fontSize:13,letterSpacing:'-.02em'}}>
+            <span style={{color:'var(--text)'}}>Manga</span><span style={{color:'var(--text-sec)',fontWeight:700}}>Watch</span>
+          </span>
+        </button>
+      </div>
+
+      {/* Nav tabs */}
+      <div className="pw-nav-tabs" style={{display:mobile?'none':'flex'}}>
+        {NAV_TABS.map(t=>(
+          <button key={t.id}
+            className={`pw-nav-tab${navTab===t.id?' active':''}`}
+            onClick={()=>handleNavTab(t.id)}
+            style={{position:'relative'}}
+          >
+            {t.label}
+            {t.future&&navTab!==t.id&&(
+              <span style={{marginLeft:5,fontSize:8,fontWeight:800,letterSpacing:'.06em',textTransform:'uppercase',background:'var(--indigo-dim)',color:'var(--indigo)',border:'1px solid var(--indigo)',borderRadius:'var(--r-full)',padding:'0px 5px',verticalAlign:'middle'}}>pronto</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div style={{flex:1}}/>
+
+      {/* Controls */}
+      <div style={{display:'flex',gap:'var(--s2)',alignItems:'center'}}>
+        <a href="pw2-card-matrix.html" target="_blank" style={{
+          padding:'5px 10px',borderRadius:'var(--r-md)',
+          background:'var(--surface-2)',border:'1px solid var(--border-md)',
+          color:'var(--text-muted)',fontSize:10,fontWeight:700,textDecoration:'none',
+          letterSpacing:'.04em',display:mobile?'none':'block',
+          transition:'color .12s',
+        }} onMouseEnter={e=>e.currentTarget.style.color='var(--text)'}
+           onMouseLeave={e=>e.currentTarget.style.color='var(--text-muted)'}>
+          CARD MATRIX ↗
+        </a>
+        <button onClick={()=>setMobile(m=>!m)} style={{
+          padding:'5px 10px',borderRadius:'var(--r-md)',
+          background:mobile?'var(--gold-dim)':'var(--surface-2)',
+          border:`1px solid ${mobile?'var(--gold)':'var(--border-md)'}`,
+          color:mobile?'var(--gold)':'var(--text-sec)',
+          fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'var(--f-body)',letterSpacing:'.04em',
+        }}>{mobile?'📱 Mobile':'🖥 Desktop'}</button>
+        <button onClick={()=>setTheme(t=>t==='dark'?'light':'dark')} style={{
+          width:32,height:32,borderRadius:'var(--r-md)',
+          background:'var(--surface-2)',border:'1px solid var(--border-md)',
+          color:'var(--text-sec)',cursor:'pointer',fontSize:15,
+        }}>{theme==='dark'?'🌙':'☀️'}</button>
+      </div>
+    </nav>
+  );
+
+  const renderScreen = (isMobile) => {
+    const v = screen.view;
+    if(v==='catalog')    return <CatalogScreen    navigate={navigate} isMobile={isMobile}/>;
+    if(v==='edition')    return <EditionScreen    navigate={navigate} editionId={screen.editionId||1} isMobile={isMobile}/>;
+    if(v==='detail')     return <DetailScreen     navigate={navigate} productId={screen.productId||1} isMobile={isMobile}/>;
+    if(v==='calendar')   return <ProximamenteScreen type="calendar"/>;
+    if(v==='collection') return <ProximamenteScreen type="collection"/>;
+    if(v==='alerts')     return <ProximamenteScreen type="alerts"/>;
+    return <CatalogScreen navigate={navigate} isMobile={isMobile}/>;
+  };
+
+  return (
+    <div className="pw-app">
+      <TopNav/>
+      {mobile ? (
+        <div className="mobile-outer">
+          <div className="mobile-frame">
+            <div className="mobile-content">{renderScreen(true)}</div>
+            <div className="mobile-bottom-nav">
+              {NAV_TABS.map(t=>(
+                <button key={t.id} className={`m-nav-btn${navTab===t.id?' active':''}`}
+                  onClick={()=>handleNavTab(t.id)}>
+                  <span className="icon">{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div>{renderScreen(false)}</div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<PandaWatchApp/>);
+</script>
+</body>
+</html>

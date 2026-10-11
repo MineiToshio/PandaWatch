@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PandaWatch v2 — Card Variants Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#090E1E; --surface:#111E36; --surface-2:#182644; --surface-3:#1F2E52;
+  --border:rgba(200,210,255,.07); --border-md:rgba(200,210,255,.14); --border-lg:rgba(200,210,255,.22);
+  --text:#E6EAFF; --text-sec:rgba(210,220,255,.60); --text-muted:rgba(210,220,255,.35);
+  --gold:#F5C242; --gold-dim:rgba(245,194,66,.13); --gold-glow:rgba(245,194,66,.22);
+  --gold-text:#181400;
+  --indigo:#6C7BFF; --indigo-dim:rgba(108,123,255,.14);
+  --violet:#C46BFF; --violet-dim:rgba(196,107,255,.14);
+  --success:#3ECF9A; --success-dim:rgba(62,207,154,.14);
+  --danger:#FF5F6D; --danger-dim:rgba(255,95,109,.14);
+  --warning:#F5A028;
+  --f-display:'Bricolage Grotesque',sans-serif;
+  --f-body:'Plus Jakarta Sans',sans-serif;
+  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px; --r-full:9999px;
+  --sh-sm:0 2px 6px rgba(0,0,0,.40); --sh-md:0 4px 14px rgba(0,0,0,.45);
+  --sh-gold:0 4px 20px rgba(245,194,66,.22);
+  --logo-body:#E8ECF8; --logo-patch:#0C1628;
+}
+[data-theme="light"] {
+  --bg:#F0F3FF; --surface:#FFFFFF; --surface-2:#E7ECFA; --surface-3:#D9E1F5;
+  --border:rgba(26,40,80,.07); --border-md:rgba(26,40,80,.13); --border-lg:rgba(26,40,80,.22);
+  --text:#111A38; --text-sec:rgba(20,30,70,.58); --text-muted:rgba(20,30,70,.36);
+  --gold:#C8951C; --gold-dim:rgba(200,149,28,.13); --gold-glow:rgba(200,149,28,.22); --gold-text:#fff;
+  --indigo:#4050E8; --indigo-dim:rgba(64,80,232,.12);
+  --violet:#9030D8; --violet-dim:rgba(144,48,216,.12);
+  --success:#1A9A6A; --success-dim:rgba(26,154,106,.12);
+  --logo-body:#FFFFFF; --logo-patch:#111A38;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{color-scheme:dark;}
+[data-theme="light"]{color-scheme:light;}
+body{font-family:var(--f-body);background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border-lg);border-radius:var(--r-full);}
+
+/* ─── Static rarity overlays ─── */
+.cover-rarity-rare {
+  position:absolute;inset:0;pointer-events:none;border-radius:inherit;z-index:3;
+  background:linear-gradient(115deg,transparent 0%,transparent 30%,rgba(245,194,66,.14) 37%,rgba(255,245,150,.32) 43%,rgba(245,194,66,.14) 49%,transparent 56%,transparent 100%);
+}
+.cover-rarity-super {
+  position:absolute;inset:0;pointer-events:none;border-radius:inherit;z-index:3;
+  background:linear-gradient(115deg,transparent 0%,transparent 18%,rgba(245,194,66,.24) 24%,rgba(255,245,150,.45) 30%,rgba(245,194,66,.24) 36%,transparent 42%,transparent 100%),
+    linear-gradient(0deg,rgba(220,150,30,.46) 0%,rgba(255,190,60,.24) 38%,transparent 62%);
+}
+.cover-rarity-ultra {
+  position:absolute;inset:0;pointer-events:none;border-radius:inherit;z-index:3;
+  background:linear-gradient(135deg,hsl(0,100%,65%) 0%,hsl(60,100%,60%) 12%,hsl(120,90%,55%) 25%,hsl(180,100%,52%) 38%,hsl(220,100%,62%) 52%,hsl(270,100%,65%) 65%,hsl(320,100%,62%) 78%,hsl(0,100%,65%) 100%);
+  background-size:200% 200%;
+  background-position:calc(var(--shine-x,.4)*100%) calc(var(--shine-y,.35)*100%);
+  opacity:.40;mix-blend-mode:screen;
+}
+
+/* ─── Entry shine beam ─── */
+@keyframes shineBeam {
+  0%   { transform:translateX(-120%) skewX(-12deg);opacity:0; }
+  15%  { opacity:var(--shine-peak,.4); }
+  85%  { opacity:var(--shine-peak,.4); }
+  100% { transform:translateX(280%) skewX(-12deg);opacity:0; }
+}
+.cover-shine-beam {
+  position:absolute;top:-10%;pointer-events:none;z-index:10;
+  left:0;width:32%;height:120%;
+  background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.75) 50%,transparent 70%);
+  opacity:0;transform:translateX(-120%) skewX(-12deg);
+  will-change:transform,opacity;
+}
+.shine-active .cover-shine-beam {
+  animation:shineBeam var(--shine-duration,.4s) cubic-bezier(.23,1,.32,1) forwards;
+}
+@media (prefers-reduced-motion:reduce) {
+  .shine-active .cover-shine-beam{animation:none!important;}
+}
+
+/* ─── Stacked wrapper ─── */
+.stacked-wrap{position:relative;margin-top:7px;margin-right:7px;}
+.stacked-wrap .sheet-2{position:absolute;inset:0;z-index:0;border-radius:var(--r-lg);transform:translate(7px,-7px);background:var(--surface-3);border:1px solid var(--border);opacity:.65;}
+.stacked-wrap .sheet-1{position:absolute;inset:0;z-index:1;border-radius:var(--r-lg);transform:translate(3.5px,-3.5px);background:var(--surface-2);border:1px solid var(--border);opacity:.82;}
+.stacked-wrap .front{position:relative;z-index:2;}
+
+/* ─── Shine storyboard frames ─── */
+.sb-frame{
+  width:60px;height:80px;border-radius:var(--r-md);overflow:hidden;
+  position:relative;border:1px solid var(--border-md);
+  background:linear-gradient(160deg,#0a0020,#060818,#140028);
+  flex-shrink:0;
+}
+.sb-beam-pos{
+  position:absolute;top:-10%;height:120%;width:30%;
+  background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.7) 50%,transparent 70%);
+  transform:skewX(-12deg);
+}
+</style>
+</head>
+<body>
+<div style="max-width:1400px;margin:0 auto;padding:48px 40px 80px;">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:40px;flex-wrap:wrap;gap:16px;">
+    <div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;">PandaWatch v2 — Design Deliverable</div>
+      <h1 style="font-family:var(--f-display);font-size:28px;font-weight:800;color:var(--text);letter-spacing:-.02em;">Card Variants Matrix</h1>
+      <p style="font-size:13px;color:var(--text-sec);margin-top:6px;max-width:620px;line-height:1.6;">
+        8 format categories × 4 rarity states. Format chips are always flat — no foil. Foil is driven exclusively by the rarity tier axis. Static states are fully legible without motion.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button id="themeBtn" onclick="toggleTheme()" style="padding:7px 14px;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--border-md);color:var(--text-sec);cursor:pointer;font-family:var(--f-body);font-size:12px;font-weight:600;">🌙 Toggle theme</button>
+      <a href="pandawatch-v2.html" style="padding:7px 14px;border-radius:var(--r-md);background:var(--gold-dim);border:1px solid var(--gold);color:var(--gold);font-size:12px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">← Back to App</a>
+    </div>
+  </div>
+
+  <!-- AXIS LEGEND -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:40px;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:20px 24px;">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:12px;">Axis 1 — Format Category (multi-value)</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(120,131,153,.15);color:#788399;border:1px solid rgba(120,131,153,.32);">Standard</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(212,138,12,.15);color:#D48A0C;border:1px solid rgba(212,138,12,.40);">Deluxe</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(224,88,48,.15);color:#E05830;border:1px solid rgba(224,88,48,.38);">Limited</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(12,169,158,.15);color:#0CA99E;border:1px solid rgba(12,169,158,.38);">Box Set</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(149,64,230,.15);color:#9540E6;border:1px solid rgba(149,64,230,.38);">Artbook</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(200,149,28,.15);color:#C8951C;border:1px solid rgba(200,149,28,.44);">Kanzenban</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(196,107,255,.15);color:#C46BFF;border:1px solid rgba(196,107,255,.42);">Variant</span>
+        <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:700;background:rgba(122,156,192,.15);color:#7A9CC0;border:1px solid rgba(122,156,192,.38);">Omnibus</span>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6;">Flat chips. No foil, no animation. Kanzenban & Variant are formats — their chip color communicates type, not scarcity.</p>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:20px 24px;">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:12px;">Axis 2 — Rarity Tier (single value, 3 levels)</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:800;background:rgba(245,194,66,.13);color:#F5C242;border:1px solid rgba(245,194,66,.52);">◆ Rare</span>
+          <span style="font-size:11px;color:var(--text-muted);">Limited confirmed, no known print run. Gold border + frozen diagonal streak on cover.</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:800;background:rgba(255,184,74,.13);color:#FFB84A;border:1px solid rgba(255,184,74,.52);">◆◆ Super Rare</span>
+          <span style="font-size:11px;color:var(--text-muted);">250–500 copies known. Gold border + lower-third warmth overlay. Shine peak 0.6.</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="padding:3px 9px;border-radius:var(--r-full);font-size:10px;font-weight:800;background:rgba(196,107,255,.13);color:#C46BFF;border:1px solid rgba(196,107,255,.52);">✦ Ultra Rare</span>
+          <span style="font-size:11px;color:var(--text-muted);">&lt;250 copies or manual holy grail. Full holo overlay moves with tilt. Shine peak 0.85.</span>
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6;">Most items have NO rarity tier — no badge, no foil. The silence makes the rarity meaningful.</p>
+    </div>
+  </div>
+
+  <!-- MATRIX GRID -->
+  <div style="margin-bottom:48px;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:16px;">8 × 4 Matrix — Format × Rarity</div>
+
+    <!-- Column headers -->
+    <div style="display:grid;grid-template-columns:120px repeat(4,1fr);gap:12px;margin-bottom:8px;">
+      <div></div>
+      <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);padding:6px;">No rarity</div>
+      <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#F5C242;padding:6px;">◆ Rare</div>
+      <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#FFB84A;padding:6px;">◆◆ Super Rare</div>
+      <div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#C46BFF;padding:6px;">✦ Ultra Rare</div>
+    </div>
+
+    <div id="matrix-rows"></div>
+  </div>
+
+  <!-- ENTRY SHINE STORYBOARD -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:28px 32px;margin-bottom:40px;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;">Entry Shine — Animation Storyboard</div>
+    <p style="font-size:12px;color:var(--text-sec);margin-bottom:24px;line-height:1.6;">One-shot diagonal beam triggered by IntersectionObserver (threshold 0.3). Cards entering viewport together stagger at 80ms intervals. Same animation fires once on hover (1.5s cooldown). Never loops.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;">
+      <!-- Rare storyboard -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <span style="padding:2px 8px;border-radius:var(--r-full);font-size:9px;font-weight:800;background:rgba(245,194,66,.13);color:#F5C242;border:1px solid rgba(245,194,66,.52);">◆ RARE</span>
+          <span style="font-size:10px;color:var(--text-muted);">400ms · peak opacity 0.4 · border area</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <!-- Frame 1: beam off-left -->
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;">
+              <div class="cover-rarity-rare"></div>
+              <div class="sb-beam-pos" style="left:-28%;opacity:0;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">0ms</div>
+          </div>
+          <!-- Frame 2: beam entering -->
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;">
+              <div class="cover-rarity-rare"></div>
+              <div class="sb-beam-pos" style="left:15%;opacity:.25;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">80ms</div>
+          </div>
+          <!-- Frame 3: beam centre -->
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(245,194,66,.45);box-shadow:0 0 14px rgba(245,194,66,.18);">
+              <div class="cover-rarity-rare"></div>
+              <div class="sb-beam-pos" style="left:38%;opacity:.4;"></div>
+            </div>
+            <div style="font-size:8px;color:#F5C242;font-weight:700;">200ms peak</div>
+          </div>
+          <!-- Frame 4: beam exiting -->
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(245,194,66,.45);">
+              <div class="cover-rarity-rare"></div>
+              <div class="sb-beam-pos" style="left:75%;opacity:.12;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">400ms</div>
+          </div>
+          <!-- Static state -->
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(245,194,66,.48);box-shadow:0 0 0 1px rgba(245,194,66,.08),0 4px 22px rgba(245,194,66,.2);">
+              <div class="cover-rarity-rare"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">static</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Super Rare storyboard -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <span style="padding:2px 8px;border-radius:var(--r-full);font-size:9px;font-weight:800;background:rgba(255,184,74,.13);color:#FFB84A;border:1px solid rgba(255,184,74,.52);">◆◆ SUPER RARE</span>
+          <span style="font-size:10px;color:var(--text-muted);">500ms · peak opacity 0.6 · border + third</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;background:linear-gradient(160deg,#1a1200,#1f1600);">
+              <div class="cover-rarity-super"></div>
+              <div class="sb-beam-pos" style="left:-28%;opacity:0;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">0ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;background:linear-gradient(160deg,#1a1200,#1f1600);">
+              <div class="cover-rarity-super"></div>
+              <div class="sb-beam-pos" style="left:10%;opacity:.3;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">100ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;background:linear-gradient(160deg,#1a1200,#1f1600);border-color:rgba(240,160,40,.65);box-shadow:0 4px 18px rgba(220,140,40,.28);">
+              <div class="cover-rarity-super"></div>
+              <div class="sb-beam-pos" style="left:38%;opacity:.6;"></div>
+            </div>
+            <div style="font-size:8px;color:#FFB84A;font-weight:700;">250ms peak</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;background:linear-gradient(160deg,#1a1200,#1f1600);border-color:rgba(240,160,40,.65);">
+              <div class="cover-rarity-super"></div>
+              <div class="sb-beam-pos" style="left:72%;opacity:.18;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">500ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;background:linear-gradient(160deg,#1a1200,#1f1600);border-color:rgba(240,160,40,.65);box-shadow:0 0 0 1px rgba(255,160,60,.10),0 4px 28px rgba(220,140,40,.28);">
+              <div class="cover-rarity-super"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">static</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ultra Rare storyboard -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <span style="padding:2px 8px;border-radius:var(--r-full);font-size:9px;font-weight:800;background:rgba(196,107,255,.13);color:#C46BFF;border:1px solid rgba(196,107,255,.52);">✦ ULTRA RARE</span>
+          <span style="font-size:10px;color:var(--text-muted);">600ms · peak opacity 0.85 · full cover</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;">
+              <div class="cover-rarity-ultra"></div>
+              <div class="sb-beam-pos" style="left:-28%;opacity:0;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">0ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;">
+              <div class="cover-rarity-ultra"></div>
+              <div class="sb-beam-pos" style="left:5%;opacity:.42;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">90ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(196,107,255,.52);box-shadow:0 4px 32px rgba(196,107,255,.44),0 0 56px rgba(100,140,255,.1);">
+              <div class="cover-rarity-ultra"></div>
+              <div class="sb-beam-pos" style="left:35%;opacity:.85;"></div>
+            </div>
+            <div style="font-size:8px;color:#C46BFF;font-weight:700;">300ms peak</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(196,107,255,.52);">
+              <div class="cover-rarity-ultra"></div>
+              <div class="sb-beam-pos" style="left:68%;opacity:.28;"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">600ms</div>
+          </div>
+          <div style="flex:1;text-align:center;">
+            <div class="sb-frame" style="margin:0 auto 4px;border-color:rgba(196,107,255,.52);box-shadow:0 0 0 1.5px rgba(196,107,255,.18),0 4px 32px rgba(196,107,255,.44),0 0 56px rgba(100,140,255,.1);">
+              <div class="cover-rarity-ultra"></div>
+            </div>
+            <div style="font-size:8px;color:var(--text-muted);">static</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stagger note -->
+    <div style="margin-top:20px;padding:14px 18px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);font-size:11px;color:var(--text-sec);line-height:1.6;">
+      <strong style="color:var(--text);">Stagger rule:</strong> When N rarity cards enter the viewport simultaneously, each fires with an 80ms offset. 8 cards = the last starts at 640ms after the first. Prevents the "flash storm" effect of simultaneous animation bursts.
+      <span style="margin-left:8px;font-size:10px;color:var(--text-muted);">· prefers-reduced-motion: all animations disabled, static state only.</span>
+    </div>
+  </div>
+
+  <!-- SINGLE vs MULTI-TOME -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:28px 32px;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;">Single-tome vs Multi-tome — Stacked Card Effect</div>
+    <p style="font-size:12px;color:var(--text-sec);margin-bottom:24px;line-height:1.6;">Multi-tome editions show 2 paper sheets behind the front card (surface-2/surface-3), offset 3.5px and 7px upper-right. Communicates "this is a series, not one volume". Foil only on the front card.</p>
+    <div style="display:flex;gap:32px;flex-wrap:wrap;" id="stack-demo"></div>
+  </div>
+
+</div>
+
+<script>
+/* ── Data ── */
+const FORMAT_META = {
+  standard:  { label:'Standard',  color:'#788399', bg:'rgba(120,131,153,.15)', border:'rgba(120,131,153,.32)',  tint:null },
+  deluxe:    { label:'Deluxe',    color:'#D48A0C', bg:'rgba(212,138,12,.15)',  border:'rgba(212,138,12,.40)',   tint:'linear-gradient(160deg,#1a1200,#1f1600,#1a1200)' },
+  limited:   { label:'Limited',   color:'#E05830', bg:'rgba(224,88,48,.15)',   border:'rgba(224,88,48,.38)',    tint:'linear-gradient(160deg,#200a08,#1c0a08,#200a08)' },
+  boxset:    { label:'Box Set',   color:'#0CA99E', bg:'rgba(12,169,158,.15)',  border:'rgba(12,169,158,.38)',   tint:'linear-gradient(160deg,#001a1a,#001f1e,#001a1a)' },
+  artbook:   { label:'Artbook',   color:'#9540E6', bg:'rgba(149,64,230,.15)',  border:'rgba(149,64,230,.38)',   tint:'linear-gradient(160deg,#1a0030,#120a20,#1a0030)' },
+  kanzenban: { label:'Kanzenban', color:'#C8951C', bg:'rgba(200,149,28,.15)',  border:'rgba(200,149,28,.44)',   tint:'linear-gradient(160deg,#1a1400,#251d00,#1a1400)' },
+  variant:   { label:'Variant',   color:'#C46BFF', bg:'rgba(196,107,255,.15)', border:'rgba(196,107,255,.42)',  tint:'linear-gradient(160deg,#12002a,#0a0a32,#22001a)' },
+  omnibus:   { label:'Omnibus',   color:'#7A9CC0', bg:'rgba(122,156,192,.15)', border:'rgba(122,156,192,.38)',  tint:'linear-gradient(160deg,#0a1020,#0e1428,#0a1020)' },
+};
+
+const RARITY_META = {
+  none:       { label:'—',         badge:null,      cardBorder:'var(--border)',  cardShadow:'0 2px 6px rgba(0,0,0,.4)',  coverClass:null,            shineDuration:'.4s', shinePeak:.4 },
+  rare:       { label:'◆ Rare',    badge:{color:'#F5C242',bg:'rgba(245,194,66,.13)',border:'rgba(245,194,66,.52)',icon:'◆'}, cardBorder:'rgba(245,194,66,.48)', cardShadow:'0 0 0 1px rgba(245,194,66,.08),0 4px 22px rgba(245,194,66,.2),0 2px 8px rgba(0,0,0,.42)', coverClass:'cover-rarity-rare', shineDuration:'.4s', shinePeak:.4 },
+  super_rare: { label:'◆◆ Super Rare', badge:{color:'#FFB84A',bg:'rgba(255,184,74,.13)',border:'rgba(255,184,74,.52)',icon:'◆◆'}, cardBorder:'rgba(240,160,40,.65)', cardShadow:'0 0 0 1px rgba(255,160,60,.10),0 4px 28px rgba(220,140,40,.28),0 2px 8px rgba(0,0,0,.46)', coverClass:'cover-rarity-super', shineDuration:'.5s', shinePeak:.6 },
+  ultra_rare: { label:'✦ Ultra Rare', badge:{color:'#C46BFF',bg:'rgba(196,107,255,.13)',border:'rgba(196,107,255,.52)',icon:'✦'}, cardBorder:'rgba(196,107,255,.52)', cardShadow:'0 0 0 1.5px rgba(196,107,255,.18),0 4px 32px rgba(196,107,255,.44),0 0 56px rgba(100,140,255,.1),0 2px 8px rgba(0,0,0,.5)', coverClass:'cover-rarity-ultra', shineDuration:'.6s', shinePeak:.85 },
+};
+
+const FORMAT_ORDER = ['standard','deluxe','limited','boxset','artbook','kanzenban','variant','omnibus'];
+const RARITY_ORDER = ['none','rare','super_rare','ultra_rare'];
+
+const KEY_EXAMPLES = {
+  'deluxe-none': 'Deluxe sin rareza',
+  'limited-rare': '★ Limited + Rare',
+  'variant-super_rare': '★ Variant + Super Rare',
+  'variant-ultra_rare': '★★ Variant + Ultra Rare',
+  'kanzenban-none': 'Kanzenban sin rareza',
+  'kanzenban-ultra_rare': '★★ Kanzenban + Ultra Rare',
+  'boxset-rare': '★ Box Set + Rare',
+  'standard-super_rare': '★ Standard + Super Rare',
+};
+
+/* ── Card builder ── */
+let shineIndexGlobal = 0;
+
+function makeCard(fmt, rarity, multi=false) {
+  const fm = FORMAT_META[fmt];
+  const rm = RARITY_META[rarity];
+  const coverBg = rarity==='ultra_rare'
+    ? 'linear-gradient(160deg,#0a0020,#060818,#140028)'
+    : (fm.tint || 'repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 3px,var(--surface-3) 3px,var(--surface-3) 6px)');
+
+  const myIdx = shineIndexGlobal++;
+  const cardId = `card-${fmt}-${rarity}-${myIdx}`;
+
+  const card = document.createElement('div');
+  card.id = cardId;
+  card.dataset.rarity = rarity!=='none' ? rarity : '';
+  card.dataset.shineDuration = rm.shineDuration;
+  card.dataset.shinePeak = rm.shinePeak;
+  card.dataset.shineIdx = myIdx;
+
+  card.style.cssText = `
+    background:var(--surface);border-radius:var(--r-lg);overflow:hidden;
+    border:1.5px solid ${rm.cardBorder};
+    box-shadow:${rm.cardShadow};
+    cursor:pointer;position:relative;
+    transition:box-shadow .2s,border-color .2s;
+    width:100%;
+  `;
+
+  const coverDiv = document.createElement('div');
+  coverDiv.style.cssText = `height:130px;position:relative;overflow:hidden;
+    background:${coverBg};
+    display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;`;
+
+  const coverLabel = document.createElement('span');
+  coverLabel.style.cssText = 'font-size:8px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.18);position:relative;z-index:2;font-family:var(--f-body);';
+  coverLabel.textContent = fm.label + ' cover';
+  coverDiv.appendChild(coverLabel);
+
+  if (rm.coverClass) {
+    const overlay = document.createElement('div');
+    overlay.className = rm.coverClass;
+    coverDiv.appendChild(overlay);
+    const beam = document.createElement('div');
+    beam.className = 'cover-shine-beam';
+    coverDiv.appendChild(beam);
+  }
+  card.appendChild(coverDiv);
+
+  // Format chip
+  const fmtChip = document.createElement('div');
+  fmtChip.style.cssText = `position:absolute;top:7px;left:7px;z-index:5;
+    padding:2px 7px;border-radius:var(--r-full);
+    font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-family:var(--f-body);
+    background:${fm.bg};color:${fm.color};border:1px solid ${fm.border};`;
+  fmtChip.textContent = fm.label;
+  card.appendChild(fmtChip);
+
+  // Rarity badge
+  if (rm.badge) {
+    const rb = document.createElement('div');
+    rb.style.cssText = `position:absolute;top:7px;right:7px;z-index:5;
+      display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:var(--r-full);
+      font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;font-family:var(--f-body);
+      background:${rm.badge.bg};color:${rm.badge.color};border:1px solid ${rm.badge.border};`;
+    rb.textContent = rm.badge.icon + ' ' + (rarity==='rare'?'Rare':rarity==='super_rare'?'SR':'UR');
+    card.appendChild(rb);
+  }
+
+  // Info
+  const info = document.createElement('div');
+  info.style.cssText = 'padding:8px 10px 10px;';
+  info.innerHTML = `
+    <div style="font-size:11px;font-weight:700;color:var(--text);line-height:1.3;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fm.label}${multi?' · Series':''}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+      <div style="font-size:10px;font-weight:700;color:${rm.badge?rm.badge.color:'var(--gold)'};">¥3,200</div>
+      <div style="font-size:8px;font-weight:800;padding:1px 5px;border-radius:var(--r-full);background:var(--success-dim);color:var(--success);border:1px solid var(--success);">91</div>
+    </div>
+  `;
+  card.appendChild(info);
+
+  // Tilt + shine
+  let cooldown = false;
+  card.addEventListener('mousemove', (e) => {
+    const r = card.getBoundingClientRect();
+    const x = (e.clientX-r.left)/r.width, y = (e.clientY-r.top)/r.height;
+    card.style.transform = `perspective(700px) rotateX(${-(y-.5)*8}deg) rotateY(${(x-.5)*8}deg) translateZ(4px)`;
+    card.style.setProperty('--shine-x', x);
+    card.style.setProperty('--shine-y', y);
+  });
+  card.addEventListener('mouseleave', () => {
+    card.style.transition = 'transform .45s cubic-bezier(.23,1,.32,1)';
+    card.style.transform = '';
+    setTimeout(() => { card.style.transition = ''; }, 450);
+  });
+  card.addEventListener('mouseenter', () => {
+    if (!card.dataset.rarity || cooldown) return;
+    if (window.matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    cooldown = true;
+    triggerShine(card);
+    setTimeout(() => { cooldown = false; }, 1500);
+  });
+
+  // Wrapper for stacked effect
+  if (multi) {
+    const wrap = document.createElement('div');
+    wrap.className = 'stacked-wrap';
+    const s2 = document.createElement('div'); s2.className = 'sheet-2'; wrap.appendChild(s2);
+    const s1 = document.createElement('div'); s1.className = 'sheet-1'; wrap.appendChild(s1);
+    const front = document.createElement('div'); front.className = 'front'; front.appendChild(card); wrap.appendChild(front);
+    return { outer: wrap, card };
+  }
+  return { outer: card, card };
+}
+
+function triggerShine(el) {
+  const rm = RARITY_META[el.dataset.rarity];
+  if (!rm || !rm.coverClass) return;
+  el.style.setProperty('--shine-duration', rm.shineDuration);
+  el.style.setProperty('--shine-peak', rm.shinePeak);
+  el.classList.add('shine-active');
+  const done = () => el.classList.remove('shine-active');
+  el.addEventListener('animationend', done, { once: true });
+  setTimeout(done, (parseFloat(rm.shineDuration)*1000)+200);
+}
+
+/* ── Build matrix ── */
+function buildMatrix() {
+  const container = document.getElementById('matrix-rows');
+
+  FORMAT_ORDER.forEach(fmt => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:120px repeat(4,1fr);gap:12px;margin-bottom:12px;';
+
+    // Row label
+    const label = document.createElement('div');
+    label.style.cssText = 'display:flex;align-items:center;';
+    const chip = document.createElement('div');
+    chip.style.cssText = `padding:4px 10px;border-radius:var(--r-full);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-family:var(--f-body);background:${FORMAT_META[fmt].bg};color:${FORMAT_META[fmt].color};border:1px solid ${FORMAT_META[fmt].border};white-space:nowrap;`;
+    chip.textContent = FORMAT_META[fmt].label;
+    label.appendChild(chip);
+    row.appendChild(label);
+
+    RARITY_ORDER.forEach(rarity => {
+      const cell = document.createElement('div');
+      const key = `${fmt}-${rarity}`;
+      const isKey = KEY_EXAMPLES[key];
+      if (isKey) {
+        cell.style.cssText = 'position:relative;';
+        const tag = document.createElement('div');
+        tag.style.cssText = 'position:absolute;top:-18px;left:0;right:0;text-align:center;font-size:8px;font-weight:700;color:var(--gold);letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        tag.textContent = isKey;
+        cell.appendChild(tag);
+      }
+      const { outer } = makeCard(fmt, rarity, fmt==='boxset'||fmt==='kanzenban');
+      cell.appendChild(outer);
+      row.appendChild(cell);
+    });
+
+    container.appendChild(row);
+  });
+
+  // Set up IntersectionObserver for entry shines
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const el = entry.target;
+      if (!el.dataset.rarity) return;
+      if (window.matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+      const delay = parseInt(el.dataset.shineIdx||0) * 80 % 640; // cap stagger
+      setTimeout(() => triggerShine(el), delay);
+      obs.unobserve(el);
+    });
+  }, { threshold: 0.3 });
+
+  document.querySelectorAll('[data-rarity]:not([data-rarity=""])').forEach(el => obs.observe(el));
+}
+
+/* ── Build stack demo ── */
+function buildStackDemo() {
+  const container = document.getElementById('stack-demo');
+  const demos = [
+    { fmt:'kanzenban', rarity:'none',       multi:false, label:'Single-tome\nKanzenban — no rarity' },
+    { fmt:'kanzenban', rarity:'none',       multi:true,  label:'Multi-tome\nKanzenban — no rarity' },
+    { fmt:'limited',   rarity:'rare',       multi:false, label:'Single-tome\nLimited + Rare' },
+    { fmt:'boxset',    rarity:'super_rare', multi:true,  label:'Multi-tome\nBox Set + Super Rare' },
+    { fmt:'variant',   rarity:'ultra_rare', multi:false, label:'Single-tome\nVariant + Ultra Rare' },
+  ];
+  demos.forEach(d => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:10px;width:120px;';
+    const { outer } = makeCard(d.fmt, d.rarity, d.multi);
+    outer.style.maxWidth = '110px';
+    const lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:10px;color:var(--text-muted);text-align:center;line-height:1.5;white-space:pre-line;';
+    lbl.textContent = d.label;
+    wrap.appendChild(outer);
+    wrap.appendChild(lbl);
+    container.appendChild(wrap);
+  });
+}
+
+/* ── Theme toggle ── */
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme')==='dark';
+  html.setAttribute('data-theme', isDark?'light':'dark');
+  html.style.colorScheme = isDark?'light':'dark';
+  document.getElementById('themeBtn').textContent = isDark ? '🌙 Toggle theme' : '☀️ Toggle theme';
+}
+
+/* ── Init ── */
+buildMatrix();
+buildStackDemo();
+</script>
+</body>
+</html>

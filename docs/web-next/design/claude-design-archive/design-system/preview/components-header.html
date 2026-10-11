@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Header & Search" subtitle="Default, search-active, and sort toolbar states" viewport="700x280" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 10px; }
+
+/* ── HEADER ── */
+.header {
+  background: #fff; border-bottom: 1px solid #E5E0D8;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 24px; height: 60px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  border-radius: 10px; margin-bottom: 20px;
+}
+.logo { display: flex; align-items: center; gap: 8px; text-decoration: none; flex-shrink: 0; }
+.logo-word { font-family: 'Space Grotesk', sans-serif; font-size: 17px; letter-spacing: -0.02em; }
+.logo-word .p { font-weight: 600; color: #1C1915; }
+.logo-word .w { font-weight: 400; color: #1A8A5A; }
+.search-bar {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  background: #F5F1EB; border: 1.5px solid #DDD8CF;
+  border-radius: 8px; padding: 0 14px; height: 38px;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.search-bar:focus-within {
+  border-color: #1A8A5A;
+  box-shadow: 0 0 0 3px rgba(26,138,90,0.12);
+  background: #fff;
+}
+.search-bar input {
+  flex: 1; border: none; background: transparent; outline: none;
+  font-family: 'DM Sans', sans-serif; font-size: 14px; color: #1C1915;
+}
+.search-bar input::placeholder { color: #A89E93; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: #706560; cursor: pointer; border: 1px solid transparent;
+  transition: background 120ms, border-color 120ms;
+}
+.icon-btn:hover { background: #F5F1EB; border-color: #DDD8CF; }
+.filter-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 14px; height: 36px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; color: #554D49;
+  border: 1.5px solid #DDD8CF; cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+  background: transparent;
+}
+.filter-btn:hover { border-color: #1A8A5A; color: #1A8A5A; }
+.filter-badge { background: #1A8A5A; color: #fff; border-radius: 999px; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+
+/* ── SEARCH FOCUS STATE ── */
+.search-focused { border-color: #1A8A5A; box-shadow: 0 0 0 3px rgba(26,138,90,0.12); background: #fff; }
+
+/* ── SORT ── */
+.sort-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+.sort-select {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 6px; border: 1.5px solid #DDD8CF;
+  font-size: 13px; color: #554D49; cursor: pointer; background: #fff;
+}
+.sort-select svg { color: #A89E93; }
+.results-count { font-size: 13px; color: #8C8178; margin-left: auto; }
+</style>
+</head>
+<body>
+
+<div class="label">Header — Default State</div>
+<div class="header">
+  <div class="logo">
+    <img src="../assets/panda-mark.png" width="32" height="32" alt="PandaWatch" style="display:block; object-fit:contain;">
+    <div class="logo-word"><span class="p">Panda</span><span class="w">Watch</span></div>
+  </div>
+
+  <div class="search-bar">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A89E93" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" placeholder="Search by manga, series, publisher, ISBN…" readonly>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C6BEB4" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+  </div>
+
+  <div class="header-actions">
+    <div class="filter-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+      Filters
+      <div class="filter-badge">3</div>
+    </div>
+    <div class="icon-btn">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M17.66 7.34a8 8 0 0 1 0 9.32"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14M6.34 7.34a8 8 0 0 0 0 9.32"/></svg>
+    </div>
+  </div>
+</div>
+
+<div class="label">Header — Search Active</div>
+<div class="header">
+  <div class="logo">
+    <img src="../assets/panda-mark.png" width="32" height="32" alt="PandaWatch" style="display:block; object-fit:contain;">
+    <div class="logo-word"><span class="p">Panda</span><span class="w">Watch</span></div>
+  </div>
+  <div class="search-bar search-focused">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1A8A5A" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" value="berserk deluxe" readonly style="color:#1C1915;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A89E93" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+  </div>
+  <div class="header-actions">
+    <div class="filter-btn" style="border-color:#1A8A5A; color:#1A8A5A;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+      Filters
+    </div>
+    <div class="icon-btn">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M17.66 7.34a8 8 0 0 1 0 9.32"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14M6.34 7.34a8 8 0 0 0 0 9.32"/></svg>
+    </div>
+  </div>
+</div>
+
+<div class="label">Toolbar — Sort + Results Count</div>
+<div class="sort-row">
+  <span style="font-size:13px; color:#8C8178;">Sort by</span>
+  <div class="sort-select">
+    Most Rare
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div style="display:flex; gap:6px; margin-left:8px;">
+    <div style="width:32px; height:32px; border-radius:6px; border:1.5px solid #1A8A5A; display:flex; align-items:center; justify-content:center; color:#1A8A5A;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </div>
+    <div style="width:32px; height:32px; border-radius:6px; border:1.5px solid #DDD8CF; display:flex; align-items:center; justify-content:center; color:#A89E93;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="results-count">128 editions found</div>
+</div>
+
+</body>
+</html>

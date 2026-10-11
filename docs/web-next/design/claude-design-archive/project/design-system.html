@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PandaWatch — Design System v1</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,400&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <style>
+    /* ═══════════════════════════════════════════
+       PANDAWATCH DESIGN TOKENS
+    ═══════════════════════════════════════════ */
+    :root {
+      /* ── Backgrounds ── */
+      --bg:        #090E1E;
+      --surface:   #111E36;
+      --surface-2: #182644;
+      --surface-3: #1F2E52;
+
+      /* ── Borders ── */
+      --border:    rgba(200,210,255,0.07);
+      --border-md: rgba(200,210,255,0.13);
+      --border-lg: rgba(200,210,255,0.22);
+
+      /* ── Text ── */
+      --text:      #E6EAFF;
+      --text-sec:  rgba(210,220,255,0.60);
+      --text-muted:rgba(210,220,255,0.35);
+
+      /* ── Brand ── */
+      --gold:      #F5C242;
+      --gold-dim:  rgba(245,194,66,0.13);
+      --gold-glow: rgba(245,194,66,0.22);
+      --gold-text: #181400;
+      --indigo:    #6C7BFF;
+      --indigo-dim:rgba(108,123,255,0.14);
+      --violet:    #C46BFF;
+      --violet-dim:rgba(196,107,255,0.14);
+
+      /* ── Semantic ── */
+      --success:   #3ECF9A;
+      --success-dim:rgba(62,207,154,0.14);
+      --danger:    #FF5F6D;
+      --danger-dim:rgba(255,95,109,0.14);
+      --warning:   #F5A028;
+
+      /* ── Rarity palette ── */
+      --r1: #788399;   /* Standard    */
+      --r2: #D48A0C;   /* Deluxe      */
+      --r3: #E05830;   /* Limited     */
+      --r4: #0CA99E;   /* Box Set     */
+      --r5: #9540E6;   /* Artbook     */
+      --r6: #F5C242;   /* Kanzenban   */
+      /* r7-r8: animated css */
+
+      /* ── Typography ── */
+      --f-display: 'Bricolage Grotesque', sans-serif;
+      --f-body:    'Plus Jakarta Sans', sans-serif;
+      --f-cjk:     'Noto Sans JP', 'Plus Jakarta Sans', sans-serif;
+
+      /* ── Spacing (4px base) ── */
+      --s0:2px; --s1:4px; --s2:8px; --s3:12px;
+      --s4:16px; --s5:20px; --s6:24px; --s7:32px;
+      --s8:40px; --s9:48px; --s10:64px; --s11:80px; --s12:96px;
+
+      /* ── Radii ── */
+      --r-xs:4px; --r-sm:6px; --r-md:10px;
+      --r-lg:14px; --r-xl:20px; --r-2xl:28px; --r-full:9999px;
+
+      /* ── Shadows ── */
+      --sh-xs: 0 1px 2px rgba(0,0,0,.40);
+      --sh-sm: 0 2px 6px rgba(0,0,0,.40), 0 1px 2px rgba(0,0,0,.30);
+      --sh-md: 0 4px 14px rgba(0,0,0,.45), 0 1px 4px rgba(0,0,0,.35);
+      --sh-lg: 0 8px 28px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+      --sh-xl: 0 16px 48px rgba(0,0,0,.65), 0 4px 12px rgba(0,0,0,.40);
+      --sh-gold: 0 4px 20px rgba(245,194,66,.22), 0 2px 8px rgba(0,0,0,.45);
+      --sh-gold-lg: 0 8px 32px rgba(245,194,66,.30), 0 4px 12px rgba(0,0,0,.45);
+      --sh-indigo: 0 4px 20px rgba(108,123,255,.25), 0 2px 8px rgba(0,0,0,.40);
+      --sh-violet: 0 4px 20px rgba(196,107,255,.25), 0 2px 8px rgba(0,0,0,.40);
+
+      /* ── Logo vars (dark mode) ── */
+      --logo-body:  #E8ECF8;
+      --logo-patch: #0C1628;
+      --logo-nose:  #0C1628;
+    }
+
+    [data-theme="light"] {
+      --bg:        #F1F4FF;
+      --surface:   #FFFFFF;
+      --surface-2: #E7ECFA;
+      --surface-3: #D9E1F5;
+      --border:    rgba(26,40,80,0.07);
+      --border-md: rgba(26,40,80,0.13);
+      --border-lg: rgba(26,40,80,0.22);
+      --text:      #111A38;
+      --text-sec:  rgba(20,30,70,0.60);
+      --text-muted:rgba(20,30,70,0.38);
+      --gold:      #C8951C;
+      --gold-dim:  rgba(200,149,28,0.13);
+      --gold-glow: rgba(200,149,28,0.22);
+      --gold-text: #FFFFFF;
+      --indigo:    #4050E8;
+      --indigo-dim:rgba(64,80,232,0.12);
+      --violet:    #9030D8;
+      --violet-dim:rgba(144,48,216,0.12);
+      --success:   #1A9A6A;
+      --success-dim:rgba(26,154,106,0.12);
+      --danger:    #D42838;
+      --danger-dim:rgba(212,40,56,0.12);
+      --warning:   #C07C10;
+      --r1: #6070AA;
+      --r2: #B87808;
+      --r3: #C04420;
+      --r4: #089088;
+      --r5: #7A30C8;
+      --r6: #C8951C;
+      --sh-xs: 0 1px 2px rgba(0,0,0,.06);
+      --sh-sm: 0 2px 6px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
+      --sh-md: 0 4px 14px rgba(0,0,0,.09), 0 1px 4px rgba(0,0,0,.06);
+      --sh-lg: 0 8px 28px rgba(0,0,0,.11), 0 2px 8px rgba(0,0,0,.07);
+      --sh-xl: 0 16px 48px rgba(0,0,0,.13), 0 4px 12px rgba(0,0,0,.08);
+      --sh-gold: 0 4px 20px rgba(200,149,28,.18), 0 2px 8px rgba(0,0,0,.07);
+      --sh-gold-lg: 0 8px 32px rgba(200,149,28,.22), 0 4px 12px rgba(0,0,0,.08);
+      --logo-body:  #FFFFFF;
+      --logo-patch: #111A38;
+      --logo-nose:  #111A38;
+    }
+
+    /* ═══ RESET ═══ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { color-scheme: dark; scroll-behavior: smooth; }
+    [data-theme="light"] { color-scheme: light; }
+
+    body {
+      font-family: var(--f-body);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.55;
+      transition: background .25s, color .25s;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ═══ LAYOUT ═══ */
+    .ds-wrap { display: flex; min-height: 100vh; }
+
+    .ds-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: var(--s5) var(--s4);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+    .ds-sidebar::-webkit-scrollbar { display: none; }
+
+    .ds-main {
+      flex: 1;
+      min-width: 0;
+      padding: var(--s10) var(--s10);
+      max-width: 1160px;
+    }
+
+    /* ═══ SECTION STRUCTURE ═══ */
+    .section { margin-bottom: var(--s12); scroll-margin-top: var(--s7); }
+    .section-eyebrow {
+      font-family: var(--f-body);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: var(--s2);
+    }
+    .section-title {
+      font-family: var(--f-display);
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1.1;
+      color: var(--text);
+      margin-bottom: var(--s3);
+      letter-spacing: -.02em;
+    }
+    .section-desc {
+      font-size: 14px;
+      color: var(--text-sec);
+      max-width: 580px;
+      line-height: 1.65;
+      margin-bottom: var(--s7);
+    }
+    .section-divider {
+      width: 100%;
+      height: 1px;
+      background: var(--border);
+      margin-bottom: var(--s10);
+    }
+
+    /* ═══ GRID HELPERS ═══ */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); }
+    .grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: var(--s5); }
+    .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: var(--s4); }
+    .flex-wrap { display: flex; flex-wrap: wrap; gap: var(--s3); }
+
+    /* ═══ ANIMATIONS ═══ */
+    @keyframes goldShimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position:  200% center; }
+    }
+    @keyframes holoShift {
+      0%   { filter: hue-rotate(0deg)   brightness(1.05) saturate(1.2); }
+      33%  { filter: hue-rotate(120deg) brightness(1.20) saturate(1.4); }
+      66%  { filter: hue-rotate(240deg) brightness(1.15) saturate(1.3); }
+      100% { filter: hue-rotate(360deg) brightness(1.05) saturate(1.2); }
+    }
+    @keyframes shineSwipe {
+      0%   { left: -80%; }
+      100% { left: 160%; }
+    }
+    @keyframes shimmerLoad {
+      0%   { background-position: -200% 0; }
+      100% { background-position:  200% 0; }
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: 0.45; }
+    }
+
+    /* ═══ SIDEBAR NAV ═══ */
+    .nav-logo-wrap { margin-bottom: var(--s6); padding-bottom: var(--s5); border-bottom: 1px solid var(--border); }
+    .nav-version { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); margin-top: var(--s1); }
+
+    .theme-toggle {
+      display: flex; align-items: center; gap: var(--s2);
+      width: 100%; padding: var(--s2) var(--s3);
+      background: var(--surface-2); border: 1px solid var(--border-md);
+      border-radius: var(--r-md); color: var(--text-sec);
+      font-size: 12px; font-weight: 500; font-family: var(--f-body);
+      cursor: pointer; margin-bottom: var(--s5);
+      transition: all .15s;
+    }
+    .theme-toggle:hover { background: var(--surface-3); color: var(--text); }
+
+    .nav-group-label {
+      font-size: 10px; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--text-muted);
+      padding: var(--s3) var(--s2) var(--s1);
+    }
+    .nav-link {
+      display: block; padding: 5px var(--s2);
+      border-radius: var(--r-sm); font-size: 13px; font-weight: 400;
+      color: var(--text-sec); text-decoration: none;
+      transition: all .12s; cursor: pointer;
+    }
+    .nav-link:hover { color: var(--text); background: var(--surface-2); }
+    .nav-link.active { color: var(--gold); background: var(--gold-dim); font-weight: 600; }
+
+    /* ═══ DEMO BOX ═══ */
+    .demo-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-xl);
+      padding: var(--s7);
+      margin-bottom: var(--s5);
+    }
+    .demo-label {
+      font-size: 11px; font-weight: 600; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--text-muted);
+      margin-bottom: var(--s4);
+    }
+
+    /* ═══ COVER PLACEHOLDER ═══ */
+    .cover-ph {
+      background: repeating-linear-gradient(
+        45deg,
+        var(--surface-2), var(--surface-2) 4px,
+        var(--surface-3) 4px, var(--surface-3) 8px
+      );
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--f-body); font-size: 9px; font-weight: 600;
+      letter-spacing: .06em; text-transform: uppercase;
+      color: var(--text-muted); text-align: center; padding: 8px;
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="ds-brand.jsx"></script>
+<script type="text/babel" src="ds-components.jsx"></script>
+<script type="text/babel" src="ds-rarity.jsx"></script>
+
+<script type="text/babel">
+/* ═══════════════════════════════════════════
+   MAIN APP — DESIGN SYSTEM
+═══════════════════════════════════════════ */
+
+const NAV = [
+  { group: 'Foundation', items: [
+    { id: 'brand',    label: 'Brand & Logo' },
+    { id: 'colors',   label: 'Colors' },
+    { id: 'type',     label: 'Typography' },
+    { id: 'spacing',  label: 'Spacing & Radii' },
+    { id: 'shadows',  label: 'Elevation' },
+  ]},
+  { group: 'Identity', items: [
+    { id: 'rarity',   label: '★ Rarity System' },
+  ]},
+  { group: 'Components', items: [
+    { id: 'buttons',  label: 'Buttons' },
+    { id: 'inputs',   label: 'Inputs' },
+    { id: 'chips',    label: 'Chips & Filters' },
+    { id: 'badges',   label: 'Badges' },
+    { id: 'cards',    label: 'Cards' },
+    { id: 'nav-comp', label: 'Navigation' },
+    { id: 'states',   label: 'States' },
+  ]},
+];
+
+function Sidebar({ active, theme, onThemeToggle }) {
+  return (
+    <nav className="ds-sidebar">
+      <div className="nav-logo-wrap">
+        <PandaLogo size={30} showWordmark />
+        <div className="nav-version">Design System v1</div>
+      </div>
+
+      <button className="theme-toggle" onClick={onThemeToggle}>
+        <span style={{fontSize:14}}>{theme === 'dark' ? '🌙' : '☀️'}</span>
+        {theme === 'dark' ? 'Dark mode' : 'Light mode'}
+      </button>
+
+      {NAV.map(group => (
+        <div key={group.group}>
+          <div className="nav-group-label">{group.group}</div>
+          {group.items.map(item => (
+            <a
+              key={item.id}
+              className={`nav-link${active === item.id ? ' active' : ''}`}
+              href={`#${item.id}`}
+            >
+              {item.label}
+            </a>
+          ))}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function App() {
+  const [theme, setTheme] = React.useState('dark');
+  const [active, setActive] = React.useState('brand');
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  React.useEffect(() => {
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting && e.intersectionRatio > 0.2) {
+          setActive(e.target.id);
+        }
+      });
+    }, { threshold: 0.2, rootMargin: '-10% 0px -60% 0px' });
+    NAV.flatMap(g => g.items).forEach(item => {
+      const el = document.getElementById(item.id);
+      if (el) obs.observe(el);
+    });
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div className="ds-wrap">
+      <Sidebar active={active} theme={theme} onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} />
+      <div className="ds-main">
+        <BrandSection />
+        <div className="section-divider" />
+        <ColorsSection />
+        <div className="section-divider" />
+        <TypographySection />
+        <div className="section-divider" />
+        <SpacingSection />
+        <div className="section-divider" />
+        <ShadowSection />
+        <div className="section-divider" />
+        <RaritySection />
+        <div className="section-divider" />
+        <ButtonsSection />
+        <div className="section-divider" />
+        <InputsSection />
+        <div className="section-divider" />
+        <ChipsSection />
+        <div className="section-divider" />
+        <BadgesSection />
+        <div className="section-divider" />
+        <CardsSection />
+        <div className="section-divider" />
+        <NavSection />
+        <div className="section-divider" />
+        <StatesSection />
+        <div style={{height: 80}} />
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Neutrals — Ink" subtitle="10-step ink/paper palette, text hierarchy in context" viewport="700x320" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: #F5F1EB; padding: 24px 28px; }
+.row { display: flex; gap: 6px; align-items: stretch; flex-wrap: wrap; margin-bottom: 20px; }
+.swatch { border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); flex: 1; min-width: 56px; }
+.swatch-color { height: 52px; }
+.swatch-info { background: #fff; padding: 6px 8px; }
+.swatch-name { font-size: 10px; font-weight: 500; color: #1C1915; }
+.swatch-hex { font-size: 9px; color: #8C8178; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
+.label { font-size: 10px; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; color: #8C8178; margin-bottom: 8px; }
+.context-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 0; }
+.context-card {
+  background: #fff; border-radius: 10px; padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #EDE9E2;
+}
+.ctx-label { font-size: 10px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: #A89E93; margin-bottom: 8px; }
+.ctx-text-primary { font-size: 14px; font-weight: 600; font-family: 'Space Grotesk', sans-serif; color: #1C1915; }
+.ctx-text-secondary { font-size: 12px; color: #8C8178; margin-top: 3px; }
+.ctx-text-tertiary { font-size: 11px; color: #A89E93; margin-top: 2px; }
+.ctx-border { border-top: 1px solid #DDD8CF; padding-top: 8px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="label">Ink — Neutral Palette</div>
+<div class="row">
+  <div class="swatch"><div class="swatch-color" style="background:#F5F1EB; border:1px solid #EDE9E2;"></div><div class="swatch-info"><div class="swatch-name">50</div><div class="swatch-hex">#F5F1EB</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#EDE9E2;"></div><div class="swatch-info"><div class="swatch-name">100</div><div class="swatch-hex">#EDE9E2</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#DDD8CF;"></div><div class="swatch-info"><div class="swatch-name">200</div><div class="swatch-hex">#DDD8CF</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#C6BEB4;"></div><div class="swatch-info"><div class="swatch-name">300</div><div class="swatch-hex">#C6BEB4</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#A89E93;"></div><div class="swatch-info"><div class="swatch-name">400</div><div class="swatch-hex">#A89E93</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#8C8178;"></div><div class="swatch-info"><div class="swatch-name">500</div><div class="swatch-hex">#8C8178</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#706560;"></div><div class="swatch-info"><div class="swatch-name">600</div><div class="swatch-hex">#706560</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#554D49;"></div><div class="swatch-info"><div class="swatch-name">700</div><div class="swatch-hex">#554D49</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#3B3632;"></div><div class="swatch-info"><div class="swatch-name">800</div><div class="swatch-hex">#3B3632</div></div></div>
+  <div class="swatch"><div class="swatch-color" style="background:#1C1915;"></div><div class="swatch-info"><div class="swatch-name">900</div><div class="swatch-hex">#1C1915</div></div></div>
+</div>
+
+<div class="label">Text Hierarchy in Context</div>
+<div class="context-grid">
+  <div class="context-card">
+    <div class="ctx-label">Catalog Card</div>
+    <div class="ctx-text-primary">Berserk Deluxe Edition</div>
+    <div class="ctx-text-secondary">Dark Horse Comics · USA</div>
+    <div class="ctx-text-tertiary">Detected May 15, 2026</div>
+    <div class="ctx-border">
+      <div style="display:flex; gap:6px; align-items:center;">
+        <div style="width:8px; height:8px; border-radius:50%; background:#8C8178;"></div>
+        <span style="font-size:10px; color:#A89E93; font-family:'JetBrains Mono',monospace;">ISBN 978-1-50670-736-5</span>
+      </div>
+    </div>
+  </div>
+  <div class="context-card">
+    <div class="ctx-label">Filter Sidebar</div>
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      <div style="font-size:12px; font-weight:600; color:#1C1915; font-family:'Space Grotesk',sans-serif;">Country</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <span style="font-size:11px; background:#EDFAF3; color:#1A8A5A; border:1px solid #A6DFCA; border-radius:999px; padding:3px 10px;">Japan (48)</span>
+        <span style="font-size:11px; background:#EDE9E2; color:#706560; border-radius:999px; padding:3px 10px;">France (31)</span>
+        <span style="font-size:11px; background:#EDE9E2; color:#706560; border-radius:999px; padding:3px 10px;">USA (22)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
